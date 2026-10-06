@@ -75,6 +75,17 @@ class Db:
             cols = {r[1] for r in c.exec_driver_sql("PRAGMA table_info(candidates)")}
             if "status" not in cols:
                 c.exec_driver_sql("ALTER TABLE candidates ADD COLUMN status VARCHAR")
+            if "params" not in cols:
+                c.exec_driver_sql("ALTER TABLE candidates ADD COLUMN params TEXT")
+            out = {r[1]: r for r in c.exec_driver_sql("PRAGMA table_info(candidate_outcomes)")}
+            if out.get("outcome_r") is not None and out["outcome_r"][3]:  # NOT NULL: relax (rebuild)
+                c.exec_driver_sql("ALTER TABLE candidate_outcomes RENAME TO _candidate_outcomes_old")
+                m.candidate_outcomes.create(c)
+                c.exec_driver_sql(
+                    "INSERT INTO candidate_outcomes (id, candidate_id, outcome_r, exit_reason, labeled_at) "
+                    "SELECT id, candidate_id, outcome_r, exit_reason, labeled_at "
+                    "FROM _candidate_outcomes_old")
+                c.exec_driver_sql("DROP TABLE _candidate_outcomes_old")
 
     def close(self) -> None:
         self.engine.dispose()
@@ -207,6 +218,7 @@ class Db:
                 "status": r.get("status"),
                 "features": _dump_opt(r.get("features")), "legs": _dump_opt(r.get("legs")),
                 "stop": _dump_opt(r.get("stop")), "exit": _dump_opt(r.get("exit")),
+                "params": _dump_opt(r.get("params")),
             })
         with self._tx() as c:
             return [int(c.execute(m.candidates.insert().values(row)).inserted_primary_key[0])
@@ -217,7 +229,7 @@ class Db:
             c.execute(m.candidates.update().where(m.candidates.c.id == candidate_id).values(status=status))
 
     def record_outcome(
-        self, candidate_id: int, outcome_r: float, exit_reason: str | None,
+        self, candidate_id: int, outcome_r: float | None, exit_reason: str | None,
         labeled_at: pd.Timestamp | None = None,
     ) -> None:
         when = labeled_at if labeled_at is not None else pd.Timestamp.now(tz="UTC")

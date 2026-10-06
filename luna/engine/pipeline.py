@@ -95,6 +95,9 @@ class Pipeline:
         self.trades: list[dict] = []
         self.cand_rows: list[dict] = []
         self.cand_objs: list[Candidate] | None = [] if keep_candidates else None
+        # params of the strategy instance that produced each candidate (aligned with cand_rows)
+        self.cand_params: list[dict | None] = []
+        self._params_of: dict[tuple, dict] = {}
         self.events: list[dict] = []
         self._touched: set[str] = set()
         # live: monotone exit re-plan counter per position (client ids unique within a minute);
@@ -114,6 +117,7 @@ class Pipeline:
             "score": c.score, "edge_bps": c.edge_bps, "stop_distance": c.stop.distance_frac,
             "regime": c.regime, "status": status, "reason": reason,
         })
+        self.cand_params.append(self._params_of.get((c.strategy, c.key, c.ts)))
         if self.cand_objs is not None:
             self.cand_objs.append(c)
         return len(self.cand_rows) - 1
@@ -324,6 +328,9 @@ class Pipeline:
             c = sig.strategy.candidate_at(sig.sf, int(sig.rows[i]), mids)
             if c is None:
                 continue
+            params = getattr(sig.strategy, "params", None)
+            if params:
+                self._params_of[(c.strategy, c.key, c.ts)] = dict(params)
             if (c.strategy, c.key) in open_keys:
                 self.cand_row(c, "rejected", "already_open")
                 continue

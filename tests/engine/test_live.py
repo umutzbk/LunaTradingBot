@@ -555,7 +555,9 @@ def test_candidates_recorded_with_reasons_and_plain_types(db):
     panel = panel_of(100)
     idx = panel["BTC"].index
     clock = Clock(tick_at(idx[50]))
-    eng, _, _ = engine(db, panel, clock, Scripted({("BTC", idx[50]): 1, ("ETH", idx[51]): 1}))
+    strat = Scripted({("BTC", idx[50]): 1, ("ETH", idx[51]): 1})
+    strat.params = {"k": 2}
+    eng, _, _ = engine(db, panel, clock, strat)
     eng.start()
     eng.tick(clock.now)
     clock.now = tick_at(idx[51])
@@ -565,6 +567,7 @@ def test_candidates_recorded_with_reasons_and_plain_types(db):
     eng.tick(clock.now)
     got = rows(db, m.candidates)
     assert [(c["key"], c["selected"]) for c in got] == [("BTC", True), ("ETH", True)]
+    assert [json.loads(c["params"]) for c in got] == [{"k": 2}, {"k": 2}]  # owning instance's params
     f = json.loads(got[0]["features"])
     assert f == {"z": 0.5, "n": 3}
     assert json.loads(got[0]["legs"]) == [["BTC", 1.0]]

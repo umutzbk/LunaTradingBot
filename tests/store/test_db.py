@@ -229,3 +229,31 @@ def test_candidate_status_and_migration_of_old_schema(tmp_path):
         got = c.execute(text("SELECT status FROM candidates ORDER BY id")).scalars().all()
     assert got == ["filled", None]
     d.close()
+
+
+def test_migration_relaxes_outcome_r_and_adds_params(tmp_path):
+    path = tmp_path / "old2.db"
+    d = Db(f"sqlite:///{path.as_posix()}")
+    row = {"ts": TS, "strategy": "s", "key": "A", "direction": 1, "selected": True}
+    (cid,) = d.record_candidates("r", [row], account="perp")
+    with d.engine.begin() as c:  # the schema before terminal outcomes / params
+        c.exec_driver_sql("ALTER TABLE candidates DROP COLUMN params")
+        c.exec_driver_sql("DROP TABLE candidate_outcomes")
+        c.exec_driver_sql(
+            "CREATE TABLE candidate_outcomes (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "candidate_id INTEGER NOT NULL REFERENCES candidates (id), outcome_r FLOAT NOT NULL, "
+            "exit_reason VARCHAR, labeled_at VARCHAR NOT NULL, UNIQUE (candidate_id))")
+        c.exec_driver_sql(
+            f"INSERT INTO candidate_outcomes (candidate_id, outcome_r, exit_reason, labeled_at) "
+            f"VALUES ({cid}, -1.5, 'stop', 't')")
+    d.close()
+    d = Db(f"sqlite:///{path.as_posix()}")
+    (cid2,) = d.record_candidates("r", [{**row, "params": {"k": 1}}], account="perp")
+    d.record_outcome(cid2, None, "untradeable_short")
+    with d.engine.connect() as c:
+        got = c.execute(text("SELECT candidate_id, outcome_r, exit_reason FROM candidate_outcomes "
+                             "ORDER BY id")).all()
+        params = c.execute(text("SELECT params FROM candidates ORDER BY id")).scalars().all()
+    assert got == [(cid, -1.5, "stop"), (cid2, None, "untradeable_short")]
+    assert params == [None, '{"k": 1}']
+    d.close()

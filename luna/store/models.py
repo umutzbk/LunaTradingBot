@@ -59,6 +59,7 @@ candidates = Table(
     Column("legs", Text),
     Column("stop", Text),
     Column("exit", Text),
+    Column("params", Text),  # JSON: params of the strategy instance that produced the candidate
 )
 Index("ix_candidates_account_ts", candidates.c.account, candidates.c.ts)
 
@@ -66,7 +67,7 @@ candidate_outcomes = Table(
     "candidate_outcomes", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("candidate_id", Integer, ForeignKey("candidates.id"), nullable=False),
-    Column("outcome_r", Float, nullable=False),
+    Column("outcome_r", Float),  # NULL: terminal "never labelable" row, see exit_reason
     Column("exit_reason", String),
     Column("labeled_at", String, nullable=False),
     UniqueConstraint("candidate_id"),

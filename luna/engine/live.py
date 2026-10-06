@@ -170,7 +170,8 @@ def _order_to_dict(o: OrderRequest) -> dict[str, Any]:
                               "price", "tif", "intent")}
 
 
-def candidate_record(c: Candidate, status: str, reason: str | None) -> dict[str, Any]:
+def candidate_record(c: Candidate, status: str, reason: str | None,
+                     params: dict | None = None) -> dict[str, Any]:
     """A ``Db.record_candidates`` row with plain Python types."""
     d = cand_to_dict(c)
     return {
@@ -179,6 +180,7 @@ def candidate_record(c: Candidate, status: str, reason: str | None) -> dict[str,
         "selected": status != "rejected", "reject_reason": reason,
         "status": None if status == "rejected" else status,
         "features": d["features"], "legs": d["legs"], "stop": d["stop"], "exit": d["exit"],
+        "params": params,
     }
 
 
@@ -882,14 +884,16 @@ class LiveEngine:
             return  # another process owns the account: write nothing more
         pipe = self.pipe
         if pipe.cand_rows:
-            rows = [candidate_record(c, r["status"], r["reason"])
-                    for c, r in zip(pipe.cand_objs, pipe.cand_rows, strict=True)]
+            rows = [candidate_record(c, r["status"], r["reason"], p)
+                    for c, r, p in zip(pipe.cand_objs, pipe.cand_rows, pipe.cand_params, strict=True)]
             ids = self.db.record_candidates(self.run_id, rows, account=self.account)
             for pid, g in pipe.entry_groups.items():
                 if g.cand_row >= 0:
                     self._cand_ids[pid] = ids[g.cand_row]
             pipe.cand_rows.clear()
             pipe.cand_objs.clear()
+            pipe.cand_params.clear()
+            pipe._params_of.clear()
             for g in pipe.entry_groups.values():
                 g.cand_row = -1
         for ev in pipe.events:
