@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
@@ -58,37 +60,76 @@ def aggregate_trades(trades: pd.DataFrame) -> pd.DataFrame:
     return _normalize(out)
 
 
+def _write_checkpoint(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data))
+    os.replace(tmp, path)
+
+
+def _empty_trades() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "price": pd.Series(dtype="float64"),
+            "volume": pd.Series(dtype="float64"),
+            "time": pd.Series(dtype="datetime64[ns, UTC]"),
+        }
+    )
+
+
 def backfill_trades(
     client,
     pair: str,
     start: pd.Timestamp,
     end: pd.Timestamp,
     checkpoint: Path,
+    on_bars: Callable[[pd.DataFrame], None],
     sleep_s: float = 1.0,
-) -> pd.DataFrame:
-    """Page /Trades from the checkpoint (or `start`) until trades reach `end`; 15m bars for [start, end)."""
+) -> int:
+    """Page /Trades over [start, end), emitting only COMPLETED 15m bars through `on_bars`.
+
+    The bar containing the latest trade is held back; the checkpoint stores that bar's
+    (bar-aligned) start as `since`, written only after the completed bars were emitted, so a
+    resume rebuilds the held bar from all its trades. Kraken's `since` is exclusive, so
+    requests use `since - 1`. Returns the number of bars emitted in this run.
+    """
     checkpoint = Path(checkpoint)
-    since = int(start.value)
+    start_ns, end_ns = int(start.value), int(end.value)
+    ident = {"pair": pair, "start": start_ns, "end": end_ns}
+    since = start_ns
     if checkpoint.exists():
-        since = int(json.loads(checkpoint.read_text())["since"])
-    pages: list[pd.DataFrame] = []
+        saved = json.loads(checkpoint.read_text())
+        if {k: saved.get(k) for k in ident} != ident:
+            raise ValueError(f"checkpoint {checkpoint} belongs to a different pair/start/end")
+        since = int(saved["since"])
+    since = min(since, end_ns)
+    emitted = 0
+    buffer = _empty_trades()
+
+    def emit(bars: pd.DataFrame) -> None:
+        nonlocal emitted
+        if not bars.empty:
+            on_bars(bars)
+            emitted += len(bars)
+
+    cursor = since - 1
     while True:
-        df, last = fetch_trades_page(client, pair, since)
-        checkpoint.parent.mkdir(parents=True, exist_ok=True)
-        checkpoint.write_text(json.dumps({"since": last}))
-        if df.empty:
-            break
-        pages.append(df)
-        if (df["time"] >= end).any() or last <= since:
-            break
-        since = last
+        page, last = fetch_trades_page(client, pair, cursor)
+        done = page.empty or last <= cursor or bool((page["time"] >= end).any())
+        keep = page[(page["time"] >= start) & (page["time"] < end)]
+        buffer = pd.concat([buffer, keep], ignore_index=True)
+        if done:
+            emit(aggregate_trades(buffer))
+            _write_checkpoint(checkpoint, {**ident, "since": end_ns})
+            return emitted
+        held = page["time"].max().floor("15min")
+        bars = aggregate_trades(buffer)
+        emit(bars[bars.index < held])
+        buffer = buffer[buffer["time"] >= held]
+        _write_checkpoint(checkpoint, {**ident, "since": min(int(held.value), end_ns)})
+        cursor = last
         if sleep_s:
             time.sleep(sleep_s)
-    if not pages:
-        return _empty_bars()
-    all_trades = pd.concat(pages, ignore_index=True)
-    all_trades = all_trades[(all_trades["time"] >= start) & (all_trades["time"] < end)]
-    return aggregate_trades(all_trades)
 
 
 def fetch_ohlc(client, pair: str) -> pd.DataFrame:

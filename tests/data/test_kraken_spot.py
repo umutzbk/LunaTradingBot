@@ -49,49 +49,98 @@ def test_aggregate_trades_empty():
     assert out.empty and list(out.columns) == BAR_COLUMNS
 
 
-def _trade_row(price, t, i):
-    return [str(price), "0.5", t, "b", "l", "", i]
+class FakeKraken:
+    """Serves trades (ns, price): exclusive since, fixed page size; fails persistently from call N."""
 
+    def __init__(self, trades, page=3, crash_on_call=None):
+        self.trades, self.page, self.crash_on_call = trades, page, crash_on_call
+        self.calls = []
 
-def test_backfill_resumes_from_checkpoint(tmp_path):
-    b = BAR0.timestamp()
-    cp = tmp_path / "cp.json"
-    cp.write_text(json.dumps({"since": 777}))
-    pages = {
-        777: ([_trade_row(100, b + 1, 1), _trade_row(101, b + 2, 2)], 888),
-        888: ([_trade_row(102, b + 3, 3), _trade_row(103, b + 5000, 4)], 999),
-    }
-    seen, cps = [], []
-
-    def handler(req):
+    def __call__(self, req):
         since = int(req.url.params["since"])
-        seen.append(since)
-        if seen[1:]:
-            cps.append(json.loads(cp.read_text())["since"])
-        rows, last = pages[since]
-        return httpx.Response(200, json={"error": [], "result": {"XXBTZUSD": rows, "last": str(last)}})
+        self.calls.append(since)
+        if self.crash_on_call and len(self.calls) >= self.crash_on_call:
+            raise httpx.ConnectError("boom")
+        rows = [t for t in self.trades if t[0] > since][: self.page]
+        last = rows[-1][0] if rows else since
+        body = [[str(p), "0.5", ns / 1e9, "b", "l", "", i] for i, (ns, p) in enumerate(rows)]
+        return httpx.Response(200, json={"error": [], "result": {"XXBTZUSD": body, "last": str(last)}})
 
-    client = make_client(httpx.MockTransport(handler))
+
+def _mk_trades():
+    b = int(BAR0.value)
+    sec = 10**9
+    # 9 trades over 4 bars; bar 1 spans a page boundary; one trade exactly on a bar start
+    offs = [5, 100, 899, 900, 1000, 1500, 1800, 2000, 2700]
+    return [(b + o * sec, 100.0 + i) for i, o in enumerate(offs)]
+
+
+def _backfill(trades, cp, end, got, crash_on_call=None):
+    srv = FakeKraken(trades, crash_on_call=crash_on_call)
+    client = make_client(httpx.MockTransport(srv))
+    n = ks.backfill_trades(client, "XBTUSD", BAR0, end, cp, got.append, sleep_s=0)
+    return n, srv
+
+
+def test_backfill_crash_resume_matches_clean_run(tmp_path):
+    trades = _mk_trades()
     end = BAR0 + pd.Timedelta("1h")
-    out = ks.backfill_trades(client, "XBTUSD", BAR0, end, cp, sleep_s=0)
-    assert seen == [777, 888]
-    assert cps == [888]  # checkpoint updated after first page
-    assert json.loads(cp.read_text()) == {"since": 999}
-    assert out.iloc[0].trades == 3 and out.iloc[0].close == 102.0
+    clean = []
+    n_clean, _ = _backfill(trades, tmp_path / "clean.json", end, clean)
+    expected = pd.concat(clean)
+    assert n_clean == len(expected) == 4
+
+    cp, got = tmp_path / "cp.json", []
+    with pytest.raises(httpx.HTTPError):
+        _backfill(trades, cp, end, got, crash_on_call=3)
+    assert got, "completed bars must be emitted before the crash"
+    n2, _ = _backfill(trades, cp, end, got)
+    union = pd.concat(got)
+    assert not union.index.duplicated().any()
+    pd.testing.assert_frame_equal(union, expected)
+    assert n2 > 0
 
 
-def test_backfill_start_without_checkpoint_and_no_progress(tmp_path):
-    seen = []
-
-    def handler(req):
-        seen.append(int(req.url.params["since"]))
-        return httpx.Response(200, json={"error": [], "result": {"XXBTZUSD": [], "last": "5"}})
-
-    client = make_client(httpx.MockTransport(handler))
+def test_backfill_checkpoint_bar_aligned_and_bounded(tmp_path):
+    trades = _mk_trades()
     end = BAR0 + pd.Timedelta("1h")
-    out = ks.backfill_trades(client, "XBTUSD", BAR0, end, tmp_path / "c.json", sleep_s=0)
-    assert seen == [int(BAR0.value)]
-    assert out.empty
+    cp, got = tmp_path / "cp.json", []
+    with pytest.raises(httpx.HTTPError):
+        _backfill(trades, cp, end, got, crash_on_call=3)
+    saved = json.loads(cp.read_text())
+    assert saved["since"] % (900 * 10**9) == 0 and saved["since"] <= end.value
+    assert saved["pair"] == "XBTUSD" and saved["start"] == BAR0.value and saved["end"] == end.value
+    assert not list(tmp_path.glob("*.tmp"))
+    _, srv2 = _backfill(trades, cp, end, got)
+    assert srv2.calls[0] == saved["since"] - 1  # exclusive cursor; refetches the held bar
+    assert json.loads(cp.read_text())["since"] == end.value
+
+
+def test_backfill_stops_at_end_and_drops_later_trades(tmp_path):
+    end = BAR0 + pd.Timedelta("30min")  # excludes trades at 1800s and later
+    got = []
+    n, _ = _backfill(_mk_trades(), tmp_path / "c.json", end, got)
+    out = pd.concat(got)
+    assert n == 2 and out.index.max() == BAR0 + pd.Timedelta("15min")
+    assert json.loads((tmp_path / "c.json").read_text())["since"] <= end.value
+
+
+def test_backfill_mismatched_checkpoint_raises(tmp_path):
+    cp = tmp_path / "cp.json"
+    end = BAR0 + pd.Timedelta("1h")
+    _backfill(_mk_trades(), cp, end, [])
+    client = make_client(httpx.MockTransport(FakeKraken([])))
+    with pytest.raises(ValueError):
+        ks.backfill_trades(client, "ETHUSD", BAR0, end, cp, lambda b: None, sleep_s=0)
+    with pytest.raises(ValueError):
+        later = end + pd.Timedelta("15min")
+        ks.backfill_trades(client, "XBTUSD", BAR0, later, cp, lambda b: None, sleep_s=0)
+
+
+def test_backfill_empty_page_stops_without_bars(tmp_path):
+    got = []
+    n, srv = _backfill([], tmp_path / "c.json", BAR0 + pd.Timedelta("1h"), got)
+    assert n == 0 and got == [] and srv.calls == [int(BAR0.value) - 1]
 
 
 def test_fetch_trades_page_error_raises():
@@ -130,3 +179,8 @@ def test_fetch_depth_parses():
     bids, asks = ks.fetch_depth(client, "XBTUSD", count=2)
     assert bids == [(100.0, 3.0), (99.9, 4.0)]
     assert asks == [(100.5, 1.0), (100.6, 2.0)]
+
+
+@pytest.fixture(autouse=True)
+def _no_retry_sleep(monkeypatch):
+    monkeypatch.setattr("luna.http.time.sleep", lambda s: None)
