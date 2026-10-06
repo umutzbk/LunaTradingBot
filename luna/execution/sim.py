@@ -82,22 +82,32 @@ class SimBroker:
         )
 
     def stop_fill(
-        self, asset: str, side: Side, qty: float, stop_price: float, bar: pd.Series
+        self,
+        asset: str,
+        side: Side,
+        qty: float,
+        stop_price: float,
+        bar: pd.Series,
+        position_id: str,
     ) -> Fill:
         """Emergency stop at the worse of stop_price and bar open, plus costs, taker.
 
         Precondition: `bar` is a real bar (filled=False); the engine must not call this on
         forward-filled bars.
         """
+        if bool(bar.get("filled", False)):
+            raise ValueError("stop_fill called on a forward-filled bar")
+        if not isinstance(bar.name, pd.Timestamp):
+            raise ValueError("stop_fill needs a bar Series named by its Timestamp")
         f = self._frictions(asset)
         open_ = float(bar["open"])
         if side == "sell":
             price = min(stop_price, open_) * (1.0 - f)
         else:
             price = max(stop_price, open_) * (1.0 + f)
-        ts = pd.Timestamp(bar.name)
+        ts = bar.name
         return Fill(
-            client_id=f"stop:{asset}:{ts:%Y%m%d%H%M}",
+            client_id=f"{position_id}:stop:{asset}:{ts:%Y%m%d%H%M}",
             ts=ts,
             asset=asset,
             side=side,

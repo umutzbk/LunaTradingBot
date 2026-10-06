@@ -339,3 +339,39 @@ def test_round_trip_identity_spot():
     assert pos.pnl["gross"] == pytest.approx(10.0)
     assert pos.pnl["spread_slip"] == pytest.approx(-0.1 + 0.2)
     assert pos.net_pnl() == pytest.approx(pf.equity() - 1000.0)
+
+
+# --- dust write-off ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("residue", [5.5e-17, 0.0004])
+def test_write_off_dust_allows_close_and_keeps_identity(residue):
+    pf = _perp("p1")
+    start = pf.equity()
+    pf.apply_fill(_fill("BTC", "buy", 1.0, 100.0, fee=0.05), "p1", ref_price=100.0)
+    sell_qty = 1.0 - residue if residue > 1e-9 else 1.0
+    pf.apply_fill(_fill("BTC", "sell", sell_qty, 110.0, fee=0.05, i=1), "p1", ref_price=110.0)
+    if residue < 1e-9:
+        # float residue case: fabricate the leftover directly
+        pf.apply_fill(_fill("BTC", "buy", residue, 110.0, i=2), "p1", ref_price=110.0)
+    pos = pf.positions["p1"]
+    assert 0 < abs(pos.qty["BTC"]) <= 1e-3
+    with pytest.raises(ValueError):
+        pf.close_position("p1", TS, "x")
+    pf.write_off_dust("p1", "BTC", 111.0, TS)
+    assert pos.is_flat() and pf.holdings.get("BTC", 0.0) == 0.0
+    pf.close_position("p1", TS, "dust")
+    pf.mark({"BTC": 111.0})
+    assert pos.net_pnl() == pytest.approx(pf.equity() - start)
+    # write-off itself carries no fee
+    assert pos.pnl["fees"] == pytest.approx(0.10)
+
+
+def test_write_off_dust_short_and_noop_when_flat():
+    pf = _perp("p1")
+    pf.apply_fill(_fill("BTC", "sell", 0.0003, 100.0), "p1", ref_price=100.0)
+    pf.write_off_dust("p1", "BTC", 90.0, TS)
+    assert pf.cash == pytest.approx(1000.0 + 0.0003 * 10.0)
+    assert pf.positions["p1"].pnl["spread_slip"] == pytest.approx(0.0)
+    pf.write_off_dust("p1", "BTC", 90.0, TS)  # already flat: no-op
+    pf.close_position("p1", TS, "dust")

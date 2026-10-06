@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
+from typing import Literal
 
 import pandas as pd
 
@@ -10,11 +12,25 @@ from luna.execution.costs import CostModel
 from luna.portfolio.portfolio import Position
 from luna.types import AccountKind, Candidate, Instrument, OrderRequest, Side
 
+Intent = Literal["open", "close", "reduce"]
+
+
+@dataclass(frozen=True)
+class PlanResult:
+    orders: list[OrderRequest]
+    reject_reason: str | None
+
+
+@dataclass(frozen=True)
+class ExitPlan:
+    orders: list[OrderRequest]
+    dust: dict[str, float]  # signed residual qty per asset that cannot be traded
+
 
 def round_qty(qty: float, step: float) -> float:
     """Round |qty| toward zero to a multiple of step, keeping the sign."""
-    if step <= 0:
-        return qty
+    if not step > 0:
+        raise ValueError(f"qty step must be > 0, got {step}")
     n = math.floor(abs(qty) / step + 1e-9)
     out = round(n * step, 12)
     return math.copysign(out, qty) if out else 0.0
@@ -22,6 +38,13 @@ def round_qty(qty: float, step: float) -> float:
 
 def _client_id(position_id: str, leg_group: str, asset: str, intent: str, ts: pd.Timestamp) -> str:
     return f"{position_id}:{leg_group}:{asset}:{intent}:{ts:%Y%m%d%H%M}"
+
+
+def _mid(mids: dict[str, float], asset: str) -> float:
+    m = mids.get(asset)
+    if m is None or not math.isfinite(m) or m <= 0:
+        raise ValueError(f"invalid mid for {asset}: {m}")
+    return m
 
 
 def _make_order(
@@ -35,12 +58,16 @@ def _make_order(
     ts: pd.Timestamp,
     band: float,
     costs: CostModel | None,
-    intent: str,
+    intent: Intent,
     position_id: str,
     leg_group: str,
+    check_notional: bool,
 ) -> OrderRequest | None:
+    """None if the rounded qty is 0, below min_qty (or, for entries, below min_notional)."""
     qty = round_qty(abs(qty), inst.qty_step)
     if qty <= 0 or qty < inst.min_qty:
+        return None
+    if check_notional and qty * mid < inst.min_notional:
         return None
     sign = 1.0 if side == "buy" else -1.0
     if kind == "perp":
@@ -59,7 +86,7 @@ def _make_order(
         qty=qty,
         limit_price=limit,
         tif=tif,
-        intent=intent,  # type: ignore[arg-type]
+        intent=intent,
         position_id=position_id,
         leg_group=leg_group,
     )
@@ -73,9 +100,11 @@ def plan_entry(
     kind: AccountKind,
     ts: pd.Timestamp,
     band: float,
+    *,
     costs: CostModel | None = None,
-) -> list[OrderRequest]:
-    """Per-leg notional = gross * |w| / sum|w|. Legs rounding to zero / below min_qty are dropped.
+) -> PlanResult:
+    """Per-leg notional = gross * |w| / sum|w|. All-or-nothing: if any leg rounds to zero qty,
+    is below min_qty or below min_notional, returns PlanResult([], "below_min_notional").
 
     `costs` is required for spot (POST_ONLY limit = mid * (1 -/+ half_spread)).
     """
@@ -85,7 +114,7 @@ def plan_entry(
     for leg in cand.legs:
         if leg.weight == 0 or total == 0:
             continue
-        mid = mids[leg.asset]
+        mid = _mid(mids, leg.asset)
         notional = gross_notional * abs(leg.weight) / total
         side: Side = "buy" if leg.weight * cand.direction > 0 else "sell"
         o = _make_order(
@@ -101,10 +130,12 @@ def plan_entry(
             intent="open",
             position_id=position_id,
             leg_group="entry",
+            check_notional=True,
         )
-        if o is not None:
-            orders.append(o)
-    return orders
+        if o is None:
+            return PlanResult([], "below_min_notional")
+        orders.append(o)
+    return PlanResult(orders, None)
 
 
 def plan_exit(
@@ -114,10 +145,16 @@ def plan_exit(
     kind: AccountKind,
     ts: pd.Timestamp,
     band: float,
+    *,
     costs: CostModel | None = None,
-) -> list[OrderRequest]:
-    """Flatten every non-zero leg: sell if qty > 0, buy if qty < 0 (intent "close")."""
+) -> ExitPlan:
+    """Flatten every non-zero leg: sell if qty > 0, buy if qty < 0 (intent "close").
+
+    Legs whose rounded |qty| is 0 or below min_qty (incl. float residue) get no order and are
+    reported in `dust` (signed qty) for Portfolio.write_off_dust.
+    """
     orders: list[OrderRequest] = []
+    dust: dict[str, float] = {}
     for asset, q in pos.qty.items():
         if q == 0:
             continue
@@ -126,7 +163,7 @@ def plan_exit(
             asset=asset,
             side=side,
             qty=q,
-            mid=mids[asset],
+            mid=_mid(mids, asset),
             inst=instruments[asset],
             kind=kind,
             ts=ts,
@@ -135,7 +172,10 @@ def plan_exit(
             intent="close",
             position_id=pos.id,
             leg_group="exit",
+            check_notional=False,
         )
-        if o is not None:
+        if o is None:
+            dust[asset] = q
+        else:
             orders.append(o)
-    return orders
+    return ExitPlan(orders, dust)

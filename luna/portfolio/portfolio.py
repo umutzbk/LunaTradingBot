@@ -114,6 +114,20 @@ class Portfolio:
         self.closed.append((pos, ts, reason))
         return pos
 
+    def write_off_dust(self, position_id: str, asset: str, mark_price: float, ts: pd.Timestamp) -> None:
+        """Zero a position's residual (sub-minimum or float-residue) leg at ``mark_price``.
+
+        Booked through the normal fill path with fee 0 and ref_price == mark_price, so realized
+        P&L reaches cash and ``gross`` while ``spread_slip`` stays 0. No-op if the leg is flat.
+        """
+        pos = self.positions[position_id]
+        q = pos.qty.get(asset, 0.0)
+        if q == 0.0:
+            return
+        side = "sell" if q > 0 else "buy"
+        fill = Fill(f"dust:{position_id}:{asset}", ts, asset, side, abs(q), mark_price, 0.0, "taker")
+        self.apply_fill(fill, position_id, mark_price)
+
     # --- fills ----------------------------------------------------------------------------------
 
     def apply_fill(self, fill: Fill, position_id: str, ref_price: float) -> None:

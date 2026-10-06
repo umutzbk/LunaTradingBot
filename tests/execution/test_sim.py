@@ -6,9 +6,9 @@ from luna.execution.costs import CostModel
 from luna.execution.sim import SimBroker
 from luna.types import Instrument, OrderRequest
 
-T0 = pd.Timestamp("2026-01-01 00:00")
-T1 = pd.Timestamp("2026-01-01 01:00")
-T2 = pd.Timestamp("2026-01-01 02:00")
+T0 = pd.Timestamp("2026-01-01 00:00", tz="UTC")
+T1 = pd.Timestamp("2026-01-01 01:00", tz="UTC")
+T2 = pd.Timestamp("2026-01-01 02:00", tz="UTC")
 
 
 def costs() -> CostModel:
@@ -101,10 +101,20 @@ def test_no_fill_on_filled_bar():
 
 def test_stop_fill_gap_uses_open():
     b = SimBroker("perp", costs(), inst())
-    f = b.stop_fill("BTC", "sell", 2.0, 95.0, bar(o=90.0))
+    f = b.stop_fill("BTC", "sell", 2.0, 95.0, bar(o=90.0), "p1")
     assert f.price == pytest.approx(90.0 * (1 - 0.0003))
     assert f.liquidity == "taker" and f.ts == T1
-    f2 = b.stop_fill("BTC", "sell", 2.0, 95.0, bar(o=100.0))  # no gap: stop price
+    f2 = b.stop_fill("BTC", "sell", 2.0, 95.0, bar(o=100.0), "p1")  # no gap: stop price
     assert f2.price == pytest.approx(95.0 * (1 - 0.0003))
-    f3 = b.stop_fill("BTC", "buy", 2.0, 105.0, bar(o=110.0))
+    f3 = b.stop_fill("BTC", "buy", 2.0, 105.0, bar(o=110.0), "p1")
     assert f3.price == pytest.approx(110.0 * (1 + 0.0003))
+
+
+def test_stop_fill_rejects_filled_or_unnamed_bar():
+    b = SimBroker("perp", costs(), inst())
+    with pytest.raises(ValueError):
+        b.stop_fill("BTC", "sell", 2.0, 95.0, bar(filled=True), "p1")
+    with pytest.raises(ValueError):
+        b.stop_fill("BTC", "sell", 2.0, 95.0, bar(name=None), "p1")
+    f = b.stop_fill("BTC", "sell", 2.0, 95.0, bar(), "p1")
+    assert f.client_id == "p1:stop:BTC:202601010100"
