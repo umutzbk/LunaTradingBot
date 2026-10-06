@@ -176,6 +176,55 @@ def test_funding_unknown_counts_without_cash():
     assert pf.positions["idle"].pnl["funding_unknown_bars"] == 0  # holds no BTC
 
 
+def test_funding_offsetting_positions_each_book_their_share():
+    pf = _perp("L", "S")
+    pf.apply_fill(_fill("BTC", "buy", 1, 100.0), "L", 100.0)
+    pf.apply_fill(_fill("BTC", "sell", 1, 100.0), "S", 100.0)
+    assert "BTC" not in pf.holdings  # account net flat
+    cash0 = pf.cash
+    pf.apply_funding("BTC", 0.001, mark=100.0, ts=TS)
+    fl, fs = pf.positions["L"].pnl["funding"], pf.positions["S"].pnl["funding"]
+    assert fl == pytest.approx(-0.1)
+    assert fs == pytest.approx(0.1)
+    assert pf.cash - cash0 == pytest.approx(fl + fs)
+    # continuity with an almost-offsetting short
+    pf2 = _perp("L", "S")
+    pf2.apply_fill(_fill("BTC", "buy", 1, 100.0), "L", 100.0)
+    pf2.apply_fill(_fill("BTC", "sell", 0.999, 100.0), "S", 100.0)
+    pf2.apply_funding("BTC", 0.001, mark=100.0, ts=TS)
+    assert pf2.positions["L"].pnl["funding"] == pytest.approx(-0.1)
+    assert pf2.positions["S"].pnl["funding"] == pytest.approx(0.0999)
+
+
+def test_round_trip_identity_sign_flip_with_costs_and_funding():
+    pf = _perp("p1")
+    pf.apply_fill(_fill("BTC", "buy", 2, 100.4, fee=0.1), "p1", ref_price=100.0)
+    pf.apply_fill(_fill("BTC", "sell", 3, 89.7, fee=0.13, i=1), "p1", ref_price=90.0)
+    assert pf.holdings["BTC"] == pytest.approx(-1.0)
+    pf.apply_funding("BTC", 0.0005, mark=88.0, ts=TS)  # short receives
+    pf.apply_fill(_fill("BTC", "buy", 1, 85.2, fee=0.04, i=2), "p1", ref_price=85.0)
+    pos = pf.positions["p1"]
+    assert pos.is_flat()
+    assert pos.pnl["gross"] == pytest.approx((90.0 - 100.0) * 2 + (90.0 - 85.0))
+    assert pos.pnl["spread_slip"] == pytest.approx(0.4 * 2 + 0.3 * 3 + 0.2)
+    assert pos.pnl["funding"] == pytest.approx(0.0005 * 88.0)
+    pf.mark({"BTC": 70.0})
+    assert pos.net_pnl() == pytest.approx(pf.equity() - 1000.0)
+
+
+def test_mark_and_fill_reject_non_finite():
+    pf = _perp("p1")
+    for bad in (float("nan"), float("inf"), 0.0, -1.0):
+        with pytest.raises(ValueError):
+            pf.mark({"BTC": bad})
+    for qty, price in ((float("inf"), 100.0), (1.0, float("inf")), (float("nan"), 100.0)):
+        with pytest.raises(ValueError):
+            pf.apply_fill(_fill("BTC", "buy", qty, price), "p1", 100.0)
+    with pytest.raises(ValueError):
+        pf.apply_fill(_fill("BTC", "buy", 1.0, 100.0), "p1", float("nan"))
+    assert pf.cash == 1000.0 and pf.holdings == {} and pf.marks == {}
+
+
 def test_funding_rejected_on_spot():
     pf = Portfolio("spot", 1000.0)
     with pytest.raises(ValueError):

@@ -123,7 +123,8 @@ class Portfolio:
             raise ValueError(f"fill asset {asset} is not a leg of position {position_id!r}")
         if fill.side not in ("buy", "sell"):
             raise ValueError(f"bad side {fill.side!r}")
-        if not (fill.qty > 0 and fill.price > 0 and ref_price > 0 and math.isfinite(fill.fee)):
+        finite = all(math.isfinite(x) for x in (fill.qty, fill.price, ref_price, fill.fee))
+        if not (finite and fill.qty > 0 and fill.price > 0 and ref_price > 0):
             raise ValueError(f"invalid fill {fill} / ref_price {ref_price}")
         s = 1.0 if fill.side == "buy" else -1.0
         delta = s * fill.qty
@@ -142,6 +143,8 @@ class Portfolio:
         else:
             self.cash += -delta * fill.price - fill.fee
         self._set(self.holdings, self.avg_entry, asset, new_held, new_avg)
+        # First fill seeds the mark if none exists yet. Existing marks are not overwritten by fill
+        # prices, so equity reflects the spread/slippage paid only after the next mark().
         self.marks.setdefault(asset, fill.price)
 
         # position attribution
@@ -184,16 +187,22 @@ class Portfolio:
             if holders:
                 self.funding_log.append((ts, asset, None, 0.0))
             return
-        held = self.holdings.get(asset, 0.0)
-        if held == 0.0:
+        if not holders:
             return
-        amount = -rate * held * mark
-        self.cash += amount
+        # Book per holder; the account amount is their sum (== -rate * net holding * mark), so
+        # exactly offsetting positions each carry their own funding while cash nets to zero.
+        amount = 0.0
         for p in holders:
-            p.pnl["funding"] += -rate * p.qty[asset] * mark
+            share = -rate * p.qty[asset] * mark
+            p.pnl["funding"] += share
+            amount += share
+        self.cash += amount
         self.funding_log.append((ts, asset, rate, amount))
 
     def mark(self, prices: dict[str, float]) -> None:
+        bad = {a: p for a, p in prices.items() if not (math.isfinite(p) and p > 0)}
+        if bad:
+            raise ValueError(f"invalid mark prices: {bad}")
         self.marks.update(prices)
 
     # --- metrics --------------------------------------------------------------------------------
