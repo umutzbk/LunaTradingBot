@@ -1,0 +1,38 @@
+services:
+  bot-perp:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    command: ["paper", "--account", "perp"]
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./var:/app/var
+    restart: unless-stopped
+
+  bot-spot:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    command: ["paper", "--account", "spot"]
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./var:/app/var
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    entrypoint: ["uv", "run", "streamlit"]
+    command: ["run", "dashboard/app.py", "--server.port", "8501"]
+    ports:
+      - "8501:8501"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./var:/app/var

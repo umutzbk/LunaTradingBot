@@ -1,0 +1,63 @@
+var_dir: var
+gbp_usd: 1.32
+accounts:
+  perp: &perp
+    capital_usd: 265
+    risk_per_trade: 0.0075
+    max_risk_per_trade: 0.01
+    max_open_risk: 0.03
+    max_positions: 3
+    max_gross_leverage: 2.0
+    max_leg_notional_frac: 1.0
+    daily_loss_limit: 0.02
+    max_drawdown: 0.15
+    max_orders_per_day: 30
+    max_price_band: 0.003
+    emergency_stop_frac: 0.02
+    liq_distance_mult: 10
+    allow_short: true
+    live_enabled: false
+    highvol_risk_mult: 0.5
+    corr_bucket_threshold: 0.7
+  spot:
+    <<: *perp
+    max_gross_leverage: 1.0
+    max_leg_notional_frac: 0.5
+    max_orders_per_day: 20
+    max_price_band: 0.005
+    allow_short: false
+costs:
+  perp:
+    maker_fee: 0.0002
+    taker_fee: 0.0005
+    half_spread_bps: {BTC: 1, ETH: 1, default: 3}
+    slippage_bps: 2
+  spot:
+    maker_fee: 0.0025
+    taker_fee: 0.004
+    half_spread_bps: {BTC: 2, ETH: 3, default: 3}
+    slippage_bps: 0
+universe:
+  min_adv_usd: 10000000
+  min_history_days: 548
+  prefilter_volume_usd: 3000000
+  history_start: "2023-01-01"
+walkforward:
+  train_months: 6
+  test_months: 2
+  step_months: 2
+  holdout_months: 3
+ranking:
+  n0: 50
+  n_min: 30
+  bootstrap_samples: 2000
+  ci: 0.90
+pairs:
+  corr_min: 0.7
+  fdr_q: 0.05
+  stability_p: 0.10
+  half_life_min: 8
+  half_life_max: 192
+  beta_change_max: 0.25
+  max_pairs: 5
+  always_watch: ["ETH/BTC"]
