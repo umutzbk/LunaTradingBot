@@ -366,9 +366,24 @@ class LiveEngine:
         self.db.set_flag(self.account, key, value)  # type: ignore[arg-type]
         self.pipe.state = dataclasses.replace(self.pipe.state, **{key: bool(value)})
 
-    def _reload_flags(self) -> None:
+    def _reload_flags(self, now: pd.Timestamp) -> None:
+        was_killed = self.pipe.state.kill_switch
         flags = {k: bool(self.db.get_state(self.account, k, False)) for k in _FLAGS}
         self.pipe.state = dataclasses.replace(self.pipe.state, **flags)
+        if self.pipe.state.kill_switch and not was_killed:  # set by someone else (Db flag)
+            self._event(now, "kill_switch", "flag set externally", "flatten")
+            self._mark_killed(now)
+
+    def _mark_killed(self, now: pd.Timestamp) -> None:
+        """Kill switch newly on: every open position exits as ``kill_switch`` (overriding other
+        exit reasons), working post-only orders (entries and exits) are cancelled, and the urgent
+        exit path re-flattens the positions as IOC (``tick``'s flatten / ``_urgent_exits``). The
+        backtest's pipeline keeps its own (setdefault) semantics."""
+        for pid in self.pf.positions:
+            self.pipe.exiting[pid] = "kill_switch"
+        self._cancel_working(now, lambda o: o.tif != "IOC")
+        for pid in self.pf.positions:  # incl. positions registered by fills booked just now
+            self.pipe.exiting[pid] = "kill_switch"
 
     # --- start / restart reconciliation -------------------------------------------------------------
 
@@ -413,6 +428,8 @@ class LiveEngine:
         else:
             self._last_fill_id = self.db.last_fill_id(self.account)
         self._reconcile(now)
+        if self.pipe.state.kill_switch:  # restarted with the kill switch on: keep flattening
+            self._mark_killed(now)
         self._snapshot()
         self._drain_commands()
         self._started = True
@@ -490,8 +507,8 @@ class LiveEngine:
             return
         self._model_retry = None
         self.model = model
-        if self._started:
-            self.db.heartbeat(self.account, self.owner)  # a fit can take minutes
+        if self._started and not self.db.heartbeat(self.account, self.owner):  # a fit takes minutes
+            self._on_lock_lost(now, "heartbeat after model fit")
         table = getattr(model, "table", None) if model is not None else None
         accepted = sum(1 for c in (table or {}).values() if getattr(c, "accepted", False))
         self._entries_enabled = model is not None and not (
@@ -510,7 +527,9 @@ class LiveEngine:
         def beat() -> None:
             while not done.wait(MINUTE.total_seconds()):
                 try:
-                    self.db.heartbeat(self.account, self.owner)
+                    if not self.db.heartbeat(self.account, self.owner):
+                        self._on_lock_lost(now, "heartbeat during model fit")
+                        return
                 except Exception:  # noqa: BLE001
                     log.exception("heartbeat during model fit failed")
 
@@ -591,7 +610,7 @@ class LiveEngine:
         if self._lock_lost:
             return
         pipe = self.pipe
-        self._reload_flags()
+        self._reload_flags(now)
         self._ensure_model(now)
         if hasattr(self.feed, "assets"):
             self.feed.assets = self._feed_assets()  # type: ignore[attr-defined]
@@ -652,7 +671,7 @@ class LiveEngine:
         self._require_started()
         if self._lock_lost:
             return
-        self._reload_flags()
+        self._reload_flags(now)
         self._book_and_settle(now)
         try:
             mids = self.feed.mids()
@@ -800,6 +819,7 @@ class LiveEngine:
             self.db.set_flag(self.account, "kill_switch", True)
             self._notify(f"DRAWDOWN KILL SWITCH: equity {self.pf.equity():.2f} vs peak {before.peak_equity}; "
                          "flattening (/resume to clear)")
+            self._mark_killed(now)
         if st.paused and not before.paused:
             self.db.set_flag(self.account, "paused", True)
             self._notify("trading paused (reconciliation)")
@@ -858,6 +878,8 @@ class LiveEngine:
 
     def _collect(self, now: pd.Timestamp) -> None:
         """Move new pipeline records (candidates, events, closed trades) to the Db / notifier."""
+        if self._lock_lost:
+            return  # another process owns the account: write nothing more
         pipe = self.pipe
         if pipe.cand_rows:
             rows = [candidate_record(c, r["status"], r["reason"])
@@ -884,6 +906,8 @@ class LiveEngine:
         self.pf.funding_log.clear()
 
     def _commit(self, now: pd.Timestamp, equity: bool = False) -> None:
+        if self._lock_lost:
+            return
         self._collect(now)
         if equity:
             pf = self.pf
@@ -974,9 +998,7 @@ class LiveEngine:
         self._set_flag("kill_switch", True)
         self._event(now, "kill", "telegram /kill", "flatten")
         self._book_and_settle(now)  # book fills already made (e.g. a strategy exit just filled)
-        self._cancel_working(now, lambda o: True)  # resting entries and post-only exits
-        for pid in self.pf.positions:  # incl. positions registered by fills booked just now
-            self.pipe.exiting[pid] = "kill_switch"
+        self._mark_killed(now)
         try:
             mids = self.feed.mids()
         except FeedError:

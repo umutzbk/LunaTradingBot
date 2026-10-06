@@ -242,3 +242,58 @@ def test_candidate_outcome_and_entry_notification_on_fill(db):  # noqa: F811
     assert status == {"BTC": "filled", "ETH": "unfilled"}
     assert sum(s.startswith("[spot] entry filled: scripted BTC") for s in note.sent) == 1
     assert not any("ETH" in s and "entry" in s for s in note.sent)
+
+
+@pytest.mark.parametrize("kind", ["perp", "spot"])
+@pytest.mark.parametrize("trigger", ["drawdown", "external_flag"])
+def test_kill_overrides_a_pending_strategy_exit(db, kind, trigger):  # noqa: F811
+    """A position already exiting by signal when the kill switch turns on (R4 in a tick, or the
+    Db flag set by someone else) is re-marked kill_switch: its resting post-only exit is
+    cancelled and it is flattened as IOC within a minute or two."""
+    eng, feed, clock, idx = _open(db, kind=kind, exits=[pd.Timestamp("2024-01-01 12:45", tz="UTC")])
+    if kind == "perp":
+        feed.book_fail = True  # the strategy's IOC exit is rejected: still exiting by "signal"
+    clock.now = tick_at(idx[51])
+    eng.tick(clock.now)
+    (pid,) = eng.pf.positions
+    assert eng.pipe.exiting[pid] == "signal"
+    (strategy_exit,) = closes(db)
+    if trigger == "drawdown":
+        eng.pipe.state = dataclasses.replace(eng.pipe.state, peak_equity=eng.pf.equity() * 2)
+        clock.now = tick_at(idx[52])
+        eng.tick(clock.now)  # R4: FLATTEN_AND_KILL
+    else:
+        db.set_flag(kind, "kill_switch", True)
+        clock.now = clock.now + pd.Timedelta(seconds=40)
+        eng.minute_check(clock.now)
+    assert db.get_state(kind, "kill_switch") is True
+    assert eng.pipe.exiting.get(pid) == "kill_switch"
+    feed.book_fail = False
+    for k in range(3):
+        eng.minute_check(clock.now + pd.Timedelta(seconds=60 * (k + 1)))
+    got = {o["client_id"]: o for o in closes(db)}
+    if kind == "spot":
+        assert got[strategy_exit["client_id"]]["status"] == "CANCELED"
+    later = [o for cid, o in got.items() if cid != strategy_exit["client_id"]]
+    assert later and all(o["tif"] == "IOC" for o in later)
+    assert eng.pf.positions == {} and eng.trades[-1]["exit_reason"] == "kill_switch"
+    assert not risk_events(db, "duplicate_client_id")
+
+
+def test_lock_lost_during_model_fit_stops(db):  # noqa: F811
+    panel = panel_of(100)
+    clock = Clock(tick_at(panel["BTC"].index[50]))
+    eng, _, _ = engine(db, panel, clock, Scripted({}))
+    eng.start()
+
+    def refit(now):
+        db.acquire_lock("perp", "B", stale_after_s=-1)  # taken over while fitting
+        return eng.model
+
+    eng._model_fn = refit
+    eng._ensure_model(clock.now, force=True)
+    assert eng._lock_lost and eng._stop.is_set() and risk_events(db, "lock_lost")
+    n_events = len(risk_events(db))
+    eng.tick(clock.now)
+    eng._commit(clock.now, equity=True)
+    assert len(risk_events(db)) == n_events and rows(db, m.equity) == []
