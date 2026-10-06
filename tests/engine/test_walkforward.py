@@ -400,7 +400,7 @@ def test_ablation_modes_run(wf_case, ablation):
     assert len(res.oos.equity) > 0
 
 
-VARIANTS_PERP = ["realistic", "edge", "cost_2x", "funding_zero", "funding_estimated_x2"]
+VARIANTS_PERP = ["realistic", "edge", "cost_2x", "cost_2x_edge", "funding_zero", "funding_estimated_x2"]
 
 
 def test_holdout_runs_once(wf_case, tmp_path, monkeypatch):
@@ -420,7 +420,7 @@ def test_holdout_runs_once(wf_case, tmp_path, monkeypatch):
 
     monkeypatch.setattr(wf, "run_backtest", spy)
     out = run_holdout(panel, {}, tl, settings, "perp", data_end=D1)
-    assert list(out) == VARIANTS_PERP and len(calls) == 5
+    assert list(out) == VARIANTS_PERP and len(calls) == 6
     hw = Window(T("2024-04-01", tz="UTC"), T("2024-06-01", tz="UTC"), T("2024-06-01", tz="UTC"), D1)
     for res in out.values():
         assert [m.window for m in res.windows] == [hw]
@@ -432,6 +432,8 @@ def test_holdout_runs_once(wf_case, tmp_path, monkeypatch):
     assert by["realistic"]["settings"].accounts["perp"].max_drawdown == 0.15
     assert by["cost_2x"]["cost_mult"] == 2.0 and by["realistic"]["cost_mult"] == 1.0
     assert by["cost_2x"]["settings"].accounts["perp"].max_drawdown == 0.15
+    assert by["cost_2x_edge"]["cost_mult"] == 2.0
+    assert by["cost_2x_edge"]["settings"].accounts["perp"].max_drawdown == 1.0  # GO/NO-GO check 5
     assert by["funding_zero"]["funding_mode"] == "zero"
     assert by["funding_estimated_x2"]["funding_mode"] == "estimated_x2"
     assert by["realistic"]["funding_mode"] == "known_only"
@@ -445,7 +447,7 @@ def test_holdout_runs_once(wf_case, tmp_path, monkeypatch):
     # another account is independent; spot has no funding scenarios
     monkeypatch.setattr(wf, "run_backtest", real)
     spot = run_holdout(panel, {}, tl, settings, "spot", data_end=D1)
-    assert list(spot) == ["realistic", "edge", "cost_2x"]
+    assert list(spot) == ["realistic", "edge", "cost_2x", "cost_2x_edge"]
     assert set(json.loads(reg.read_text(encoding="utf-8"))) == {"perp", "spot"}
     # a walk-forward whose test windows reach into the recorded holdout is refused
     with pytest.raises(ValueError, match="overlaps the recorded perp holdout"):

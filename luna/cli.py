@@ -107,16 +107,97 @@ def baseline(
     typer.echo(f"report: {out_dir / 'report.html'}")
 
 
-@app.command()
-def walkforward() -> None:
-    """Run walk-forward evaluation."""
-    _not_implemented("walkforward")
+def _echo_verdict(rep, out_dir) -> None:
+    g = rep.gonogo
+    typer.echo(f"verdict: {g.verdict}")
+    typer.echo(g.headline)
+    for name, (ok, detail) in g.checks.items():
+        typer.echo(f"  {'pass' if ok else 'FAIL'}  {name}: {detail}")
+    for k, v in rep.setup.items():
+        if k.startswith("runtime"):
+            typer.echo(f"{k}: {v}")
+    typer.echo(f"report: {out_dir / 'report.html'}")
 
 
 @app.command()
-def holdout() -> None:
-    """Run the one-shot holdout evaluation."""
-    _not_implemented("holdout")
+def walkforward(
+    account: Annotated[Literal["perp", "spot"], typer.Option(help="Account to run")] = "perp",
+    data_end: Annotated[
+        datetime | None, typer.Option(help="Exclusive data end (default: all stored data); smoke runs")
+    ] = None,
+    assets: Annotated[str | None, typer.Option(help="Comma-separated asset subset (default: all)")] = None,
+) -> None:
+    """Walk-forward evaluation: main (realistic + edge), sensitivity, ablations, naive baselines and
+    GO/NO-GO; writes var/reports/walkforward_<account>_<ts>/{report.html,summary.json}. Never runs
+    the holdout."""
+    import time
+
+    import pandas as pd
+
+    from luna.config import load_settings
+    from luna.data.store import BarStore
+    from luna.instruments import load_instruments
+    from luna.report.walkforward import build_tradelists, load_inputs, walkforward_report, write_report
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    t0 = time.perf_counter()
+    settings = load_settings()
+    store = BarStore(settings.var_dir)
+    end = _utc(data_end)
+    subset = [a.strip() for a in assets.split(",")] if assets else None
+    inp = load_inputs(settings, store, account, load_instruments(settings, account), data_end=end,
+                      assets=subset)
+    t1 = time.perf_counter()
+    tl = build_tradelists(inp, settings, account, use_regime=True, data_end=end)
+    tl0 = build_tradelists(inp, settings, account, use_regime=False, data_end=end)
+    t2 = time.perf_counter()
+    rep = walkforward_report(inp, tl, tl0, settings, account, data_end=end)
+    rep.setup["runtime trade lists"] = f"{t2 - t1:.1f}s"
+    rep.setup["runtime total"] = f"{time.perf_counter() - t0:.1f}s"
+    if end is not None:
+        rep.setup["data end (option)"] = str(end)
+    if subset:
+        rep.setup["asset subset (option)"] = ", ".join(subset)
+    ts = pd.Timestamp.now(tz="UTC").strftime("%Y%m%dT%H%M%S")
+    out_dir = settings.var_dir / "reports" / f"walkforward_{account}_{ts}"
+    write_report(rep, out_dir, f"Luna walk-forward - {account}")
+    _echo_verdict(rep, out_dir)
+
+
+@app.command()
+def holdout(
+    account: Annotated[Literal["perp", "spot"], typer.Option(help="Account to run")] = "perp",
+) -> None:
+    """The one-shot holdout (last holdout_months), refused if this account's holdout was already
+    run; writes var/reports/holdout_<account>_<ts>/{report.html,summary.json}."""
+    import time
+
+    import pandas as pd
+
+    from luna.config import load_settings
+    from luna.data.store import BarStore
+    from luna.engine.walkforward import HoldoutAlreadyRun, HoldoutRegistryCorrupt
+    from luna.instruments import load_instruments
+    from luna.report.walkforward import build_tradelists, holdout_report, load_inputs, write_report
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    t0 = time.perf_counter()
+    settings = load_settings()
+    store = BarStore(settings.var_dir)
+    inp = load_inputs(settings, store, account, load_instruments(settings, account))
+    tl = build_tradelists(inp, settings, account, use_regime=True)
+    ts = pd.Timestamp.now(tz="UTC").strftime("%Y%m%dT%H%M%S")
+    out_dir = settings.var_dir / "reports" / f"holdout_{account}_{ts}"
+    try:
+        rep = holdout_report(inp, tl, settings, account, out_dir=out_dir)
+    except (HoldoutAlreadyRun, HoldoutRegistryCorrupt) as e:
+        typer.echo(f"holdout refused: {e}", err=True)
+        raise typer.Exit(1) from e
+    rep.setup["runtime total"] = f"{time.perf_counter() - t0:.1f}s"
+    write_report(rep, out_dir, f"Luna holdout - {account}")
+    _echo_verdict(rep, out_dir)
 
 
 @app.command()

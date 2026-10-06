@@ -617,11 +617,13 @@ def _git_dirty() -> bool | None:
 
 
 def holdout_variants(kind: AccountKind) -> dict[str, dict]:
-    """The scenarios a holdout run simulates (all on the same fitted model)."""
+    """The scenarios a holdout run simulates (all on the same fitted model). ``cost_2x_edge`` feeds
+    the GO/NO-GO 2x-cost check, which reads the edge variant (``luna.report.gonogo``)."""
     v: dict[str, dict] = {
         "realistic": {},
         "edge": {"max_drawdown_override": 1.0},
         "cost_2x": {"cost_mult": 2.0},
+        "cost_2x_edge": {"cost_mult": 2.0, "max_drawdown_override": 1.0},
     }
     if kind == "perp":
         v["funding_zero"] = {"funding_mode": "zero"}
@@ -645,7 +647,8 @@ def run_holdout(
 ) -> dict[str, WalkForwardResult]:
     """The one-shot holdout: fit on the ``train_months`` before the holdout, then simulate the
     holdout (last ``holdout_months``) from a fresh account under every ``holdout_variants`` scenario
-    (realistic, edge = kill switch off, 2x costs, and on perp funding "zero" / "estimated_x2").
+    (realistic, edge = kill switch off, 2x costs (realistic and edge), and on perp funding "zero" /
+    "estimated_x2").
 
     ``registry`` (default ``settings.var_dir / "holdout_registry.json"``, JSON
     ``{account: {run_at, git_sha, git_dirty, window, variants}}``): raises ``HoldoutAlreadyRun`` if
