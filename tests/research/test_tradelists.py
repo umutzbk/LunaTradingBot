@@ -8,8 +8,15 @@ from luna.config import load_settings
 from luna.engine.backtest import default_instruments, run_backtest
 from luna.execution.costs import CostModel
 from luna.ranking.ranker import AcceptAllRanker
+from luna.research import tradelists as tl_mod
 from luna.research.kernel import R_SIGNAL, R_STOP, R_TIME, REASONS, STOP_NONE, STOP_PRICE, simulate
-from luna.research.tradelists import TRADE_COLUMNS, build_all_tradelists, build_tradelist
+from luna.research.tradelists import (
+    TRADE_COLUMNS,
+    _stored_key,
+    build_all_tradelists,
+    build_tradelist,
+    cache_key,
+)
 from luna.strategy.mean_reversion import MeanReversion
 from luna.strategy.momentum import Momentum
 from luna.strategy.naive import NaiveMeanReversion, NaiveMomentum, NaivePairs
@@ -19,6 +26,7 @@ SETTINGS = load_settings()
 START = pd.Timestamp("2000-01-01", tz="UTC")
 END = pd.Timestamp("2100-01-01", tz="UTC")
 BAR = pd.Timedelta("15min")
+BAND = {k: SETTINGS.accounts[k].max_price_band for k in ("perp", "spot")}
 
 
 # --- kernel ----------------------------------------------------------------------------------------
@@ -150,6 +158,11 @@ def _market(n=7_000, seed=0):
     known = known[rng.random(len(known)) > 0.05]  # some unknown hours inside the known period
     funding = {"AAA": pd.DataFrame({"rate": rng.normal(2e-5, 1e-4, len(known))}, index=known),
                "BBB": pd.DataFrame({"rate": rng.normal(-1e-5, 1e-4, len(known))}, index=known)}
+    # DDD: driftless random walk with shocks (mostly RANGE regime: mean-reversion entries)
+    # and twice as long as the others (the regime needs ~2,200 bars of warm-up)
+    rd, nd = np.random.default_rng(seed + 100), 2 * n
+    shocks = np.where(rd.random(nd) < 0.004, rd.choice([-0.04, 0.04], nd), 0.0)
+    panel["DDD"] = _bars(20.0 * np.exp(np.cumsum(rd.normal(0, 0.003, nd) + shocks)), rd)
     return panel, funding
 
 
@@ -172,7 +185,7 @@ CASES = [
     (Momentum, {"fast": 48, "slow": 192, "donchian": 96, "k_atr": 2}, "AAA", "perp"),
     (Momentum, {"fast": 48, "slow": 192, "donchian": 96, "k_atr": 3}, "AAA", "spot"),
     (MeanReversion, {"W": 96, "z_in": 2.0, "z_out": 0.5}, "BBB", "perp"),
-    (MeanReversion, {"W": 96, "z_in": 2.0, "z_out": 0.0}, "AAA", "spot"),
+    (MeanReversion, {"W": 96, "z_in": 2.0, "z_out": 0.0}, "DDD", "spot"),
     (Pairs, {"W": 96, "z_in": 1.5, "z_out": 0.0}, "BBB/AAA", "perp"),
 ]
 
@@ -202,7 +215,7 @@ def test_tradelist_matches_backtest_single_strategy(market, cls, params, key, ki
     res, tl, costs = _engine_vs_list(market, cls, params, key, kind)
     eng = res.trades.sort_values("entry_ts").reset_index(drop=True)
     tl = tl.sort_values("entry_ts").reset_index(drop=True)
-    assert len(eng) >= 3
+    assert len(eng) >= (10 if (cls, kind) == (MeanReversion, "spot") else 8)
     assert list(tl.columns) == TRADE_COLUMNS
     assert len(tl) == len(eng)
     assert (tl["entry_ts"].to_numpy() == eng["entry_ts"].to_numpy()).all()
@@ -253,18 +266,19 @@ def test_spot_tradelist_drops_shorts(market):
     strat = NaiveMeanReversion({"span": 48})
     sf = strat.signals(panel, ["AAA"])["AAA"]
     costs = CostModel(SETTINGS.costs["perp"])
-    perp = build_tradelist(sf, panel, funding, costs, "perp", strategy=strat)
+    perp = build_tradelist(sf, panel, funding, costs, "perp", strategy=strat, band=BAND["perp"])
     spot = build_tradelist(sf, panel, funding, CostModel(SETTINGS.costs["spot"]), "spot",
-                           strategy=strat)
+                           strategy=strat, band=BAND["spot"])
     assert (perp["direction"] == -1).any() and (perp["direction"] == 1).any()
     assert len(spot) > 0 and (spot["direction"] == 1).all()
     assert (spot["funding"] == 0).all() and (spot["funding_unknown_bars"] == 0).all()
     # pairs always have a short leg: no spot trades at all, and build_all skips pair keys
     p = NaivePairs({"span": 96})
     psf = p.signals(panel, ["BBB/AAA"])["BBB/AAA"]
-    assert len(build_tradelist(psf, panel, funding, costs, "spot", strategy=p)) == 0
+    none = build_tradelist(psf, panel, funding, costs, "spot", strategy=p, band=BAND["spot"])
+    assert len(none) == 0 and list(none.columns) == TRADE_COLUMNS
     out = build_all_tradelists({"naive_pairs": NaivePairs}, panel, funding, costs, "spot",
-                               {"naive_pairs": ["BBB/AAA"]}, cache_dir=None)
+                               {"naive_pairs": ["BBB/AAA"]}, band=BAND["spot"], cache_dir=None)
     assert len(out) == 0 and list(out.columns) == TRADE_COLUMNS
 
 
@@ -273,7 +287,7 @@ def test_funding_unknown_counted(market):
     strat = NaiveMeanReversion({"span": 48})
     sf = strat.signals(panel, ["AAA"])["AAA"]
     costs = CostModel(SETTINGS.costs["perp"])
-    tl = build_tradelist(sf, panel, funding, costs, "perp", strategy=strat)
+    tl = build_tradelist(sf, panel, funding, costs, "perp", strategy=strat, band=BAND["perp"])
     first = funding["AAA"].index[0]
     rates = funding["AAA"]["rate"]
     for _, t in tl.iterrows():
@@ -285,19 +299,28 @@ def test_funding_unknown_counted(market):
             assert t["funding"] == 0.0 and n_unknown == len(hours)
     assert (tl["funding_unknown_bars"] > 0).any()
     # no funding data at all: every held hour unknown, nothing booked
-    none = build_tradelist(sf, panel, {}, costs, "perp", strategy=strat)
+    none = build_tradelist(sf, panel, {}, costs, "perp", strategy=strat, band=BAND["perp"])
     assert (none["funding"] == 0).all()
     long_held = (none["exit_ts"] - none["entry_ts"]) >= pd.Timedelta("1h")
     assert long_held.any() and (none.loc[long_held, "funding_unknown_bars"] > 0).all()
     np.testing.assert_allclose(none["ret_net"], none["ret_gross"] - none["cost"])
 
 
+def _build_all(panel, funding, costs, cache_dir, **kw):
+    strategies = {"mean_reversion": MeanReversion, "naive_mean_reversion": NaiveMeanReversion}
+    keys = {"mean_reversion": ["AAA", "BBB"], "naive_mean_reversion": ["AAA"]}
+    return build_all_tradelists(strategies, panel, funding, costs, "perp", keys,
+                                band=BAND["perp"], cache_dir=cache_dir, **kw)
+
+
+def _cache_files(tmp_path):
+    return sorted(tmp_path.glob("tradelists_perp_*.parquet"))
+
+
 def test_build_all_tradelists_grids_and_cache(market, tmp_path):
     panel, funding = market
     costs = CostModel(SETTINGS.costs["perp"])
-    strategies = {"mean_reversion": MeanReversion, "naive_mean_reversion": NaiveMeanReversion}
-    keys = {"mean_reversion": ["AAA", "BBB"], "naive_mean_reversion": ["AAA"]}
-    out = build_all_tradelists(strategies, panel, funding, costs, "perp", keys, cache_dir=tmp_path)
+    out = _build_all(panel, funding, costs, tmp_path)
     assert list(out.columns) == TRADE_COLUMNS
     ids = {MeanReversion(g).params_id for g in MeanReversion.GRID}
     mr = out[out["strategy"] == "mean_reversion"]
@@ -308,22 +331,57 @@ def test_build_all_tradelists_grids_and_cache(market, tmp_path):
     for _, g in out.groupby(["strategy", "params_id", "key"]):
         g = g.sort_values("entry_ts")
         assert (g["entry_ts"].iloc[1:].to_numpy() >= g["exit_ts"].iloc[:-1].to_numpy()).all()
-    path = tmp_path / "tradelists_perp.parquet"
-    key_file = path.with_suffix(".key")
-    assert path.exists() and key_file.exists()
-    stamp, key = path.stat().st_mtime_ns, key_file.read_text()
-    again = build_all_tradelists(strategies, panel, funding, costs, "perp", keys, cache_dir=tmp_path)
+    (path,) = _cache_files(tmp_path)
+    key = _stored_key(path)
+    assert key is not None and path.name == f"tradelists_perp_{key[:16]}.parquet"
+    stamp = path.stat().st_mtime_ns
+    again = _build_all(panel, funding, costs, tmp_path)
     assert path.stat().st_mtime_ns == stamp  # served from the cache
     pd.testing.assert_frame_equal(again, out)
-    # changed data -> recomputed and the cache overwritten
+    # changed data -> recomputed into its own file (the first subset's cache stays valid)
     panel2 = {**panel, "AAA": panel["AAA"].iloc[:-500]}
-    third = build_all_tradelists(strategies, panel2, funding, costs, "perp", keys, cache_dir=tmp_path)
-    key2 = key_file.read_text()
-    assert key2 != key
+    third = _build_all(panel2, funding, costs, tmp_path)
+    files = _cache_files(tmp_path)
+    assert len(files) == 2 and not list(tmp_path.glob("*.tmp"))
     aaa = third[third["key"] == "AAA"]
     assert aaa["exit_ts"].max() <= panel2["AAA"].index[-1] < out.loc[out["key"] == "AAA", "exit_ts"].max()
-    pd.testing.assert_frame_equal(pd.read_parquet(path), third)
-    # changed grid inputs (costs) -> recomputed too
+    (path2,) = [f for f in files if f != path]
+    pd.testing.assert_frame_equal(pd.read_parquet(path2), third)
+    assert path.stat().st_mtime_ns == stamp
+    # changed costs -> another key
     cheap = CostModel(SETTINGS.costs["perp"].model_copy(update={"slippage_bps": 0.0}))
-    build_all_tradelists(strategies, panel2, funding, cheap, "perp", keys, cache_dir=tmp_path)
-    assert key_file.read_text() not in (key, key2)
+    _build_all(panel2, funding, cheap, tmp_path)
+    assert len(_cache_files(tmp_path)) == 3
+    # a file whose stored key does not match its name is not trusted: recomputed and replaced
+    path.write_bytes(path2.read_bytes())
+    again = _build_all(panel, funding, costs, tmp_path)
+    pd.testing.assert_frame_equal(again, out)
+    assert _stored_key(path) == key
+
+
+def test_cache_key_covers_source_code(market, monkeypatch):
+    panel, funding = market
+    costs = CostModel(SETTINGS.costs["perp"])
+    strategies = {"momentum": Momentum}
+    args = (strategies, panel, funding, costs, "perp", {"momentum": ["AAA"]}, BAND["perp"], True)
+    files = {f.relative_to(tl_mod._ROOT).as_posix() for f in tl_mod._source_files(strategies)}
+    assert {"luna/research/kernel.py", "luna/research/tradelists.py", "luna/strategy/base.py",
+            "luna/strategy/momentum.py", "luna/regime/rules.py", "luna/features/core.py",
+            "luna/features/pairs.py", "luna/engine/backtest.py"} <= files
+    base = cache_key(*args)
+    assert cache_key(*args) == base
+    real = tl_mod._read_source
+    for target in ("momentum.py", "rules.py", "core.py"):
+        monkeypatch.setattr(
+            tl_mod, "_read_source",
+            lambda f, t=target: real(f) + (b"# edited" if f.name == t else b""))
+        assert cache_key(*args) != base, target
+    monkeypatch.setattr(tl_mod, "_read_source", real)
+    assert cache_key(*args) == base
+
+
+def test_build_all_rejects_mismatched_strategy_names(market):
+    panel, funding = market
+    with pytest.raises(ValueError, match="name"):
+        build_all_tradelists({"mr": MeanReversion}, panel, funding, CostModel(SETTINGS.costs["perp"]),
+                             "perp", {"mr": ["AAA"]}, band=BAND["perp"], cache_dir=None)

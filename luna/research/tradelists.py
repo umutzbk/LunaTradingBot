@@ -33,10 +33,14 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from luna.engine.backtest import _Funding, _Market
 from luna.execution.costs import CostModel
@@ -54,6 +58,7 @@ from luna.strategy.momentum import Momentum
 from luna.strategy.naive import NaiveMeanReversion, NaiveMomentum
 from luna.types import AccountKind
 
+_KEY_META = b"luna_cache_key"
 CODE_VERSION = "tradelists-v1"  # bump when trade-list semantics change (invalidates caches)
 
 TRADE_COLUMNS = [
@@ -139,12 +144,16 @@ def build_tradelist(
     kind: AccountKind,
     *,
     strategy: object,
-    band: float = math.inf,
+    band: float,
     market: ResearchMarket | None = None,
 ) -> pd.DataFrame:
     """Trade list of ``strategy`` on ``sf.key`` (module docstring). ``band`` is the account's
-    ``max_price_band`` for perp IOC fills (inf = never binds); ``market`` reuses a prepared
-    ``ResearchMarket`` over the same panel/funding/kind."""
+    ``max_price_band`` (``settings.accounts[kind].max_price_band``; the engine cancels perp IOC
+    fills beyond it, and it is required so callers cannot silently diverge from the engine);
+    ``market`` reuses a prepared ``ResearchMarket`` over the same panel/funding/kind. Pairs on a
+    spot account have no trades (a short leg is never allowed)."""
+    if kind == "spot" and sf.legs_beta is not None:
+        return _empty()
     mk = market or ResearchMarket(panel, funding, kind)
     mkt = mk.mkt
     idx = mk.idx
@@ -232,6 +241,38 @@ def _instances(cls: type, use_regime: bool) -> list:
     return [cls()]
 
 
+_SHARED_SOURCES = (
+    "luna/research/kernel.py", "luna/research/tradelists.py", "luna/strategy/base.py",
+    "luna/regime/rules.py", "luna/engine/backtest.py",
+)
+_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _read_source(path: Path) -> bytes:
+    return path.read_bytes()
+
+
+def _source_files(strategies: dict[str, type]) -> list[Path]:
+    files = {_ROOT / f for f in _SHARED_SOURCES}
+    files |= set((_ROOT / "luna" / "features").glob("*.py"))
+    for cls in strategies.values():  # defining module of each strategy class and its bases
+        for base in cls.__mro__:
+            mod = sys.modules.get(base.__module__)
+            src = getattr(mod, "__file__", None)
+            if src and Path(src).resolve().is_relative_to(_ROOT / "luna"):
+                files.add(Path(src).resolve())
+    return sorted(files)
+
+
+def _code_hash(strategies: dict[str, type]) -> str:
+    """Hash of the source text of every module whose code shapes the trade lists."""
+    h = hashlib.sha256()
+    for f in _source_files(strategies):
+        h.update(f.relative_to(_ROOT).as_posix().encode())
+        h.update(_read_source(f))
+    return h.hexdigest()
+
+
 def _data_hash(panel: dict[str, pd.DataFrame], funding: dict[str, pd.DataFrame]) -> str:
     h = hashlib.sha256()
     for name, frames in (("bars", panel), ("funding", funding)):
@@ -246,6 +287,7 @@ def cache_key(strategies: dict[str, type], panel, funding, costs: CostModel, kin
               keys: dict[str, list[str]], band: float, use_regime: bool) -> str:
     spec = {
         "code": CODE_VERSION,
+        "source": _code_hash(strategies),
         "kind": kind,
         "band": repr(float(band)),
         "use_regime": use_regime,
@@ -269,23 +311,29 @@ def build_all_tradelists(
     kind: AccountKind,
     keys: dict[str, list[str]],
     *,
-    band: float = math.inf,
+    band: float,
     use_regime: bool = True,
     cache_dir: Path | None = Path("var/research"),
 ) -> pd.DataFrame:
     """Trade lists of every grid point (or the single default instance of a non-grid strategy)
-    on every key of ``keys[name]``. Spot skips pair keys ("A/B"; they need a short leg).
+    on every key of ``keys[name]``; ``strategies`` maps each class's ``name`` to the class.
+    Spot skips pair keys ("A/B"; they need a short leg). ``band`` as in ``build_tradelist``.
 
-    Cached to ``cache_dir/tradelists_<kind>.parquet`` with its key in ``.key`` next to it: a hash
-    of the data content (bars + funding), ``CODE_VERSION``, the grids, keys, costs, band and
-    ``use_regime``. A mismatch recomputes and overwrites. ``cache_dir=None`` disables the cache.
+    Cached to ``cache_dir/tradelists_<kind>_<key[:16]>.parquet``, the full key stored in the
+    parquet metadata and checked on read. The key hashes the data content (bars + funding), the
+    source text of the modules that shape the trades (kernel, this module, the strategies' modules,
+    strategy base, regime, features, engine), ``CODE_VERSION``, the grids, keys, costs, band and
+    ``use_regime``. Writes go to a temporary file renamed into place, so an interrupted write never
+    leaves a file that passes the check. ``cache_dir=None`` disables the cache.
     """
+    for name, cls in strategies.items():
+        if getattr(cls, "name", None) != name:
+            raise ValueError(f"strategies key {name!r} != {cls.__name__}.name {getattr(cls, 'name', None)!r}")
     key = cache_key(strategies, panel, funding, costs, kind, keys, band, use_regime)
-    path = key_path = None
+    path = None
     if cache_dir is not None:
-        path = Path(cache_dir) / f"tradelists_{kind}.parquet"
-        key_path = path.with_suffix(".key")
-        if path.exists() and key_path.exists() and key_path.read_text().strip() == key:
+        path = Path(cache_dir) / f"tradelists_{kind}_{key[:16]}.parquet"
+        if path.exists() and _stored_key(path) == key:
             return pd.read_parquet(path)
 
     market = ResearchMarket(panel, funding, kind)
@@ -301,10 +349,26 @@ def build_all_tradelists(
     frames = [f for f in frames if len(f)]
     out = pd.concat(frames, ignore_index=True) if frames else _empty()
     if path is not None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        out.to_parquet(path, index=False)
-        key_path.write_text(key)
+        _write_cache(out, path, key)
     return out
+
+
+def _stored_key(path: Path) -> str | None:
+    try:
+        meta = pq.read_schema(path).metadata or {}
+    except (OSError, pa.ArrowInvalid):
+        return None
+    raw = meta.get(_KEY_META)
+    return raw.decode() if raw is not None else None
+
+
+def _write_cache(df: pd.DataFrame, path: Path, key: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    table = pa.Table.from_pandas(df, preserve_index=False)
+    table = table.replace_schema_metadata({**(table.schema.metadata or {}), _KEY_META: key.encode()})
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    pq.write_table(table, tmp)
+    os.replace(tmp, path)
 
 
 def _empty() -> pd.DataFrame:
