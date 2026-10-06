@@ -30,7 +30,10 @@ def fetch_candles(client: httpx.Client, asset: str, start: pd.Timestamp, end: pd
         rows.extend(candles)
         if not data.get("more_candles") or not candles:
             break
-        cursor = max(int(c["time"]) for c in candles) // 1000 + BAR_SECONDS
+        nxt = max(int(c["time"]) for c in candles) // 1000 + BAR_SECONDS
+        if nxt <= cursor:  # no progress: stop instead of looping forever
+            break
+        cursor = nxt
     if not rows:
         return _empty_bars()
     df = pd.DataFrame(rows)

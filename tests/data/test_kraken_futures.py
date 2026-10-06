@@ -151,3 +151,19 @@ def test_live_candles_smoke():
     end = pd.Timestamp.now(tz="UTC").floor("15min") - pd.Timedelta("15min")
     df = kf.fetch_candles(client, "BTC", end - pd.Timedelta("1D") + pd.Timedelta("15min"), end)
     assert 90 <= len(df) <= 97
+
+
+def test_fetch_candles_stops_when_cursor_does_not_advance():
+    calls = []
+    page = {"candles": [{"time": 1700000100000, "open": 1, "high": 1, "low": 1, "close": 1, "volume": 1}],
+            "more_candles": True}
+
+    def handler(req):
+        calls.append(req)
+        assert len(calls) < 10, "pagination looped"
+        return httpx.Response(200, json=page)
+
+    client = make_client(httpx.MockTransport(handler))
+    start, end = pd.Timestamp(1700000100, unit="s", tz="UTC"), pd.Timestamp(1700009000, unit="s", tz="UTC")
+    df = kf.fetch_candles(client, "ETH", start, end)
+    assert len(df) == 1 and len(calls) == 2

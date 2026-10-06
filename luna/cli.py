@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Annotated, Literal, NoReturn
 
@@ -22,13 +23,39 @@ def backfill(
     start: Annotated[datetime | None, typer.Option(help="Start date")] = None,
 ) -> None:
     """Backfill historical bars/funding."""
-    _not_implemented("backfill")
+    import pandas as pd
+
+    from luna.config import load_settings
+    from luna.data.backfill import backfill_perp, backfill_spot, last_closed_boundary
+    from luna.data.store import BarStore
+    from luna.http import make_client
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    settings = load_settings()
+    store = BarStore(settings.var_dir)
+    start_ts = None
+    if start is not None:
+        start_ts = pd.Timestamp(start)
+        start_ts = start_ts.tz_localize("UTC") if start_ts.tzinfo is None else start_ts.tz_convert("UTC")
+    end = last_closed_boundary()
+    with make_client() as client:
+        fn = backfill_perp if venue == "perp" else backfill_spot
+        done = fn(client, store, settings, assets, start_ts, end)
+    typer.echo(f"backfill {venue}: {len(done)} assets ({', '.join(done)})")
 
 
 @app.command("data-report")
 def data_report() -> None:
     """Report data coverage and quality."""
-    _not_implemented("data-report")
+    from luna.config import load_settings
+    from luna.data.report import build_data_report
+    from luna.data.store import BarStore
+
+    settings = load_settings()
+    out = settings.var_dir / "reports" / "data" / "data_report.md"
+    path = build_data_report(BarStore(settings.var_dir), out)
+    typer.echo(f"data report: {path}")
 
 
 @app.command()
