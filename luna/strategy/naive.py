@@ -14,64 +14,16 @@ import pandas as pd
 
 from luna.features.core import atr, ema, ewma_zscore
 from luna.features.pairs import spread
-from luna.portfolio.portfolio import Position
-from luna.strategy.base import SignalFrame
-from luna.types import Candidate, ExitSpec, Leg, StopSpec
+from luna.strategy.base import SignalFrame, SignalStrategy, edge_trigger
+from luna.types import ExitSpec, Leg, StopSpec
 
 
-def _edge(active: pd.Series, direction: pd.Series) -> pd.Series:
-    """`direction` on bars where `active` turns True from a valid False; else 0 (int8)."""
-    fired = active & (active.shift(1, fill_value=True) == False)  # noqa: E712
-    return direction.where(fired, 0).fillna(0).astype("int8")
-
-
-class _Naive:
+class _Naive(SignalStrategy):
     name: str
     _defaults: dict
 
     def __init__(self, params: dict | None = None):
         self.params = {**self._defaults, **(params or {})}
-
-    def _legs(self, sf: SignalFrame, i: int) -> tuple[Leg, ...]:
-        return (Leg(sf.key, 1.0),)
-
-    def candidate_at(self, sf: SignalFrame, i: int, mids: dict[str, float]) -> Candidate | None:
-        d = int(sf.entry.iloc[i])
-        if d == 0 or sf.ref is None:
-            return None
-        ref = float(sf.ref.iloc[i])
-        dist = float(sf.stop_distance.iloc[i])
-        feats = {"ref": ref, "stop_distance": dist}
-        for name, ser in (("z", sf.z), ("atr", sf.atr), ("beta", sf.legs_beta)):
-            if ser is not None:
-                feats[name] = float(ser.iloc[i])
-        if not all(math.isfinite(v) for v in feats.values()):
-            return None
-        return Candidate(
-            ts=sf.entry.index[i],
-            strategy=self.name,
-            key=sf.key,
-            legs=self._legs(sf, i),
-            direction=d,
-            entry_ref=ref,
-            stop=self._stop(sf, d, ref, dist),
-            exit=sf.exit_spec,
-            regime="NONE",
-            reason=self._reason(d, feats),
-            features=feats,
-        )
-
-    def should_exit(
-        self, sf: SignalFrame, i: int, pos: Position, bar_close: dict[str, float]
-    ) -> str | None:
-        if self._stop_hit(sf, i, pos, bar_close):
-            return "stop"
-        flag = sf.exit_long if pos.direction > 0 else sf.exit_short
-        if bool(flag.iloc[i]):
-            return "signal"
-        if pos.bars_held >= pos.exit.max_hold_bars:
-            return "time"
-        return None
 
 
 class NaiveMomentum(_Naive):
@@ -108,7 +60,7 @@ class NaiveMomentum(_Naive):
         return out
 
     @staticmethod
-    def _stop(sf, d, ref, dist):
+    def _stop(sf, i, d, ref, dist):
         # dist = k*ATR/close, so level = entry -/+ k*ATR
         return StopSpec("price", ref * (1.0 - d * dist), dist)
 
@@ -139,7 +91,7 @@ class NaiveMeanReversion(_Naive):
         p = self.params
         z = ewma_zscore(level, p["span"])
         sigma = level.ewm(span=p["span"], min_periods=p["span"], adjust=False).std()
-        entry = _edge(z.abs() > p["enter_z"], -np.sign(z))
+        entry = edge_trigger(z.abs() > p["enter_z"], -np.sign(z))
         small = (z.abs() < p["exit_z"]).fillna(False)
         return SignalFrame(
             key=key,
@@ -158,7 +110,7 @@ class NaiveMeanReversion(_Naive):
         )
 
     @staticmethod
-    def _stop(sf, d, ref, dist):
+    def _stop(sf, i, d, ref, dist):
         return StopSpec("zscore", float(sf.stop_z), dist)
 
     @staticmethod

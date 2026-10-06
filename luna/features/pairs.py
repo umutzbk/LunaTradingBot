@@ -29,3 +29,21 @@ def half_life(s: pd.Series) -> float:
     if b <= -1.0:
         return 0.0  # reverts fully within one bar
     return float(-np.log(2.0) / np.log1p(b))
+
+
+def spread_zscore(
+    log_a: pd.Series, log_b: pd.Series, beta: pd.Series, span: int
+) -> tuple[pd.Series, pd.Series]:
+    """EWMA z-score and EWMA std of the spread ``log_a - beta_t * log_b`` at each bar t, where the
+    whole history up to t is evaluated with that bar's ``beta_t``.
+
+    Equals ``ewma_zscore(log_a - beta_t * log_b, span).iloc[t]`` for every t (EWMA mean/var are
+    bilinear: mean = m_a - beta*m_b, var = v_a - 2*beta*c_ab + beta^2*v_b), so a moving rolling beta
+    does not inject ``d(beta) * log_b`` jumps into the spread history. Causal; NaN in warm-up.
+    """
+    ew_a = log_a.ewm(span=span, min_periods=span, adjust=False)
+    ew_b = log_b.ewm(span=span, min_periods=span, adjust=False)
+    mean = ew_a.mean() - beta * ew_b.mean()
+    var = ew_a.var() - 2.0 * beta * ew_a.cov(log_b) + beta**2 * ew_b.var()
+    sigma = np.sqrt(var.clip(lower=0.0)).replace(0.0, np.nan)
+    return (log_a - beta * log_b - mean) / sigma, sigma

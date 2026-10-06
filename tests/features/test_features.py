@@ -11,7 +11,7 @@ from luna.features.core import (
     rolling_corr,
     trend_strength,
 )
-from luna.features.pairs import half_life, spread
+from luna.features.pairs import half_life, spread, spread_zscore
 from tests.helpers import assert_causal, synthetic_bars, synthetic_pair
 
 
@@ -154,3 +154,25 @@ def test_assert_causal_detects_leaks(leaky):
     df = synthetic_bars(600, "random_walk", seed=4)
     with pytest.raises(AssertionError):
         assert_causal(leaky, df)
+
+
+def test_spread_zscore_uses_each_bars_beta_over_history():
+    a, b = synthetic_pair(1_500, "cointegrated", seed=21)
+    la, lb = np.log(a["close"]), np.log(b["close"])
+    beta = rolling_beta(la, lb, 96)
+    z, sigma = spread_zscore(la, lb, beta, 96)
+    for t in (300, 800, 1_499):
+        fixed = la.iloc[:t + 1] - beta.iloc[t] * lb.iloc[:t + 1]
+        assert z.iloc[t] == pytest.approx(ewma_zscore(fixed, 96).iloc[-1], rel=1e-6)
+        assert sigma.iloc[t] == pytest.approx(
+            fixed.ewm(span=96, min_periods=96, adjust=False).std().iloc[-1], rel=1e-6)
+    assert z.iloc[:95].isna().all()
+
+    def frame(d):
+        lad = np.log(d["close"])
+        lbd = lb.loc[d.index]
+        bd = rolling_beta(lad, lbd, 96)
+        zz, ss = spread_zscore(lad, lbd, bd, 96)
+        return pd.DataFrame({"z": zz, "sigma": ss})
+
+    assert_causal(frame, a)
