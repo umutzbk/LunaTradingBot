@@ -263,9 +263,40 @@ def paper(
 
 
 @app.command()
-def label() -> None:
-    """Label trades / regimes."""
-    _not_implemented("label")
+def label(
+    account: Annotated[Literal["perp", "spot"], typer.Option(help="Account to label")] = "perp",
+    db: Annotated[Path | None, typer.Option(help="SQLite file (default var/luna.db)")] = None,
+) -> None:
+    """Counterfactual labels: net R of every matured candidate (selected or rejected) simulated with
+    its own stop/exit rules; idempotent."""
+    import pandas as pd
+    from sqlalchemy import func, select
+
+    from luna.config import load_settings
+    from luna.data.store import BarStore
+    from luna.execution.costs import CostModel
+    from luna.labeling import label_candidates
+    from luna.store import models as m
+    from luna.store.db import Db, default_url
+
+    settings = load_settings()
+    database = Db(f"sqlite:///{db.as_posix()}" if db is not None else default_url(settings.var_dir))
+    try:
+        n = label_candidates(database, BarStore(settings.var_dir), CostModel(settings.costs[account]),
+                             account, pd.Timestamp.now(tz="UTC"),
+                             band=settings.accounts[account].max_price_band)
+        o, c = m.candidate_outcomes, m.candidates
+        with database.engine.connect() as conn:
+            total, mean_r = conn.execute(
+                select(func.count(), func.avg(o.c.outcome_r))
+                .select_from(o.join(c, c.c.id == o.c.candidate_id))
+                .where(c.c.account == account)).one()
+            cands = conn.execute(
+                select(func.count()).select_from(c).where(c.c.account == account)).scalar_one()
+    finally:
+        database.close()
+    mean = "n/a" if mean_r is None else f"{mean_r:.3f}"
+    typer.echo(f"label {account}: {n} new outcomes; {total}/{cands} candidates labeled, mean R {mean}")
 
 
 if __name__ == "__main__":
