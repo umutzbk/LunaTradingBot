@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, NoReturn
 
 import typer
@@ -203,9 +204,62 @@ def holdout(
 @app.command()
 def paper(
     account: Annotated[Literal["perp", "spot"], typer.Option(help="Account to run")] = "perp",
+    db: Annotated[Path | None, typer.Option(help="SQLite file (default var/luna.db)")] = None,
+    once: Annotated[bool, typer.Option(help="Run a single tick + minute check, then exit")] = False,
 ) -> None:
-    """Run the paper-trading loop."""
-    _not_implemented("paper")
+    """Run the 24/7 paper-trading loop (public data, PaperBroker; never places real orders).
+    Exits non-zero if another process holds the account's lock. SIGINT/SIGTERM stop it cleanly."""
+    import signal
+
+    import pandas as pd
+
+    from luna.config import load_settings
+    from luna.data.store import BarStore
+    from luna.engine.feeds import KrakenFuturesLiveFeed, KrakenSpotLiveFeed
+    from luna.engine.live import LIVE_BUFFER_BARS, EngineLocked, LiveEngine
+    from luna.execution.costs import CostModel
+    from luna.execution.paper import PaperBroker
+    from luna.http import make_client
+    from luna.instruments import load_instruments
+    from luna.notify.telegram import make_notifier
+    from luna.store.db import Db, default_url
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # request URLs would leak the Telegram token
+    settings = load_settings()
+    instruments = load_instruments(settings, account)
+    store = BarStore(settings.var_dir)
+    venue = "kraken_futures" if account == "perp" else "kraken_spot"
+    assets = [a for a in store.assets(venue) if a in instruments]
+    client = make_client()
+    feed_cls = KrakenFuturesLiveFeed if account == "perp" else KrakenSpotLiveFeed
+    feed = feed_cls(assets, store, client, buffer_bars=LIVE_BUFFER_BARS)
+    database = Db(f"sqlite:///{db.as_posix()}" if db is not None else default_url(settings.var_dir))
+    broker = PaperBroker(account, CostModel(settings.costs[account]), feed, database, account)
+    engine = LiveEngine(account, settings, feed, broker, database, make_notifier(settings, client),
+                        lambda: pd.Timestamp.now(tz="UTC"), "paper", instruments=instruments,
+                        http_client=client)
+    try:
+        engine.start()
+    except EngineLocked as e:
+        typer.echo(f"paper {account}: {e}", err=True)
+        database.close()
+        client.close()
+        raise typer.Exit(1) from e
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: engine.stop())
+    try:
+        if once:
+            engine.tick(pd.Timestamp.now(tz="UTC"))
+            engine.minute_check(pd.Timestamp.now(tz="UTC"))
+            typer.echo(engine.status())
+            typer.echo(engine.positions())
+        else:
+            engine.run_forever()
+    finally:
+        engine.close()
+        database.close()
+        client.close()
 
 
 @app.command()

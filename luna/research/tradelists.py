@@ -243,7 +243,7 @@ def _instances(cls: type, use_regime: bool) -> list:
 
 _SHARED_SOURCES = (
     "luna/research/kernel.py", "luna/research/tradelists.py", "luna/strategy/base.py",
-    "luna/regime/rules.py", "luna/engine/backtest.py",
+    "luna/regime/rules.py", "luna/engine/backtest.py", "luna/engine/pipeline.py",
 )
 _ROOT = Path(__file__).resolve().parents[2]
 

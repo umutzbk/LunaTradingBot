@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pandas as pd
-from sqlalchemy import Connection, Engine, create_engine, event, select
+from sqlalchemy import Connection, Engine, create_engine, event, func, select
 from sqlalchemy.dialects.sqlite import insert
 
 from luna.portfolio.portfolio import Position
@@ -270,6 +270,50 @@ class Db:
                 account=account, run_id=run_id, client_id=fill.client_id, position_id=position_id,
                 ts=m.ts_to_str(fill.ts), symbol=fill.asset, side=fill.side, qty=fill.qty,
                 price=fill.price, fee=fill.fee, liquidity=fill.liquidity))
+
+    def fills_after(self, account: str, after_id: int) -> list[tuple[int, Fill, str | None]]:
+        """Fill rows with id > ``after_id`` in id (= recording) order: (row id, Fill, position_id)."""
+        with self.engine.connect() as c:
+            rows = c.execute(select(m.fills).where(
+                m.fills.c.account == account, m.fills.c.id > after_id
+            ).order_by(m.fills.c.id)).mappings().all()
+        return [(int(r["id"]), Fill(
+            client_id=r["client_id"], ts=m.ts_from_str(r["ts"]), asset=r["symbol"], side=r["side"],
+            qty=r["qty"], price=r["price"], fee=r["fee"], liquidity=r["liquidity"],
+        ), r["position_id"]) for r in rows]
+
+    def last_fill_id(self, account: str) -> int:
+        """Largest fill row id of the account (0 if none)."""
+        with self.engine.connect() as c:
+            v = c.execute(select(func.max(m.fills.c.id)).where(m.fills.c.account == account)).scalar()
+        return int(v or 0)
+
+    def count_orders_since(self, account: str, since: pd.Timestamp) -> int:
+        """Number of orders of the account stamped at or after ``since``."""
+        with self.engine.connect() as c:
+            return int(c.execute(select(func.count()).select_from(m.orders).where(
+                m.orders.c.account == account, m.orders.c.ts >= m.ts_to_str(since))).scalar() or 0)
+
+    def save_snapshot(
+        self, account: str, state: dict[str, Any],
+        positions: list[tuple[Position, Literal["open", "closed"], str | None, pd.Timestamp | None]],
+        run_id: str | None = None,
+    ) -> None:
+        """Atomically write state keys (JSON values) and position upserts in one transaction (the
+        live engine's commit point). Flags (kill_switch / paused) are refused here: they are only
+        written with ``set_flag`` so a snapshot never overwrites a flag set by someone else."""
+        bad = {"kill_switch", "paused", _LOCK_KEY} & set(state)
+        if bad:
+            raise ValueError(f"save_snapshot may not write {sorted(bad)}")
+        with self._tx() as c:
+            for k, v in state.items():
+                self._set_state(c, account, k, v)
+            for pos, status, exit_reason, closed_at in positions:
+                row = m.position_to_row(account, pos, status, exit_reason, run_id, closed_at)
+                stmt = insert(m.positions).values(row)
+                c.execute(stmt.on_conflict_do_update(
+                    index_elements=["account", "id"],
+                    set_={k: stmt.excluded[k] for k in row if k not in ("account", "id")}))
 
     # --- time series / events ---------------------------------------------------------------------
 

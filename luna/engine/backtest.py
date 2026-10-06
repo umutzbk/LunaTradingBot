@@ -14,7 +14,8 @@ orders still waiting for the next bar). Passing them as ``initial_portfolio`` / 
 / ``initial_exiting`` continues the run as if it had not been split, except that entry orders
 decided on the last bar of a window are dropped (the next window decides afresh).
 
-Per bar ``t`` of the union index inside ``[start, end)``:
+Per bar ``t`` of the union index inside ``[start, end)`` (steps 1, 4-6 are the shared
+``luna.engine.pipeline.Pipeline`` steps, also run by the live engine):
 
 1. fills of the orders decided at the previous bar (``SimBroker.on_bar``). The first entry fill
    registers the position; a pairs entry with only some legs filled is a ``leg_failure`` and the
@@ -54,22 +55,19 @@ import numpy as np
 import pandas as pd
 
 from luna.config import Settings
+from luna.engine.pipeline import CORR_WINDOW, Pipeline  # noqa: F401  (CORR_WINDOW re-exported)
 from luna.execution.costs import CostModel
 from luna.execution.sim import SimBroker
 from luna.instruments import perp_symbol, spot_pair
-from luna.planner import plan_entry, plan_exit
-from luna.portfolio.constructor import Selection, construct
-from luna.portfolio.portfolio import Portfolio, Position
+from luna.portfolio.portfolio import Portfolio
 from luna.ranking.ranker import Ranker
-from luna.risk.engine import OrderCheck, RiskContext, apply_actions, check, portfolio_actions
-from luna.risk.state import RiskState, roll_day
+from luna.risk.state import RiskState
 from luna.strategy.base import SignalFrame, Strategy
-from luna.types import AccountKind, Candidate, Instrument, OrderRequest
+from luna.types import AccountKind, Instrument, OrderRequest
 
 FundingMode = Literal["known_only", "zero", "estimated", "estimated_x2"]
 
 BAR = pd.Timedelta("15min")
-CORR_WINDOW = 30 * 96  # 30 days of 15-minute bars
 
 TRADE_COLUMNS = [
     "position_id", "strategy", "key", "direction", "entry_ts", "exit_ts", "exit_reason",
@@ -224,14 +222,6 @@ class _Signal:
     rows: np.ndarray  # row in sf for each union-index bar, -1 if absent
 
 
-@dataclass
-class _EntryGroup:
-    sel: Selection
-    assets: set[str]
-    cand_row: int
-    filled: set[str] = field(default_factory=set)
-
-
 # --- engine -----------------------------------------------------------------------------------------
 
 
@@ -302,132 +292,40 @@ def run_backtest(
                 fires.setdefault(int(i), []).append((strat.name, key))
 
     broker = SimBroker(kind, costs, instruments, cost_mult)
-    band = limits.max_price_band
-    min_qty = {a: inst.min_qty for a, inst in instruments.items()}
-    min_notional = {a: inst.min_notional for a, inst in instruments.items()}
-
-    def regime_mult(c: Candidate) -> float:
-        return limits.highvol_risk_mult if c.regime == "HIGH_VOL" else 1.0
-
     state = dataclasses.replace(initial_state) if initial_state is not None else RiskState()
-    submitted: dict[str, tuple[OrderRequest, float]] = {}  # client_id -> (order, ref price)
-    entry_groups: dict[str, _EntryGroup] = {}
-    exiting: dict[str, str] = {}  # position_id -> exit reason
+    pipe = Pipeline(pf, state, kind, limits, costs, instruments, broker, "backtest")
     if initial_exiting is not None:
         stray = (set(initial_exiting.reasons) | {o.position_id for o, _ in initial_exiting.orders}) - set(
             pf.positions
         )
         if stray:
             raise ValueError(f"pending exits for positions not in the portfolio: {sorted(stray)}")
-        exiting.update(initial_exiting.reasons)
+        pipe.exiting.update(initial_exiting.reasons)
         for o, ref in initial_exiting.orders:
             if o.intent == "open":
                 raise ValueError(f"pending exit order {o.client_id} is an open")
             broker.submit(o)
-            submitted[o.client_id] = (o, ref)
+            pipe.submitted[o.client_id] = (o, ref)
     initial_equity = float(pf.equity())
-    entry_notional: dict[str, float] = {
-        pid: sum(abs(q) * p.entry_price.get(a, 0.0) for a, q in p.qty.items())
-        for pid, p in pf.positions.items()
-    }
-    trades: list[dict] = []
-    cand_rows: list[dict] = []
-    events: list[dict] = []
     n_out = i1 - i0
     equity = np.empty(max(n_out, 0))
     stats = np.empty((max(n_out, 0), len(BAR_STAT_COLUMNS)))
-
-    def event(ts, kind_, pid="", asset="", detail=""):
-        events.append({"ts": ts, "kind": kind_, "position_id": pid, "asset": asset, "detail": detail})
-
-    def cand_row(c: Candidate, status: str, reason: str | None) -> int:
-        cand_rows.append({
-            "ts": c.ts, "strategy": c.strategy, "key": c.key, "direction": c.direction,
-            "score": c.score, "edge_bps": c.edge_bps, "stop_distance": c.stop.distance_frac,
-            "regime": c.regime, "status": status, "reason": reason,
-        })
-        return len(cand_rows) - 1
-
-    def finish(pid: str, ts: pd.Timestamp, reason: str) -> None:
-        pos = pf.close_position(pid, ts, reason)
-        exiting.pop(pid, None)
-        p = pos.pnl
-        net = pos.net_pnl()
-        trades.append({
-            "position_id": pid, "strategy": pos.strategy, "key": pos.key,
-            "direction": pos.direction, "entry_ts": pos.entry_ts, "exit_ts": ts,
-            "exit_reason": reason, "gross_notional": entry_notional.pop(pid, math.nan),
-            "risk_amount": pos.risk_amount, "pnl_gross": p["gross"], "fees": p["fees"],
-            "spread_slip": p["spread_slip"], "funding": p["funding"],
-            "funding_unknown_bars": int(p["funding_unknown_bars"]), "pnl_net": net,
-            "r_multiple": net / pos.risk_amount if pos.risk_amount > 0 else math.nan,
-            "regime": pos.regime,
-        })
-
-    def ctx(t, eq, st, *, extra_pos=0, extra_risk=0.0, extra_gross=0.0, holdings=None,
-            cash_used=0.0, liq=None) -> RiskContext:
-        return RiskContext(
-            limits=limits, kind=kind, mode="backtest", state=st, equity=float(eq),
-            open_positions=len(pf.positions) + extra_pos,
-            open_risk=pf.open_risk() + extra_risk,
-            gross_notional=pf.gross_notional() + extra_gross,
-            holdings=dict(pf.holdings) if holdings is None else holdings,
-            last_bar_ts=t, now=t, liq_distance=liq or {}, min_qty=min_qty,
-            min_notional=min_notional, available_cash=pf.cash - cash_used,
-            open_position_ids=frozenset(pf.positions),
-        )
-
-    def veto_events(t, vetoed):
-        for o, reason in vetoed:
-            event(t, "veto", o.position_id, o.asset, reason)
 
     for i in range(i0, i1):
         t = full_idx[i]
         last = mkt.last[i]
 
-        # (1) fills of orders decided at the previous bar
-        if submitted:
+        # (1) fills of orders decided at the previous bar (every one is consumed on this bar)
+        if pipe.submitted:
             bars = {
                 a: {"open": float(mkt.open[i, j]), "high": float(mkt.high[i, j]),
                     "low": float(mkt.low[i, j]), "close": float(mkt.close[i, j]),
                     "filled": not bool(mkt.real[i, j])}
                 for a, j in mkt.col.items() if mkt.present[i, j]
             }
-            touched: set[str] = set()
             for f in broker.on_bar(t, bars):
-                order, ref = submitted[f.client_id]
-                pid = order.position_id
-                if order.intent == "open":
-                    g = entry_groups[pid]
-                    if pid not in pf.positions:
-                        c = g.sel.cand
-                        pf.open_position(Position(
-                            id=pid, strategy=c.strategy, key=c.key, legs=c.legs,
-                            direction=c.direction, qty={}, entry_price={}, entry_ts=f.ts,
-                            entry_ref=c.entry_ref, stop=c.stop, exit=c.exit,
-                            risk_amount=g.sel.risk_amount, regime=c.regime,
-                        ))
-                    pf.apply_fill(f, pid, ref)
-                    entry_notional[pid] = entry_notional.get(pid, 0.0) + f.qty * f.price
-                    g.filled.add(f.asset)
-                elif pid in pf.positions:
-                    pf.apply_fill(f, pid, ref)
-                    touched.add(pid)
-            submitted.clear()  # every pending order was decided before t: all consumed
-            for pid, g in entry_groups.items():
-                if not g.filled:
-                    cand_rows[g.cand_row]["status"] = "unfilled"
-                elif g.filled != g.assets:
-                    cand_rows[g.cand_row]["status"] = "partial"
-                    event(t, "leg_failure", pid, ",".join(sorted(g.assets - g.filled)),
-                          "entry legs unfilled; flattening filled legs")
-                    exiting[pid] = "leg_failure"
-                else:
-                    cand_rows[g.cand_row]["status"] = "filled"
-            entry_groups.clear()
-            for pid in touched:
-                if pid in pf.positions and pf.positions[pid].is_flat():
-                    finish(pid, t, exiting.get(pid, "signal"))
+                pipe.apply_fill(f)
+            pipe.settle(t)
 
         # (2) emergency stops on bar t's range
         if pf.positions:
@@ -452,9 +350,9 @@ def run_backtest(
                     stop_px = float(o + lam * (worst_px[a] - o))
                     f = broker.stop_fill(a, "sell" if q > 0 else "buy", abs(q), stop_px, mkt.bar(i, a), pid)
                     pf.apply_fill(f, pid, stop_px)
-                event(t, "emergency_stop", pid, ",".join(a for a, _ in legs),
-                      f"intrabar loss {-worst:.4f} >= {threshold:.4f}")
-                finish(pid, t, "emergency_stop")
+                pipe.event(t, "emergency_stop", pid, ",".join(a for a, _ in legs),
+                           f"intrabar loss {-worst:.4f} >= {threshold:.4f}")
+                pipe.finish(pid, t, "emergency_stop")
 
         # (3) funding at the hour boundary closing this bar
         if fund is not None and fund.boundary[i] and pf.holdings:
@@ -469,73 +367,17 @@ def run_backtest(
                             p.pnl["funding_unknown_bars"] += 1
 
         # (4) mark, day roll, portfolio-level actions
-        if pf.holdings:
-            pf.mark({a: float(last[mkt.col[a]]) for a in pf.holdings})
-        eq = float(pf.equity())
-        state = roll_day(state, t, eq)
-        actions = portfolio_actions(ctx(t, eq, state))
-        new_state = apply_actions(state, actions, t)
-        if new_state.kill_switch and not state.kill_switch:
-            event(t, "FLATTEN_AND_KILL", detail=f"equity {eq:.4f} vs peak {state.peak_equity}")
-        if new_state.entries_blocked_day != state.entries_blocked_day and new_state.entries_blocked_day:
-            event(t, "BLOCK_ENTRIES_TODAY", detail=f"equity {eq:.4f} vs day start {state.day_start_equity}")
-        if new_state.paused and not state.paused:
-            event(t, "PAUSE_RECONCILIATION")
-        state = new_state
-        if state.kill_switch:
-            for pid in pf.positions:
-                exiting.setdefault(pid, "kill_switch")
+        pipe.portfolio_step(t, {a: float(last[mkt.col[a]]) for a in pf.holdings})
 
         # (5) exits
-        for pid, pos in pf.positions.items():
-            pos.bars_held += 1
-            if pid in exiting:
-                continue
-            sig = signals.get((pos.strategy, pos.key))
-            if sig is None or sig.rows[i] < 0:
-                continue
-            closes = {a: float(last[mkt.col[a]]) for a in pos.qty}
-            reason = sig.strategy.should_exit(sig.sf, int(sig.rows[i]), pos, closes)
-            if reason:
-                exiting[pid] = reason
-        if exiting:
-            exit_checks: list[OrderCheck] = []
-            for pid in list(exiting):
-                pos = pf.positions.get(pid)
-                if pos is None:
-                    exiting.pop(pid)
-                    continue
-                mids = {a: float(last[mkt.col[a]]) for a in pos.qty}
-                plan = plan_exit(pos, mids, instruments, kind, t, band, costs=costs)
-                for a in plan.dust:
-                    pf.mark({a: mids[a]})
-                    pf.write_off_dust(pid, a, mids[a], t)
-                if not plan.orders:
-                    if pos.is_flat():
-                        finish(pid, t, exiting[pid])
-                    continue
-                for o in plan.orders:
-                    m = mids[o.asset]
-                    exit_checks.append(OrderCheck(o, o.qty * m, 0.0, 0.0, None, True, False, m))
-            if exit_checks:
-                res = check(exit_checks, ctx(t, pf.equity(), state))
-                approved = {o.client_id for o in res.approved}
-                for oc in exit_checks:
-                    if oc.order.client_id in approved:
-                        broker.submit(oc.order)
-                        submitted[oc.order.client_id] = (oc.order, oc.mid)
-                veto_events(t, res.vetoed)
-                state = dataclasses.replace(state, orders_today=state.orders_today + len(res.approved))
+        pipe.exit_signals(i, mkt, signals)
+        pipe.flatten(t, lambda a, last=last: float(last[mkt.col[a]]))
 
         # (6) entries
         firing = fires.get(i)
         entry_lev = math.nan
         if firing:
-            state, entry_lev = _entries(
-                i, t, firing, mkt, signals, pf, ranker, kind, limits, costs, instruments,
-                regime_mult, band, state, ctx, cand_row, veto_events, broker, submitted,
-                entry_groups,
-            )
+            entry_lev = pipe.entries(i, t, firing, mkt, signals, ranker)
 
         k = i - i0
         eq = pf.equity()
@@ -550,17 +392,17 @@ def run_backtest(
     bar_stats["n_positions"] = bar_stats["n_positions"].astype("int64")
     return BacktestResult(
         equity=pd.Series(equity, index=out_idx, name="equity"),
-        trades=_frame(trades, TRADE_COLUMNS),
-        candidates=_frame(cand_rows, CANDIDATE_COLUMNS),
-        risk_events=_frame(events, EVENT_COLUMNS),
+        trades=_frame(pipe.trades, TRADE_COLUMNS),
+        candidates=_frame(pipe.cand_rows, CANDIDATE_COLUMNS),
+        risk_events=_frame(pipe.events, EVENT_COLUMNS),
         funding_known_from=dict(fund.known_from) if fund is not None else {},
         bar_stats=bar_stats,
         benchmark=benchmark,
         portfolio=pf,
-        risk_state=state,
+        risk_state=pipe.state,
         pending_exits=PendingExits(
-            reasons=dict(exiting),
-            orders=[(o, ref) for o, ref in submitted.values() if o.intent != "open"],
+            reasons=dict(pipe.exiting),
+            orders=[(o, ref) for o, ref in pipe.submitted.values() if o.intent != "open"],
         ),
         initial_equity=initial_equity,
     )
@@ -569,90 +411,3 @@ def run_backtest(
 def _frame(rows: list[dict], columns: list[str]) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=columns) if rows else pd.DataFrame(columns=columns)
 
-
-def _entries(
-    i, t, firing, mkt, signals, pf, ranker, kind, limits, costs, instruments, regime_mult, band,
-    state, ctx, cand_row, veto_events, broker, submitted, entry_groups,
-) -> tuple[RiskState, float]:
-    """Step 6 for one bar. Returns the updated risk state (orders_today) and the committed gross
-    leverage after the submitted entries (NaN if none were submitted)."""
-    mids = {a: float(mkt.close[i, j]) for a, j in mkt.col.items() if mkt.real[i, j]}
-    open_keys = {(p.strategy, p.key) for p in pf.positions.values()}
-    scorer = ranker if hasattr(ranker, "score") else ranker(t)
-    cands: list[Candidate] = []
-    for name, key in firing:
-        sig = signals[(name, key)]
-        c = sig.strategy.candidate_at(sig.sf, int(sig.rows[i]), mids)
-        if c is None:
-            continue
-        if (c.strategy, c.key) in open_keys:
-            cand_row(c, "rejected", "already_open")
-            continue
-        if not all(leg.asset in mids for leg in c.legs):
-            cand_row(c, "rejected", "no_data")
-            continue
-        if kind == "spot" and any(leg.weight * c.direction < 0 for leg in c.legs):
-            cand_row(c, "rejected", "short_not_allowed")
-            continue
-        scored = scorer.score(c, t)
-        if scored is None:
-            cand_row(c, "rejected", "ranker")
-            continue
-        cands.append(scored)
-    if not cands:
-        return state, math.nan
-
-    assets = sorted({leg.asset for c in cands for leg in c.legs} | set(pf.holdings))
-    lo = max(0, i - CORR_WINDOW + 1)
-    returns = pd.DataFrame(mkt.logret[lo:i + 1, [mkt.col[a] for a in assets]], columns=assets)
-    sels, skipped = construct(cands, pf, limits, costs, instruments, mids, returns, regime_mult)
-    for c, reason in skipped:
-        cand_row(c, "rejected", reason)
-
-    eq = pf.equity()
-    acc_pos, acc_risk, acc_gross, acc_cash = 0, 0.0, 0.0, 0.0
-    holdings = dict(pf.holdings)
-    for sel in sels:
-        c = sel.cand
-        pr = plan_entry(c, sel.gross_notional, mids, instruments, kind, t, band, costs=costs)
-        if pr.reject_reason:
-            cand_row(c, "rejected", pr.reject_reason)
-            continue
-        batch_gross = sum(o.qty * mids[o.asset] for o in pr.orders)
-        liq: dict[str, float] = {}
-        checks: list[OrderCheck] = []
-        post = dict(holdings)
-        for n, o in enumerate(pr.orders):
-            mid = mids[o.asset]
-            risk = sel.risk_amount if n == 0 else 0.0  # the position's risk is counted once
-            checks.append(OrderCheck(o, o.qty * mid, risk, risk / eq if eq > 0 else math.inf,
-                                     c.stop.distance_frac, True, False, mid))
-            post[o.asset] = post.get(o.asset, 0.0) + (o.qty if o.side == "buy" else -o.qty)
-        if kind == "perp":
-            post_gross = pf.gross_notional() + acc_gross + batch_gross
-            for o in pr.orders:
-                notional = abs(post[o.asset]) * mids[o.asset]
-                mm = instruments[o.asset].maintenance_margin
-                liq[o.asset] = math.inf if notional == 0 else max(0.0, (eq - post_gross * mm) / notional)
-        res = check(checks, ctx(t, eq, state, extra_pos=acc_pos, extra_risk=acc_risk,
-                                extra_gross=acc_gross, holdings=dict(holdings), cash_used=acc_cash,
-                                liq=liq))
-        if res.vetoed:  # all-or-nothing per selection
-            cand_row(c, "rejected", res.vetoed[0][1])
-            veto_events(t, res.vetoed)
-            continue
-        row = cand_row(c, "submitted", None)
-        pid = pr.orders[0].position_id
-        entry_groups[pid] = _EntryGroup(sel, {o.asset for o in pr.orders}, row)
-        for oc in checks:
-            broker.submit(oc.order)
-            submitted[oc.order.client_id] = (oc.order, oc.mid)
-        state = dataclasses.replace(state, orders_today=state.orders_today + len(checks))
-        acc_pos += 1
-        acc_risk += sel.risk_amount
-        acc_gross += batch_gross
-        if kind == "spot":
-            acc_cash += sum(oc.notional for oc in checks if oc.order.side == "buy")
-        holdings = post
-    committed = (pf.gross_notional() + acc_gross) / eq if acc_pos and eq > 0 else math.nan
-    return state, committed

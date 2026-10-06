@@ -180,3 +180,35 @@ def test_order_status_and_book_snapshot(db):
     assert row[1] == "BTC"
     assert json.loads(row[2]) == [[100.0, 1.0]] and json.loads(row[3]) == [[101.0, 2.0]]
     assert pd.Timestamp(row[0]) == TS
+
+
+def test_snapshot_atomic_and_never_writes_flags(db):
+    db.set_flag("perp", "paused", True)
+    with pytest.raises(ValueError, match="paused"):
+        db.save_snapshot("perp", {"paused": False}, [])
+    with pytest.raises(ValueError, match="lock"):
+        db.save_snapshot("perp", {"lock": {}}, [])
+    p = _pos()
+    db.save_snapshot("perp", {"peak_equity": 300.0, "engine": {"last_fill_id": 7}}, [(p, "open", None, None)])
+    assert db.get_state("perp", "paused") is True
+    assert db.get_state("perp", "engine") == {"last_fill_id": 7}
+    assert db.load_risk_state("perp").peak_equity == 300.0
+    assert [x.id for x in db.open_positions("perp")] == ["p1"]
+    db.save_snapshot("perp", {}, [(p, "closed", "signal", TS)])
+    assert db.open_positions("perp") == []
+
+
+def test_fills_after_and_order_count(db):
+    f1 = Fill("c1", TS, "A", "buy", 1.5, 100.0, 0.1, "taker")
+    f2 = Fill("c2", TS + pd.Timedelta("1min"), "B", "sell", 2.0, 50.0, 0.05, "maker")
+    db.record_fill("perp", f1, position_id="p1")
+    db.record_fill("spot", f1, position_id="px")
+    db.record_fill("perp", f2, position_id="p1")
+    got = db.fills_after("perp", 0)
+    assert [(f, pid) for _, f, pid in got] == [(f1, "p1"), (f2, "p1")]
+    assert [f for _, f, _ in db.fills_after("perp", got[0][0])] == [f2]
+    assert db.last_fill_id("perp") == got[-1][0] and db.last_fill_id("nobody") == 0
+    for k, ts in enumerate([TS - pd.Timedelta("1D"), TS, TS + pd.Timedelta("1h")]):
+        db.record_order("perp", OrderRequest(f"o{k}", ts, "A", "buy", 1.0, 1.0, "IOC", "open", "p", "g"))
+    assert db.count_orders_since("perp", TS.floor("D")) == 2
+    assert db.count_orders_since("spot", TS.floor("D")) == 0
