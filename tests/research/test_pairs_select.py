@@ -37,6 +37,8 @@ def test_cointegrated_pair_selected():
     row = sel.table.iloc[0]
     assert row["reasons"] == "" and row["p_bh"] <= 0.05
     assert abs(row["beta_1"] - 0.8) < 0.2
+    assert 8 <= row["hl_1"] <= 192 and 8 <= row["hl_2"] <= 192
+    assert abs(row["beta_1"] - row["beta_2"]) / abs(row["beta_1"]) < 0.25
 
 
 def test_canonical_order_by_adv():
@@ -46,21 +48,51 @@ def test_canonical_order_by_adv():
     assert list(sel.table["pair"]) == ["BTC/ETH"]
 
 
-def test_unstable_beta_rejected():
-    n = 8000
-    a, b = synthetic_pair(n, "cointegrated", seed=2)
+def _ou_pair(n: int, phi: float, b1: float, b2: float, seed: int):
+    """A = beta * B + OU(phi); beta moves b1 -> b2 at the midpoint without a level jump."""
+    _, b = synthetic_pair(n, "cointegrated", seed=seed)
     lb = np.log(b["close"].to_numpy())
-    rng = np.random.default_rng(5)
-    eps = rng.normal(0, 0.001, n)
+    eps = np.random.default_rng(seed + 50).normal(0, 0.001, n)
     ou = np.zeros(n)
     for i in range(1, n):
-        ou[i] = ou[i - 1] * 0.95 + eps[i]
-    beta = np.where(np.arange(n) < n // 2, 0.5, 1.3)
-    a2 = _bars_from_close(np.exp(beta * lb + ou), np.random.default_rng(9), 0.001)
+        ou[i] = ou[i - 1] * phi + eps[i]
+    m = n // 2
+    la = np.where(np.arange(n) < m, b1 * lb, b1 * lb[m] + b2 * (lb - lb[m]))
+    a = _bars_from_close(np.exp(la + ou), np.random.default_rng(9), 0.001)
+    return a, _liq(b, 1000)
+
+
+def _run(a: pd.DataFrame, b: pd.DataFrame):
     s, e = _window(a)
-    sel = select_pairs({"ETH": a2, "BTC": _liq(b, 1000)}, ["ETH", "BTC"], s, e, CFG)
-    assert sel.selected == []
-    assert sel.table.iloc[0]["reasons"] != ""
+    return select_pairs({"ETH": a, "BTC": b}, ["ETH", "BTC"], s, e, CFG)
+
+
+def test_unstable_beta_rejected():
+    a, b = _ou_pair(8000, 0.95, 0.8, 1.1, seed=1)
+    sel = _run(a, b)
+    assert sel.prefiltered == 1 and sel.fdr_pass == ["ETH/BTC"]  # reaches the stability checks
+    assert sel.selected == [] and sel.stable == []
+    assert "beta_change" in sel.table.iloc[0]["reasons"]
+
+
+def test_slow_half_life_rejected():
+    a, b = _ou_pair(20000, 0.998, 0.8, 0.8, seed=2)
+    sel = _run(a, b)
+    assert sel.fdr_pass == ["ETH/BTC"]
+    row = sel.table.iloc[0]
+    assert row["hl_1"] > 192 and row["hl_2"] > 192
+    assert "half_life" in row["reasons"] and sel.selected == []
+
+
+def test_empty_family():
+    a, _ = synthetic_pair(2000, "independent", seed=1)
+    s, e = _window(a)
+    one = select_pairs({"ETH": a}, ["ETH"], s, e, CFG)
+    short = select_pairs({"ETH": a.iloc[:20], "BTC": _liq(a.iloc[:20], 1000)}, ["ETH", "BTC"], s, e, CFG)
+    for sel in (one, short):
+        assert sel.tested == 0 and sel.prefiltered == 0 and sel.selected == []
+        assert sel.fdr_pass == [] and sel.stable == []
+        assert list(sel.table.columns) == _COLS and sel.table.empty
 
 
 def test_uses_only_train_window():
@@ -104,9 +136,9 @@ def test_always_watch_below_corr_is_reported_not_selected():
 
 
 def test_independent_random_walks_mostly_rejected():
-    n_assets, hours = 12, 2000
+    n_assets, hours = 12, 1200
     cfg = CFG.model_copy(update={"corr_min": -1.0})  # no prefilter: BH must carry the load
-    nonempty = 0
+    nonempty = fdr_nonempty = 0
     for seed in range(20):
         rng = np.random.default_rng(1000 + seed)
         idx = pd.date_range("2024-01-01", periods=hours * 4, freq="15min", tz="UTC")
@@ -117,4 +149,6 @@ def test_independent_random_walks_mostly_rejected():
         sel = select_pairs(panel, list(panel), idx[0], idx[-1] + pd.Timedelta(minutes=15), cfg)
         assert sel.tested == 66
         nonempty += bool(sel.selected)
+        fdr_nonempty += bool(sel.fdr_pass)
     assert nonempty <= 1
+    assert fdr_nonempty <= 1  # BH alone (before stability) controls false positives

@@ -52,7 +52,7 @@ def _eg_hourly(both: pd.DataFrame) -> float:
         return 1.0
     try:
         return float(coint(both.iloc[:, 0], both.iloc[:, 1], trend="c", maxlag=_MAXLAG)[1])
-    except Exception:  # degenerate (e.g. constant) series
+    except (ValueError, np.linalg.LinAlgError):  # degenerate (e.g. constant) series
         return 1.0
 
 
@@ -103,6 +103,8 @@ def select_pairs(
         hourly_close[asset] = close[asset].resample("1h").last()
         adv[asset] = adv_usd(w, train_end, days=days)
 
+    # always_watch keys are matched against the canonical key, so "ETH/BTC" only matches while ETH
+    # has the lower ADV than BTC in the train window.
     watch = set(cfg.always_watch)
     mid = train_start + (train_end - train_start) / 2
     rows: list[dict] = []
