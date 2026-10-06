@@ -47,3 +47,24 @@ def roll_day(state: RiskState, now: pd.Timestamp, equity: float) -> RiskState:
             peak_equity=peak,
         )
     return dataclasses.replace(state, peak_equity=peak)
+
+
+_STATE_FIELDS = tuple(f.name for f in dataclasses.fields(RiskState))
+
+
+def state_to_dict(state: RiskState) -> dict[str, object]:
+    """JSON-safe dict of every RiskState field (dates as ISO strings)."""
+    out: dict[str, object] = {}
+    for name in _STATE_FIELDS:
+        v = getattr(state, name)
+        out[name] = v.isoformat() if isinstance(v, date) else v
+    return out
+
+
+def state_from_dict(d: dict[str, object]) -> RiskState:
+    """Inverse of ``state_to_dict``; missing keys take the RiskState defaults."""
+    kw = {k: v for k, v in d.items() if k in _STATE_FIELDS}
+    for name in ("day", "entries_blocked_day"):
+        if kw.get(name) is not None:
+            kw[name] = date.fromisoformat(str(kw[name]))
+    return RiskState(**kw)  # type: ignore[arg-type]
