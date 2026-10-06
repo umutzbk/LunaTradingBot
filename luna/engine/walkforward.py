@@ -1,27 +1,30 @@
 """Walk-forward engine (spec §4, §5, §8) and the one-shot holdout guard.
 
-Layout. ``make_windows`` lays windows out from ``data_start``: train ``train_months``, test
-``test_months``, step ``step_months``; the last ``holdout_months`` before ``data_end`` are the holdout
-and never part of a window (only whole test windows ending at or before the holdout start are used).
-With ``step == test`` the test windows are contiguous.
+Layout. ``make_windows`` lays windows out from ``data_start``: window ``k`` trains on
+``[start + k*step, start + k*step + train)`` and tests on the following ``test`` months, every bound
+computed directly from ``start`` (chained month offsets drift at month ends). ``step_months`` must
+equal ``test_months`` so the test windows tile the OOS period exactly (no gap, no double-counted
+P&L). The last ``holdout_months`` before ``data_end`` are the holdout and never part of a window
+(only whole test windows ending at or before the holdout start are used).
 
 Fitting a window (``fit_window``), using only data before ``train_end``:
 
 1. universe = ``select_universe`` at ``train_end`` (ADV and the history rule look strictly before it);
 2. pairs = ``select_pairs`` on ``[train_start, train_end)`` (perp only; spot never trades pairs);
 3. keys: momentum / mean reversion = the universe, pairs = the selected pairs;
-4. train trades = trade-list rows with ``entry_ts >= train_start`` and ``exit_ts < train_end``
-   (asserted), restricted to each strategy's keys;
+4. train trades = trade-list rows with ``entry_ts >= train_start`` and ``exit_ts < train_end``,
+   restricted to each strategy's keys (every frame used for fitting is re-checked, ``_check_train``);
 5. params per strategy = argmax of the mean ``r_net`` over its train trades, ties broken by the
    smaller ``params_id``. Perp funding rule (§4): if any of the strategy's train trades has
    ``funding_unknown_bars > 0`` the objective is ``min(mean r_net with unknown funding at 0x,
-   mean r_net with unknown funding at 2x the estimate)`` (``_funding_estimate_r``);
+   mean r_net with the worst-case unknown-funding cost)`` (``_funding_cost_r``);
 6. expectancy table = ``fit_expectancy`` on the selected params' train trades; ranker =
    ``ExpectancyRanker`` (ablation ``random_ranker``: ``RandomRanker``); strategies instantiated with
    the chosen params and ``use_regime`` (ablation ``no_regime``: False).
 
-Trade lists are built once for the whole period (``build_walkforward_tradelists``) and only
-filtered per window. For the ``no_regime`` ablation they must be built with ``use_regime=False``.
+Trade lists are built once for the whole period (``build_walkforward_tradelists``, which stamps
+``attrs["use_regime"]``) and only filtered per window. ``run_walkforward`` / ``run_holdout`` refuse
+trade lists whose stamp is missing or does not match the ablation.
 
 OOS simulation (``run_walkforward``). Test windows are simulated sequentially with
 ``run_backtest``; the Portfolio, RiskState and pending exits of one window are the initial state of
@@ -29,11 +32,13 @@ the next. Models switch at window boundaries: entries use the new window's strat
 ranker; positions carried over keep being exited by the strategy instance (params) that opened them,
 even when their key left the universe (``WindowStrategy``). Leading windows whose universe is empty
 (the 18-month history rule) are skipped and reported; a later window with an empty universe runs
-with no entries (carried positions still exit).
+with no entries (carried positions still exit). A walk-forward whose test windows overlap a
+recorded holdout of the account is refused.
 """
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import json
 import os
@@ -48,6 +53,7 @@ import pandas as pd
 from luna.config import Settings, WalkForwardConfig
 from luna.engine.backtest import BacktestResult, FundingMode, PendingExits, run_backtest
 from luna.execution.costs import CostModel
+from luna.portfolio.portfolio import Portfolio
 from luna.ranking.expectancy import ANY, CellStat, ExpectancyRanker, fit_expectancy
 from luna.ranking.ranker import RandomRanker, Ranker
 from luna.research.pairs_select import PairSelection, select_pairs
@@ -64,11 +70,18 @@ STRATEGIES: dict[str, type[GridStrategy]] = {
     "momentum": Momentum, "mean_reversion": MeanReversion, "pairs": Pairs,
 }
 BAR = pd.Timedelta("15min")
+FUNDING_FLOOR = 1.25e-5  # hourly |rate| floor of the unknown-funding estimate (0.01% per 8h)
+OPEN_COLUMNS = ["position_id", "strategy", "key", "direction", "entry_ts", "risk_amount",
+                "funding_unknown_bars", "unrealized_net"]
 _ROOT = Path(__file__).resolve().parents[2]
 
 
 class HoldoutAlreadyRun(RuntimeError):
     """The holdout of this account has already been run (spec §8: exactly once)."""
+
+
+class HoldoutRegistryCorrupt(RuntimeError):
+    """The holdout registry exists but is empty or not a JSON object."""
 
 
 @dataclass(frozen=True)
@@ -97,6 +110,7 @@ class WalkForwardResult:
     windows: list[WindowModel]
     oos: BacktestResult
     per_window: pd.DataFrame
+    open_at_end: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=OPEN_COLUMNS))
 
 
 # --- windows --------------------------------------------------------------------------------------
@@ -110,15 +124,25 @@ def _utc(ts) -> pd.Timestamp:
 def make_windows(
     data_start, data_end, cfg: WalkForwardConfig
 ) -> tuple[list[Window], tuple[pd.Timestamp, pd.Timestamp]]:
-    """(windows, (holdout_start, holdout_end)); every test window ends at or before holdout_start."""
+    """(windows, (holdout_start, holdout_end)); every test window ends at or before holdout_start
+    and consecutive test windows are contiguous."""
+    if cfg.step_months != cfg.test_months:
+        raise ValueError(
+            f"step_months ({cfg.step_months}) must equal test_months ({cfg.test_months}): "
+            "test windows must tile the OOS period without gaps or overlaps"
+        )
     start, end = _utc(data_start), _utc(data_end)
     holdout_start = end - pd.DateOffset(months=cfg.holdout_months)
+
+    def at(months: int) -> pd.Timestamp:
+        return start + pd.DateOffset(months=months)
+
     windows = []
     k = 0
     while True:
-        tr0 = start + pd.DateOffset(months=k * cfg.step_months)
-        tr1 = tr0 + pd.DateOffset(months=cfg.train_months)
-        te1 = tr1 + pd.DateOffset(months=cfg.test_months)
+        base = k * cfg.step_months
+        tr0, tr1 = at(base), at(base + cfg.train_months)
+        te1 = at(base + cfg.train_months + cfg.test_months)
         if te1 > holdout_start:
             break
         windows.append(Window(tr0, tr1, tr1, te1))
@@ -131,6 +155,20 @@ def make_windows(
 
 def _grid_params(cls: type[GridStrategy]) -> dict[str, dict]:
     return {cls(dict(g)).params_id: dict(g) for g in cls.GRID}
+
+
+def _select(
+    w: Window, panel: dict[str, pd.DataFrame], settings: Settings, kind: AccountKind,
+    universe_panel: dict[str, pd.DataFrame] | None,
+) -> tuple[list[str], PairSelection]:
+    """Universe at ``train_end`` (from ``universe_panel``, default ``panel``; restricted to assets in
+    ``panel``) and the pair selection on the train window (perp only)."""
+    cfg = settings.universe
+    universe = [a for a in select_universe(universe_panel or panel, w.train_end, cfg.min_adv_usd,
+                                           cfg.min_history_days) if a in panel]
+    pairs = select_pairs(panel, universe if kind == "perp" else [], w.train_start, w.train_end,
+                         settings.pairs)
+    return universe, pairs
 
 
 def _known_rates(funding: dict[str, pd.DataFrame] | None, before: pd.Timestamp) -> dict[str, float]:
@@ -148,31 +186,27 @@ def _known_rates(funding: dict[str, pd.DataFrame] | None, before: pd.Timestamp) 
     return out
 
 
-def _funding_estimate_r(trades: pd.DataFrame, rates: dict[str, float]) -> pd.Series:
-    """Per trade, the unknown-hours funding at 2x the estimated rate, in R.
+def _funding_cost_r(trades: pd.DataFrame, rates: dict[str, float]) -> pd.Series:
+    """Per trade, the worst-case cost (in R, >= 0) of its unknown funding hours.
 
-    Estimate per leg l: ``-direction * s_l * f_l * 2 * rate_l * hours_l`` per unit of gross notional
-    (the trade lists' convention: long pays a positive rate), divided by the trade's stop distance.
-    Single asset: s = +1, f = 1, hours = funding_unknown_bars. Pair "A/B" (long = long A, short B):
-    the trade list keeps no beta, so beta ~ 1 is assumed: f = 1/2 per leg, s = (+1, -1), and the
-    unknown hours (counted per held leg) are split evenly between the two legs. ``rate_l`` is the
-    asset's mean known rate before train_end, else the pooled mean of the known assets, else 0.
-    """
+    Every leg l pays ``|w_l| * 2 * max(|rate_l|, FUNDING_FLOOR) * hours_l`` per unit of gross
+    notional, regardless of direction, divided by the trade's stop distance. Single asset: |w| = 1,
+    hours = funding_unknown_bars. Pair "A/B": the trade list keeps no beta, so beta ~ 1 is assumed:
+    |w| = 1/2 per leg and the unknown hours (counted per held leg) are split evenly between the legs.
+    ``rate_l`` is the asset's mean known rate stamped before train_end, else the pooled mean of the
+    known assets, else 0 (then the floor applies)."""
     pooled = float(np.mean(list(rates.values()))) if rates else 0.0
     out = np.zeros(len(trades))
-    for n, (key, d, unk, dist) in enumerate(zip(
-        trades["key"], trades["direction"], trades["funding_unknown_bars"], trades["stop_distance"],
-        strict=True,
+    for n, (key, unk, dist) in enumerate(zip(
+        trades["key"], trades["funding_unknown_bars"], trades["stop_distance"], strict=True,
     )):
         if not unk:
             continue
         legs = str(key).split("/")
-        signs = (1.0, -1.0) if len(legs) == 2 else (1.0,)
         frac = 1.0 / len(legs)
         hours = float(unk) / len(legs)
-        per_unit = sum(s * frac * 2.0 * rates.get(a, pooled) * hours
-                       for a, s in zip(legs, signs, strict=True))
-        out[n] = -float(d) * per_unit / float(dist)
+        per_unit = sum(frac * 2.0 * max(abs(rates.get(a, pooled)), FUNDING_FLOOR) * hours for a in legs)
+        out[n] = per_unit / float(dist)
     return pd.Series(out, index=trades.index)
 
 
@@ -182,15 +216,20 @@ def _choose_params(
     """(params_id, worst-case funding rule applied) for one strategy's train trades."""
     worst = kind == "perp" and bool((trades["funding_unknown_bars"] > 0).any())
     r0 = trades["r_net"].astype(float)
+    obj = r0.groupby(trades["params_id"]).mean()
     if worst:
-        r2 = r0 + _funding_estimate_r(trades, rates)
-        m0 = r0.groupby(trades["params_id"]).mean()
-        m2 = r2.groupby(trades["params_id"]).mean()
-        obj = np.minimum(m0, m2)
-    else:
-        obj = r0.groupby(trades["params_id"]).mean()
+        r2 = r0 - _funding_cost_r(trades, rates)
+        obj = np.minimum(obj, r2.groupby(trades["params_id"]).mean())
     best = obj.max()
     return min(str(p) for p, v in obj.items() if v == best), worst
+
+
+def _check_train(frame: pd.DataFrame, w: Window, what: str) -> None:
+    """Every trade used for fitting must lie inside [train_start, train_end) (entry and exit)."""
+    bad = ((frame["entry_ts"] < w.train_start) | (frame["entry_ts"] >= w.train_end)
+           | (frame["exit_ts"] >= w.train_end))
+    if bool(bad.any()):
+        raise ValueError(f"{what}: {int(bad.sum())} trades outside the train window {w}")
 
 
 def fit_window(
@@ -212,16 +251,11 @@ def fit_window(
     for a spot run), restricted to assets present in ``panel``."""
     if ablation not in ("none", "no_regime", "random_ranker"):
         raise ValueError(f"unknown ablation {ablation!r}")
-    cfg = settings.universe
-    universe = [a for a in select_universe(universe_panel or panel, w.train_end, cfg.min_adv_usd,
-                                           cfg.min_history_days) if a in panel]
-    pairs = select_pairs(panel, universe if kind == "perp" else [], w.train_start, w.train_end,
-                         settings.pairs)
+    universe, pairs = _select(w, panel, settings, kind, universe_panel)
     keys = {"momentum": list(universe), "mean_reversion": list(universe), "pairs": list(pairs.selected)}
 
     tl = tradelists
     train = tl[(tl["entry_ts"] >= w.train_start) & (tl["exit_ts"] < w.train_end)]
-    assert (train["entry_ts"] < w.train_end).all() and (train["exit_ts"] < w.train_end).all()
 
     rates = _known_rates(funding, w.train_end) if kind == "perp" else {}
     params: dict[str, str] = {}
@@ -233,6 +267,7 @@ def fit_window(
         st = train[(train["strategy"] == name) & train["key"].isin(keys[name])]
         if st.empty:
             continue
+        _check_train(st, w, f"{name} param selection")
         pid, worst = _choose_params(st, kind, rates)
         grid = _grid_params(cls)
         if pid not in grid:
@@ -244,13 +279,16 @@ def fit_window(
         strategies.append(cls(grid[pid], use_regime=use_regime))
 
     rk = settings.ranking
-    table = (fit_expectancy(pd.concat(chosen, ignore_index=True), rk.n0, rk.n_min,
-                            rk.bootstrap_samples, rk.ci) if chosen else {})
+    table: dict[tuple[str, str, str], CellStat] = {}
+    if chosen:
+        sel = pd.concat(chosen, ignore_index=True)
+        _check_train(sel, w, "expectancy table")
+        table = fit_expectancy(sel, rk.n0, rk.n_min, rk.bootstrap_samples, rk.ci)
     ranker: Ranker = RandomRanker(seed) if ablation == "random_ranker" else ExpectancyRanker(table, params)
     if kind != "perp":
         rule = "r_net (spot: no funding)"
     elif worst_for:
-        rule = "worst_case(0x, 2x est) for " + ",".join(worst_for)
+        rule = "worst_case(0x, 2x max(|est|, floor) cost) for " + ",".join(worst_for)
     else:
         rule = "r_net (no unknown funding)"
     return WindowModel(w, universe, pairs, params, table, rule, ranker, strategies, keys)
@@ -331,6 +369,25 @@ def _stitch(results: list[BacktestResult]) -> BacktestResult:
     )
 
 
+def _open_at_end(pf: Portfolio | None) -> pd.DataFrame:
+    """Positions still open at the end of the run; ``unrealized_net`` = realized net so far (fees,
+    funding, spread/slippage paid, partial closes) + open legs marked at the last mark vs their
+    reference entry price (the engine's attribution: fill-vs-reference is in ``spread_slip``)."""
+    if pf is None or not pf.positions:
+        return pd.DataFrame(columns=OPEN_COLUMNS)
+    rows = []
+    for pid, p in pf.positions.items():
+        open_gross = sum(q * (pf.marks.get(a, p.entry_ref_price[a]) - p.entry_ref_price[a])
+                         for a, q in p.qty.items() if q)
+        rows.append({
+            "position_id": pid, "strategy": p.strategy, "key": p.key, "direction": p.direction,
+            "entry_ts": p.entry_ts, "risk_amount": p.risk_amount,
+            "funding_unknown_bars": int(p.pnl["funding_unknown_bars"]),
+            "unrealized_net": p.net_pnl() + open_gross,
+        })
+    return pd.DataFrame(rows, columns=OPEN_COLUMNS)
+
+
 def _row(w: Window, status: str, m: WindowModel | None, res: BacktestResult | None) -> dict:
     row: dict = {"train_start": w.train_start, "train_end": w.train_end, "test_start": w.test_start,
                  "test_end": w.test_end, "status": status}
@@ -361,7 +418,10 @@ def _simulate(
     panel, funding, settings: Settings, kind: AccountKind, cost_mult: float,
     funding_mode: FundingMode, instruments: dict[str, Instrument] | None,
 ) -> list[BacktestResult]:
-    """Sequential test windows, carrying Portfolio / RiskState / PendingExits."""
+    """Sequential, contiguous test windows, carrying Portfolio / RiskState / PendingExits."""
+    for a, b in zip(models, models[1:], strict=False):
+        if b.window.test_start != a.window.test_end:
+            raise ValueError(f"test windows not contiguous: {a.window.test_end} -> {b.window.test_start}")
     results: list[BacktestResult] = []
     owners: dict[str, tuple[object, str]] = {}  # open position id -> (opening strategy, key)
     pf = state = exiting = None
@@ -388,6 +448,34 @@ def _simulate(
     return results
 
 
+def _check_tradelists(tradelists: pd.DataFrame, ablation: Ablation) -> None:
+    want = ablation != "no_regime"
+    got = tradelists.attrs.get("use_regime")
+    if got is None:
+        raise ValueError("trade lists carry no attrs['use_regime'] stamp; build them with "
+                         "build_walkforward_tradelists")
+    if bool(got) != want:
+        raise ValueError(f"ablation {ablation!r} needs trade lists built with use_regime={want}, "
+                         f"got use_regime={bool(got)}")
+
+
+def _registry_path(settings: Settings, registry: Path | None) -> Path:
+    return Path(registry) if registry is not None else Path(settings.var_dir) / "holdout_registry.json"
+
+
+def _read_registry(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    text = path.read_text(encoding="utf-8")
+    try:
+        data = json.loads(text) if text.strip() else None
+    except json.JSONDecodeError as e:
+        raise HoldoutRegistryCorrupt(f"{path}: invalid JSON ({e})") from e
+    if not isinstance(data, dict):
+        raise HoldoutRegistryCorrupt(f"{path}: expected a JSON object, got {text[:80]!r}")
+    return data
+
+
 def run_walkforward(
     panel: dict[str, pd.DataFrame],
     funding: dict[str, pd.DataFrame],
@@ -404,13 +492,17 @@ def run_walkforward(
     instruments: dict[str, Instrument] | None = None,
     universe_panel: dict[str, pd.DataFrame] | None = None,
     seed: int = 0,
+    registry: Path | None = None,
 ) -> WalkForwardResult:
     """Fit every window and simulate the test windows sequentially (module docstring).
 
     ``max_drawdown_override``: None = realistic config; e.g. 1.0 = "edge" variant (drawdown kill
     switch disabled). ``data_start`` defaults to ``settings.universe.history_start``, ``data_end``
     to the last bar of the panel + 15 min. ``panel`` must hold the full history (the universe's
-    history rule looks back ``min_history_days``)."""
+    history rule looks back ``min_history_days``). ``registry`` (default
+    ``settings.var_dir / "holdout_registry.json"``): refuses if a test window overlaps the
+    account's recorded holdout window."""
+    _check_tradelists(tradelists, ablation)
     data_start, data_end = _bounds(panel, settings, data_start, data_end)
     windows, _ = make_windows(data_start, data_end, settings.walkforward)
     sim_settings = _variant(settings, kind, max_drawdown_override)
@@ -426,10 +518,18 @@ def run_walkforward(
         rows.append((w, "ok" if m.universe else "empty universe: no entries", m))
     if not models:
         raise ValueError(f"no walk-forward window with a non-empty universe in {data_start}..{data_end}")
+    rec = _read_registry(_registry_path(settings, registry)).get(kind)
+    if rec is not None:
+        h0, h1 = _utc(rec["window"]["test_start"]), _utc(rec["window"]["test_end"])
+        for m in models:
+            if m.window.test_start < h1 and h0 < m.window.test_end:
+                raise ValueError(f"test window {m.window.test_start}..{m.window.test_end} overlaps the "
+                                 f"recorded {kind} holdout {h0}..{h1}")
     results = _simulate(models, panel, funding, sim_settings, kind, cost_mult, funding_mode, instruments)
     by_window = dict(zip([m.window for m in models], results, strict=True))
     per_window = pd.DataFrame([_row(w, s, m, by_window.get(w)) for w, s, m in rows])
-    return WalkForwardResult(models, _stitch(results), per_window)
+    oos = _stitch(results)
+    return WalkForwardResult(models, oos, per_window, _open_at_end(oos.portfolio))
 
 
 def _bounds(panel, settings: Settings, data_start, data_end) -> tuple[pd.Timestamp, pd.Timestamp]:
@@ -451,15 +551,12 @@ def candidate_keys(
     universe_panel: dict[str, pd.DataFrame] | None = None,
 ) -> dict[str, list[str]]:
     """Every key any of ``windows`` can trade: union of universes and of selected pairs."""
-    cfg = settings.universe
     assets: set[str] = set()
     pairs: set[str] = set()
     for w in windows:
-        u = [a for a in select_universe(universe_panel or panel, w.train_end, cfg.min_adv_usd,
-                                        cfg.min_history_days) if a in panel]
+        u, p = _select(w, panel, settings, kind, universe_panel)
         assets |= set(u)
-        if kind == "perp" and u:
-            pairs |= set(select_pairs(panel, u, w.train_start, w.train_end, settings.pairs).selected)
+        pairs |= set(p.selected)
     return {"momentum": sorted(assets), "mean_reversion": sorted(assets), "pairs": sorted(pairs)}
 
 
@@ -477,16 +574,18 @@ def build_walkforward_tradelists(
     cache_dir: Path | None = Path("var/research"),
 ) -> pd.DataFrame:
     """Trade lists of every grid point on every candidate key of every window (and of the holdout
-    fit window), built once with the account's price band."""
+    fit window), built once with the account's price band; stamped ``attrs["use_regime"]``."""
     data_start, data_end = _bounds(panel, settings, data_start, data_end)
     windows, holdout = make_windows(data_start, data_end, settings.walkforward)
     if include_holdout:
         windows = [*windows, _holdout_window(holdout, settings.walkforward)]
     keys = candidate_keys(panel, settings, kind, windows, universe_panel=universe_panel)
-    return build_all_tradelists(
+    df = build_all_tradelists(
         STRATEGIES, panel, funding, CostModel(settings.costs[kind]), kind, keys,
         band=settings.accounts[kind].max_price_band, use_regime=use_regime, cache_dir=cache_dir,
     )
+    df.attrs["use_regime"] = bool(use_regime)
+    return df
 
 
 # --- holdout --------------------------------------------------------------------------------------
@@ -497,20 +596,37 @@ def _holdout_window(holdout: tuple[pd.Timestamp, pd.Timestamp], cfg: WalkForward
     return Window(h0 - pd.DateOffset(months=cfg.train_months), h0, h0, h1)
 
 
-def _git_sha() -> str:
+def _git(*args: str) -> str | None:
     try:
-        out = subprocess.run(["git", "rev-parse", "HEAD"], cwd=_ROOT, capture_output=True,
-                             text=True, timeout=10, check=False)
+        out = subprocess.run(["git", *args], cwd=_ROOT, capture_output=True, text=True, timeout=10,
+                             check=False)
     except (OSError, subprocess.SubprocessError):
-        return "unknown"
-    sha = out.stdout.strip()
-    return sha if out.returncode == 0 and sha else "unknown"
+        return None
+    return out.stdout if out.returncode == 0 else None
 
 
-def _read_registry(path: Path) -> dict:
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8") or "{}")
+def _git_sha() -> str:
+    out = _git("rev-parse", "HEAD")
+    return out.strip() if out and out.strip() else "unknown"
+
+
+def _git_dirty() -> bool | None:
+    """True if the work tree has uncommitted changes, None if git is unavailable."""
+    out = _git("status", "--porcelain")
+    return None if out is None else bool(out.strip())
+
+
+def holdout_variants(kind: AccountKind) -> dict[str, dict]:
+    """The scenarios a holdout run simulates (all on the same fitted model)."""
+    v: dict[str, dict] = {
+        "realistic": {},
+        "edge": {"max_drawdown_override": 1.0},
+        "cost_2x": {"cost_mult": 2.0},
+    }
+    if kind == "perp":
+        v["funding_zero"] = {"funding_mode": "zero"}
+        v["funding_estimated_x2"] = {"funding_mode": "estimated_x2"}
+    return v
 
 
 def run_holdout(
@@ -520,44 +636,55 @@ def run_holdout(
     settings: Settings,
     kind: AccountKind,
     *,
-    registry: Path,
+    registry: Path | None = None,
     ablation: Ablation = "none",
-    cost_mult: float = 1.0,
-    funding_mode: FundingMode = "known_only",
-    max_drawdown_override: float | None = None,
     data_end=None,
     instruments: dict[str, Instrument] | None = None,
     universe_panel: dict[str, pd.DataFrame] | None = None,
     seed: int = 0,
-) -> WalkForwardResult:
-    """The one-shot holdout: fit on the ``train_months`` before the holdout, simulate the holdout
-    (last ``holdout_months``) from a fresh account. Raises ``HoldoutAlreadyRun`` if ``registry``
-    (JSON ``{account: {run_at, git_sha, window}}``) already records this account; the run is
-    recorded after it completes (a crash does not consume the holdout)."""
-    registry = Path(registry)
-    if kind in _read_registry(registry):
-        raise HoldoutAlreadyRun(f"holdout for {kind} already run: {_read_registry(registry)[kind]}")
+) -> dict[str, WalkForwardResult]:
+    """The one-shot holdout: fit on the ``train_months`` before the holdout, then simulate the
+    holdout (last ``holdout_months``) from a fresh account under every ``holdout_variants`` scenario
+    (realistic, edge = kill switch off, 2x costs, and on perp funding "zero" / "estimated_x2").
+
+    ``registry`` (default ``settings.var_dir / "holdout_registry.json"``, JSON
+    ``{account: {run_at, git_sha, git_dirty, window, variants}}``): raises ``HoldoutAlreadyRun`` if
+    it records this account, ``HoldoutRegistryCorrupt`` (before running) if it is empty or not a
+    JSON object. The account is recorded once, after every variant has completed (a crash does not
+    consume the holdout)."""
+    path = _registry_path(settings, registry)
+    if kind in _read_registry(path):
+        raise HoldoutAlreadyRun(f"holdout for {kind} already run: {_read_registry(path)[kind]}")
+    _check_tradelists(tradelists, ablation)
     _, data_end = _bounds(panel, settings, settings.universe.history_start, data_end)
     _, holdout = make_windows(data_end, data_end, settings.walkforward)
     w = _holdout_window(holdout, settings.walkforward)
-    m = fit_window(w, tradelists, panel, settings, kind, funding=funding, ablation=ablation,
-                   seed=seed, universe_panel=universe_panel)
-    if not m.universe:
+    model = fit_window(w, tradelists, panel, settings, kind, funding=funding, ablation=ablation,
+                       seed=seed, universe_panel=universe_panel)
+    if not model.universe:
         raise ValueError(f"empty {kind} universe at the holdout start {w.train_end}")
-    (res,) = _simulate([m], panel, funding, _variant(settings, kind, max_drawdown_override), kind,
-                       cost_mult, funding_mode, instruments)
-    out = WalkForwardResult([m], res, pd.DataFrame([_row(w, "holdout", m, res)]))
 
-    reg = _read_registry(registry)
+    out: dict[str, WalkForwardResult] = {}
+    for name, v in holdout_variants(kind).items():
+        m = copy.deepcopy(model)  # fresh ranker state per scenario
+        (res,) = _simulate([m], panel, funding, _variant(settings, kind, v.get("max_drawdown_override")),
+                           kind, v.get("cost_mult", 1.0), v.get("funding_mode", "known_only"),
+                           instruments)
+        out[name] = WalkForwardResult([m], res, pd.DataFrame([_row(w, f"holdout:{name}", m, res)]),
+                                      _open_at_end(res.portfolio))
+
+    reg = _read_registry(path)
     if kind in reg:  # recorded by a concurrent run meanwhile
         raise HoldoutAlreadyRun(f"holdout for {kind} already run: {reg[kind]}")
     reg[kind] = {
         "run_at": pd.Timestamp.now(tz="UTC").isoformat(),
         "git_sha": _git_sha(),
+        "git_dirty": _git_dirty(),
         "window": {f.name: getattr(w, f.name).isoformat() for f in dataclasses.fields(w)},
+        "variants": list(out),
     }
-    registry.parent.mkdir(parents=True, exist_ok=True)
-    tmp = registry.with_name(f"{registry.name}.{os.getpid()}.tmp")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(reg, indent=1), encoding="utf-8")
-    os.replace(tmp, registry)
+    os.replace(tmp, path)
     return out
