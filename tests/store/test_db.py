@@ -164,3 +164,19 @@ def test_records_fill_equity_event_funding_run(db):
         counts = {t: c.execute(text(f"SELECT COUNT(*) FROM {t}")).scalar()
                   for t in ("runs", "fills", "equity", "risk_events", "funding")}
     assert counts == {"runs": 1, "fills": 1, "equity": 1, "risk_events": 1, "funding": 1}
+
+
+def test_order_status_and_book_snapshot(db):
+    o = OrderRequest("c1", TS, "BTC", "buy", 1.0, 100.0, "IOC", "open", "p1", "g1")
+    assert db.order_status("perp", "c1") is None
+    db.record_order("perp", o)
+    assert db.order_status("perp", "c1") == "NEW"
+    db.set_order_status("perp", "c1", "FILLED")
+    assert db.order_status("perp", "c1") == "FILLED"
+    assert db.order_status("spot", "c1") is None
+    db.record_book_snapshot(TS, "BTC", [(100.0, 1.0)], [(101.0, 2.0)])
+    with db.engine.connect() as c:
+        row = c.execute(text("SELECT ts, symbol, bids, asks FROM book_snapshots")).one()
+    assert row[1] == "BTC"
+    assert json.loads(row[2]) == [[100.0, 1.0]] and json.loads(row[3]) == [[101.0, 2.0]]
+    assert pd.Timestamp(row[0]) == TS

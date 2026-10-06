@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -69,12 +70,16 @@ class BarStore:
         return df
 
     def write(self, venue: Venue, asset: str, df: pd.DataFrame) -> None:
+        """Crash-safe: write a sibling temp file, then atomically replace the target."""
         path = self._bar_path(venue, asset)
         path.parent.mkdir(parents=True, exist_ok=True)
-        _normalize(df).to_parquet(path)
+        tmp = path.with_name(path.name + ".tmp")
+        _normalize(df).to_parquet(tmp)
+        os.replace(tmp, path)
 
     def append(self, venue: Venue, asset: str, df: pd.DataFrame) -> int:
-        """Merge into stored bars (new rows win on duplicate index); return rows added."""
+        """Merge into stored bars (new rows win on duplicate index); return rows added.
+        Crash-safe via `write` (a crash mid-write leaves the previous file intact)."""
         old = self.read(venue, asset)
         new = _normalize(df)
         merged = pd.concat([old, new])

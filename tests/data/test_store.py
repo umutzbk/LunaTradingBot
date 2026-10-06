@@ -112,3 +112,24 @@ def test_delete_removes_bars_and_is_idempotent(tmp_path):
     s.delete("kraken_spot", "BTC")
     s.delete("kraken_spot", "BTC")
     assert s.assets("kraken_spot") == []
+
+
+def test_append_is_crash_safe(tmp_path, monkeypatch):
+    store = BarStore(tmp_path)
+    store.write("kraken_spot", "BTC", make_bars(10))
+    path = tmp_path / "bars" / "kraken_spot" / "BTC.parquet"
+    real = pd.DataFrame.to_parquet
+
+    def crashing(self, target, *a, **k):
+        with open(target, "wb") as fh:  # partial write, then the process "dies"
+            fh.write(b"PAR1garbage")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(pd.DataFrame, "to_parquet", crashing)
+    try:
+        store.append("kraken_spot", "BTC", make_bars(3, start="2024-01-02"))
+    except OSError:
+        pass
+    monkeypatch.setattr(pd.DataFrame, "to_parquet", real)
+    assert len(pd.read_parquet(path)) == 10  # original file intact
+    assert len(store.read("kraken_spot", "BTC")) == 10

@@ -249,6 +249,12 @@ class Db:
                 m.orders.c.account == account, m.orders.c.client_id == client_id
             ).values(status=status))
 
+    def order_status(self, account: str, client_id: str) -> str | None:
+        """Current status of an order, or None if it was never recorded."""
+        with self.engine.connect() as c:
+            return c.execute(select(m.orders.c.status).where(
+                m.orders.c.account == account, m.orders.c.client_id == client_id)).scalar()
+
     def open_orders(self, account: str) -> list[OrderRequest]:
         with self.engine.connect() as c:
             rows = c.execute(select(m.orders).where(
@@ -284,6 +290,16 @@ class Db:
             c.execute(m.risk_events.insert().values(
                 account=account, run_id=run_id, ts=m.ts_to_str(ts), rule=rule, detail=detail,
                 action=action))
+
+    def record_book_snapshot(
+        self, ts: pd.Timestamp, symbol: str,
+        bids: list[tuple[float, float]], asks: list[tuple[float, float]],
+    ) -> None:
+        """Order book levels as JSON [[price, qty], ...], best first."""
+        with self._tx() as c:
+            c.execute(m.book_snapshots.insert().values(
+                ts=m.ts_to_str(ts), symbol=symbol, bids=m.dumps([list(x) for x in bids]),
+                asks=m.dumps([list(x) for x in asks])))
 
     def record_funding(
         self, account: str, ts: pd.Timestamp, symbol: str, position: float | None,
