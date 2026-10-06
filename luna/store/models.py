@@ -53,6 +53,8 @@ candidates = Table(
     Column("regime", String),
     Column("selected", Boolean, nullable=False),
     Column("reject_reason", String),
+    # selected candidates' order outcome (live): submitted -> filled | partial | unfilled
+    Column("status", String),
     Column("features", Text),
     Column("legs", Text),
     Column("stop", Text),

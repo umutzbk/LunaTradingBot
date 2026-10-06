@@ -72,6 +72,7 @@ class Pipeline:
         mode: Literal["backtest", "paper", "live"],
         *,
         keep_candidates: bool = False,
+        track_attempts: bool = False,
     ) -> None:
         self.pf = pf
         self.state = state
@@ -96,6 +97,11 @@ class Pipeline:
         self.cand_objs: list[Candidate] | None = [] if keep_candidates else None
         self.events: list[dict] = []
         self._touched: set[str] = set()
+        # live: monotone exit re-plan counter per position (client ids unique within a minute);
+        # None in the backtest (attempt 0 = the historical ids)
+        self.exit_attempts: dict[str, int] | None = {} if track_attempts else None
+        # live: called as (position_id, status, group) when an entry group resolves
+        self.on_entry_resolved: Callable[[str, str, EntryGroup], None] | None = None
 
     # --- records ----------------------------------------------------------------------------------
 
@@ -115,6 +121,8 @@ class Pipeline:
     def finish(self, pid: str, ts: pd.Timestamp, reason: str) -> None:
         pos = self.pf.close_position(pid, ts, reason)
         self.exiting.pop(pid, None)
+        if self.exit_attempts is not None:
+            self.exit_attempts.pop(pid, None)
         p = pos.pnl
         net = pos.net_pnl()
         self.trades.append({
@@ -195,6 +203,8 @@ class Pipeline:
             if g.cand_row >= 0:
                 self.cand_rows[g.cand_row]["status"] = status
             del self.entry_groups[pid]
+            if self.on_entry_resolved is not None:
+                self.on_entry_resolved(pid, status, g)
         for pid in self._touched:
             if pid in self.pf.positions and self.pf.positions[pid].is_flat():
                 self.finish(pid, t, self.exiting.get(pid, "signal"))
@@ -245,10 +255,11 @@ class Pipeline:
     def flatten(
         self, t: pd.Timestamp, mid: Callable[[str], float], now=None,
         adjust: Callable[[OrderRequest, float], OrderRequest] | None = None,
+        only: set[str] | None = None,
     ) -> None:
-        """Exit orders for every position being exited whose previous exit order is no longer
-        working. ``mid(asset)`` is the reference price; ``adjust`` may rewrite an order (e.g. an
-        emergency exit as IOC) before the risk check."""
+        """Exit orders for every position being exited (restricted to ``only`` if given) whose
+        previous exit order is no longer working. ``mid(asset)`` is the reference price;
+        ``adjust`` may rewrite an order (e.g. an emergency exit as IOC) before the risk check."""
         if not self.exiting:
             return
         pf = self.pf
@@ -260,10 +271,15 @@ class Pipeline:
             if pos is None:
                 self.exiting.pop(pid)
                 continue
-            if pid in working:
+            if pid in working or (only is not None and pid not in only):
                 continue
             mids = {a: mid(a) for a in pos.qty}
-            plan = plan_exit(pos, mids, self.instruments, self.kind, now, self.band, costs=self.costs)
+            attempt = 0
+            if self.exit_attempts is not None:
+                attempt = self.exit_attempts.get(pid, 0)
+                self.exit_attempts[pid] = attempt + 1
+            plan = plan_exit(pos, mids, self.instruments, self.kind, now, self.band, costs=self.costs,
+                             attempt=attempt)
             for a in plan.dust:
                 pf.mark({a: mids[a]})
                 pf.write_off_dust(pid, a, mids[a], t)

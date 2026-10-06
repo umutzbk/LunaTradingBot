@@ -67,6 +67,14 @@ class Db:
             conn.exec_driver_sql("BEGIN")
 
         m.metadata.create_all(self.engine)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Additive column migrations for databases created by an older schema."""
+        with self.engine.begin() as c:
+            cols = {r[1] for r in c.exec_driver_sql("PRAGMA table_info(candidates)")}
+            if "status" not in cols:
+                c.exec_driver_sql("ALTER TABLE candidates ADD COLUMN status VARCHAR")
 
     def close(self) -> None:
         self.engine.dispose()
@@ -178,11 +186,14 @@ class Db:
 
     # --- candidates -------------------------------------------------------------------------------
 
-    def record_candidates(self, run_id: str, rows: list[dict[str, Any]], account: str | None = None) -> None:
-        """Insert candidate rows (selected and rejected). Row keys: ts, strategy, key, direction,
-        score, edge_bps, regime, selected, reject_reason, features, legs, stop, exit, account."""
+    def record_candidates(
+        self, run_id: str, rows: list[dict[str, Any]], account: str | None = None,
+    ) -> list[int]:
+        """Insert candidate rows (selected and rejected); returns their ids in order. Row keys: ts,
+        strategy, key, direction, score, edge_bps, regime, selected, reject_reason, status,
+        features, legs, stop, exit, account."""
         if not rows:
-            return
+            return []
         out = []
         for r in rows:
             acc = r.get("account", account)
@@ -193,11 +204,17 @@ class Db:
                 "strategy": r["strategy"], "key": r["key"], "direction": int(r["direction"]),
                 "score": r.get("score"), "edge_bps": r.get("edge_bps"), "regime": r.get("regime"),
                 "selected": bool(r.get("selected", False)), "reject_reason": r.get("reject_reason"),
+                "status": r.get("status"),
                 "features": _dump_opt(r.get("features")), "legs": _dump_opt(r.get("legs")),
                 "stop": _dump_opt(r.get("stop")), "exit": _dump_opt(r.get("exit")),
             })
         with self._tx() as c:
-            c.execute(m.candidates.insert(), out)
+            return [int(c.execute(m.candidates.insert().values(row)).inserted_primary_key[0])
+                    for row in out]
+
+    def set_candidate_status(self, candidate_id: int, status: str) -> None:
+        with self._tx() as c:
+            c.execute(m.candidates.update().where(m.candidates.c.id == candidate_id).values(status=status))
 
     def record_outcome(
         self, candidate_id: int, outcome_r: float, exit_reason: str | None,

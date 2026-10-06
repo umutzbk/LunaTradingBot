@@ -212,3 +212,20 @@ def test_fills_after_and_order_count(db):
         db.record_order("perp", OrderRequest(f"o{k}", ts, "A", "buy", 1.0, 1.0, "IOC", "open", "p", "g"))
     assert db.count_orders_since("perp", TS.floor("D")) == 2
     assert db.count_orders_since("spot", TS.floor("D")) == 0
+
+
+def test_candidate_status_and_migration_of_old_schema(tmp_path):
+    path = tmp_path / "old.db"
+    d = Db(f"sqlite:///{path.as_posix()}")
+    with d.engine.begin() as c:  # a database created before the status column existed
+        c.exec_driver_sql("ALTER TABLE candidates DROP COLUMN status")
+    d.close()
+    d = Db(f"sqlite:///{path.as_posix()}")
+    row = {"ts": TS, "strategy": "s", "key": "A", "direction": 1, "selected": True, "status": "submitted"}
+    ids = d.record_candidates("r", [row, {**row, "selected": False, "status": None}], account="perp")
+    assert len(ids) == 2 and ids[1] == ids[0] + 1
+    d.set_candidate_status(ids[0], "filled")
+    with d.engine.connect() as c:
+        got = c.execute(text("SELECT status FROM candidates ORDER BY id")).scalars().all()
+    assert got == ["filled", None]
+    d.close()

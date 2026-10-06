@@ -1,5 +1,6 @@
 import logging
 
+import pytest
 from typer.testing import CliRunner
 
 import luna.instruments
@@ -16,7 +17,16 @@ def test_paper_help_lists_options():
         assert opt in res.output
 
 
-def test_paper_refused_when_lock_held(tmp_path, monkeypatch):
+@pytest.fixture
+def httpx_level():
+    """The CLI sets the httpx logger level globally; restore it for the other tests."""
+    lg = logging.getLogger("httpx")
+    old = lg.level
+    yield
+    lg.setLevel(old)
+
+
+def test_paper_refused_when_lock_held(tmp_path, monkeypatch, httpx_level):
     monkeypatch.setenv("LUNA_VAR_DIR", str(tmp_path))
     monkeypatch.setattr(luna.instruments, "load_instruments",
                         lambda settings, kind, *a, **k: default_instruments(["BTC"], kind, load_settings()))

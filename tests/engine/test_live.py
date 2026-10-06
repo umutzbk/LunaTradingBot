@@ -114,6 +114,8 @@ class FakeFeed:
         self.leak = False  # also serve the still-forming bar (a buggy feed)
         self.rates: dict[str, float | None] = {}
         self.mid_override: dict[str, float] = {}
+        self.depth = 1e9  # size of the single book level on each side
+        self.book_fail = False
 
     def _closed(self, a, now):
         df = self.panel[a]
@@ -140,8 +142,10 @@ class FakeFeed:
         return {a: self._mid(a) for a in self.panel}
 
     def book(self, a):
+        if self.book_fail:
+            raise FeedError("orderbook unavailable")
         mid = self._mid(a)
-        return [(mid * (1 - self.spread), 1e9)], [(mid * (1 + self.spread), 1e9)]
+        return [(mid * (1 - self.spread), self.depth)], [(mid * (1 + self.spread), self.depth)]
 
     def trades_since(self, a, since_ns):
         return pd.DataFrame({"price": pd.Series(dtype="float64"), "volume": pd.Series(dtype="float64"),
@@ -676,7 +680,7 @@ def test_emergency_replaces_resting_spot_exit_with_ioc(db):
     assert exit_order["tif"] == "POST_ONLY" and exit_order["status"] == "OPEN"
     (pos,) = eng.pf.positions.values()
     feed.mid_override["BTC"] = pos.entry_ref_price["BTC"] * 0.94  # -6% on <= 0.5x equity
-    eng.minute_check(clock.now + pd.Timedelta(seconds=60))
+    eng.minute_check(clock.now + pd.Timedelta(seconds=30))  # same minute as the resting exit
     got = {o["client_id"]: o for o in orders(db)}
     assert got[exit_order["client_id"]]["status"] == "CANCELED"
     urgent = [o for o in got.values() if o["intent"] == "close" and o["tif"] == "IOC"]

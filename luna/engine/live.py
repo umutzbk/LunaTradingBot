@@ -16,8 +16,9 @@ equity. A tz-naive ``now`` raises.
 tick(now):
   1. reload kill_switch / paused from the Db (others may set them; they are only written with
      ``Db.set_flag``); refit the model when due;
-  2. ``feed.refresh(now)`` - ``FeedError``: skip the tick, record risk event ``feed_error``; 4 in a
-     row -> notify; 2 in a row with open positions -> pause + notify;
+  2. ``feed.refresh(now)`` - ``FeedError``: skip the tick, record risk event ``feed_error``. Every
+     tick without fresh data (feed error, no bars, no new bar, a stale newest bar) is a data miss
+     (spec §7.4): 4 in a row -> notify; 2 in a row with open positions -> pause + notify;
   3. poll the broker and book every fill row recorded since the last one booked (the Db is the
      source of truth, so fills recorded before a crash are booked exactly once after a restart);
      resolve entry groups whose orders are all terminal;
@@ -30,8 +31,23 @@ tick(now):
      commit a snapshot.
 
 minute_check(now): poll fills; emergency stops from live mids (a position whose loss reaches
-``emergency_stop_frac * equity`` is closed at once, IOC); hourly funding; Telegram commands; lock
-heartbeat and dead-man's-switch ping.
+``emergency_stop_frac * equity`` is closed at once: a resting post-only exit is cancelled and
+replaced); every position exiting for ``emergency_stop`` / ``kill_switch`` without a working exit
+order is (re-)flattened as IOC each minute (rejected / cancelled / partly filled IOCs are retried
+with a fresh client id: ``plan_exit(attempt=n)``, a monotone per-position counter); hourly
+funding; Telegram commands. ``run_forever`` refreshes the lock (and pings the dead-man's switch)
+first, before any tick / minute check; a lost lock stops the engine.
+
+Urgent exits (emergency stop, kill switch, R4 drawdown kill) always go out as IOC limits within the
+band, also on spot. ``/resume`` clears both flags, resets the peak to the current equity, cancels
+the kill switch's working exits and hands those positions back to their strategies.
+
+Lock. Every order is preceded by a lock check (``Db.heartbeat``): if another process took the lock
+the engine stops (risk event ``lock_lost``, notification) and never submits or writes state again.
+A model fit runs with a background heartbeat. A client id the Db already knows is never
+resubmitted (risk event ``duplicate_client_id``). Candidates are recorded every tick (selected and
+rejected with reasons); a selected one's ``status`` goes submitted -> filled / partial / unfilled
+when its orders are terminal, and the "entry" notification is sent on fill.
 
 Persistence and restart safety. One Db transaction (``Db.save_snapshot``) holds the risk state
 (without flags), the open/closed positions and the engine state (portfolio cash/holdings, positions
@@ -80,6 +96,7 @@ from luna.notify.telegram import Notifier, handle_command
 from luna.portfolio.constructor import Selection
 from luna.portfolio.portfolio import Portfolio, Position
 from luna.ranking.expectancy import ExpectancyRanker
+from luna.risk.engine import STALE_AFTER
 from luna.risk.state import state_to_dict
 from luna.store import models as m
 from luna.store.db import Db
@@ -98,6 +115,7 @@ ENGINE_KEY = "engine"
 _OPEN = ("NEW", "OPEN", "PARTIAL")
 _FLAGS = ("kill_switch", "paused")
 _HOLDINGS_TOL = 0.01  # R18 reconciliation tolerance (±1%)
+URGENT = ("emergency_stop", "kill_switch")  # exit reasons retried every minute, as IOC
 
 
 class EngineLocked(RuntimeError):
@@ -159,6 +177,7 @@ def candidate_record(c: Candidate, status: str, reason: str | None) -> dict[str,
         "ts": c.ts, "strategy": c.strategy, "key": c.key, "direction": int(c.direction),
         "score": _f(c.score), "edge_bps": _f(c.edge_bps), "regime": c.regime,
         "selected": status != "rejected", "reject_reason": reason,
+        "status": None if status == "rejected" else status,
         "features": d["features"], "legs": d["legs"], "stop": d["stop"], "exit": d["exit"],
     }
 
@@ -233,19 +252,27 @@ def fit_live_model(
 
 
 class _Submitter:
-    """What the pipeline submits to: commits a snapshot (the order is already registered as in
-    flight) before handing the order to the broker; never resubmits a known client_id."""
+    """What the pipeline submits to. Before handing an order to the broker it (1) verifies that
+    this process still holds the account lock (refreshing it; on loss the engine stops and nothing
+    more is submitted), (2) commits a snapshot (the order is already registered as in flight) and
+    (3) refuses a client_id the Db already knows (risk event ``duplicate_client_id``)."""
 
     def __init__(self, engine: LiveEngine) -> None:
         self.engine = engine
 
     def submit(self, order: OrderRequest) -> None:
         eng = self.engine
+        now = eng._utc(eng.clock())
+        if eng._lock_lost or not eng.db.heartbeat(eng.account, eng.owner):
+            eng._on_lock_lost(now, f"submit of {order.client_id} refused")
+            return
         if order.intent == "open":
             eng._own(order.position_id)
         eng._snapshot()
         if eng.db.order_status(eng.account, order.client_id) is not None:
             log.warning("client_id %s already known; not resubmitted", order.client_id)
+            eng._event(now, "duplicate_client_id", f"{order.client_id} {order.intent} not resubmitted",
+                       "skip")
             return
         eng.broker.submit(order)
 
@@ -306,8 +333,10 @@ class LiveEngine:
         self._last_funding_hour: pd.Timestamp | None = None
         self._last_fill_id = 0
         self._closed_pending: list[tuple[Position, pd.Timestamp, str]] = []
-        self._feed_errors = 0
+        self._data_misses = 0  # consecutive ticks without fresh data (feed error / stale / none)
         self._started = False
+        self._lock_lost = False
+        self._cand_ids: dict[str, int] = {}  # entry position id -> candidates row id (Db)
         self._stop = threading.Event()
 
     # --- helpers ------------------------------------------------------------------------------------
@@ -377,7 +406,8 @@ class LiveEngine:
         for pos in self.db.open_positions(self.account):
             pf.positions[pos.id] = pos
         self.pipe = Pipeline(pf, state, self.account, self.limits, self.costs, self._instruments,
-                             _Submitter(self), self.mode, keep_candidates=True)
+                             _Submitter(self), self.mode, keep_candidates=True, track_attempts=True)
+        self.pipe.on_entry_resolved = self._entry_resolved
         if aux is not None:
             self._restore(aux)
         else:
@@ -400,6 +430,8 @@ class LiveEngine:
             sel = Selection(cand_from_dict(d["cand"]), float(d["gross_notional"]), float(d["risk_amount"]))
             pipe.entry_groups[pid] = EntryGroup(sel, set(d["assets"]), -1, set(d["filled"]), set(d["cids"]))
         self._owners = dict(aux.get("owners", {}))
+        pipe.exit_attempts = {k: int(v) for k, v in aux.get("exit_attempts", {}).items()}
+        self._cand_ids = {k: int(v) for k, v in aux.get("cand_ids", {}).items()}
         self._last_bar = _ts(aux.get("last_bar"))
         self._last_funding_hour = _ts(aux.get("last_funding_hour"))
         self._last_fill_id = int(aux.get("last_fill_id", 0))
@@ -450,7 +482,7 @@ class LiveEngine:
         if not due or (self._model_retry is not None and now < self._model_retry and not force):
             return
         try:
-            model = self._model_fn(now)
+            model = self._with_heartbeat(self._model_fn, now)
         except Exception as e:  # noqa: BLE001 - keep running (exits still managed) on a failed fit
             log.exception("model fit failed")
             self._event(now, "model_fit_failed", f"{type(e).__name__}: {e}", "keep previous model")
@@ -468,6 +500,27 @@ class LiveEngine:
             log.warning("model has no accepted expectancy cell: managing positions, opening nothing")
             self._event(now, "no_model", "no accepted expectancy cell", "no entries")
             self._notify("model has no accepted cell: no new entries until the next refit")
+
+    def _with_heartbeat(self, fn: Callable[[pd.Timestamp], Any], now: pd.Timestamp) -> Any:
+        """Run a long call (model fit) while a background thread keeps the lock fresh."""
+        if not self._started:
+            return fn(now)
+        done = threading.Event()
+
+        def beat() -> None:
+            while not done.wait(MINUTE.total_seconds()):
+                try:
+                    self.db.heartbeat(self.account, self.owner)
+                except Exception:  # noqa: BLE001
+                    log.exception("heartbeat during model fit failed")
+
+        th = threading.Thread(target=beat, name="luna-fit-heartbeat", daemon=True)
+        th.start()
+        try:
+            return fn(now)
+        finally:
+            done.set()
+            th.join()
 
     def _own(self, pid: str) -> None:
         """Remember which strategy instance (params) opened position ``pid``."""
@@ -535,6 +588,8 @@ class LiveEngine:
     def tick(self, now) -> None:
         now = self._utc(now)
         self._require_started()
+        if self._lock_lost:
+            return
         pipe = self.pipe
         self._reload_flags()
         self._ensure_model(now)
@@ -543,17 +598,17 @@ class LiveEngine:
         try:
             buffers = self.feed.refresh(now)
         except FeedError as e:
-            self._feed_error(now, e)
+            log.warning("feed error: %s", e)
+            self._data_miss(now, "feed_error", str(e), "skip_tick")
             self._book_and_settle(now)
             self._commit(now)
             return
-        self._feed_errors = 0
         self._book_and_settle(now)
         panel = {a: df[df.index + BAR <= now] for a, df in buffers.items()
                  if a in self._instruments and len(df)}
         panel = {a: df for a, df in panel.items() if len(df)}
         if not panel:
-            self._event(now, "no_data", "feed returned no closed bars", "skip")
+            self._data_miss(now, "no_data", "feed returned no closed bars", "skip")
             self._commit(now)
             return
         idx = pd.DatetimeIndex([])
@@ -573,9 +628,13 @@ class LiveEngine:
         if self._last_bar is not None and t <= self._last_bar:
             if self.pf.holdings:
                 self.pf.mark({a: price(a) for a in self.pf.holdings})
-            self._event(now, "stale_data", f"no new closed bar since {self._last_bar}", "no decision")
+            self._data_miss(now, "stale_data", f"no new closed bar since {self._last_bar}", "no decision")
             self._commit(now)
             return
+        if now - (t + BAR) <= STALE_AFTER:
+            self._data_misses = 0  # a fresh bar
+        else:  # decided anyway (exits); entries are vetoed by R16
+            self._data_miss(now, "stale_data", f"newest bar {t} is stale at {now}", "R16 blocks entries")
         bars = 1 if self._last_bar is None else max(1, int((t - self._last_bar) / BAR))
         self._last_bar = t  # decided at most once, also if the process dies mid-decision
         signals, firing = self._signals(panel, idx, i)
@@ -583,7 +642,7 @@ class LiveEngine:
         pipe.portfolio_step(t, {a: price(a) for a in self.pf.holdings}, now=now)
         self._sync_flags(now, before)
         pipe.exit_signals(i, mkt, signals, bars)
-        pipe.flatten(t, price, now=now)
+        pipe.flatten(t, price, now=now, adjust=self._urgent_ioc)
         if firing and self._entries_enabled and self.model is not None:
             pipe.entries(i, t, firing, mkt, signals, self.model.ranker, now=now)
         self._commit(now, equity=True)
@@ -591,6 +650,8 @@ class LiveEngine:
     def minute_check(self, now) -> None:
         now = self._utc(now)
         self._require_started()
+        if self._lock_lost:
+            return
         self._reload_flags()
         self._book_and_settle(now)
         try:
@@ -598,15 +659,15 @@ class LiveEngine:
         except FeedError as e:
             log.warning("mids unavailable: %s", e)
             mids = {}
-        self._emergency(now, mids)
 
         def price(a: str) -> float:
             v = mids.get(a)
             return float(v) if v is not None and math.isfinite(v) and v > 0 else float(self.pf.marks[a])
 
+        self._emergency(now, mids)
+        self._urgent_exits(now, price)
         self._funding(now, price)
         self._commands()
-        self._heartbeat()
         self._commit(now)
 
     # --- steps ------------------------------------------------------------------------------------
@@ -625,16 +686,18 @@ class LiveEngine:
                     firing.append((strat.name, key))
         return signals, firing
 
-    def _feed_error(self, now: pd.Timestamp, e: Exception) -> None:
-        self._feed_errors += 1
-        log.warning("feed error (%d in a row): %s", self._feed_errors, e)
-        self._event(now, "feed_error", str(e), "skip_tick")
-        if self._feed_errors == FEED_NOTIFY_AFTER:
-            self._notify(f"feed failing: {self._feed_errors} ticks in a row ({e})")
-        if (self._feed_errors >= FEED_PAUSE_AFTER and self.pf.positions
+    def _data_miss(self, now: pd.Timestamp, rule: str, detail: str, action: str) -> None:
+        """A tick without fresh data (feed error, no bars, no new or a stale bar), spec §7.4:
+        4 in a row -> notify; 2 in a row with open positions -> pause + notify."""
+        self._data_misses += 1
+        self._event(now, rule, detail, action)
+        if self._data_misses == FEED_NOTIFY_AFTER:
+            self._notify(f"feed failing: {self._data_misses} ticks in a row without fresh data ({rule})")
+        if (self._data_misses >= FEED_PAUSE_AFTER and self.pf.positions
                 and not self.pipe.state.paused):
             self._set_flag("paused", True)
-            self._event(now, "feed_pause", f"{self._feed_errors} feed errors with open positions", "pause")
+            self._event(now, "feed_pause", f"{self._data_misses} ticks without data with open positions",
+                        "pause")
             self._notify("no market data with open positions: trading paused (/resume to clear)")
 
     def _book_fills(self, now: pd.Timestamp) -> None:
@@ -701,11 +764,19 @@ class LiveEngine:
                            f"loss {-pnl:.4f} >= {threshold:.4f} at live mids")
                 self._notify(f"emergency stop {pid}: loss {-pnl:.2f}")
                 hit = True
-        if hit:
+        if hit:  # a resting (post-only) exit of a stopped position is replaced, not waited for
             urgent = {pid for pid, r in pipe.exiting.items() if r == "emergency_stop"}
-            self._cancel_working(now, lambda o: o.intent != "open" and o.position_id in urgent)
-            pipe.flatten(self._bar_of(now), lambda a: mids.get(a) or float(pf.marks[a]), now=now,
-                         adjust=self._urgent_ioc)
+            self._cancel_working(
+                now, lambda o: o.intent != "open" and o.position_id in urgent and o.tif != "IOC")
+
+    def _urgent_exits(self, now: pd.Timestamp, price: Callable[[str], float]) -> None:
+        """Every minute: (re-)flatten positions exiting for an emergency stop or the kill switch
+        that have no working exit order (an IOC that was rejected, cancelled or partly filled is
+        retried with a fresh client id)."""
+        only = {pid for pid, r in self.pipe.exiting.items()
+                if r in URGENT and pid in self.pf.positions}
+        if only:
+            self.pipe.flatten(self._bar_of(now), price, now=now, adjust=self._urgent_ioc, only=only)
 
     def _cancel_working(self, now: pd.Timestamp, which: Callable[[OrderRequest], bool]) -> None:
         """Cancel the working orders selected by ``which`` and book / settle them (an urgent exit
@@ -718,7 +789,7 @@ class LiveEngine:
 
     def _urgent_ioc(self, o: OrderRequest, mid: float) -> OrderRequest:
         """Emergency / kill exits on spot go out as IOC limits within the band (not post-only)."""
-        if o.tif == "IOC" or self.pipe.exiting.get(o.position_id) not in ("emergency_stop", "kill_switch"):
+        if o.tif == "IOC" or self.pipe.exiting.get(o.position_id) not in URGENT:
             return o
         sign = 1.0 if o.side == "buy" else -1.0
         return dataclasses.replace(o, tif="IOC", limit_price=mid * (1.0 + sign * self.limits.max_price_band))
@@ -749,16 +820,41 @@ class LiveEngine:
                 reply = f"{cmd} failed: {type(e).__name__}"
             self._notify(reply)
 
-    def _heartbeat(self) -> None:
-        if not self.db.heartbeat(self.account, self.owner):
-            log.critical("lost the %s lock; stopping", self.account)
-            self._notify("lost the process lock: stopping")
-            self.stop()
+    def heartbeat(self, now=None) -> None:
+        """Refresh the account lock (stop on loss) and ping the dead-man's switch."""
+        now = self._utc(now if now is not None else self.clock())
+        if self._lock_lost or not self.db.heartbeat(self.account, self.owner):
+            self._on_lock_lost(now, "heartbeat")
             return
         if self.http_client is not None:
             ping(self.http_client, self.settings.healthcheck_url)
 
+    def _on_lock_lost(self, now: pd.Timestamp, where: str) -> None:
+        """Another process took the lock: stop at once, never submit or write state again."""
+        first = not self._lock_lost
+        self._lock_lost = True
+        self.stop()
+        if first:
+            log.critical("lost the %s lock (%s); stopping", self.account, where)
+            try:
+                self._event(now, "lock_lost", f"{self.owner}: {where}", "stop")
+            except Exception:  # noqa: BLE001
+                log.exception("could not record lock_lost")
+            self._notify("lost the process lock: stopping (no further orders)")
+
     # --- records / snapshot -------------------------------------------------------------------------
+
+    def _entry_resolved(self, pid: str, status: str, g: EntryGroup) -> None:
+        """An entry's orders are all terminal: store the candidate's outcome; notify fills."""
+        cid = self._cand_ids.pop(pid, None)
+        if cid is not None:
+            self.db.set_candidate_status(cid, status)
+        if status in ("filled", "partial"):
+            c = g.sel.cand
+            pos = self.pf.positions.get(pid)
+            qty = ", ".join(f"{a} {q:+.6g}" for a, q in (pos.qty.items() if pos else ()) if q)
+            self._notify(f"entry {status}: {c.strategy} {c.key} dir {c.direction} ({qty}); "
+                         f"stop {c.stop.level:.6g}, risk {g.sel.risk_amount:.2f}")
 
     def _collect(self, now: pd.Timestamp) -> None:
         """Move new pipeline records (candidates, events, closed trades) to the Db / notifier."""
@@ -766,11 +862,10 @@ class LiveEngine:
         if pipe.cand_rows:
             rows = [candidate_record(c, r["status"], r["reason"])
                     for c, r in zip(pipe.cand_objs, pipe.cand_rows, strict=True)]
-            self.db.record_candidates(self.run_id, rows, account=self.account)
-            for r in rows:
-                if r["selected"]:
-                    self._notify(f"entry {r['strategy']} {r['key']} dir {r['direction']} "
-                                 f"score {r['score']:.3f}")
+            ids = self.db.record_candidates(self.run_id, rows, account=self.account)
+            for pid, g in pipe.entry_groups.items():
+                if g.cand_row >= 0:
+                    self._cand_ids[pid] = ids[g.cand_row]
             pipe.cand_rows.clear()
             pipe.cand_objs.clear()
             for g in pipe.entry_groups.values():
@@ -800,6 +895,8 @@ class LiveEngine:
         self._snapshot()
 
     def _snapshot(self) -> None:
+        if self._lock_lost:
+            return  # another process owns the account state now
         pipe = self.pipe
         pf = pipe.pf
         risk = {k: v for k, v in state_to_dict(pipe.state).items() if k not in _FLAGS}
@@ -822,6 +919,8 @@ class LiveEngine:
             "last_funding_hour": (m.ts_to_str(self._last_funding_hour)
                                   if self._last_funding_hour is not None else None),
             "last_fill_id": int(self._last_fill_id),
+            "exit_attempts": dict(pipe.exit_attempts or {}),
+            "cand_ids": {pid: i for pid, i in self._cand_ids.items() if pid in pipe.entry_groups},
         }
         positions: list[tuple[Position, Any, str | None, pd.Timestamp | None]] = [
             (p, "open", None, None) for p in pf.positions.values()]
@@ -856,11 +955,16 @@ class LiveEngine:
 
     def resume(self) -> None:
         """Clear kill switch and pause; reset the peak to the current equity (EngineControl)."""
+        now = self._utc(self.clock())
         self._set_flag("kill_switch", False)
         self._set_flag("paused", False)
-        self._feed_errors = 0
+        self._data_misses = 0
+        # positions being flattened by the kill switch go back to strategy management
+        killed = {pid for pid, r in self.pipe.exiting.items() if r == "kill_switch"}
+        self._cancel_working(now, lambda o: o.intent != "open" and o.position_id in killed)
+        for pid in killed:
+            self.pipe.exiting.pop(pid, None)
         self.pipe.state = dataclasses.replace(self.pipe.state, peak_equity=float(self.pf.equity()))
-        now = self._utc(self.clock())
         self._event(now, "resume", f"peak reset to {self.pf.equity():.4f}", "resume")
         self._snapshot()
 
@@ -869,8 +973,7 @@ class LiveEngine:
         now = self._utc(self.clock())
         self._set_flag("kill_switch", True)
         self._event(now, "kill", "telegram /kill", "flatten")
-        for pid in self.pf.positions:
-            self.pipe.exiting[pid] = "kill_switch"
+        self._book_and_settle(now)  # book fills already made (e.g. a strategy exit just filled)
         self._cancel_working(now, lambda o: True)  # resting entries and post-only exits
         for pid in self.pf.positions:  # incl. positions registered by fills booked just now
             self.pipe.exiting[pid] = "kill_switch"
@@ -878,8 +981,7 @@ class LiveEngine:
             mids = self.feed.mids()
         except FeedError:
             mids = {}
-        self.pipe.flatten(self._bar_of(now), lambda a: mids.get(a) or float(self.pf.marks[a]), now=now,
-                          adjust=self._urgent_ioc)
+        self._urgent_exits(now, lambda a: mids.get(a) or float(self.pf.marks[a]))
         self._commit(now)
 
     # --- loop -------------------------------------------------------------------------------------
@@ -890,10 +992,10 @@ class LiveEngine:
     def close(self) -> None:
         """Final snapshot and lock release (clean shutdown)."""
         try:
-            if self._started:
+            if self._started and not self._lock_lost:
                 self._snapshot()
         finally:
-            self.db.release_lock(self.account, self.owner)
+            self.db.release_lock(self.account, self.owner)  # no-op unless we still own it
 
     @staticmethod
     def next_tick(now: pd.Timestamp) -> pd.Timestamp:
@@ -918,6 +1020,10 @@ class LiveEngine:
         nxt_min = now
         while not self._stop.is_set():
             now = self._utc(self.clock())
+            if now >= nxt_tick or now >= nxt_min:
+                self._safe(self.heartbeat, now)  # first: never trade on a lock we lost
+                if self._stop.is_set():
+                    break
             if now >= nxt_tick:
                 self._safe(self.tick, now)
                 nxt_tick = self.next_tick(now)

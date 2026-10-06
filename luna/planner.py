@@ -36,8 +36,15 @@ def round_qty(qty: float, step: float) -> float:
     return math.copysign(out, qty) if out else 0.0
 
 
-def _client_id(position_id: str, leg_group: str, asset: str, intent: str, ts: pd.Timestamp) -> str:
-    return f"{position_id}:{leg_group}:{asset}:{intent}:{ts:%Y%m%d%H%M}"
+def _client_id(
+    position_id: str, leg_group: str, asset: str, intent: str, ts: pd.Timestamp, attempt: int = 0
+) -> str:
+    """Minute-resolution id; ``attempt > 0`` (live re-plans within the same minute) appends
+    ``:a{attempt}``. ``attempt == 0`` keeps the historical ids exactly."""
+    if attempt < 0:
+        raise ValueError(f"attempt must be >= 0, got {attempt}")
+    cid = f"{position_id}:{leg_group}:{asset}:{intent}:{ts:%Y%m%d%H%M}"
+    return f"{cid}:a{attempt}" if attempt else cid
 
 
 def _mid(mids: dict[str, float], asset: str) -> float:
@@ -62,6 +69,7 @@ def _make_order(
     position_id: str,
     leg_group: str,
     check_notional: bool,
+    attempt: int = 0,
 ) -> OrderRequest | None:
     """None if the rounded qty is 0, below min_qty (or, for entries, below min_notional)."""
     qty = round_qty(abs(qty), inst.qty_step)
@@ -79,7 +87,7 @@ def _make_order(
         tif = "POST_ONLY"
         limit = mid * (1.0 - sign * costs.half_spread(asset))
     return OrderRequest(
-        client_id=_client_id(position_id, leg_group, asset, intent, ts),
+        client_id=_client_id(position_id, leg_group, asset, intent, ts, attempt),
         ts=ts,
         asset=asset,
         side=side,
@@ -102,6 +110,7 @@ def plan_entry(
     band: float,
     *,
     costs: CostModel | None = None,
+    attempt: int = 0,
 ) -> PlanResult:
     """Per-leg notional = gross * |w| / sum|w|. All-or-nothing: if any leg rounds to zero qty,
     is below min_qty or below min_notional, returns PlanResult([], "below_min_notional").
@@ -131,6 +140,7 @@ def plan_entry(
             position_id=position_id,
             leg_group="entry",
             check_notional=True,
+            attempt=attempt,
         )
         if o is None:
             return PlanResult([], "below_min_notional")
@@ -147,6 +157,7 @@ def plan_exit(
     band: float,
     *,
     costs: CostModel | None = None,
+    attempt: int = 0,
 ) -> ExitPlan:
     """Flatten every non-zero leg: sell if qty > 0, buy if qty < 0 (intent "close").
 
@@ -173,6 +184,7 @@ def plan_exit(
             position_id=pos.id,
             leg_group="exit",
             check_notional=False,
+            attempt=attempt,
         )
         if o is None:
             dust[asset] = q
