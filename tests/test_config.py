@@ -1,3 +1,4 @@
+import pandas as pd
 from typer.testing import CliRunner
 
 from luna.cli import app
@@ -33,6 +34,19 @@ def test_cli_help_lists_commands():
         assert c in out
 
 
-def test_backfill_options_and_stub_exit():
+def test_backfill_options_are_passed_through(monkeypatch, tmp_path):
+    from luna.data import backfill as bf
+
+    seen = {}
+
+    def fake_spot(client, store, settings, assets, start, end):
+        seen.update(assets=assets, start=start, end=end)
+        return ["BTC", "ETH"]
+
+    monkeypatch.setenv("LUNA_VAR_DIR", str(tmp_path))
+    monkeypatch.setattr(bf, "backfill_spot", fake_spot)
     args = ["backfill", "--venue", "spot", "--assets", "BTC,ETH", "--start", "2024-01-01"]
-    assert CliRunner().invoke(app, args).exit_code == 1
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 0, result.output
+    assert seen["assets"] == "BTC,ETH" and seen["start"] == pd.Timestamp("2024-01-01", tz="UTC")
+    assert seen["end"] == seen["end"].floor("15min")

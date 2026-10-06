@@ -32,3 +32,9 @@ def test_select_universe_requires_history():
 def test_select_universe_sorted_by_adv_desc():
     p = {"A": bars("2023-01-01", "2025-01-01", 100.0), "B": bars("2023-01-01", "2025-01-01", 900.0)}
     assert select_universe(p, ASOF, 1.0, 548) == ["B", "A"]
+
+
+def test_adv_usd_divides_by_window_days_not_fixed_days():
+    asof = pd.Timestamp("2025-01-01", tz="UTC")
+    b = bars("2024-12-30", "2025-01-01", 1.0)  # 2 full days of data, window 2 days
+    assert np.isclose(adv_usd(b, asof, days=2), 960.0)

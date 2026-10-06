@@ -82,6 +82,9 @@ class BarStore:
         self.write(venue, asset, merged)
         return len(merged) - len(old)
 
+    def delete(self, venue: Venue, asset: str) -> None:
+        self._bar_path(venue, asset).unlink(missing_ok=True)
+
     def assets(self, venue: Venue) -> list[str]:
         d = self.root / "bars" / venue
         return sorted(p.stem for p in d.glob("*.parquet")) if d.exists() else []

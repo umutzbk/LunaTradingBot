@@ -13,7 +13,7 @@ def adv_usd(bars: pd.DataFrame, asof: pd.Timestamp, days: int = 30) -> float:
         return 0.0
     daily = (w["volume"] * w["close"]).groupby(w.index.floor("D")).sum()
     full = pd.date_range(lo.floor("D"), asof - pd.Timedelta(days=1), freq="D", tz="UTC")
-    return float(daily.reindex(full, fill_value=0.0).sum() / days)
+    return float(daily.reindex(full, fill_value=0.0).mean())
 
 
 def select_universe(

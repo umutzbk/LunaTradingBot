@@ -83,43 +83,43 @@ def backfill_spot(
 ) -> list[str]:
     var = Path(settings.var_dir)
     asset_list = _parse_assets(assets) or store.assets("kraken_futures")
-    pairs = {spot_pair(a): a for a in asset_list}
+    if not asset_list:
+        log.warning("spot: no assets (perp store empty, no --assets); run the perp backfill first")
+        return []
     parts = download_archive(client, var / "raw", PARTS)
-    archive = extract_15m(parts, list(pairs))
     # Gap-fill bars land in a small staging store (appending to the full-history parquet every
-    # page is far too slow) and are merged into the main store when the asset finishes.
+    # page is far too slow). Everything for one asset is merged into the main store in a single
+    # read-merge-write, and the staging file is only deleted after that, so an interrupted run
+    # loses nothing.
     staging = BarStore(var / "raw" / "gapfill")
     done = []
-    for pair, asset in pairs.items():
-        if pair not in archive:
+    for asset in asset_list:
+        pair = spot_pair(asset)
+        # one pair at a time keeps memory flat; archive frames are dropped after each asset
+        archive = extract_15m(parts, [pair]).get(pair)
+        if archive is None:
             log.warning("spot %s: pair %s not in archive, skipped", asset, pair)
             continue
-        bars = archive[pair]
-        if not bars.empty:
-            store.append("kraken_spot", asset, bars)
-        leftover = staging.read("kraken_spot", asset)  # from an interrupted run
-        if not leftover.empty:
-            store.append("kraken_spot", asset, leftover)
         if start is not None:
             gap_start = start
         else:
-            after_archive = bars.index[-1] + BAR if not bars.empty else GAP_FILL_FLOOR
+            after_archive = archive.index[-1] + BAR if not archive.empty else GAP_FILL_FLOOR
             gap_start = max(after_archive, GAP_FILL_FLOOR)
         added = 0
+        cp = var / "raw" / "checkpoints" / f"{pair}.json"
         if gap_start < end:
-            cp = var / "raw" / "checkpoints" / f"{pair}.json"
             gap_end = _checkpoint_end(cp, pair, gap_start, end)
             added = backfill_trades(
                 client, pair, gap_start, gap_end, cp,
                 on_bars=lambda df, a=asset: staging.append("kraken_spot", a, df),
             )
-            store.append("kraken_spot", asset, staging.read("kraken_spot", asset))
-            staging._bar_path("kraken_spot", asset).unlink(missing_ok=True)
-            cp.unlink(missing_ok=True)
         top = fetch_ohlc(client, pair)
         top = top[top.index < end]
-        if not top.empty:
-            store.append("kraken_spot", asset, top)
-        log.info("spot %s: archive %d bars, gap-fill %d bars, top-up %d", asset, len(bars), added, len(top))
+        pieces = [archive, staging.read("kraken_spot", asset), top]  # later pieces win
+        store.append("kraken_spot", asset, pd.concat([p for p in pieces if not p.empty]))
+        staging.delete("kraken_spot", asset)
+        cp.unlink(missing_ok=True)
+        log.info("spot %s: archive %d, gap-fill %d, top-up %d", asset, len(archive), added, len(top))
         done.append(asset)
+        del archive, pieces
     return done

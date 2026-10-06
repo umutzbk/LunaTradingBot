@@ -97,3 +97,18 @@ def test_validate_clean_series_ok():
     assert (rep.duplicates, rep.non_monotonic, rep.gaps, rep.filled_bars) == (0, 0, 0, 0)
     assert rep.spikes == []
     assert rep.ok is True
+
+
+def test_delete_removes_bars_and_is_idempotent(tmp_path):
+    import pandas as pd
+
+    from luna.data.store import BarStore
+
+    s = BarStore(tmp_path)
+    idx = pd.date_range("2025-01-01", periods=2, freq="15min", tz="UTC")
+    df = pd.DataFrame({c: 1.0 for c in ("open", "high", "low", "close", "volume")}, index=idx)
+    df["trades"] = 1
+    s.write("kraken_spot", "BTC", df)
+    s.delete("kraken_spot", "BTC")
+    s.delete("kraken_spot", "BTC")
+    assert s.assets("kraken_spot") == []
