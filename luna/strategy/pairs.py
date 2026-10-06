@@ -9,6 +9,13 @@ short beta*B). Legs (A, +1), (B, -beta) with beta frozen at the entry bar.
 fractional return of the pair. Exits as mean reversion (direction-aware z stop STOP_DZ, take
 profit at z_out); time stop 288 bars.
 
+Exits read z_t computed with the current beta_t, while the open legs keep the beta frozen at entry.
+This is deliberate: z_t is the best current estimate of how far the pair is from equilibrium (the
+signal the position is betting on), and re-hedging the legs every bar to follow beta_t would add
+turnover and costs, so the hedge ratio is fixed for the life of the trade. The stop/TP therefore
+judge the relationship, not the exact P&L of the frozen hedge; the max_hold time stop bounds the
+drift between the two.
+
 Regime: classify_regime of leg A, reindexed to the pair index. With ``use_regime`` there is no
 direction gate; only HIGH_VOL (and UNKNOWN) bars block entries. Pairs is skipped for spot accounts
 by the caller (it needs a short leg); ``signals`` itself works regardless.

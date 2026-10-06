@@ -34,11 +34,16 @@ def _zero_cost_settings():
     })
 
 
-def _gross_r(panel, strat, keys) -> pd.Series:
+def _trades(panel, strat, keys) -> pd.DataFrame:
     res = run_backtest(panel, {}, [strat], {strat.name: keys}, AcceptAllRanker(), "perp",
                        _zero_cost_settings(), START, END)
-    t = res.trades
-    return (t["pnl_gross"] / t["risk_amount"]).astype(float)
+    t = res.trades.copy()
+    t["gross_r"] = (t["pnl_gross"] / t["risk_amount"]).astype(float)
+    return t
+
+
+def _gross_r(panel, strat, keys) -> pd.Series:
+    return _trades(panel, strat, keys)["gross_r"]
 
 
 def _pos(direction, stop, exit_spec, key="BTC", legs=None, bars_held=0):
@@ -174,11 +179,22 @@ def test_regime_gates(monkeypatch):
     mp = {"fast": 48, "slow": 192, "donchian": 96, "k_atr": 2}
     ungated = Momentum(mp, use_regime=False).signals({"X": up}, ["X"])["X"].entry
     assert (ungated == 1).sum() > 2
-    _patch_regime(monkeypatch, mom_mod, lambda n: ["TREND_UP"] * n)
-    pd.testing.assert_series_equal(Momentum(mp).signals({"X": up}, ["X"])["X"].entry, ungated)
-    for label in ("TREND_DOWN", "RANGE", "HIGH_VOL", "UNKNOWN"):
+    for label in ("TREND_UP", "HIGH_VOL"):  # HIGH_VOL: momentum still enters (risk halved later)
+        _patch_regime(monkeypatch, mom_mod, lambda n, lab=label: [lab] * n)
+        pd.testing.assert_series_equal(Momentum(mp).signals({"X": up}, ["X"])["X"].entry, ungated)
+    for label in ("TREND_DOWN", "RANGE", "UNKNOWN"):
         _patch_regime(monkeypatch, mom_mod, lambda n, lab=label: [lab] * n)
         assert (Momentum(mp).signals({"X": up}, ["X"])["X"].entry == 0).all()
+
+    down = synthetic_bars(3_000, "trend", seed=4, drift=-0.0003)
+    ungated = Momentum(mp, use_regime=False).signals({"X": down}, ["X"])["X"].entry
+    assert (ungated == -1).sum() > 2
+    for label in ("TREND_DOWN", "HIGH_VOL"):
+        _patch_regime(monkeypatch, mom_mod, lambda n, lab=label: [lab] * n)
+        pd.testing.assert_series_equal(Momentum(mp).signals({"X": down}, ["X"])["X"].entry, ungated)
+    for label in ("TREND_UP", "RANGE", "UNKNOWN"):
+        _patch_regime(monkeypatch, mom_mod, lambda n, lab=label: [lab] * n)
+        assert (Momentum(mp).signals({"X": down}, ["X"])["X"].entry == 0).all()
 
 
 def test_pairs_regime_from_leg_a_blocks_high_vol(monkeypatch):
@@ -330,9 +346,13 @@ def test_trend_series_momentum_gross_positive():
     up = synthetic_bars(12_000, "trend", seed=12, drift=0.0003)
     down = synthetic_bars(12_000, "trend", seed=13, drift=-0.0003)
     strat = Momentum({"fast": 48, "slow": 192, "donchian": 96, "k_atr": 2}, use_regime=False)
-    r = _gross_r({"UP": up, "DN": down}, strat, ["UP", "DN"])
-    assert len(r) >= 30
-    assert r.mean() > 0.1
+    t = _trades({"UP": up, "DN": down}, strat, ["UP", "DN"])
+    assert len(t) >= 30
+    assert t["gross_r"].mean() > 0.1
+    for key, d in (("UP", 1), ("DN", -1)):  # each side earns on its own trend
+        side = t[(t["key"] == key) & (t["direction"] == d)]["gross_r"]
+        assert len(side) >= 15, key
+        assert side.mean() > 0.1, key
 
 
 def test_cointegrated_pair_gross_positive():

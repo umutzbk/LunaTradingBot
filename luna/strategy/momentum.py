@@ -3,7 +3,9 @@
 Entry at the close of bar t when trend_strength = (EMA(fast) - EMA(slow)) / ATR(96) has |.| > 0.5
 and the close breaks the Donchian(N) channel of the previous N bars (high for long, low for short)
 in the same direction; with ``use_regime`` the bar's regime must be TREND_UP (long) / TREND_DOWN
-(short). Edge-triggered: fires when that condition turns on.
+(short) or HIGH_VOL (either side, direction from the signed trend strength; the constructor halves
+the risk budget there). RANGE and UNKNOWN block entries. Edge-triggered: fires when that condition
+turns on.
 
 Stop price = close -/+ k_atr * ATR(96) (``stop_distance = k_atr * ATR / close``). Exits: ATR
 trailing stop (level = max(previous level, close - k_atr * ATR) for a long, mirrored for a short,
@@ -57,8 +59,10 @@ class Momentum(GridStrategy):
             up = (ts > p["ts_threshold"]) & (close > don_hi)
             dn = (ts < -p["ts_threshold"]) & (close < don_lo)
             if self.use_regime:
-                up &= regime == "TREND_UP"
-                dn &= regime == "TREND_DOWN"
+                # HIGH_VOL takes precedence in classify_regime but does not block momentum (spec
+                # 5.4: only its risk budget is halved, by the constructor's regime_mult)
+                up &= regime.isin(["TREND_UP", "HIGH_VOL"])
+                dn &= regime.isin(["TREND_DOWN", "HIGH_VOL"])
             direction = pd.Series(np.where(up, 1, -1), index=close.index)
             never = pd.Series(False, index=close.index)
             out[key] = SignalFrame(
