@@ -263,6 +263,46 @@ def paper(
 
 
 @app.command()
+def health(
+    account: Annotated[Literal["perp", "spot"], typer.Option(help="Account to check")] = "perp",
+    db: Annotated[Path | None, typer.Option(help="SQLite file (default var/luna.db)")] = None,
+    max_age_min: Annotated[float, typer.Option(help="Max age of the latest equity row, minutes")] = 20,
+) -> None:
+    """Liveness probe (Docker healthcheck): exit 0 iff the account's latest equity row (written by
+    every completed paper tick) is younger than --max-age-min, else 1. Read-only."""
+    import sqlite3
+
+    import pandas as pd
+
+    from luna.store.models import ts_from_str
+
+    if db is None:
+        from luna.config import load_settings
+
+        db = load_settings().var_dir / "luna.db"
+    if not db.is_file():
+        typer.echo(f"health {account}: database missing ({db})")
+        raise typer.Exit(1)
+    try:
+        conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True, timeout=10)
+        try:
+            row = conn.execute("SELECT max(ts) FROM equity WHERE account = ?", (account,)).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        typer.echo(f"health {account}: database error ({e})")
+        raise typer.Exit(1) from e
+    if row is None or row[0] is None:
+        typer.echo(f"health {account}: no equity rows")
+        raise typer.Exit(1)
+    age = (pd.Timestamp.now(tz="UTC") - ts_from_str(row[0])).total_seconds() / 60
+    if age >= max_age_min:
+        typer.echo(f"health {account}: stale, last equity {row[0]} ({age:.1f} min old)")
+        raise typer.Exit(1)
+    typer.echo(f"health {account}: ok, last equity {row[0]} ({age:.1f} min old)")
+
+
+@app.command()
 def label(
     account: Annotated[Literal["perp", "spot"], typer.Option(help="Account to label")] = "perp",
     db: Annotated[Path | None, typer.Option(help="SQLite file (default var/luna.db)")] = None,
