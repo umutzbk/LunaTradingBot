@@ -13,8 +13,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from luna.engine.backtest import BacktestResult
-from luna.report.metrics import summary
-from luna.research.stats import block_bootstrap_ci
+from luna.report.metrics import metrics_with_ci
 
 log = logging.getLogger("luna.report")
 PRIMARY = [
@@ -30,26 +29,6 @@ PRIMARY = [
 ]
 PNL = ["pnl_gross", "fees", "spread_slip", "funding", "pnl_net"]
 SECONDARY = [("sharpe_daily", "sharpe_daily", "{:.2f}"), ("sortino_daily", "sortino_daily", "{:.2f}")]
-
-
-def expectancy_ci(res: BacktestResult, n: int = 2000, ci: float = 0.90) -> tuple[float, float]:
-    """(lo, hi) day-block bootstrap CI of the mean R multiple, blocks = UTC day of the trade exit.
-    Trades with NaN R are dropped (and logged)."""
-    tr = res.trades
-    if tr.empty:
-        return (math.nan, math.nan)
-    r = tr["r_multiple"].to_numpy(dtype=float)
-    ok = np.isfinite(r)
-    if not ok.all():
-        log.warning("expectancy_ci: dropped %d trades with non-finite r_multiple", int((~ok).sum()))
-    days = tr["exit_ts"].dt.floor("D").astype("int64").to_numpy()
-    _, lo, hi = block_bootstrap_ci(r[ok], days[ok], n=n, ci=ci)
-    return (lo, hi)
-
-
-def metrics_with_ci(res: BacktestResult) -> dict[str, float]:
-    lo, hi = expectancy_ci(res)
-    return {**summary(res), "ci_lo": lo, "ci_hi": hi}
 
 
 def _fmt(v: float | None, f: str) -> str:
@@ -388,8 +367,7 @@ def _ablations_eval(rep, m: dict[str, dict]) -> str:
 
 def _baselines_eval(rep, m: dict[str, dict], best: float) -> str:
     rows = [[_e("Luna (edge)")] + [_cell(m["edge"], k, f) for k, _, f in COMPARE]]
-    for n, res in rep.naive.items():
-        x = metrics_with_ci(res)
+    for n, x in rep.naive_metrics.items():
         mark = " (best)" if math.isfinite(best) and x["expectancy_r"] == best else ""
         rows.append([_e(n + mark)] + [_cell(x, k, f) for k, _, f in COMPARE])
     for n, why in rep.naive_skipped.items():
@@ -420,7 +398,7 @@ def render_evaluation(rep, out_dir: Path, title: str) -> Path:
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    m = {n: metrics_with_ci(r.oos) for n, r in rep.variants.items()}
+    m = rep.metrics
     setup = _plain_table(["", ""], [[_e(k), _e(v)] for k, v in rep.setup.items()], "Run setup")
     body = {
         "Verdict": _verdict_html(rep),

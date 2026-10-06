@@ -155,3 +155,28 @@ def test_verdict_values(verdict_input):
     cases = {"GO": {}, "NO-GO": {"best_naive_expectancy_r": 5.0},
              "INSUFFICIENT DATA": {"main_edge": _res(_good_r(5))}}
     assert _evaluate(**cases[verdict_input]).verdict == verdict_input
+
+
+def test_insufficient_headline_lists_other_failures():
+    few = _res(_good_r(5))
+    g = _evaluate(main_edge=few, best_naive_expectancy_r=5.0)
+    assert g.verdict == "INSUFFICIENT DATA"
+    assert g.headline.startswith("INSUFFICIENT DATA: n=5")
+    assert "(also failing: " in g.headline and "complexity_adds_value" in g.headline
+    assert "min_trades" not in g.headline.split("also failing")[1]
+    ok = _evaluate(main_edge=_res(_good_r(29)), main_realistic=_res(_good_r(29)))
+    assert ok.verdict == "INSUFFICIENT DATA" and "also failing" not in ok.headline
+
+
+def test_precomputed_metrics_are_used(monkeypatch):
+    import luna.report.gonogo as gm
+    from luna.report.metrics import metrics_with_ci
+
+    good, x2 = _res(_good_r()), _res(_good_r(), pnl_scale=0.5)
+    pre = {"edge": metrics_with_ci(good), "realistic": metrics_with_ci(good),
+           "cost_x2_edge": metrics_with_ci(x2)}
+    expected = _evaluate()
+    monkeypatch.setattr(gm, "metrics_with_ci", lambda *a: (_ for _ in ()).throw(AssertionError("recomputed")))
+    assert _evaluate(metrics=pre) == expected
+    pre["edge"] = {**pre["edge"], "ci_lo": -1.0}  # the given numbers are what is judged
+    assert not _evaluate(metrics=pre).checks["expectancy_ci_lo"][0]

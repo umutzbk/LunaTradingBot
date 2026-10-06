@@ -22,8 +22,7 @@ import numpy as np
 import pandas as pd
 
 from luna.engine.backtest import BacktestResult
-from luna.report.html import expectancy_ci
-from luna.report.metrics import summary
+from luna.report.metrics import metrics_with_ci
 
 Verdict = Literal["GO", "NO-GO", "INSUFFICIENT DATA"]
 
@@ -63,7 +62,9 @@ class GoNoGo:
         if self.verdict == "GO":
             return "GO: every §8 condition holds"
         if self.verdict == "INSUFFICIENT DATA":
-            return f"INSUFFICIENT DATA: {self.checks['min_trades'][1]}"
+            text = f"INSUFFICIENT DATA: {self.checks['min_trades'][1]}"
+            others = [k for k in self.failed if k != "min_trades"]
+            return text + (f" (also failing: {', '.join(others)})" if others else "")
         text = "NO-GO: failed " + ", ".join(self.failed)
         if "complexity_adds_value" in self.failed:
             text += " (complexity does not add value)"
@@ -105,13 +106,19 @@ def evaluate(
     per_window_edge: pd.DataFrame,
     best_naive_expectancy_r: float,
     funding_known_from: dict | None,
+    *,
+    metrics: dict[str, dict] | None = None,
 ) -> GoNoGo:
     """Every §8 condition; verdict "INSUFFICIENT DATA" if the edge OOS has < 30 trades, "GO" if all
-    checks pass, else "NO-GO". Checks are always all computed (shown in the report)."""
-    e = summary(main_edge)
-    r = summary(main_realistic)
-    c2 = summary(cost_x2_edge)
-    lo, hi = expectancy_ci(main_edge)
+    checks pass, else "NO-GO". Checks are always all computed (shown in the report).
+
+    ``metrics``: already computed ``metrics_with_ci`` of the three results, keys "edge",
+    "realistic", "cost_x2_edge" (computed here when absent)."""
+    pre = metrics or {}
+    e = pre.get("edge") or metrics_with_ci(main_edge)
+    r = pre.get("realistic") or metrics_with_ci(main_realistic)
+    c2 = pre.get("cost_x2_edge") or metrics_with_ci(cost_x2_edge)
+    lo, hi = e["ci_lo"], e["ci_hi"]
     n = int(e["n_trades"])
     checks: dict[str, tuple[bool, str]] = {}
 
@@ -153,7 +160,8 @@ def evaluate(
     checks["complexity_adds_value"] = (_fin(exp_r) and exp_r > bar,
                                        f"Luna {exp_r:.3f} R vs {what} (need strictly greater)")
 
-    assert list(checks) == list(CHECKS)
+    if list(checks) != list(CHECKS):
+        raise RuntimeError(f"GO/NO-GO checks {list(checks)} out of sync with CHECKS {list(CHECKS)}")
     if n < MIN_TRADES:
         verdict: Verdict = "INSUFFICIENT DATA"
     elif all(ok for ok, _ in checks.values()):

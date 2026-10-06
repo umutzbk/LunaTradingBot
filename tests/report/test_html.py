@@ -5,12 +5,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import luna.report.gonogo as gonogo_mod
+import luna.report.html as html_mod
 from luna.config import load_settings
 from luna.engine.backtest import default_instruments
+from luna.engine.walkforward import universe_at
 from luna.report.gonogo import CHECKS
 from luna.report.html import EVAL_SECTIONS, SECONDARY_HEADING
 from luna.report.walkforward import (
     Inputs,
+    best_naive_expectancy,
     build_tradelists,
     walkforward_report,
     walkforward_variants,
@@ -35,7 +39,7 @@ def _settings(var_dir):
 
 
 @pytest.fixture(scope="module")
-def case(tmp_path_factory):
+def full_case(tmp_path_factory):
     var = tmp_path_factory.mktemp("var")
     n = 182 * 96
     panel = {
@@ -53,7 +57,13 @@ def case(tmp_path_factory):
                              registry=var / "registry.json")
     out = var / "report"
     path = write_report(rep, out, "Luna walk-forward - perp")
-    return rep, path.read_text(encoding="utf-8"), json.loads((out / "summary.json").read_text())
+    summ = json.loads((out / "summary.json").read_text())
+    return rep, path.read_text(encoding="utf-8"), summ, inp, settings
+
+
+@pytest.fixture(scope="module")
+def case(full_case):
+    return full_case[:3]
 
 
 def _sections(page):
@@ -148,3 +158,46 @@ def test_ablations_and_sensitivity_sections(case):
     assert "FDR pass" in sec["Pair selection per window"] and "stable" in sec["Pair selection per window"]
     assert "Survivorship" in sec["Data caveats"] and "Funding gap" in sec["Data caveats"]
     assert np.isfinite(rep.variants["edge"].oos.equity.iloc[-1])
+
+
+def test_summary_json_ablations_caveats_and_funding_known_from(case):
+    rep, _, s = case
+    for n in ("no_regime", "random_ranker"):
+        d = s["ablations"][n]
+        assert d["d_expectancy_r"] == pytest.approx(
+            rep.metrics[n]["expectancy_r"] - rep.metrics["edge"]["expectancy_r"])
+        assert d["d_pnl_net"] == pytest.approx(rep.metrics[n]["pnl_net"] - rep.metrics["edge"]["pnl_net"])
+    text = " ".join(s["caveats"])
+    for word in ("Survivorship", "Funding gap", "Regime thresholds are rolling", "Pre-holdout gap"):
+        assert word in text
+    # data 2024-01-01 .. 2024-07-01, 1-month holdout from 2024-06-01; last test window ends 2024-06-01
+    assert "Pre-holdout gap: [2024-06-01, 2024-06-01) (0 days)" in text
+    assert s["funding_known_from"] == {"BTC": FUNDING_FROM.isoformat(), "ETH": FUNDING_FROM.isoformat(),
+                                       "SOL": None}
+
+
+def test_naive_universe_uses_the_walkforward_rule(full_case):
+    rep, _, _, inp, settings = full_case
+    first = rep.variants["edge"].windows[0]
+    assert first.window.train_end == rep.span[0]
+    assert universe_at(inp.panel, rep.span[0], settings, inp.universe_panel) == first.universe
+    assert set(rep.naive["naive_momentum"].trades["key"]) <= set(first.universe)
+
+
+def test_metrics_are_computed_once(case, tmp_path, monkeypatch):
+    rep, _, _ = case
+
+    def boom(*a, **kw):
+        raise AssertionError("metrics recomputed")
+
+    monkeypatch.setattr(html_mod, "metrics_with_ci", boom)
+    monkeypatch.setattr(gonogo_mod, "metrics_with_ci", boom)
+    write_report(rep, tmp_path, "again")  # renderer and summary reuse rep.metrics / rep.naive_metrics
+    v = rep.variants
+    g = gonogo_mod.evaluate(
+        v["edge"].oos, v["realistic"].oos, v["cost_2x_edge"].oos, v["edge"].per_window,
+        best_naive_expectancy(rep.naive), rep.funding_known_from,
+        metrics={"edge": rep.metrics["edge"], "realistic": rep.metrics["realistic"],
+                 "cost_x2_edge": rep.metrics["cost_2x_edge"]},
+    )
+    assert g == rep.gonogo

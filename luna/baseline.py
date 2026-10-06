@@ -14,7 +14,8 @@ from luna.config import Settings
 from luna.data.store import BarStore, fill_missing
 from luna.engine.backtest import BacktestResult, run_backtest
 from luna.ranking.ranker import AcceptAllRanker
-from luna.report.html import metrics_with_ci, render_report
+from luna.report.html import render_report
+from luna.report.metrics import metrics_with_ci
 from luna.strategy.naive import NaiveMeanReversion, NaiveMomentum, NaivePairs
 from luna.types import AccountKind, Instrument
 from luna.universe import select_universe

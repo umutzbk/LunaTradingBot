@@ -161,7 +161,7 @@ def test_expectancy_ci_groups_by_exit_day(monkeypatch):
     import numpy as np
     import pandas as pd
 
-    import luna.report.html as h
+    import luna.report.metrics as h
 
     def res(exits):
         tr = pd.DataFrame({"exit_ts": pd.to_datetime(exits, utc=True),

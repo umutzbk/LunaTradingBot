@@ -12,7 +12,7 @@ Around them:
   OOS span [first test_start, last test_end), universe selected at the span start with the same rule
   as the walk-forward (edge variant; spot skips pairs).
 
-The holdout (``run_holdout_report``) is never run by the walk-forward; it uses ``run_holdout``,
+The holdout (``holdout_report``) is never run by the walk-forward; it uses ``run_holdout``,
 which refuses a second run per account.
 """
 
@@ -35,16 +35,20 @@ from luna.data.store import BarStore, fill_missing
 from luna.engine.backtest import BacktestResult, run_backtest
 from luna.engine.walkforward import (
     WalkForwardResult,
+    _bounds,
+    _variant,
     build_walkforward_tradelists,
+    make_windows,
     run_holdout,
     run_walkforward,
+    universe_at,
 )
 from luna.ranking.ranker import AcceptAllRanker
 from luna.report.gonogo import CHECKS, GoNoGo, evaluate, funding_known_mask
-from luna.report.html import metrics_with_ci, render_evaluation
+from luna.report.html import render_evaluation
+from luna.report.metrics import metrics_with_ci
 from luna.strategy.naive import NaiveMeanReversion, NaiveMomentum, NaivePairs
 from luna.types import AccountKind, Instrument
-from luna.universe import select_universe
 
 log = logging.getLogger("luna.report.walkforward")
 BAR = pd.Timedelta("15min")
@@ -56,7 +60,7 @@ SENSITIVITY = ("cost_2x", "cost_2x_edge", "funding_zero", "funding_estimated", "
 EDGE = 1.0  # max_drawdown_override of the "edge" variant
 WINDOW_COLUMNS = ["test_start", "test_end", "status", "universe", "pairs_selected", "accepted_cells",
                   "n_trades", "expectancy_r", "net_pnl"]
-WARMUP = pd.Timedelta(days=30)  # bars kept before history_start (indicator warm-up)
+WARMUP = pd.Timedelta(days=90)  # indicator / regime warm-up (regime quantile lookback 8640 bars)
 
 
 def walkforward_variants(kind: AccountKind) -> dict[str, dict]:
@@ -96,6 +100,8 @@ class EvalReport:
     funding_known_from: dict | None  # None: spot (no funding)
     span: tuple[pd.Timestamp, pd.Timestamp]
     benchmarks: dict[str, float]  # name -> total return over the span
+    metrics: dict[str, dict]  # variant -> metrics_with_ci(oos), computed once
+    naive_metrics: dict[str, dict]  # naive run -> metrics_with_ci, computed once
     setup: dict[str, str] = field(default_factory=dict)
     caveats: list[str] = field(default_factory=list)
 
@@ -115,8 +121,11 @@ def load_inputs(
     """Full-history panel of ``account`` (missing bars filled), perp funding, and the bars the
     universe is selected from (spot: the perp panel, as the baseline). ``data_end`` (exclusive)
     truncates every series; ``assets`` restricts the candidate assets. Bars before
-    ``history_start - WARMUP`` are not loaded (spot archives reach back to 2013)."""
-    lo = pd.Timestamp(settings.universe.history_start, tz="UTC") - WARMUP
+    ``history_start - min_history_days - WARMUP`` are not loaded (spot archives reach back to 2013):
+    the universe's history rule at any window (train_end > history_start) and the indicators still
+    see everything they can use, so no asset's history is undercounted."""
+    cfg = settings.universe
+    lo = pd.Timestamp(cfg.history_start, tz="UTC") - pd.Timedelta(days=cfg.min_history_days) - WARMUP
     hi = data_end - BAR if data_end is not None else None
     perp_assets = [a for a in store.assets("kraken_futures") if assets is None or a in assets]
     perp_raw = {a: store.read("kraken_futures", a, lo, hi) for a in perp_assets}
@@ -154,16 +163,9 @@ def build_tradelists(inp: Inputs, settings: Settings, account: AccountKind, *, u
 # --- naive baselines and benchmarks ---------------------------------------------------------------
 
 
-def _edge_settings(settings: Settings, kind: AccountKind) -> Settings:
-    accounts = dict(settings.accounts)
-    accounts[kind] = accounts[kind].model_copy(update={"max_drawdown": EDGE})
-    return settings.model_copy(update={"accounts": accounts})
-
-
 def span_universe(inp: Inputs, settings: Settings, start: pd.Timestamp) -> list[str]:
-    cfg = settings.universe
-    src = inp.universe_panel if inp.universe_panel is not None else inp.panel
-    return [a for a in select_universe(src, start, cfg.min_adv_usd, cfg.min_history_days) if a in inp.panel]
+    """Universe at ``start`` with exactly the walk-forward rule (``universe_at``)."""
+    return universe_at(inp.panel, start, settings, inp.universe_panel)
 
 
 def run_naive(
@@ -182,7 +184,7 @@ def run_naive(
         keys["naive_pairs"] = [NAIVE_PAIR]
     else:
         skipped["naive_pairs"] = "ETH/BTC not both in the universe at the span start"
-    edge = _edge_settings(settings, kind)
+    edge = _variant(settings, kind, EDGE)
     out = {}
     for name, strat in strategies.items():
         if not keys[name]:
@@ -218,17 +220,28 @@ def benchmarks(inp: Inputs, settings: Settings, start: pd.Timestamp, end: pd.Tim
 # --- evaluation -----------------------------------------------------------------------------------
 
 
-def _verdict(variants: dict[str, WalkForwardResult], naive, kind: AccountKind) -> tuple[GoNoGo, dict | None]:
-    known_from = None if kind == "spot" else dict(variants["edge"].oos.funding_known_from)
-    g = evaluate(variants["edge"].oos, variants["realistic"].oos, variants["cost_2x_edge"].oos,
-                 variants["edge"].per_window, best_naive_expectancy(naive), known_from)
-    return g, known_from
+def _pre_holdout_gap(
+    inp: Inputs, settings: Settings, data_start, data_end
+) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """[last walk-forward test_end, holdout start): covered by neither the walk-forward OOS nor the
+    holdout (only whole test windows are used). Empty when they touch."""
+    start, end = _bounds(inp.panel, settings, data_start, data_end)
+    windows, (h0, _) = make_windows(start, end, settings.walkforward)
+    return (windows[-1].test_end if windows else h0, h0)
 
 
-def _caveats(kind: AccountKind, inp: Inputs, known_from: dict | None, variants, mode: str) -> list[str]:
+def _caveats(kind: AccountKind, inp: Inputs, known_from: dict | None, variants, mode: str,
+             gap: tuple[pd.Timestamp, pd.Timestamp]) -> list[str]:
+    days = (gap[1] - gap[0]) / pd.Timedelta(days=1)
     out = [
         "Survivorship bias: the universe only contains assets listed today; coins delisted in the past "
         "are absent from the data. Each window's universe is selected with data before its train end.",
+        "Regime thresholds are rolling: trailing quantiles (trend 70th, volatility 90th percentile) over "
+        "the past 8640 bars (~90 days) per asset, causal at every bar, rather than one constant fixed "
+        "on each train window as spec §5.4 describes.",
+        f"Pre-holdout gap: [{gap[0]:%Y-%m-%d}, {gap[1]:%Y-%m-%d}) ({days:.0f} days) lies between the last "
+        "walk-forward test window and the holdout; it belongs to neither OOS result (only whole test "
+        "windows are used).",
         "Open positions at the end of the run are listed separately and are not counted in trade "
         "counts, expectancy or P&L tables (closed trades only).",
         "Reported results come only from the bar-by-bar portfolio simulation; research trade lists "
@@ -274,6 +287,31 @@ def _setup(kind, inp: Inputs, span, tradelists: pd.DataFrame | None, elapsed: di
     return s
 
 
+def _finish(
+    kind: AccountKind, mode: Literal["walkforward", "holdout"], variants: dict[str, WalkForwardResult],
+    naive: dict[str, BacktestResult], naive_skipped: dict[str, str], inp: Inputs, settings: Settings,
+    span: tuple[pd.Timestamp, pd.Timestamp], tradelists: pd.DataFrame, elapsed: dict[str, float],
+    gap: tuple[pd.Timestamp, pd.Timestamp],
+) -> EvalReport:
+    """Metrics (once per result), GO/NO-GO, caveats -> EvalReport."""
+    metrics = {n: metrics_with_ci(r.oos) for n, r in variants.items()}
+    naive_metrics = {n: metrics_with_ci(r) for n, r in naive.items()}
+    known_from = None if kind == "spot" else dict(variants["edge"].oos.funding_known_from)
+    g = evaluate(variants["edge"].oos, variants["realistic"].oos, variants["cost_2x_edge"].oos,
+                 variants["edge"].per_window, best_naive_expectancy(naive), known_from,
+                 metrics={"edge": metrics["edge"], "realistic": metrics["realistic"],
+                          "cost_x2_edge": metrics["cost_2x_edge"]})
+    caveats = _caveats(kind, inp, known_from, variants, mode, gap)
+    if mode == "holdout":
+        caveats.append("Holdout: a single window, run exactly once per account (recorded in the holdout "
+                       "registry); the windows check reads that one window. Ablations are walk-forward "
+                       "only.")
+    return EvalReport(
+        kind, mode, variants, naive, naive_skipped, g, known_from, span, benchmarks(inp, settings, *span),
+        metrics, naive_metrics, _setup(kind, inp, span, tradelists, elapsed), caveats,
+    )
+
+
 def walkforward_report(
     inp: Inputs,
     tradelists: pd.DataFrame,
@@ -302,12 +340,8 @@ def walkforward_report(
     t0 = time.perf_counter()
     naive, naive_skipped = run_naive(inp, settings, kind, *span)
     elapsed["naive"] = time.perf_counter() - t0
-    g, known_from = _verdict(variants, naive, kind)
-    return EvalReport(
-        kind, "walkforward", variants, naive, naive_skipped, g, known_from, span,
-        benchmarks(inp, settings, *span), _setup(kind, inp, span, tradelists, elapsed),
-        _caveats(kind, inp, known_from, variants, "walkforward"),
-    )
+    return _finish(kind, "walkforward", variants, naive, naive_skipped, inp, settings, span, tradelists,
+                   elapsed, _pre_holdout_gap(inp, settings, data_start, data_end))
 
 
 def holdout_report(
@@ -335,14 +369,8 @@ def holdout_report(
     w = variants["edge"].windows[0].window
     span = (w.test_start, w.test_end)
     naive, naive_skipped = run_naive(inp, settings, kind, *span)
-    g, known_from = _verdict(variants, naive, kind)
-    caveats = _caveats(kind, inp, known_from, variants, "holdout")
-    caveats.append("Holdout: a single window, run exactly once per account (recorded in the holdout "
-                   "registry); the windows check reads that one window. Ablations are walk-forward only.")
-    return EvalReport(
-        kind, "holdout", variants, naive, naive_skipped, g, known_from, span,
-        benchmarks(inp, settings, *span), _setup(kind, inp, span, tradelists, elapsed), caveats,
-    )
+    return _finish(kind, "holdout", variants, naive, naive_skipped, inp, settings, span, tradelists,
+                   elapsed, _pre_holdout_gap(inp, settings, None, data_end))
 
 
 # --- outputs --------------------------------------------------------------------------------------
@@ -387,14 +415,23 @@ def summary_dict(rep: EvalReport) -> dict:
                    for k, (ok, d) in g.checks.items()},
         "span": [rep.span[0], rep.span[1]],
         "variants": {},
-        "naive": {k: metrics_with_ci(r) for k, r in rep.naive.items()},
+        "naive": rep.naive_metrics,
         "naive_skipped": rep.naive_skipped,
         "best_naive_expectancy_r": best_naive_expectancy(rep.naive),
         "benchmarks": rep.benchmarks,
         "setup": rep.setup,
+        "caveats": rep.caveats,
+        "funding_known_from": (None if rep.funding_known_from is None else
+                               {a: (None if pd.isna(t) else pd.Timestamp(t).isoformat())
+                                for a, t in sorted(rep.funding_known_from.items())}),
+        "ablations": {
+            n: {"d_expectancy_r": rep.metrics[n]["expectancy_r"] - rep.metrics["edge"]["expectancy_r"],
+                "d_pnl_net": rep.metrics[n]["pnl_net"] - rep.metrics["edge"]["pnl_net"]}
+            for n in ABLATIONS if n in rep.metrics
+        },
     }
     for name, res in rep.variants.items():
-        m = metrics_with_ci(res.oos)
+        m = dict(rep.metrics[name])
         m["open_at_end"] = len(res.open_at_end)
         m["funding_split"] = _known_split(res.oos, rep.funding_known_from)
         pw = res.per_window

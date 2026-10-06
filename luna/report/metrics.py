@@ -3,13 +3,16 @@ informational only (never GO/NO-GO)."""
 
 from __future__ import annotations
 
+import logging
 import math
 
 import numpy as np
 import pandas as pd
 
 from luna.engine.backtest import BacktestResult
-from luna.research.stats import cvar, profit_factor
+from luna.research.stats import block_bootstrap_ci, cvar, profit_factor
+
+log = logging.getLogger("luna.report")
 
 DAYS_PER_YEAR = 365  # crypto trades every day
 
@@ -111,3 +114,24 @@ def summary(res: BacktestResult) -> dict[str, float]:
         "avg_leverage": avg_lev,
         "max_leverage": max_lev,
     }
+
+
+def expectancy_ci(res: BacktestResult, n: int = 2000, ci: float = 0.90) -> tuple[float, float]:
+    """(lo, hi) day-block bootstrap CI of the mean R multiple, blocks = UTC day of the trade exit.
+    Trades with NaN R are dropped (and logged)."""
+    tr = res.trades
+    if tr.empty:
+        return (math.nan, math.nan)
+    r = tr["r_multiple"].to_numpy(dtype=float)
+    ok = np.isfinite(r)
+    if not ok.all():
+        log.warning("expectancy_ci: dropped %d trades with non-finite r_multiple", int((~ok).sum()))
+    days = tr["exit_ts"].dt.floor("D").astype("int64").to_numpy()
+    _, lo, hi = block_bootstrap_ci(r[ok], days[ok], n=n, ci=ci)
+    return (lo, hi)
+
+
+def metrics_with_ci(res: BacktestResult) -> dict[str, float]:
+    """``summary`` plus the expectancy CI (``ci_lo``, ``ci_hi``)."""
+    lo, hi = expectancy_ci(res)
+    return {**summary(res), "ci_lo": lo, "ci_hi": hi}

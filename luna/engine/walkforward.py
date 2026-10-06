@@ -157,15 +157,25 @@ def _grid_params(cls: type[GridStrategy]) -> dict[str, dict]:
     return {cls(dict(g)).params_id: dict(g) for g in cls.GRID}
 
 
+def universe_at(
+    panel: dict[str, pd.DataFrame], asof: pd.Timestamp, settings: Settings,
+    universe_panel: dict[str, pd.DataFrame] | None = None,
+) -> list[str]:
+    """The walk-forward universe rule: ``select_universe`` at ``asof`` on ``universe_panel``
+    (default ``panel``), restricted to assets present in ``panel``. Shared by window fitting and the
+    naive baselines of the report so both select the same way."""
+    cfg = settings.universe
+    return [a for a in select_universe(universe_panel or panel, asof, cfg.min_adv_usd,
+                                       cfg.min_history_days) if a in panel]
+
+
 def _select(
     w: Window, panel: dict[str, pd.DataFrame], settings: Settings, kind: AccountKind,
     universe_panel: dict[str, pd.DataFrame] | None,
 ) -> tuple[list[str], PairSelection]:
     """Universe at ``train_end`` (from ``universe_panel``, default ``panel``; restricted to assets in
     ``panel``) and the pair selection on the train window (perp only)."""
-    cfg = settings.universe
-    universe = [a for a in select_universe(universe_panel or panel, w.train_end, cfg.min_adv_usd,
-                                           cfg.min_history_days) if a in panel]
+    universe = universe_at(panel, w.train_end, settings, universe_panel)
     pairs = select_pairs(panel, universe if kind == "perp" else [], w.train_start, w.train_end,
                          settings.pairs)
     return universe, pairs
