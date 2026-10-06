@@ -1,7 +1,7 @@
 # Luna — Varlıktan Bağımsız Sistematik Trading Motoru · Tasarım Spec'i
 
-- **Tarih:** 2026-10-06 (rev 3: çok varlıklı, çok stratejili motor)
-- **Durum:** Taslak, kullanıcı onayı bekliyor
+- **Tarih:** 2026-10-06 (rev 4: kullanıcı review düzeltmeleri — gerçek spot verisi, funding dürüstlüğü, tek sermaye bütçesi, konservatif ranking, Sharpe dışı GO/NO-GO, pairs için multiple-testing düzeltmesi, naive baseline'lar, kanıta bağlı yol haritası)
+- **Durum:** Onaylandı (rev 4 düzeltmeleriyle)
 - **Bu spec'in kapsamı:** Alt proje **#1 — Luna Core + Kripto** (P0–P2: veri, backtest, paper trading)
 
 ---
@@ -36,13 +36,14 @@ Ve hangi strateji, hangi varlık sınıfı, hangi rejimde bu edge'i yaratıyor?
 ## 1. Alt proje #1: amaç ve başarı kriterleri
 
 **Teslimat (P0–P2):**
-1. Kripto evreninin 15 dakikalık perp mumları (2023-01'den beri) ve funding geçmişi indirilmiş, doğrulanmış, Parquet'te.
+1. Kripto evreninin 15 dakikalık perp mumları (2023-01'den beri), funding geçmişi ve **gerçek spot OHLCVT** verisi indirilmiş, doğrulanmış, Parquet'te.
 2. Üç strateji, rejim kapıları, ranker, portfolio constructor ve risk motoru ile **portföy seviyesinde** walk-forward backtest yapılabiliyor. HTML rapor:
    - strateji × varlık × rejim kırılımı
    - brüt / fee / spread+slippage / funding / net P&L
-   - perp hesap ile spot hesap (yalnızca long, 1x) karşılaştırması
+   - perp hesap ile spot hesap (yalnızca long, 1x) karşılaştırması; aynı $265 bütçenin iki alternatif kullanımı olarak
+   - naive baseline'lara karşı karşılaştırma
    - otomatik GO/NO-GO
-3. Perp ve spot hesaplar Docker'da 7/24 paper modda çalışıyor; dashboard'dan izlenebiliyor.
+3. Perp ve spot alternatifleri Docker'da 7/24 paper modda çalışıyor (ayrı standalone koşular); dashboard'dan izlenebiliyor.
 4. Risk motorunun her kuralı testlerle doğrulanmış.
 5. Testler ağ erişimi olmadan geçiyor.
 
@@ -58,7 +59,7 @@ UK FCA, kripto türevlerinin (futures/perp/CFD) **retail** yatırımcılara sat�
 | Venue (#1) | Kraken Futures (USD-margined linear perp `PF_*`) + Kraken Spot (USD pariteleri). ccxt (`krakenfutures`, `kraken`) |
 | Hesap tipleri | **perp**: long/short, gross kaldıraç ≤ 2x · **spot**: yalnızca long, 1x. Aynı stratejiler; spot'ta short sinyalleri "flat" olarak yorumlanır |
 | Para birimi | Hesaplar USD. Raporda GBP karşılığı (config'deki kur ile) |
-| Sermaye | Varsayılan **$265 (~£200)**, hesap başına. Tüm limitler yüzde cinsinden, sermaye büyüdükçe aynen ölçeklenir |
+| Sermaye | **Toplam deney bütçesi tek: $265 (~£200).** Perp ve spot **alternatif dağıtımlardır**, aynı anda çalışan iki ayrı hesap değildir: "£200'ü perp'e koysam" ile "£200'ü spot'a koysam" karşılaştırılır. Her biri ayrı bir standalone backtest/paper koşusudur ve rapor bunları hiçbir zaman toplamaz. İleride bütçe bölünürse (`accounts.*.capital_share`), toplam yine $265 olur. Tüm limitler yüzde cinsinden |
 | Bar | 15 dakika, yalnızca kapanmış barlar |
 | Evren (#1) | Kraken PF perp'leri; 30 günlük ortalama hacim ≥ $10M **ve** ≥ 18 ay geçmiş. Bugün itibarıyla tahminen BTC, ETH, SOL, XRP, ADA, DOGE, LINK, NEAR, SUI, ZEC (~10–15 varlık). Liste walk-forward penceresi başında o güne kadarki veriye göre yeniden seçilir |
 | Araçlar | Python 3.12, uv, pandas, numpy, statsmodels, ccxt, SQLAlchemy, pydantic, Streamlit, plotly, pytest, ruff |
@@ -127,7 +128,8 @@ luna/
   universe.py              # likidite + geçmiş uzunluğu filtresi, tarih bazlı seçim
   data/
     kraken_futures.py      # charts API 15m mumlar (sayfalı) + historicalfundingrates
-    kraken_spot.py         # canlı OHLC/book (paper/live için)
+    kraken_spot_archive.py # resmi OHLCVT arşivi: indir, SHA256 doğrula, 15m USD paritelerini çıkar
+    kraken_spot.py         # Trades ile boşluk doldurma + canlı OHLC/book (paper/live için)
     store.py               # Parquet, eklemeli güncelleme, doğrulama
   features/                # returns, EWMA vol, ATR, EMA eğimi, trend gücü, z-score, rolling OLS β, AR(1) half-life, korelasyon
   regime/rules.py          # kural tabanlı rejim sınıflandırıcı
@@ -144,6 +146,9 @@ luna/
   execution/base.py, costs.py, sim.py, paper.py
   engine/backtest.py, live.py, walkforward.py
   research/tradelists.py   # strateji × varlık bazında vektörel trade listesi (hızlı)
+  research/stats.py        # block bootstrap, Benjamini-Hochberg, profit factor, CVaR
+  strategy/naive.py        # P0.5 naive baseline'lar
+  labeling.py              # reddedilen adaylar için counterfactual sonuç
   report/metrics.py, report/html.py
   store/db.py, store/models.py
   notify/telegram.py, notify/heartbeat.py
@@ -156,8 +161,15 @@ tests/
 ## 4. Veri
 
 - **Perp:** Kraken Futures `charts/v1/trade/{symbol}/15m` (sayfalı) + `historicalfundingrates`. Evrendeki her sembol için 2023-01'den bugüne.
-- **Funding boşluğu:** Funding geçmişi olmayan dönemde (~12 aydan öncesi) her sembol, kendi gözlenen ortalama saatlik oranıyla modellenir. Rapor ayrıca 0× ve 2× funding duyarlılığını gösterir.
-- **Spot (backtest):** Spot fiyatı için aynı varlığın perp mumları **proxy** olarak kullanılır (15 dakikalık barlarda basis ihmal edilebilir); spot komisyon ve spread uygulanır. Bu varsayım raporda açıkça yazılır. Paper/live modda gerçek spot verisi kullanılır.
+- **Funding boşluğu, dürüst yaklaşım:** Funding geçmişi olmayan dönem (~12 aydan öncesi) **"funding unavailable"** olarak işaretlenir. Hayali funding verisi üretilmez.
+  - **Ana rapor:** funding P&L yalnızca bilinen dönemde gösterilir. Bilinmeyen dönemin net sonucu "funding hariç" olarak ayrıca etiketlenir ve iki dönemin sonuçları ayrı satırlarda verilir.
+  - **Duyarlılık bölümü (ayrı):** bilinmeyen dönem için 0× / tahmini (gözlenen ortalama) / 2× tahmini senaryoları. Bu bölüm ana sonuç değildir.
+  - **Optimizasyon (train) hayali funding'e göre yapılmaz:** bilinmeyen dönem içeren train pencerelerinde parametre seçim kriteri, *0× ve 2× tahmini senaryolarının kötü olanıdır* (worst-case). Böylece model, sahte funding avantajına göre optimize edilemez.
+- **Spot, gerçek veri (proxy yok):** Spot backtest'leri Kraken'in **gerçek spot 15m OHLCVT** verisini kullanır:
+  - Kaynak: Kraken'in resmi arşivi (`Kraken_OHLCVT_Full_2026Q2.zip`, 5 × 2 GB parça, SHA256 doğrulamalı, 2026-06-30'a kadar). Yalnızca evrendeki USD paritelerinin 15m dosyaları çıkarılır.
+  - 2026-07-01'den bugüne olan boşluk public Trades endpoint'inden (checkpoint'li) doldurulur, sonrası canlı OHLC.
+  - Arşiv yalnızca işlem olan barları içerir. Eksik barlar "işlem yok" olarak doldurulur (`filled=True`) ve fill modeli bu barlarda dolum vermez.
+  - Spot ile perp arasındaki basis, likidite ve spread farkları raporda veri olarak gösterilir.
 - **Doğrulama:** monoton zaman, tekrar yok, boşluk raporu, aşırı sıçrama (bar getirisi > 10σ) bayrağı.
 - **Survivorship bias:** Evren her walk-forward penceresinin başında o tarihe kadar mevcut olan veriyle seçilir. Bugün listelenmiş olup geçmişte delist edilmiş coin'ler bu veride yok; bu kısıt raporda not edilir.
 
@@ -178,7 +190,12 @@ Her stratejinin küçük bir parametre grid'i vardır. Her aday **zorunlu olarak
 - **Grid:** `W ∈ {96, 288}`, `z_in ∈ {2.0, 2.5}`, `z_out ∈ {0, 0.5}` → 8 kombinasyon. `stop_dz = 1.5` sabit.
 
 ### 5.3 Pairs / relative value (iki bacak, market-neutral)
-- **Parite seçimi** (train penceresi başında): evrendeki tüm pariteler arasından getiri korelasyonu > 0.7, Engle-Granger p < 0.05 ve half-life 8 ile 192 bar arasında olanların ilk 5'i. ETH/BTC her zaman izlenir.
+- **Parite seçimi** (train penceresi başında, multiple-testing farkındalığıyla): 10–15 varlık 45–105 parite eder. Tümüne p < 0.05 uygulamak false-positive üretir. Bu yüzden:
+  1. **Ön filtre** (test sayısını azaltır, p-değerine bakmaz): getiri korelasyonu > 0.7.
+  2. Kalan pariteler için Engle-Granger p-değerleri hesaplanır ve **Benjamini-Hochberg FDR** düzeltmesi uygulanır (q = 0.05). Düzeltmeyi geçemeyen elenir. ETH/BTC'nin de geçmesi gerekir; istisna yok.
+  3. **Stabilite:** train penceresi iki yarıya bölünür. Parite her iki yarıda da nominal p < 0.10 ve half-life 8–192 bar olmalı; β'nın iki yarı arasında değişimi < %25 olmalı.
+  4. Kalanlardan en düşük düzeltilmiş p'ye sahip en fazla 5 parite alınır.
+  - Rapor her pencere için test edilen parite sayısını, FDR'ı geçenleri ve stabiliteyi geçenleri gösterir. Hiçbir parite geçmezse o pencerede pairs stratejisi çalışmaz; bu da geçerli bir sonuç.
 - `s = log A − β log B` (rolling OLS β), z-score. `|z| > z_in` → spread'e ters pozisyon. Çıkış `|z| < z_out`. Stop `stop_dz`. Time-stop var.
 - **Spot hesapta pairs devre dışı** (short gerektirir). Spot için yalnızca ETH/BTC'de "rotasyon" yorumu ileride eklenebilir (YAGNI).
 - **Grid:** `W ∈ {96, 288, 672}`, `z_in ∈ {1.5, 2.0, 2.5}`, `z_out ∈ {0, 0.5}` → 18 kombinasyon.
@@ -189,11 +206,19 @@ Her stratejinin küçük bir parametre grid'i vardır. Her aday **zorunlu olarak
 - T, train penceresinde **sabit** bir yüzdelik ile belirlenir (overfitting'i sınırlamak için optimize edilmez).
 
 ### 5.5 Ranker (V1: geçmiş expectancy)
-- **Train penceresinde** her `(strateji, parametre, varlık/parite, rejim)` hücresi için vektörel trade listesi çıkarılır. Hesaplanan değerler: net getiri/işlem (bps, tüm maliyetler dahil), işlem sayısı, standart sapma.
+- **Train penceresinde** her `(strateji, parametre, varlık/parite, rejim)` hücresi için vektörel trade listesi çıkarılır. Hesaplanan değerler: net getiri/işlem (bps ve R cinsinden, tüm maliyetler dahil), işlem sayısı, standart sapma.
 - **Seçim:** her strateji için, train'deki net expectancy'si en yüksek parametre seti seçilir (hücre bazında değil, strateji bazında; overfitting'i sınırlamak için).
-- **Shrinkage:** `edge = (n / (n + n0)) × mean_net_bps`, `n0 = 30`. Az işlemli hücreler 0'a çekilir.
+- **Hiyerarşik shrinkage** (konservatif): hücre tahmini, bir üst seviyeye doğru çekilir. Seviyeler: strateji → strateji×varlık → strateji×varlık×rejim.
+  - `edge_cell = w·mean_cell + (1−w)·edge_parent`, `w = n/(n + n0)`, `n0 = 50`
+  - En üst seviye (strateji) 0'a doğru çekilir.
+- **Bootstrap güven aralığı:** her hücre için expectancy'nin %90 güven aralığı hesaplanır (trade'ler üzerinde, gün bloklarıyla 2.000 örnekli block bootstrap).
+- **Kabul koşulları:** Hücreden aday kabul edilmesi için şunların hepsi gerekir:
+  - strateji×varlık seviyesinde **n ≥ 30** işlem
+  - expectancy'nin bootstrap %90 güven aralığının **alt sınırı > 0**
+  - shrink edilmiş edge > 0
+  - Rejim seviyesindeki hücreler tek başına kabul sebebi olamaz; yalnızca shrink edilmiş bir ayar olarak kullanılır.
 - **Skor:** `score = edge / stop_distance_bps`. Bu, işlem başı riske göre beklenen getiriyi (R-çarpanı) verir.
-- `edge ≤ 0` veya `n < 10` olan hücreden aday kabul edilmez.
+- Expectancy tablosu, güven aralıkları ve kabul/ret nedenleri raporda tablo olarak gösterilir.
 - Ranker'ın arayüzü sabit (`score(candidate) -> float`). Alt proje #3'te ML ranker bunun yerine takılır ve A/B testi yapılır.
 
 ### 5.6 Portfolio constructor
@@ -275,16 +300,29 @@ Diğer kurallar:
 - **Walk-forward:** train 6 ay, test 2 ay, adım 2 ay (~2023-01 → bugün, holdout hariç ≈ 15 pencere). Her train penceresinde sırasıyla evren seçimi, parite seçimi, parametre seçimi, expectancy tablosu ve rejim eşikleri belirlenir; ardından test penceresi simüle edilir. OOS parçalar birleştirilir.
 - **Holdout:** son 3 ay. `luna backtest --holdout` ile **bir kez** çalıştırılır; DB'ye kaydedilir.
 - **Nedensellik testleri:** her feature ve rolling β için "veriyi kes, geçmiş değerler değişmesin" testi.
-- **Metrikler:** getiri, Sharpe, Sortino, max DD, Calmar, işlem sayısı, kazanma oranı, ortalama R, **P&L kırılımı** (brüt / fee / spread+slip / funding / net). Kırılımlar: strateji, varlık, rejim, hesap tipi (perp/spot). Ayrıca BTC ile korelasyon, ortalama ve maksimum kaldıraç, stop tetiklenmeleri, denenen kombinasyon sayısı.
-- **Benchmark'lar:** nakit (0), BTC buy & hold, eşit ağırlıklı evren buy & hold.
+- **Metrikler, öncelik sırasıyla:**
+  - **Birincil:** expectancy (işlem başı R ve bps) + bootstrap %90 güven aralığı, profit factor, max DD, tail loss (en kötü gün, günlük CVaR %5, en kötü işlem R'si), turnover, exposure (zamanın yüzde kaçında pozisyonda), **P&L kırılımı** (brüt / fee / spread+slip / funding / net)
+  - **İkincil (yalnızca bilgi):** Sharpe ve Sortino. **Günlük** getirilerden hesaplanır, 15 dakikalık getirilerden asla. Örtüşen pozisyonlar ve otokorelasyon nedeniyle yanıltıcı olabileceği raporda not edilir; GO/NO-GO'da kullanılmaz.
+  - **Kırılımlar:** strateji, varlık, rejim, hesap tipi (perp/spot). Ayrıca BTC ile korelasyon, ortalama ve maksimum kaldıraç, stop tetiklenmeleri, denenen kombinasyon sayısı.
+- **Benchmark'lar:** nakit (0), BTC buy & hold, eşit ağırlıklı evren buy & hold, ve **naive baseline'lar** (§8.1).
 - **Ablation:** rejim kapıları kapalı; ranker yerine rastgele seçim. Böylece her katmanın katkısı ölçülür.
-- **GO/NO-GO** (hesap başına):
-  1. OOS net getiri > 0
-  2. Pencerelerin ≥ %60'ında net > 0
-  3. Ortalama R > 0 ve işlem başı brüt edge ≥ 1.5 × maliyet
-  4. OOS işlem sayısı ≥ 30 (altındaysa "YETERSİZ VERİ")
-  5. 2× maliyet senaryosunda net ≥ 0
-  6. Max DD < %15
+- **GO/NO-GO** (hesap başına, **tüm** koşullar gerekir):
+  1. OOS işlem sayısı ≥ 30 (altındaysa sonuç "YETERSİZ VERİ")
+  2. OOS expectancy'nin bootstrap %90 güven aralığının alt sınırı > 0
+  3. Profit factor ≥ 1.2
+  4. Max DD < %15, en kötü gün > −%3, günlük CVaR %5 > −%2
+  5. **2× maliyet** senaryosunda net expectancy ≥ 0
+  6. Funding bilinen dönemde de net > 0 (funding'i bilinmeyen döneme dayanan bir GO verilmez)
+  7. Walk-forward pencerelerinin ≥ %60'ında net > 0
+  8. **Luna, en iyi naive baseline'ı OOS net expectancy'de geçmeli.** Geçemiyorsa sonuç "NO-GO: karmaşıklık değer katmıyor".
+
+### 8.1 Naive baseline'lar (P0.5)
+Rejim filtresi yok, ranker yok, eşit risk ile aynı evren, aynı maliyet modeli ve aynı risk motoru. Grid yok, sabit ve "ders kitabı" parametreler:
+- **Momentum:** EMA(96) / EMA(480) kesişimi; long/short (spot'ta long/flat). Stop 3×ATR.
+- **Mean reversion:** EWMA(96) z-skoru; `|z| > 2` iken ters yönde gir, `|z| < 0.5` olunca çık. Stop `|z| > 3.5`.
+- **Pairs:** yalnızca ETH/BTC; β = 1, 288 barlık z-skoru; `|z| > 2` iken gir, `|z| < 0.5` olunca çık. Stop `|z| > 3.5`.
+
+Luna'nın her katmanı (rejim, ranker, constructor), bu baseline'lara karşı ne kadar katkı sağladığını göstermek zorundadır.
 - **Sentetik testler:**
   - OU serisi → mean reversion brüt kâr > 0
   - Trend + gürültü → momentum brüt kâr > 0
@@ -306,6 +344,8 @@ Diğer kurallar:
 | `book_snapshots` | ts, symbol, bids, asks |
 
 Backtest çıktıları: `var/reports/<run_id>/` (HTML + Parquet).
+
+**Candidates tablosu, ileride ML için dataset olarak tasarlandı:** Seçilen **ve reddedilen** tüm adaylar, o anki feature'ları ve ret nedeniyle birlikte saklanır. Günlük bir iş (`luna label`), reddedilen adayların **counterfactual sonucunu** hesaplar: aynı stop ve çıkış kurallarıyla girilseydi net R ne olurdu. Sonuç `candidate_outcomes` tablosuna yazılır (`candidate_id`, `outcome_r`, `exit_reason`, `labeled_at`). Backtest koşuları da aynı tabloyu Parquet olarak üretir. Böylece "hangi işlemleri almalıyım?" problemi için etiketli veri kendiliğinden birikir.
 
 ## 10. İzleme
 
@@ -337,19 +377,36 @@ Backtest çıktıları: `var/reports/<run_id>/` (HTML + Parquet).
 
 ## 13. Yol haritası (alt proje #1)
 
-| Aşama | Teslimat |
-|---|---|
-| **P0** | İskelet, config, Docker, instruments + evren, perp veri backfill + doğrulama, feature'lar, rejim |
-| **P1** | 3 strateji, research trade listeleri, expectancy + ranker, constructor, risk, portföy, SimBroker, portföy backtest'i, walk-forward, ablation, HTML rapor, GO/NO-GO |
-| **P2** | PaperBroker (perp + spot), live engine, SQLite, Streamlit, Telegram, heartbeat; iki hesap Docker'da sürekli paper modda |
+| Aşama | Odak | Teslimat |
+|---|---|---|
+| **P0** | **Veri bütünlüğü** | İskelet, config, Docker, instruments + evren; perp mumları + funding; gerçek spot OHLCVT (arşiv + boşluk doldurma); doğrulama raporu (boşluk, tekrar, sıçrama, spot ile perp basis) |
+| **P0.5** | **Naive baseline'lar** | Feature'lar, portföy muhasebesi, risk motoru, SimBroker, basit backtest döngüsü; §8.1'deki üç baseline'ın tüm veri üzerinde maliyetli sonuçları. "Geçilmesi gereken çıta" bu aşamada belirlenir |
+| **P1** | **Strateji doğruluğu** | Rejim, 3 strateji, research trade listeleri, sentetik testler (§8), nedensellik testleri, expectancy + bootstrap + hiyerarşik shrinkage, ranker, constructor |
+| **P1.5** | **Walk-forward ve acımasız doğrulama** | Walk-forward, pairs için FDR, funding dürüstlüğü, ablation, duyarlılık analizleri, HTML rapor, GO/NO-GO, baseline karşılaştırması. Holdout yalnızca en sonda ve bir kez çalıştırılır |
+| **P2** | **Paper trading (birkaç ay)** | PaperBroker (perp + spot alternatifleri), live engine, SQLite, Streamlit, Telegram, heartbeat, counterfactual etiketleme (§9). Paper ile backtest davranışının karşılaştırma raporu |
+| P3 | £10–20 gerçek, **spot** | Execution doğrulaması (alt proje #4). Perp yalnızca yasal uygunluk teyidinden sonra |
+| P4 | £200 | Ancak P3 kapısı geçilince |
+| P5 | Düzenli aylık ekleme (£100–300) | Ancak ölçekleme kapısı geçilince |
 
-Sonrası: alt proje #4 (canlı, önce spot £10–20; perp yalnızca yasal uygunluk teyidinden sonra) → #2 (hisse/ETF) → #3 (ML/AI).
+**Kanıta bağlı kapılar (takvime değil):**
+- **P2 → P3:** ≥ 8 hafta paper; paper fill'leri ile backtest varsayımları arasında maliyet farkı ≤ %50; risk motorunda veya mutabakatta açıklanamayan bir olay yok.
+- **P3 → P4:** ≥ 30 canlı işlem; canlı net expectancy ≥ 0; gerçekleşen maliyetler modelin ≤ 1.5 katı; operasyonel hata yok.
+- **P4 → P5 (aylık £100–300):**
+  - ≥ 100 canlı işlem ve ≥ 6 ay
+  - canlı net expectancy'nin bootstrap %90 güven aralığının alt sınırı > 0
+  - maliyetler 2 katına çıkarıldığında (simülasyon) net ≥ 0
+  - max DD < %15
+  - canlı ile backtest'in aynı dönemdeki davranışı yakın: expectancy, işlem sıklığı ve ortalama tutma süresi ±%50 içinde
+
+Sonrası: alt proje #2 (hisse/ETF) → #3 (ML/AI; ancak yeterli OOS ve canlı veri biriktiğinde).
 
 ## 14. Riskler
 
 - **Edge çıkmayabilir.** Rapor ve ablation bunu dürüstçe gösterecek şekilde tasarlandı.
 - **Overfitting:** 3 strateji × küçük grid'ler, strateji bazında seçim, shrinkage, holdout ve denenen kombinasyon sayısının raporlanması.
-- **Survivorship bias, funding boşluğu, spot için perp proxy:** raporda açıkça not edilir.
+- **Survivorship bias ve funding boşluğu:** raporda açıkça not edilir. Funding boşluğu hiçbir zaman ana sonucu ya da optimizasyonu taşımaz (§4).
+- **Spot arşiv boyutu:** ~10 GB indirme. Yalnızca gerekli 15m CSV'ler çıkarılır, sonra arşiv parçaları silinebilir.
+- **ML cazibesi:** ML, naive baseline'larda ve V1'de OOS edge görülmeden eklenmez. Edge yokken ML çoğunlukla yalnızca backtest'i daha güzel gösterir.
 - **Perp yasal uygunluğu:** kullanıcıya bağlı; kodda varsayılan olarak kapalı.
 - **Küçük sermayede borsa minimumları:** $265 ile bazı adaylar minimumun altında kalabilir. Constructor bunları atlar ve raporda sayısı gösterilir.
 - **Sermaye uyarısı:** Bu bir deney bütçesi. Tamamen kaybedilmesi kişisel finansal durumu etkilemeyecek bir tutar olmalı.
