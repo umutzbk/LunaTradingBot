@@ -139,3 +139,18 @@ def test_synthetic_pair_kinds():
     assert abs(np.log(a["close"]).diff().corr(np.log(b["close"]).diff())) < 0.5
     for f in synthetic_pair(100, "cointegrated", seed=2):
         assert (f["high"] >= f[["open", "close"]].max(axis=1)).all()
+
+
+@pytest.mark.parametrize(
+    "leaky",
+    [
+        lambda d: d["close"].rolling(21, center=True, min_periods=1).mean(),
+        lambda d: d["close"].shift(-1),
+        lambda d: d["close"].rolling(20).mean().bfill(),
+    ],
+    ids=["centered", "shift_neg", "bfill_warmup"],
+)
+def test_assert_causal_detects_leaks(leaky):
+    df = synthetic_bars(600, "random_walk", seed=4)
+    with pytest.raises(AssertionError):
+        assert_causal(leaky, df)

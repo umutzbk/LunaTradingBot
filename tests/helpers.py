@@ -98,14 +98,20 @@ def assert_causal(
     df: pd.DataFrame,
     cut_points: int = 5,
 ) -> None:
-    """fn(df[:k]) must equal fn(df)[:k] for random k (no look-ahead)."""
+    """fn(df[:k]) must equal fn(df)[:k] (no look-ahead).
+
+    Cut points are stratified (small values inside typical warm-ups, plus len-1) with
+    `cut_points` random extras, so warm-up bfill and similar leaks are caught.
+    """
+    n = len(df)
     full = fn(df)
+    fixed = {k for k in (2, 3, 5, 10, 25, 50, 100, 300, 500) if k < n} | {n - 1}
     rng = np.random.default_rng(12345)
-    ks = rng.integers(2, len(df), size=cut_points)
-    for k in ks:
+    extras = {int(k) for k in rng.integers(2, n, size=cut_points)}
+    for k in sorted(fixed | extras):
         part = fn(df.iloc[:k])
         expected = full.iloc[:k]
         if isinstance(expected, pd.DataFrame):
-            pd.testing.assert_frame_equal(part, expected, check_freq=False)
+            pd.testing.assert_frame_equal(part, expected, check_freq=False, rtol=1e-9, atol=0)
         else:
-            pd.testing.assert_series_equal(part, expected, check_freq=False)
+            pd.testing.assert_series_equal(part, expected, check_freq=False, rtol=1e-9, atol=0)
