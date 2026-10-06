@@ -10,6 +10,7 @@ from typing import Any
 
 import pandas as pd
 from sqlalchemy import Engine, create_engine, text
+from sqlalchemy.exc import OperationalError
 
 EQUITY_COLS = ["ts", "equity", "gross_leverage", "open_risk"]
 POSITION_COLS = ["id", "strategy", "key", "direction", "opened_at", "bars_held", "regime",
@@ -20,7 +21,7 @@ RISK_COLS = ["ts", "rule", "detail", "action"]
 STATE_COLS = ["kill_switch", "paused", "day_start_equity", "peak_equity", "lock_owner",
               "lock_heartbeat_age_s"]
 REPORT_COLS = ["kind", "account", "ts", "path", "verdict"]
-STATS_COLS = ["strategy", "n_labeled", "n_selected", "n_rejected", "mean_r_selected",
+STATS_COLS = ["strategy", "n_labeled", "n_terminal", "n_selected", "n_rejected", "mean_r_selected",
               "mean_r_rejected"]
 
 _REPORT_DIR = re.compile(r"^(?P<kind>[a-z]+)_(?P<account>[A-Za-z0-9]+)_(?P<ts>\d{8}T\d{6})$")
@@ -43,8 +44,15 @@ def _read(db: Any, sql: str, cols: list[str], **params: Any) -> pd.DataFrame:
     try:
         with _engine(db).connect() as c:
             return pd.read_sql_query(text(sql), c, params=params)
-    except Exception:  # noqa: BLE001 - e.g. no such table: the dashboard shows "no data yet"
-        return pd.DataFrame(columns=cols)
+    except Exception as e:
+        # DB not initialised yet ("no such table") -> "no data yet"; pandas may wrap the
+        # sqlalchemy error, so inspect the cause chain. Locked / corrupt / other: never mask.
+        err: BaseException | None = e
+        while err is not None:
+            if isinstance(err, OperationalError) and "no such table" in str(err).lower():
+                return pd.DataFrame(columns=cols)
+            err = err.__cause__ or err.__context__
+        raise
 
 
 def _ts(df: pd.DataFrame, col: str = "ts") -> pd.DataFrame:
@@ -59,22 +67,38 @@ def equity_curve(db: Any, account: str) -> pd.DataFrame:
     return _ts(df)
 
 
+def list_accounts(db: Any) -> list[str]:
+    """Distinct accounts seen in the DB (fallback perp/spot when none)."""
+    df = _read(db, "SELECT account FROM equity UNION SELECT account FROM state "
+                   "UNION SELECT account FROM candidates UNION SELECT account FROM positions "
+                   "ORDER BY 1", ["account"])
+    return df["account"].tolist() or ["perp", "spot"]
+
+
 def open_positions_df(db: Any, account: str) -> pd.DataFrame:
     raw = _read(db, "SELECT id, strategy, key, opened_at, pnl_net, data FROM positions "
                     "WHERE account = :a AND status = 'open' ORDER BY opened_at, id",
                 POSITION_COLS + ["data"], a=account)
     rows = []
+    bad = 0
     for r in raw.to_dict("records"):
-        d = json.loads(r["data"])
+        try:
+            d = json.loads(r["data"])
+            legs = ", ".join(f"{a}:{w:g}" for a, w in d.get("legs", []))
+        except (ValueError, TypeError, AttributeError):
+            bad += 1
+            continue
         rows.append({
             "id": r["id"], "strategy": r["strategy"], "key": r["key"], "direction": d.get("direction"),
             "opened_at": r["opened_at"], "bars_held": d.get("bars_held"), "regime": d.get("regime"),
             "risk_amount": d.get("risk_amount"),
-            "legs": ", ".join(f"{a}:{w:g}" for a, w in d.get("legs", [])),
+            "legs": legs,
             "qty": json.dumps(d.get("qty", {})), "entry_price": json.dumps(d.get("entry_price", {})),
             "stop": json.dumps(d.get("stop", {})), "pnl_net": r["pnl_net"],
         })
-    return _ts(pd.DataFrame(rows, columns=POSITION_COLS), "opened_at")
+    out = _ts(pd.DataFrame(rows, columns=POSITION_COLS), "opened_at")
+    out.attrs["skipped_bad_rows"] = bad
+    return out
 
 
 def recent_candidates(db: Any, account: str, limit: int = 200) -> pd.DataFrame:
@@ -140,21 +164,33 @@ def report_index(var_dir: Path) -> pd.DataFrame:
     return df.sort_values("ts", ascending=False, ignore_index=True) if len(df) else df
 
 
+def terminal_reasons_df(db: Any, account: str) -> pd.DataFrame:
+    """Never-labelable outcomes (outcome_r NULL) per strategy and exit_reason."""
+    return _read(db, """
+        SELECT c.strategy, COALESCE(o.exit_reason, '') AS exit_reason, COUNT(*) AS n
+        FROM candidates c JOIN candidate_outcomes o ON o.candidate_id = c.id
+        WHERE c.account = :a AND o.outcome_r IS NULL
+        GROUP BY c.strategy, o.exit_reason ORDER BY c.strategy, n DESC""",
+                 ["strategy", "exit_reason", "n"], a=account)
+
+
 def candidate_outcome_stats(db: Any, account: str) -> pd.DataFrame:
-    """Per strategy: labeled counts and mean outcome_r of selected vs rejected candidates."""
+    """Per strategy: labeled (numeric outcome) counts, terminal (NULL outcome) count, and mean
+    outcome_r of selected vs rejected candidates."""
     df = _read(db, """
         SELECT c.strategy, c.selected, o.outcome_r
         FROM candidates c JOIN candidate_outcomes o ON o.candidate_id = c.id
-        WHERE c.account = :a AND o.outcome_r IS NOT NULL""", ["strategy", "selected", "outcome_r"],
-               a=account)
+        WHERE c.account = :a""", ["strategy", "selected", "outcome_r"], a=account)
     if df.empty:
         return pd.DataFrame(columns=STATS_COLS)
     df["selected"] = df["selected"].astype(bool)
     rows = []
     for strat, g in df.groupby("strategy", sort=True):
-        s, r = g[g["selected"]]["outcome_r"], g[~g["selected"]]["outcome_r"]
+        lab = g[g["outcome_r"].notna()]
+        s, r = lab[lab["selected"]]["outcome_r"], lab[~lab["selected"]]["outcome_r"]
         rows.append({
-            "strategy": strat, "n_labeled": len(g), "n_selected": len(s), "n_rejected": len(r),
+            "strategy": strat, "n_labeled": len(lab), "n_terminal": int(g["outcome_r"].isna().sum()),
+            "n_selected": len(s), "n_rejected": len(r),
             "mean_r_selected": float(s.mean()) if len(s) else None,
             "mean_r_rejected": float(r.mean()) if len(r) else None,
         })

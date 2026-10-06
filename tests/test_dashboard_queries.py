@@ -88,7 +88,7 @@ def test_candidates_and_stats(db):
     st = q.candidate_outcome_stats(db, "perp")
     assert list(st.columns) == q.STATS_COLS
     r = st.iloc[0]
-    assert r["n_labeled"] == 3 and r["n_selected"] == 1 and r["n_rejected"] == 2
+    assert r["n_labeled"] == 3 and r["n_terminal"] == 1 and r["n_selected"] == 1 and r["n_rejected"] == 2
     assert r["mean_r_selected"] == 2.0 and r["mean_r_rejected"] == 0.0
 
 
@@ -126,3 +126,66 @@ def test_report_index(tmp_path):
     w = df[df["kind"] == "walkforward"].iloc[0]
     assert w["verdict"] == "PASS" and w["account"] == "perp" and w["path"].endswith("report.html")
     assert w["ts"] == pd.Timestamp("2026-10-06T12:18:47", tz="UTC")
+
+
+def test_terminal_reasons(db):
+    ids = db.record_candidates("r", [cand(0), cand(1), cand(2)], account="perp")
+    db.record_outcome(ids[0], None, "no_data")
+    db.record_outcome(ids[1], None, "no_data")
+    db.record_outcome(ids[2], None, "delisted")
+    df = q.terminal_reasons_df(db, "perp")
+    assert dict(zip(df["exit_reason"], df["n"], strict=True)) == {"no_data": 2, "delisted": 1}
+    assert q.candidate_outcome_stats(db, "perp").iloc[0]["n_terminal"] == 3
+
+
+def test_non_missing_table_errors_propagate():
+    class Boom:
+        def connect(self):
+            raise sa.exc.OperationalError("SELECT 1", {}, Exception("database is locked"))
+
+    with pytest.raises(sa.exc.OperationalError, match="locked"):
+        q.equity_curve(Boom(), "perp")
+    with pytest.raises(sa.exc.OperationalError):
+        q.state_df(Boom(), "perp")
+
+    class Corrupt:
+        def connect(self):
+            raise sa.exc.DatabaseError("SELECT 1", {}, Exception("file is not a database"))
+
+    with pytest.raises(sa.exc.DatabaseError):
+        q.recent_candidates(Corrupt(), "perp")
+
+
+def test_bad_position_row_skipped(db):
+    with db.engine.begin() as c:
+        c.exec_driver_sql(
+            "INSERT INTO positions (account, id, strategy, key, legs, status, opened_at, entry, stop, "
+            "pnl_net, pnl_breakdown, data) VALUES ('perp','bad','s','k','[]','open','2026-01-01',"
+            "'{}','{}',0,'{}','not json')")
+    df = q.open_positions_df(db, "perp")
+    assert df.empty and df.attrs["skipped_bad_rows"] == 1
+
+
+def test_report_index_malformed_summary(tmp_path):
+    d = tmp_path / "reports" / "walkforward_perp_20261006T121847"
+    d.mkdir(parents=True)
+    (d / "summary.json").write_text("{not json")
+    (d.parent / "baseline_perp_20261006T121848").mkdir()
+    (d.parent / "baseline_perp_20261006T121848" / "summary.json").write_text("[1, 2]")
+    df = q.report_index(tmp_path)
+    assert len(df) == 2 and df["verdict"].isna().all()
+
+
+def test_readonly_candidates_state_and_accounts(db, tmp_path):
+    db.record_candidates("r", [cand(0)], account="perp")
+    db.set_flag("perp", "paused", True)
+    db.record_equity("spot", T, 1.0)
+    eng = q.open_readonly(tmp_path)
+    assert q.recent_candidates(eng, "perp")["key"].tolist() == ["K0"]
+    assert q.state_df(eng, "perp").iloc[0]["paused"]
+    assert q.list_accounts(eng) == ["perp", "spot"]
+    eng.dispose()
+
+
+def test_list_accounts_fallback(db):
+    assert q.list_accounts(db) == ["perp", "spot"]
