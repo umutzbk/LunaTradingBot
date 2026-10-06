@@ -151,9 +151,9 @@ CASES = {
     "R12_liquidation": (dict(liq_distance={"BTC": 0.49}), {}, dict(liq_distance={"BTC": 0.5}), {}),
     "R13_spot_short": (
         dict(kind="spot", holdings={"BTC": 0.5}),
-        dict(side="sell", intent="close", has_stop=False, stop_distance_frac=None),
+        dict(side="sell"),
         dict(kind="spot", holdings={"BTC": 1.0}),
-        dict(side="sell", intent="close", has_stop=False, stop_distance_frac=None),
+        dict(side="sell"),
     ),
     "R14_orders_per_day": (
         dict(state_kw={"orders_today": 30}),
@@ -229,7 +229,7 @@ def test_kill_from_flatten_action_still_lets_closes_through():
     ctx = _ctx(equity=840.0, state_kw={"day_start_equity": 840.0}, holdings={"BTC": 1.0})
     actions = portfolio_actions(ctx)
     assert "FLATTEN_AND_KILL" in actions
-    killed = dataclasses.replace(ctx, state=apply_actions(ctx.state, actions))
+    killed = dataclasses.replace(ctx, state=apply_actions(ctx.state, actions, NOW))
     assert killed.state.kill_switch
     assert _single(_close(), killed) is None
     assert _single(_oc(), killed).startswith("R1_kill")
@@ -244,7 +244,45 @@ def test_close_orders_still_subject_to_band_minimums_and_live():
 
 
 def test_close_that_grows_position_is_pyramiding():
-    assert _single(_close(increases_abs_position=True), _ctx()).startswith("R10_pyramiding")
+    ctx = _ctx(holdings={"BTC": 1.0})
+    assert _single(_close(increases_abs_position=True), ctx).startswith("R10_pyramiding")
+
+
+@pytest.mark.parametrize(
+    "state_kw,holdings,side,qty",
+    [
+        ({"kill_switch": True, "paused": True}, {}, "sell", 1.0),  # close opens a short
+        ({"kill_switch": True, "paused": True}, {}, "buy", 1.0),  # close opens a long
+        ({}, {"BTC": 1.0}, "sell", 5.0),  # close flips 1 long into a 4 short
+        ({}, {"BTC": 1.0}, "buy", 1.0),  # same side as the holding: grows it
+        ({}, {"BTC": -1.0}, "sell", 0.5),  # same side as a short holding
+        ({}, {"BTC": -1.0}, "buy", 1.5),  # flips a short into a long
+    ],
+)
+def test_close_must_not_open_or_flip_exposure(state_kw, holdings, side, qty):
+    ctx = _ctx(state_kw=state_kw, holdings=holdings)
+    for intent in ("close", "reduce"):
+        reason = _single(_close(intent=intent, side=side, qty=qty, notional=100.0 * qty), ctx)
+        assert reason is not None and reason.startswith("R10_close_invalid"), reason
+
+
+def test_close_valid_against_short_and_exact_size():
+    assert _single(_close(side="buy", qty=1.0), _ctx(holdings={"BTC": -1.0})) is None
+    assert _single(_close(qty=1.0 + 1e-12), _ctx(holdings={"BTC": 1.0})) is None  # float drift
+
+
+def test_batch_close_updates_running_holdings():
+    ctx = _ctx(state_kw={"kill_switch": True}, holdings={"BTC": 1.0})
+    res = check([_close(client_id="a", qty=0.6), _close(client_id="b", qty=0.6)], ctx)
+    assert [o.client_id for o in res.approved] == ["a"]
+    assert res.vetoed[0][1].startswith("R10_close_invalid")
+
+
+@pytest.mark.parametrize("intent", ["OPEN", "Close", "", "flatten"])
+def test_unknown_intent_vetoed_first(intent):
+    ctx = _ctx(state_kw={"kill_switch": True}, holdings={"BTC": 1.0})
+    assert _single(_oc(intent=intent), ctx).startswith("R0_bad_intent")
+    assert _single(_oc(intent=intent), _ctx()).startswith("R0_bad_intent")
 
 
 # --- batches ----------------------------------------------------------------------------------
@@ -332,7 +370,7 @@ def test_spot_batch_tracks_holdings_and_cash():
         ctx,
     )
     assert [o.client_id for o in sells.approved] == ["s1"]
-    assert sells.vetoed[0][1].startswith("R13_spot_short")
+    assert sells.vetoed[0][1].startswith("R10_close_invalid")
 
     buys = check(
         [
@@ -374,7 +412,7 @@ def test_r12_perp_only_and_fail_closed():
     spot = _ctx(kind="spot", liq_distance={})
     assert _single(_oc(), spot) is None
     assert _single(_oc(), _ctx(liq_distance={})).startswith("R12_liquidation")
-    assert _single(_oc(stop_distance_frac=None), _ctx()).startswith("R12_liquidation")
+    assert _single(_oc(stop_distance_frac=None), _ctx()).startswith("R11_no_stop")
 
 
 def test_r13_perp_short_allowed_unless_config_forbids():
@@ -390,24 +428,57 @@ def test_r3_r4_unknown_reference_equity_blocks_opens():
 
 
 @pytest.mark.parametrize(
-    "field,value",
+    "field,value,rule",
     [
-        ("notional", math.nan),
-        ("new_position_risk", math.nan),
-        ("new_position_risk_frac", math.nan),
-        ("stop_distance_frac", math.nan),
-        ("mid", math.nan),
-        ("mid", 0.0),
-        ("notional", math.inf),
+        ("notional", math.nan, "R8_gross_leverage"),
+        ("notional", math.inf, "R8_gross_leverage"),
+        ("new_position_risk", math.nan, "R6_open_risk"),
+        ("new_position_risk", -1.0, "R6_open_risk"),
+        ("new_position_risk_frac", math.nan, "R5_risk_per_trade"),
+        ("new_position_risk_frac", -0.001, "R5_risk_per_trade"),
+        ("stop_distance_frac", math.nan, "R11_no_stop"),
+        ("stop_distance_frac", math.inf, "R11_no_stop"),
+        ("stop_distance_frac", 0.0, "R11_no_stop"),
+        ("stop_distance_frac", -0.05, "R11_no_stop"),
+        ("mid", math.nan, "R15_price_band"),
+        ("mid", 0.0, "R15_price_band"),
     ],
 )
-def test_non_finite_order_inputs_fail_closed(field, value):
-    assert _single(_oc(**{field: value}), _ctx()) is not None
+def test_bad_order_inputs_fail_closed(field, value, rule):
+    reason = _single(_oc(**{field: value}), _ctx())
+    assert reason is not None and reason.startswith(rule), reason
 
 
-@pytest.mark.parametrize("field", ["equity", "open_risk", "gross_notional"])
-def test_non_finite_context_inputs_fail_closed(field):
-    assert _single(_oc(), _ctx(**{field: math.nan})) is not None
+@pytest.mark.parametrize(
+    "field,rule",
+    [("equity", "R3_daily_loss"), ("open_risk", "R6_open_risk"), ("gross_notional", "R8_gross_leverage")],
+)
+def test_non_finite_context_inputs_fail_closed(field, rule):
+    reason = _single(_oc(), _ctx(**{field: math.nan}))
+    assert reason is not None and reason.startswith(rule), reason
+
+
+@pytest.mark.parametrize("mid", [100.0, 43251.7, 64000.1])
+@pytest.mark.parametrize("kind", ["perp", "spot"])
+def test_price_band_exact_edge_passes(mid, kind):
+    band = (PERP if kind == "perp" else SPOT)["max_price_band"]
+    ctx = _ctx(kind=kind, holdings={"BTC": 1.0}, available_cash=1e9)
+    for side, sign in (("buy", 1), ("sell", -1)):
+        edge = mid * (1 + sign * band)
+        beyond = mid * (1 + sign * band * 1.001)
+        assert _single(_oc(side=side, limit_price=edge, mid=mid), ctx) is None, (side, edge)
+        reason = _single(_oc(side=side, limit_price=beyond, mid=mid), ctx)
+        assert reason is not None and reason.startswith("R15_price_band"), (side, beyond)
+
+
+def test_r7_existing_position_id_takes_no_new_slot():
+    ctx = _ctx(open_positions=3, open_position_ids=frozenset({"pair1", "p2", "p3"}))
+    retry = _oc(client_id="retry", asset="ETH", side="sell", position_id="pair1", new_position_risk=1.0)
+    assert _single(retry, ctx) is None
+    fresh = _oc(client_id="new", position_id="p4", new_position_risk=1.0)
+    assert _single(fresh, ctx).startswith("R7_max_positions")
+    res = check([retry, fresh], ctx)
+    assert [o.client_id for o in res.approved] == ["retry"]
 
 
 def test_rules_apply_in_spec_order():
@@ -450,7 +521,7 @@ def test_reconciliation_mismatch_pauses():
     ctx = _ctx(reconciliation_ok=False)
     actions = portfolio_actions(ctx)
     assert actions == ["PAUSE_RECONCILIATION"]
-    state = apply_actions(ctx.state, actions)
+    state = apply_actions(ctx.state, actions, NOW)
     assert state.paused and not state.kill_switch
     assert ctx.state.paused is False  # input not mutated
 
@@ -458,14 +529,37 @@ def test_reconciliation_mismatch_pauses():
 def test_portfolio_actions_combined_and_ordered():
     ctx = _ctx(equity=800.0, reconciliation_ok=False)
     assert portfolio_actions(ctx) == ["FLATTEN_AND_KILL", "BLOCK_ENTRIES_TODAY", "PAUSE_RECONCILIATION"]
-    state = apply_actions(ctx.state, portfolio_actions(ctx))
+    state = apply_actions(ctx.state, portfolio_actions(ctx), NOW)
     assert state.kill_switch and state.paused
 
 
-def test_apply_actions_block_entries_changes_nothing():
+def test_apply_actions_block_entries_sets_only_the_day():
     state = _state()
-    assert apply_actions(state, ["BLOCK_ENTRIES_TODAY"]) == state
-    assert apply_actions(state, []) == state
+    blocked = apply_actions(state, ["BLOCK_ENTRIES_TODAY"], NOW)
+    assert blocked == dataclasses.replace(state, entries_blocked_day=date(2024, 1, 1))
+    assert apply_actions(state, [], NOW) == state
+    assert state.entries_blocked_day is None  # pure
+
+
+def test_daily_loss_block_is_sticky_until_next_utc_day():
+    ctx = _ctx(equity=980.0)  # -2.0% vs day start
+    state = apply_actions(ctx.state, portfolio_actions(ctx), NOW)
+    recovered = _ctx(equity=981.0, state_kw={"entries_blocked_day": state.entries_blocked_day})
+    assert portfolio_actions(recovered) == []  # -1.9%: condition no longer holds ...
+    assert _single(_oc(), recovered).startswith("R3_daily_loss")  # ... but entries stay blocked
+    holding = dataclasses.replace(recovered, holdings={"BTC": 1.0})
+    assert _single(_close(), holding) is None  # closes still allowed
+
+    tomorrow = NOW + pd.Timedelta("1D")
+    next_state = roll_day(state, tomorrow, 981.0)
+    assert next_state.entries_blocked_day is None
+    next_ctx = dataclasses.replace(recovered, state=next_state, now=tomorrow, last_bar_ts=tomorrow - BAR)
+    assert _single(_oc(), next_ctx) is None
+
+
+def test_apply_actions_rejects_naive_now():
+    with pytest.raises(ValueError):
+        apply_actions(_state(), ["BLOCK_ENTRIES_TODAY"], pd.Timestamp("2024-01-01"))
 
 
 def test_portfolio_actions_nan_equity_blocks_entries_without_flatten():

@@ -18,13 +18,15 @@ class RiskState:
     day_start_equity: float | None = None
     peak_equity: float | None = None
     orders_today: int = 0
+    entries_blocked_day: date | None = None  # R3: no new entries for the rest of this UTC day
 
 
 def roll_day(state: RiskState, now: pd.Timestamp, equity: float) -> RiskState:
     """Return the state for decision time `now` (pure; `state` is not modified).
 
     On the first call on a new UTC day the day resets once: `day_start_equity = equity`,
-    `orders_today = 0`. Downtime across several midnights therefore resets exactly once, to the
+    `orders_today = 0`,
+    `entries_blocked_day = None`. Downtime across several midnights therefore resets exactly once, to the
     equity at the current tick. A timestamp earlier than `state.day` never resets. The peak
     always tracks `max(peak, equity)`. Non-finite equity raises ValueError (it would poison
     the day start and the peak). Kill switch and pause are preserved.
@@ -37,6 +39,11 @@ def roll_day(state: RiskState, now: pd.Timestamp, equity: float) -> RiskState:
     peak = equity if state.peak_equity is None else max(state.peak_equity, equity)
     if state.day is None or today > state.day:
         return dataclasses.replace(
-            state, day=today, day_start_equity=equity, orders_today=0, peak_equity=peak
+            state,
+            day=today,
+            day_start_equity=equity,
+            orders_today=0,
+            entries_blocked_day=None,
+            peak_equity=peak,
         )
     return dataclasses.replace(state, peak_equity=peak)

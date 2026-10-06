@@ -5,10 +5,13 @@ vetoes the order with reason "<rule id>: <detail>". Approved orders update a run
 exposure (gross notional, open risk, open positions, orders today, holdings, spot cash), so a batch
 cannot jointly exceed a limit. Vetoed orders consume nothing.
 
+An intent outside {"open", "close", "reduce"} is vetoed first with R0_bad_intent.
+
 Exemptions (spec §6.1, rev4): orders with intent "close"/"reduce" pass R1, R2, R3, R4, R5-R9, R11,
 R12, R14, R16 and R18. They remain subject to R10 (a "close" that grows a position is mislabeled
-pyramiding), R13 (a sell may not take holdings below zero), R15 (price band), R17 (minimums) and
-R19 (live disabled).
+pyramiding; R10_close_invalid: a close/reduce must be opposite in sign to the asset's net signed
+holding with qty <= |held|, so it can never open or flip exposure), R13 (a sell may not take holdings
+below zero), R15 (price band), R17 (minimums) and R19 (live disabled).
 
 All comparisons are written so that NaN inputs fail closed (`not (x <= limit)` rather than
 `x > limit`). Unknown reference values (missing day start / peak equity, missing per-asset
@@ -20,6 +23,7 @@ from __future__ import annotations
 import dataclasses
 import math
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Literal
 
 import pandas as pd
@@ -32,7 +36,9 @@ Action = Literal["FLATTEN_AND_KILL", "BLOCK_ENTRIES_TODAY", "PAUSE_RECONCILIATIO
 
 BAR = pd.Timedelta("15min")
 STALE_AFTER = 2 * BAR  # R16: last closed bar older than 2 bars
-_QTY_TOL = 1e-9  # relative tolerance on spot holdings (R13), absorbs float drift from fills
+_QTY_TOL = 1e-9  # relative tolerance on holdings (R10 close, R13), absorbs float drift from fills
+_BAND_TOL = 1e-12  # R15: a limit exactly on the band edge must pass despite float rounding
+_INTENTS = frozenset({"open", "close", "reduce"})
 
 
 @dataclass(frozen=True)
@@ -62,7 +68,9 @@ class OrderCheck:
 class RiskContext:
     """Account snapshot at decision time. `holdings` is net signed qty per asset;
     `liq_distance[asset]` is the fractional price move to liquidation of the post-order position
-    (perp only); `last_bar_ts` is the open time of the last closed 15-minute bar."""
+    (perp only); `last_bar_ts` is the open time of the last closed 15-minute bar;
+    `open_position_ids` are the ids of positions open before this batch (R7: an open order on one
+    of them, e.g. a retried pair leg, does not take a new slot)."""
 
     limits: RiskLimits
     kind: AccountKind
@@ -80,6 +88,7 @@ class RiskContext:
     min_notional: dict[str, float]
     available_cash: float
     reconciliation_ok: bool = True
+    open_position_ids: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -139,10 +148,20 @@ def portfolio_actions(ctx: RiskContext) -> list[Action]:
     return actions
 
 
-def apply_actions(state: RiskState, actions: list[Action]) -> RiskState:
-    """Return a new state with the actions' persistent flags set. BLOCK_ENTRIES_TODAY needs no
-    flag: `check` vetoes opens with R3 while the day loss holds."""
+def _utc_date(ts: pd.Timestamp) -> date:
+    if ts.tzinfo is None:
+        raise ValueError("risk engine requires tz-aware timestamps (UTC)")
+    return ts.tz_convert("UTC").date()
+
+
+def apply_actions(state: RiskState, actions: list[Action], now: pd.Timestamp) -> RiskState:
+    """Return a new state with the actions' persistent flags set (pure).
+
+    FLATTEN_AND_KILL sets kill_switch, PAUSE_RECONCILIATION sets paused, BLOCK_ENTRIES_TODAY sets
+    entries_blocked_day to the UTC date of `now` (sticky until roll_day starts a new day)."""
     out = dataclasses.replace(state)
+    if "BLOCK_ENTRIES_TODAY" in actions:
+        out.entries_blocked_day = _utc_date(now)
     if "FLATTEN_AND_KILL" in actions:
         out.kill_switch = True
     if "PAUSE_RECONCILIATION" in actions:
@@ -156,8 +175,14 @@ def apply_actions(state: RiskState, actions: list[Action]) -> RiskState:
 def _check_one(oc: OrderCheck, ctx: RiskContext, run: _Running) -> str | None:
     order = oc.order
     lim = ctx.limits
+    if order.intent not in _INTENTS:
+        return f"R0_bad_intent: {order.intent!r}"
     is_open = order.intent == "open"
-    is_new_position = is_open and order.position_id not in run.new_position_ids
+    is_new_position = (
+        is_open
+        and order.position_id not in ctx.open_position_ids
+        and order.position_id not in run.new_position_ids
+    )
     restrict_short = ctx.kind == "spot" or not lim.allow_short
 
     if is_open:
@@ -165,12 +190,14 @@ def _check_one(oc: OrderCheck, ctx: RiskContext, run: _Running) -> str | None:
             return "R1_kill: kill switch active"
         if ctx.state.paused:
             return "R2_pause: trading paused"
+        if ctx.state.entries_blocked_day == _utc_date(ctx.now):
+            return "R3_daily_loss: entries blocked for the rest of the UTC day"
         if _day_loss_breached(ctx) is not False:
             return f"R3_daily_loss: equity {ctx.equity} vs day start {ctx.state.day_start_equity}"
         if _drawdown_breached(ctx) is not False:
             return f"R4_drawdown: equity {ctx.equity} vs peak {ctx.state.peak_equity}"
-        if not (oc.new_position_risk_frac <= lim.max_risk_per_trade):
-            return f"R5_risk_per_trade: {oc.new_position_risk_frac} > {lim.max_risk_per_trade}"
+        if not (0 <= oc.new_position_risk_frac <= lim.max_risk_per_trade):
+            return f"R5_risk_per_trade: {oc.new_position_risk_frac} not in [0, {lim.max_risk_per_trade}]"
         total_risk = run.open_risk + oc.new_position_risk
         if not (oc.new_position_risk >= 0 and total_risk <= lim.max_open_risk * ctx.equity):
             return f"R6_open_risk: {total_risk} > {lim.max_open_risk} x {ctx.equity}"
@@ -186,14 +213,20 @@ def _check_one(oc: OrderCheck, ctx: RiskContext, run: _Running) -> str | None:
     if oc.increases_abs_position:
         return "R10_pyramiding: order grows an existing position"
 
+    if not is_open:
+        held = run.holdings.get(order.asset, 0.0)
+        opposite = held > 0 if order.side == "sell" else held < 0
+        if not (opposite and order.qty <= abs(held) * (1 + _QTY_TOL)):
+            return f"R10_close_invalid: {order.side} {order.qty} against net holding {held}"
+
     if is_open:
-        if not oc.has_stop:
-            return "R11_no_stop: open order without stop"
+        stop = oc.stop_distance_frac
+        if not (oc.has_stop and stop is not None and math.isfinite(stop) and stop > 0):
+            return f"R11_no_stop: open order without a valid stop ({oc.has_stop}, {stop})"
         if ctx.kind == "perp":
             liq = ctx.liq_distance.get(order.asset)
-            stop = oc.stop_distance_frac
-            if liq is None or stop is None or not (stop > 0):
-                return f"R12_liquidation: unknown liq distance/stop ({liq}, {stop})"
+            if liq is None:
+                return f"R12_liquidation: unknown liq distance for {order.asset}"
             if not (liq >= lim.liq_distance_mult * stop):
                 return f"R12_liquidation: {liq} < {lim.liq_distance_mult} x {stop}"
 
@@ -205,7 +238,7 @@ def _check_one(oc: OrderCheck, ctx: RiskContext, run: _Running) -> str | None:
     if is_open and not (run.orders_today < lim.max_orders_per_day):
         return f"R14_orders_per_day: {run.orders_today} >= {lim.max_orders_per_day}"
 
-    if not (oc.mid > 0 and abs(order.limit_price / oc.mid - 1.0) <= lim.max_price_band):
+    if not (oc.mid > 0 and abs(order.limit_price / oc.mid - 1.0) <= lim.max_price_band + _BAND_TOL):
         return f"R15_price_band: limit {order.limit_price} vs mid {oc.mid}"
 
     if is_open:
@@ -251,9 +284,10 @@ def _apply(oc: OrderCheck, ctx: RiskContext, run: _Running) -> None:
 def check(orders: list[OrderCheck], ctx: RiskContext) -> RiskResult:
     """Evaluate `orders` in sequence; pure (ctx and its dicts are not modified).
 
-    R7 counts an "open" order as a new position the first time its position_id appears among
-    approved opens in this batch (pair legs share one position_id, hence one slot). Adding to a
-    position that existed before the batch is R10's job (`increases_abs_position`).
+    R7 counts an "open" order as a new position unless its position_id is in
+    `ctx.open_position_ids` or was already approved earlier in this batch (pair legs and retried
+    legs share one slot). Growing an existing position is still vetoed by R10
+    (`increases_abs_position`).
     """
     run = _Running(
         open_positions=ctx.open_positions,
