@@ -58,10 +58,47 @@ def data_report() -> None:
     typer.echo(f"data report: {path}")
 
 
+def _utc(ts: datetime | None):
+    import pandas as pd
+
+    if ts is None:
+        return None
+    t = pd.Timestamp(ts)
+    return t.tz_localize("UTC") if t.tzinfo is None else t.tz_convert("UTC")
+
+
 @app.command()
-def baseline() -> None:
-    """Run baseline strategies."""
-    _not_implemented("baseline")
+def baseline(
+    account: Annotated[Literal["perp", "spot"], typer.Option(help="Account to run")] = "perp",
+    start: Annotated[datetime | None, typer.Option(help="Start (default history_start + 30d)")] = None,
+    end: Annotated[datetime | None, typer.Option(help="End, exclusive (default last common bar)")] = None,
+) -> None:
+    """Run the naive baselines (combined + each alone) and write an HTML report."""
+    import pandas as pd
+
+    from luna.baseline import run_baseline
+    from luna.config import load_settings
+    from luna.data.store import BarStore
+    from luna.instruments import load_instruments
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    settings = load_settings()
+    store = BarStore(settings.var_dir)
+    ts = pd.Timestamp.now(tz="UTC").strftime("%Y%m%dT%H%M%S")
+    out_dir = settings.var_dir / "reports" / f"baseline_{account}_{ts}"
+    summ = run_baseline(
+        settings, store, account, load_instruments(settings, account), _utc(start), _utc(end), out_dir
+    )
+    for name, m in summ.items():
+        if "skipped" in m:
+            typer.echo(f"{name}: skipped ({m['skipped']})")
+        else:
+            typer.echo(
+                f"{name}: n={m['n_trades']:.0f} expR={m['expectancy_r']} "
+                f"CI=[{m['ci_lo']}, {m['ci_hi']}] PF={m['profit_factor']} maxDD={m['max_dd']}"
+            )
+    typer.echo(f"report: {out_dir / 'report.html'}")
 
 
 @app.command()

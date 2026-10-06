@@ -10,8 +10,11 @@ from pathlib import Path
 
 import pandas as pd
 
+from luna.config import CostConfig
 from luna.data.store import BAR_COLUMNS, _empty_bars, _normalize
 from luna.http import get_json
+from luna.instruments import asset_from_spot
+from luna.types import Instrument
 
 SPOT_BASE = "https://api.kraken.com/0/public"
 
@@ -161,3 +164,28 @@ def fetch_depth(
     bids = [(float(r[0]), float(r[1])) for r in book["bids"]]
     asks = [(float(r[0]), float(r[1])) for r in book["asks"]]
     return bids, asks
+
+
+def fetch_spot_instruments(client, pairs: list[str], costs: CostConfig) -> dict[str, Instrument]:
+    """Instruments (by asset) from /AssetPairs for the given altnames, e.g. ["XBTUSD", "ETHUSD"]."""
+    res = _result(get_json(client, f"{SPOT_BASE}/AssetPairs", {"pair": ",".join(pairs)}))
+    by_alt = {v["altname"]: v for v in res.values()}
+    out = {}
+    for pair in pairs:
+        meta = by_alt.get(pair)
+        if meta is None:
+            continue
+        asset = asset_from_spot(pair)
+        out[asset] = Instrument(
+            asset=asset,
+            symbol=pair,
+            venue="kraken_spot",
+            kind="spot",
+            qty_step=10.0 ** -int(meta["lot_decimals"]),
+            price_tick=float(meta["tick_size"]),
+            min_qty=float(meta["ordermin"]),
+            min_notional=float(meta["costmin"]),
+            maker_fee=costs.maker_fee,
+            taker_fee=costs.taker_fee,
+        )
+    return out

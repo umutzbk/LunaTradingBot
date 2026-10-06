@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
-from luna.config import CostConfig
-from luna.types import Instrument
+import dataclasses
+import json
+from pathlib import Path
+
+import httpx
+
+from luna.config import CostConfig, Settings
+from luna.types import AccountKind, Instrument
 
 
 def _kraken_code(asset: str) -> str:
@@ -16,6 +22,11 @@ def perp_symbol(asset: str) -> str:
 
 def spot_pair(asset: str) -> str:
     return f"{_kraken_code(asset)}USD"
+
+
+def asset_from_spot(pair: str) -> str:
+    code = pair.removesuffix("USD")
+    return "BTC" if code == "XBT" else code
 
 
 def asset_from_perp(symbol: str) -> str:
@@ -41,3 +52,41 @@ def perp_instrument(meta: dict, costs: CostConfig) -> Instrument:
         initial_margin=float(margin.get("initialMargin", 0.0)),
         maintenance_margin=float(margin.get("maintenanceMargin", 0.0)),
     )
+
+
+def _instrument_cache(settings: Settings, kind: AccountKind) -> Path:
+    return Path(settings.var_dir) / "instruments" / f"{kind}.json"
+
+
+def load_instruments(
+    settings: Settings,
+    kind: AccountKind,
+    client: httpx.Client | None = None,
+    assets: list[str] | None = None,
+) -> dict[str, Instrument]:
+    """Exchange instruments by asset from `var/instruments/{kind}.json`; if absent, fetch (perp:
+    every listed perp; spot: `assets`, default the assets in the spot bar store) and write the cache."""
+    path = _instrument_cache(settings, kind)
+    if path.exists():
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        return {a: Instrument(**d) for a, d in raw.items()}
+    from luna.data.kraken_futures import list_perps
+    from luna.data.kraken_spot import fetch_spot_instruments
+    from luna.data.store import BarStore
+    from luna.http import make_client
+
+    own = client is None
+    client = client if client is not None else make_client()
+    try:
+        if kind == "perp":
+            found = {inst.asset: inst for inst, _ in list_perps(client, settings.costs["perp"])}
+        else:
+            wanted = assets if assets is not None else BarStore(settings.var_dir).assets("kraken_spot")
+            found = fetch_spot_instruments(client, [spot_pair(a) for a in wanted], settings.costs["spot"])
+    finally:
+        if own:
+            client.close()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    raw = {a: dataclasses.asdict(i) for a, i in found.items()}
+    path.write_text(json.dumps(raw, indent=1), encoding="utf-8")
+    return found
