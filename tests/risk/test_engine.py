@@ -656,3 +656,33 @@ def test_roll_day_ignores_clock_going_backwards():
     s = roll_day(RiskState(), pd.Timestamp("2024-01-05", tz="UTC"), 1000.0)
     back = roll_day(s, pd.Timestamp("2024-01-04 23:00", tz="UTC"), 900.0)
     assert (back.day, back.day_start_equity) == (date(2024, 1, 5), 1000.0)
+
+
+# --- numpy scalars (engines feed np.float64 from price arrays) ------------------------------------
+
+
+def _np_ctx(equity, day_start=1000.0, peak=1000.0):
+    import numpy as np
+
+    return _ctx(equity=np.float64(equity),
+                state_kw={"day_start_equity": np.float64(day_start), "peak_equity": np.float64(peak)})
+
+
+def test_portfolio_actions_with_numpy_floats():
+    assert portfolio_actions(_np_ctx(1000.0)) == []  # nothing breached -> no fail-closed block
+    assert portfolio_actions(_np_ctx(990.0, day_start=1000.0)) == []
+    assert portfolio_actions(_np_ctx(975.0, day_start=1000.0)) == ["BLOCK_ENTRIES_TODAY"]
+    acts = portfolio_actions(_np_ctx(800.0, day_start=800.0, peak=1000.0))
+    assert acts == ["FLATTEN_AND_KILL"]  # np.True_ must still kill (fail open before the fix)
+    import numpy as np
+
+    unknown = _ctx(equity=np.float64(1000.0), state_kw={"day_start_equity": None, "peak_equity": None})
+    assert portfolio_actions(unknown) == ["BLOCK_ENTRIES_TODAY"]  # unknown: block, never kill
+
+
+def test_check_r3_r4_with_numpy_floats():
+    assert _single(_oc(), _np_ctx(1000.0)) is None
+    assert _single(_oc(), _np_ctx(975.0, day_start=1000.0)).startswith("R3_daily_loss")
+    assert _single(_oc(), _np_ctx(800.0, day_start=800.0, peak=1000.0)).startswith("R4_drawdown")
+    killed = dataclasses.replace(_np_ctx(800.0, day_start=1000.0, peak=1000.0), holdings={"BTC": 1.0})
+    assert _single(_close(), killed) is None  # closes stay exempt from R3/R4

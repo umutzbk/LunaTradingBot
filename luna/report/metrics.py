@@ -14,14 +14,16 @@ from luna.research.stats import cvar, profit_factor
 DAYS_PER_YEAR = 365  # crypto trades every day
 
 
-def daily_returns(equity: pd.Series) -> pd.Series:
+def daily_returns(equity: pd.Series, start_equity: float | None = None) -> pd.Series:
     """Simple returns of the UTC daily closing equity. The first day's return is measured against
-    the first equity observation of the series."""
+    `start_equity` (the starting capital) when given and finite, else against the first equity
+    observation of the series."""
     if equity.empty:
         return pd.Series(dtype=float)
     closes = equity.resample("1D").last().ffill()
     prev = closes.shift(1)
-    prev.iloc[0] = equity.iloc[0]
+    base = start_equity if start_equity is not None and math.isfinite(start_equity) else equity.iloc[0]
+    prev.iloc[0] = base
     return closes / prev - 1.0
 
 
@@ -47,6 +49,7 @@ def summary(res: BacktestResult) -> dict[str, float]:
     worst_trade_r    lowest R multiple.
     turnover         traded notional per day (entry + exit ~ 2 x entry gross) / mean equity.
     exposure         fraction of bars with at least one open position.
+    stop_count       trades closed by a stop (emergency intrabar stop or strategy "stop" exit).
     corr_btc         correlation of daily strategy returns with BTC daily returns (NaN if no BTC).
     """
     tr = res.trades
@@ -55,7 +58,7 @@ def summary(res: BacktestResult) -> dict[str, float]:
     net = tr["pnl_net"].to_numpy(dtype=float) if n else np.array([])
     r = tr["r_multiple"].to_numpy(dtype=float) if n else np.array([])
     gross_notional = tr["gross_notional"].to_numpy(dtype=float) if n else np.array([])
-    dr = daily_returns(eq)
+    dr = daily_returns(eq, res.initial_equity)
     n_days = max(len(dr), 1)
     mean_eq = float(eq.mean()) if len(eq) else math.nan
 
@@ -93,6 +96,7 @@ def summary(res: BacktestResult) -> dict[str, float]:
         "worst_trade_r": float(r.min()) if n else math.nan,
         "turnover": _ratio(2.0 * float(gross_notional.sum()) / n_days, mean_eq),
         "exposure": exposure,
+        "stop_count": float(tr["exit_reason"].isin(["emergency_stop", "stop"]).sum()) if n else 0.0,
         "win_rate": float((net > 0).mean()) if n else math.nan,
         "pnl_gross": tot("pnl_gross"),
         "fees": tot("fees"),

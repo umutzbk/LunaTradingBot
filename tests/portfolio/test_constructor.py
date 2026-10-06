@@ -6,7 +6,7 @@ from luna.config import CostConfig, RiskLimits
 from luna.execution.costs import CostModel
 from luna.portfolio.constructor import Selection, construct
 from luna.portfolio.portfolio import Portfolio, Position
-from luna.types import Candidate, ExitSpec, Instrument, Leg, StopSpec
+from luna.types import Candidate, ExitSpec, Fill, Instrument, Leg, StopSpec
 
 TS = pd.Timestamp("2024-01-01 12:00", tz="UTC")
 ASSETS = ("A", "B", "C", "D", "E")
@@ -132,3 +132,27 @@ def test_constructor_short_not_allowed_on_spot():
     assert skipped[0][1] == "short_not_allowed"
     sels, _ = run([cand("A", direction=1)], kind="spot")
     assert len(sels) == 1
+
+
+def test_constructor_leverage_cap_reason():
+    pf = Portfolio("perp", 265.0)
+    pf.open_position(Position("x", "s", "E", (Leg("E", 1.0),), 1, {}, {}, TS, 100.0,
+                              StopSpec("price", 98.0, 0.02), ExitSpec(10), 1.0, "NONE"))
+    pf.apply_fill(Fill("f", TS, "E", "buy", 5.3, 100.0, 0.0, "taker"), "x", 100.0)  # 530 = 2.0 x 265
+    _, skipped = run([cand("A")], pf=pf)
+    assert skipped[0][1] == "leverage_cap"
+
+
+def test_constructor_short_overlap_is_uncorrelated():
+    rng = np.random.default_rng(2)
+    base = rng.normal(0, 0.002, 2880)
+    ret = independent_returns()
+    ret["A"], ret["B"] = base, base  # perfectly correlated ...
+    ret.iloc[:-95, [0, 1]] = np.nan  # ... but only 95 joint observations
+    sels, skipped = run([cand("A", score=2), cand("B", score=1)], returns=ret)
+    assert len(sels) == 2 and skipped == []
+    ret = independent_returns()
+    ret["A"], ret["B"] = base, base
+    ret.iloc[:-96, [0, 1]] = np.nan  # 96 joint observations: enough
+    _, skipped = run([cand("A", score=2), cand("B", score=1)], returns=ret)
+    assert skipped[0][1] == "corr_bucket"

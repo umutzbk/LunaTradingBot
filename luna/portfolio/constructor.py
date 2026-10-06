@@ -8,15 +8,17 @@ Candidates are taken in descending score order. Each is checked, in order, again
                            direction (pairs legs included).
 4. ``corr_bucket``         a leg has the same direction as an open/selected exposure whose 30-day
                            return correlation is > corr_bucket_threshold (same asset = corr 1):
-                           one position per risk bucket.
+                           one position per risk bucket. A pair with fewer than
+                           MIN_CORR_OVERLAP joint return observations counts as uncorrelated.
 5. ``invalid_candidate``   non-finite / non-positive stop distance, missing mid, or equity <= 0.
-6. sizing                  ``risk_amt = risk_per_trade * equity * regime_mult``,
+6. ``leverage_cap``        no gross-leverage headroom left (open + selected gross >= cap).
+7. sizing                  ``risk_amt = risk_per_trade * equity * regime_mult``,
                            ``gross = risk_amt / (stop_distance + round_trip)``, clipped to the
                            remaining gross-leverage headroom and to the per-leg notional cap. The
                            selection's ``risk_amount`` is ``gross * (stop_distance + round_trip)``
                            (= risk_amt unless clipped).
-7. ``below_min_notional``  a leg rounds below the instrument's qty step / min_qty / min_notional.
-8. ``open_risk``           open + selected risk + this risk > max_open_risk * equity.
+8. ``below_min_notional``  a leg rounds below the instrument's qty step / min_qty / min_notional.
+9. ``open_risk``           open + selected risk + this risk > max_open_risk * equity.
 
 Round trip is the |weight|-weighted mean of ``CostModel.round_trip_frac`` over the legs, with taker
 fees on perp (IOC) and maker fees on spot (post-only).
@@ -36,6 +38,8 @@ from luna.execution.costs import CostModel
 from luna.planner import round_qty
 from luna.portfolio.portfolio import Portfolio
 from luna.types import Candidate, Instrument
+
+MIN_CORR_OVERLAP = 96  # one day of 15-minute bars
 
 
 @dataclass
@@ -70,7 +74,7 @@ class _Corr:
             if r is not None and a in r.columns and b in r.columns:
                 x = r[[a, b]].to_numpy(dtype=float)
                 x = x[np.isfinite(x).all(axis=1)]
-                if len(x) >= 2 and x[:, 0].std() > 0 and x[:, 1].std() > 0:
+                if len(x) >= MIN_CORR_OVERLAP and x[:, 0].std() > 0 and x[:, 1].std() > 0:
                     val = float(np.corrcoef(x[:, 0], x[:, 1])[0, 1])
             self._cache[key] = val
         return self._cache[key]
@@ -162,11 +166,14 @@ def _evaluate(
     total_w = sum(weights)
     legs = [leg for leg in cand.legs if leg.weight != 0]
     rt = sum(abs(leg.weight) * costs.round_trip_frac(leg.asset, liquidity) for leg in legs) / total_w
+    headroom = limits.max_gross_leverage * equity - gross_used
+    if not headroom > 0:
+        return "leverage_cap", None
     risk_amt = limits.risk_per_trade * equity * mult
     gross = risk_amt / (dist + rt)
     gross = min(
         gross,
-        limits.max_gross_leverage * equity - gross_used,
+        headroom,
         limits.max_leg_notional_frac * equity * total_w / max(weights),
     )
     if not gross > 0:

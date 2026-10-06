@@ -4,6 +4,15 @@
 Timing. Bars are indexed by their open time ``t``. All decisions for bar ``t`` are taken at its
 close and use only bars ``<= t`` (signals are causal and are read at row ``t``). Orders are stamped
 ``t`` and SimBroker fills them on bar ``t + 1`` (open for IOC, through-the-limit for post-only).
+The risk engine's clock is the bar-open time too: ``roll_day``/``apply_actions`` get ``now = t``
+and ``RiskContext(now=t, last_bar_ts=t)``, so the bar opening 23:45 (closing at midnight) still
+belongs to the old UTC day and R16 (stale data) never fires on the backtest's own bars.
+
+Window continuity (walk-forward): the result carries ``portfolio``, ``risk_state`` (kill switch,
+day start, peak, orders today) and ``pending_exits`` (positions being flattened and their exit
+orders still waiting for the next bar). Passing them as ``initial_portfolio`` / ``initial_state``
+/ ``initial_exiting`` continues the run as if it had not been split, except that entry orders
+decided on the last bar of a window are dropped (the next window decides afresh).
 
 Per bar ``t`` of the union index inside ``[start, end)``:
 
@@ -88,6 +97,18 @@ class BacktestResult:
     bar_stats: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=BAR_STAT_COLUMNS))
     benchmark: pd.Series | None = None  # BTC close over the run (None if BTC not in the panel)
     portfolio: Portfolio | None = None  # final state (open positions carry over to a next window)
+    risk_state: RiskState | None = None  # final risk state (kill switch, day start, peak, orders)
+    pending_exits: PendingExits | None = None  # flattens in progress at the end of the window
+    initial_equity: float = math.nan  # equity before the first bar (daily-return base)
+
+
+@dataclass
+class PendingExits:
+    """Positions being exited (position_id -> exit reason) and their exit orders decided on the
+    last bar, still to be filled on the next bar as (order, reference mid)."""
+
+    reasons: dict[str, str] = field(default_factory=dict)
+    orders: list[tuple[OrderRequest, float]] = field(default_factory=list)
 
 
 def default_instruments(
@@ -229,11 +250,15 @@ def run_backtest(
     initial_portfolio: Portfolio | None = None,
     *,
     instruments: dict[str, Instrument] | None = None,
+    initial_state: RiskState | None = None,
+    initial_exiting: PendingExits | None = None,
 ) -> BacktestResult:
     """Simulate [start, end) on the union of the panel's bar indexes (see module docstring).
 
     `ranker` is a Ranker or a factory ``ts -> Ranker`` (e.g. walk-forward window rankers).
     `initial_portfolio` is deep-copied; the final state is returned in ``result.portfolio``.
+    `initial_state` / `initial_exiting` continue a previous window's ``risk_state`` /
+    ``pending_exits`` (see "Window continuity").
     `instruments` defaults to `default_instruments` (synthetic, permissive).
     """
     if funding_mode not in ("known_only", "zero", "estimated", "estimated_x2"):
@@ -284,10 +309,23 @@ def run_backtest(
     def regime_mult(c: Candidate) -> float:
         return limits.highvol_risk_mult if c.regime == "HIGH_VOL" else 1.0
 
-    state = RiskState()
+    state = dataclasses.replace(initial_state) if initial_state is not None else RiskState()
     submitted: dict[str, tuple[OrderRequest, float]] = {}  # client_id -> (order, ref price)
     entry_groups: dict[str, _EntryGroup] = {}
     exiting: dict[str, str] = {}  # position_id -> exit reason
+    if initial_exiting is not None:
+        stray = (set(initial_exiting.reasons) | {o.position_id for o, _ in initial_exiting.orders}) - set(
+            pf.positions
+        )
+        if stray:
+            raise ValueError(f"pending exits for positions not in the portfolio: {sorted(stray)}")
+        exiting.update(initial_exiting.reasons)
+        for o, ref in initial_exiting.orders:
+            if o.intent == "open":
+                raise ValueError(f"pending exit order {o.client_id} is an open")
+            broker.submit(o)
+            submitted[o.client_id] = (o, ref)
+    initial_equity = float(pf.equity())
     entry_notional: dict[str, float] = {
         pid: sum(abs(q) * p.entry_price.get(a, 0.0) for a, q in p.qty.items())
         for pid, p in pf.positions.items()
@@ -394,7 +432,8 @@ def run_backtest(
         # (2) emergency stops on bar t's range
         if pf.positions:
             threshold = limits.emergency_stop_frac * pf.equity()
-            for pid, pos in list(pf.positions.items()):
+            # equity <= 0: no meaningful threshold; the drawdown kill switch owns that case
+            for pid, pos in list(pf.positions.items()) if threshold > 0 else []:
                 legs = [(a, q) for a, q in pos.qty.items() if q != 0.0]
                 if not legs or not all(mkt.real[i, mkt.col[a]] for a, _ in legs):
                     continue
@@ -518,6 +557,12 @@ def run_backtest(
         bar_stats=bar_stats,
         benchmark=benchmark,
         portfolio=pf,
+        risk_state=state,
+        pending_exits=PendingExits(
+            reasons=dict(exiting),
+            orders=[(o, ref) for o, ref in submitted.values() if o.intent != "open"],
+        ),
+        initial_equity=initial_equity,
     )
 
 
@@ -528,8 +573,9 @@ def _frame(rows: list[dict], columns: list[str]) -> pd.DataFrame:
 def _entries(
     i, t, firing, mkt, signals, pf, ranker, kind, limits, costs, instruments, regime_mult, band,
     state, ctx, cand_row, veto_events, broker, submitted, entry_groups,
-) -> RiskState:
-    """Step 6 for one bar. Returns the updated risk state (orders_today)."""
+) -> tuple[RiskState, float]:
+    """Step 6 for one bar. Returns the updated risk state (orders_today) and the committed gross
+    leverage after the submitted entries (NaN if none were submitted)."""
     mids = {a: float(mkt.close[i, j]) for a, j in mkt.col.items() if mkt.real[i, j]}
     open_keys = {(p.strategy, p.key) for p in pf.positions.values()}
     scorer = ranker if hasattr(ranker, "score") else ranker(t)

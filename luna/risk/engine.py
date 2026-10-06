@@ -118,7 +118,7 @@ def _day_loss_breached(ctx: RiskContext) -> bool | None:
     dse = ctx.state.day_start_equity
     if dse is None or not (math.isfinite(dse) and dse > 0) or not math.isfinite(ctx.equity):
         return None
-    return (dse - ctx.equity) >= ctx.limits.daily_loss_limit * dse
+    return bool((dse - ctx.equity) >= ctx.limits.daily_loss_limit * dse)  # plain bool, never np.bool_
 
 
 def _drawdown_breached(ctx: RiskContext) -> bool | None:
@@ -126,7 +126,7 @@ def _drawdown_breached(ctx: RiskContext) -> bool | None:
     peak = ctx.state.peak_equity
     if peak is None or not (math.isfinite(peak) and peak > 0) or not math.isfinite(ctx.equity):
         return None
-    return (peak - ctx.equity) >= ctx.limits.max_drawdown * peak
+    return bool((peak - ctx.equity) >= ctx.limits.max_drawdown * peak)  # plain bool, never np.bool_
 
 
 def portfolio_actions(ctx: RiskContext) -> list[Action]:
@@ -139,9 +139,10 @@ def portfolio_actions(ctx: RiskContext) -> list[Action]:
     PAUSE_RECONCILIATION R18 reconciliation mismatch.
     """
     actions: list[Action] = []
-    if _drawdown_breached(ctx) is True:
+    if _drawdown_breached(ctx):  # unknown (None) never kills
         actions.append("FLATTEN_AND_KILL")
-    if _day_loss_breached(ctx) is not False:
+    day_loss = _day_loss_breached(ctx)
+    if day_loss is None or day_loss:  # unknown blocks (fail closed)
         actions.append("BLOCK_ENTRIES_TODAY")
     if not ctx.reconciliation_ok:
         actions.append("PAUSE_RECONCILIATION")
@@ -192,9 +193,11 @@ def _check_one(oc: OrderCheck, ctx: RiskContext, run: _Running) -> str | None:
             return "R2_pause: trading paused"
         if ctx.state.entries_blocked_day == _utc_date(ctx.now):
             return "R3_daily_loss: entries blocked for the rest of the UTC day"
-        if _day_loss_breached(ctx) is not False:
+        day_loss = _day_loss_breached(ctx)
+        if day_loss is None or day_loss:
             return f"R3_daily_loss: equity {ctx.equity} vs day start {ctx.state.day_start_equity}"
-        if _drawdown_breached(ctx) is not False:
+        drawdown = _drawdown_breached(ctx)
+        if drawdown is None or drawdown:
             return f"R4_drawdown: equity {ctx.equity} vs peak {ctx.state.peak_equity}"
         if not (0 <= oc.new_position_risk_frac <= lim.max_risk_per_trade):
             return f"R5_risk_per_trade: {oc.new_position_risk_frac} not in [0, {lim.max_risk_per_trade}]"

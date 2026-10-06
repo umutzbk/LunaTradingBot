@@ -250,17 +250,28 @@ def test_drawdown_kill_flattens_and_blocks():
 # --- causality / data edge cases -----------------------------------------------------------------
 
 
-def test_no_lookahead_engine():
-    panel = _multi_panel(3_000, seed=7)
-    strategies = [NaiveMeanReversion({"span": 48})]
-    keys = {"naive_mean_reversion": list(panel)}
-    full = bt(panel, strategies, keys)
+def _lookahead_case(name):
+    if name == "mean_reversion":
+        panel = _multi_panel(3_000, seed=7)
+        return panel, NaiveMeanReversion({"span": 48}), list(panel)
+    if name == "momentum":
+        panel = {"BTC": swing_bars(3_000, seed=1, leg=300), "SOL": swing_bars(3_000, seed=2, leg=250)}
+        return panel, NaiveMomentum({"fast": 24, "slow": 96, "atr_n": 24}), list(panel)
+    a, b = synthetic_pair(3_000, "cointegrated", seed=4)
+    return {"ETH": a, "BTC": b}, NaivePairs({"span": 96}), ["ETH/BTC"]
+
+
+@pytest.mark.parametrize("name", ["mean_reversion", "momentum", "pairs"])
+def test_no_lookahead_engine(name):
+    panel, strat, keys = _lookahead_case(name)
+    full = bt(panel, [strat], {strat.name: keys})
     k = 2_000
-    cut = bt({a: df.iloc[:k] for a, df in panel.items()}, strategies, keys)
+    cut = bt({a: df.iloc[:k] for a, df in panel.items()}, [strat], {strat.name: keys})
     t_k = panel["BTC"].index[k]
     a = full.trades[full.trades["exit_ts"] < t_k].reset_index(drop=True)
     b = cut.trades[cut.trades["exit_ts"] < t_k].reset_index(drop=True)
-    assert len(a) > 5
+    assert len(a) >= 3
+    assert len(full.trades) > len(a)  # the cut really removed later trades
     pd.testing.assert_frame_equal(a, b)
     pd.testing.assert_series_equal(full.equity.iloc[:k], cut.equity)
 
@@ -345,9 +356,12 @@ def test_metrics_summary():
     assert s["pnl_net"] == pytest.approx(s["pnl_gross"] - s["fees"] - s["spread_slip"] + s["funding"])
     assert 0 <= s["max_dd"] < 1 and 0 <= s["exposure"] <= 1 and 0 <= s["win_rate"] <= 1
     assert math.isfinite(s["corr_btc"]) and -1 <= s["corr_btc"] <= 1
-    dr = daily_returns(res.equity)
+    assert res.initial_equity == SETTINGS.accounts["perp"].capital_usd
+    dr = daily_returns(res.equity, res.initial_equity)
     assert len(dr) == len(res.equity.resample("1D").last())
+    assert dr.iloc[0] == pytest.approx(res.equity.resample("1D").last().iloc[0] / 265.0 - 1)
     assert s["worst_day"] == pytest.approx(dr.min())
+    assert s["stop_count"] == tr["exit_reason"].isin(["stop", "emergency_stop"]).sum()
     assert s["sharpe_daily"] == pytest.approx(dr.mean() / dr.std(ddof=1) * math.sqrt(365))
     no_btc = bt({"SOL": panel["SOL"]}, [NaiveMeanReversion({"span": 48})], {"naive_mean_reversion": ["SOL"]})
     assert math.isnan(summary(no_btc)["corr_btc"])
@@ -366,3 +380,66 @@ def test_performance_5_assets_20k_bars():
                        instruments=insts(panel))
     assert time.perf_counter() - t0 < 60
     assert len(res.trades) > 500
+
+
+# --- walk-forward window continuity ---------------------------------------------------------------
+
+
+def _continue(panel, strategies, keys, split, settings=SETTINGS):
+    """Run [START, split) then [split, END) carrying portfolio, risk state and pending exits."""
+    kw = dict(instruments=insts(panel))
+    r1 = run_backtest(panel, {}, strategies, keys, AcceptAllRanker(), "perp", settings, START, split, **kw)
+    r2 = run_backtest(panel, {}, strategies, keys, AcceptAllRanker(), "perp", settings, split, END,
+                      initial_portfolio=r1.portfolio, initial_state=r1.risk_state,
+                      initial_exiting=r1.pending_exits, **kw)
+    return r1, r2
+
+
+def test_window_continuity_pending_leg_failure_flatten():
+    a, b = synthetic_pair(600, "cointegrated", seed=1)
+    b.iloc[301, b.columns.get_loc("filled")] = True
+    panel, keys = {"ETH": a, "BTC": b}, {"forced": ["ETH/BTC"]}
+    single = bt(panel, [Forced({300: 1}, {500})], keys)
+    split = a.index[302]  # window 1 ends right after the leg failure was detected and flatten planned
+    r1, r2 = _continue(panel, [Forced({300: 1}, {500})], keys, split)
+    assert r1.trades.empty
+    assert list(r1.pending_exits.reasons.values()) == ["leg_failure"]
+    assert len(r1.pending_exits.orders) == 1
+    assert r2.trades["exit_ts"].tolist() == [split]  # flatten completes on window 2's first bar
+    pd.testing.assert_frame_equal(r2.trades, single.trades)
+    assert not r2.portfolio.positions and not r2.pending_exits.reasons
+
+
+def test_window_continuity_keeps_kill_switch_and_pending_flatten():
+    bars = synthetic_bars(800, "random_walk", seed=5, sigma=0.0005)
+    close = bars["close"].to_numpy().copy()
+    close[400:] *= 0.2
+    bars["close"] = close
+    bars["open"] = np.r_[close[0], close[:-1]]
+    bars["high"] = np.maximum(bars["open"], bars["close"]) * 1.0001
+    bars["low"] = np.minimum(bars["open"], bars["close"]) * 0.9999
+    settings = _with_limits(emergency_stop_frac=10.0)
+    panel, keys = {"SOL": bars}, {"forced": ["SOL"]}
+    strat = Forced({390: 1, 600: 1}, {700}, stop=0.002)
+    single = run_backtest(panel, {}, [strat], keys, AcceptAllRanker(), "perp", settings, START, END,
+                          instruments=insts(panel))
+    kill_ts = single.risk_events.loc[single.risk_events["kind"] == "FLATTEN_AND_KILL", "ts"].iloc[0]
+    split = kill_ts + BAR  # window 1 ends with the kill-flatten exit decided but not yet filled
+    r1, r2 = _continue(panel, [strat], keys, split, settings)
+    assert r1.risk_state.kill_switch and r1.trades.empty
+    assert list(r1.pending_exits.reasons.values()) == ["kill_switch"]
+    assert r2.trades["exit_ts"].tolist() == [split]  # flatten fills on window 2's first bar
+    pd.testing.assert_frame_equal(r2.trades, single.trades)
+    assert r2.risk_state.kill_switch
+    late = r2.candidates[r2.candidates["ts"] == bars.index[600]]
+    assert len(late) == 1 and late["reason"].str.startswith("R1").all()  # kill switch persisted
+    assert not (r2.risk_events["kind"] == "FLATTEN_AND_KILL").any()  # not re-triggered, carried
+    pd.testing.assert_series_equal(pd.concat([r1.equity, r2.equity]), single.equity)
+
+
+def test_initial_exiting_must_match_portfolio():
+    from luna.engine.backtest import PendingExits
+
+    bars = synthetic_bars(200, "random_walk", seed=1)
+    with pytest.raises(ValueError, match="not in the portfolio"):
+        bt({"SOL": bars}, [], {}, initial_exiting=PendingExits(reasons={"ghost": "signal"}))
