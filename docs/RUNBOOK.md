@@ -124,7 +124,7 @@ Komutlar (yalnızca bu chat id'den gelenler işlenir; bot kapalıyken gelen komu
 | `/status` | equity, bayraklar, son bar, entries on/off |
 | `/positions` | açık pozisyonlar |
 | `/pause` | yeni girişleri durdur (açık pozisyonlar yönetilmeye devam eder) |
-| `/resume` | pause'u kaldır |
+| `/resume` | **hem kill switch'i hem pause'u kaldırır** ve peak equity'yi (drawdown çapası, R4) o anki equity'ye sıfırlar; kill switch'in kapatmakta olduğu pozisyonlar strateji yönetimine geri döner. ⚠️ Bilinçli kullanın: drawdown kill'inden sonra `/resume` drawdown sayacını sıfırlar ve %15'lik limit yeni zirveden tekrar başlar. |
 | `/kill` | **kill switch**: yeni giriş yok, tüm pozisyonlar kapatılır; yeniden başlatmada da açık kalır |
 
 Her iki bot aynı token'ı kullanırsa komutu ilk okuyan bot alır; perp ve spot'u birlikte çalıştırıyorsanız iki ayrı

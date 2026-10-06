@@ -5,3 +5,8 @@ var
 __pycache__
 .pytest_cache
 .ruff_cache
+# secrets: passed at runtime via compose env_file, never baked into the image
+.env
+.env.*
+!.env.example
+# NOTE: docker/certs is intentionally NOT ignored (the Dockerfile copies it)

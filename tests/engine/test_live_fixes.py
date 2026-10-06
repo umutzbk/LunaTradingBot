@@ -297,3 +297,39 @@ def test_lock_lost_during_model_fit_stops(db):  # noqa: F811
     eng.tick(clock.now)
     eng._commit(clock.now, equity=True)
     assert len(risk_events(db)) == n_events and rows(db, m.equity) == []
+
+
+@pytest.mark.parametrize("model_kind", ["no_accepted_cell", "none"])
+def test_candidates_recorded_without_accepted_cell(db, model_kind):  # noqa: F811
+    """No accepted expectancy cell: the fitted strategies still scan every tick and every candidate
+    is recorded as rejected by the ranker (with its params); nothing is submitted. No model at all:
+    nothing beyond the no_model risk event."""
+    from luna.engine.live import LiveEngine
+    from luna.ranking.expectancy import ExpectancyRanker
+
+    panel = panel_of(100)
+    idx = panel["BTC"].index
+    clock = Clock(tick_at(idx[50]))
+    strat = Scripted({("BTC", idx[50]): 1, ("ETH", idx[51]): -1})
+    strat.params = {"k": 3}
+    model = None
+    if model_kind == "no_accepted_cell":
+        model = SimpleNamespace(strategies=[strat], keys={"scripted": ["BTC", "ETH"]},
+                                ranker=ExpectancyRanker({}, {"scripted": "k3"}), table={}, window=None)
+    eng, feed, broker = engine(db, panel, clock, strat)
+    eng = LiveEngine("perp", eng.settings, feed, broker, db, RecNotifier(), clock, "paper",
+                     instruments=insts(panel), model_fn=lambda now: model)
+    eng.start()
+    for k in (50, 51):
+        clock.now = tick_at(idx[k])
+        eng.tick(clock.now)
+    got = rows(db, m.candidates)
+    assert orders(db) == []
+    assert risk_events(db, "no_model")
+    if model_kind == "none":
+        assert got == []
+    else:
+        assert [(c["key"], c["selected"], c["reject_reason"]) for c in got] == [
+            ("BTC", False, "ranker"), ("ETH", False, "ranker")]
+        import json
+        assert all(json.loads(c["params"]) == {"k": 3} for c in got)

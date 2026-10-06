@@ -253,6 +253,14 @@ def fit_live_model(
 # --- broker wrapper ---------------------------------------------------------------------------------
 
 
+class _RejectAll:
+    """Ranker used while the model has no accepted expectancy cell: rejects every candidate
+    (recorded with reason "ranker")."""
+
+    def score(self, cand: Candidate, ts: pd.Timestamp) -> None:
+        return None
+
+
 class _Submitter:
     """What the pipeline submits to. Before handing an order to the broker it (1) verifies that
     this process still holds the account lock (refreshing it; on loss the engine stops and nothing
@@ -664,8 +672,12 @@ class LiveEngine:
         self._sync_flags(now, before)
         pipe.exit_signals(i, mkt, signals, bars)
         pipe.flatten(t, price, now=now, adjust=self._urgent_ioc)
-        if firing and self._entries_enabled and self.model is not None:
-            pipe.entries(i, t, firing, mkt, signals, self.model.ranker, now=now)
+        if firing and self.model is not None and getattr(self.model, "strategies", None):
+            # without an accepted expectancy cell the fitted strategies still generate candidates
+            # every tick (scanner / counterfactual dataset), all rejected by the ranker: nothing
+            # is ever submitted
+            ranker = self.model.ranker if self._entries_enabled else _RejectAll()
+            pipe.entries(i, t, firing, mkt, signals, ranker, now=now)
         self._commit(now, equity=True)
 
     def minute_check(self, now) -> None:
