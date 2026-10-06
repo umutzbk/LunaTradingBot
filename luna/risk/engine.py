@@ -276,8 +276,9 @@ def _apply(oc: OrderCheck, ctx: RiskContext, run: _Running) -> None:
     if order.intent == "open":
         run.gross_notional += oc.notional
         run.open_risk += oc.new_position_risk
-        if order.position_id not in run.new_position_ids:
-            run.new_position_ids.add(order.position_id)
+        pid = order.position_id
+        if pid not in ctx.open_position_ids and pid not in run.new_position_ids:
+            run.new_position_ids.add(pid)
             run.open_positions += 1
 
 

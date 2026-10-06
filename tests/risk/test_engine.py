@@ -481,6 +481,19 @@ def test_r7_existing_position_id_takes_no_new_slot():
     assert [o.client_id for o in res.approved] == ["retry"]
 
 
+def test_r7_batch_retry_of_existing_id_does_not_consume_running_slot():
+    ctx = _ctx(open_positions=2, open_position_ids=frozenset({"pair1", "p2"}))
+    retry = _oc(client_id="retry", asset="ETH", side="sell", position_id="pair1", new_position_risk=1.0)
+    fresh = _oc(client_id="fresh", position_id="p3", new_position_risk=1.0)
+    res = check([retry, fresh], ctx)
+    assert [o.client_id for o in res.approved] == ["retry", "fresh"], res.vetoed
+    # the fresh id did take the last slot
+    extra = _oc(client_id="extra", position_id="p4", new_position_risk=1.0)
+    res = check([retry, fresh, extra], ctx)
+    assert [o.client_id for o in res.approved] == ["retry", "fresh"]
+    assert res.vetoed[0][1].startswith("R7_max_positions")
+
+
 def test_rules_apply_in_spec_order():
     ctx = _ctx(state_kw={"kill_switch": True, "paused": True}, mode="live")
     assert _single(_oc(has_stop=False), ctx).startswith("R1_kill")
