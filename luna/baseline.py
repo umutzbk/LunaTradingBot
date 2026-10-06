@@ -7,6 +7,7 @@ import logging
 import math
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from luna.config import Settings
@@ -27,7 +28,15 @@ RUNS = ("naive_momentum", "naive_mean_reversion", "naive_pairs")
 
 
 def _json_safe(d: dict) -> dict:
-    return {k: (None if isinstance(v, float) and not math.isfinite(v) else v) for k, v in d.items()}
+    """NaN -> None, +/-inf -> "inf" / "-inf", numpy scalars -> python."""
+    out = {}
+    for k, v in d.items():
+        if isinstance(v, np.generic):
+            v = v.item()
+        if isinstance(v, float) and not math.isfinite(v):
+            v = None if math.isnan(v) else ("inf" if v > 0 else "-inf")
+        out[k] = v
+    return out
 
 
 def run_baseline(
@@ -43,7 +52,7 @@ def run_baseline(
     cfg = settings.universe
     perp_panel = {a: store.read("kraken_futures", a) for a in store.assets("kraken_futures")}
     if start is None:
-        start = pd.Timestamp(cfg.history_start, tz="UTC") + pd.Timedelta(days=30)
+        start = pd.Timestamp(cfg.history_start, tz="UTC") + pd.Timedelta(days=cfg.min_history_days)
     universe = select_universe(perp_panel, start, cfg.min_adv_usd, cfg.min_history_days)
     if account == "spot":
         spot_assets = set(store.assets("kraken_spot"))
@@ -53,7 +62,12 @@ def run_baseline(
         log.warning("no instrument metadata for %s; dropped", dropped)
     universe = [a for a in universe if a in instruments]
     if not universe:
-        raise ValueError(f"empty {account} universe at {start}")
+        firsts = [df.index[0] for df in perp_panel.values() if not df.empty]
+        hint = ""
+        if firsts:
+            earliest = min(firsts) + pd.Timedelta(days=cfg.min_history_days)
+            hint = f"; earliest valid start is {earliest} (first bar + {cfg.min_history_days}d history)"
+        raise ValueError(f"empty {account} universe at {start}{hint}")
 
     lo = start - WARMUP
     panel = {}
@@ -76,8 +90,8 @@ def run_baseline(
         "naive_mean_reversion": NaiveMeanReversion(),
         "naive_pairs": NaivePairs(),
     }
-    if account == "spot":
-        strategies.pop("naive_pairs")  # needs shorting
+    if account == "spot" or not pairs_ok:
+        strategies.pop("naive_pairs")  # spot: needs shorting; perp: ETH/BTC not both in universe
 
     def go(names: list[str]) -> BacktestResult:
         log.info("running %s on %d assets, %s .. %s", names, len(panel), start, end)
@@ -97,6 +111,10 @@ def run_baseline(
     if account == "spot":
         summ["naive_pairs"] = {"skipped": "pairs require shorting"}
         extra.append(("Skipped", "<p>naive_pairs: pairs require shorting (spot account).</p>"))
+    elif not pairs_ok:
+        summ["naive_pairs"] = {"skipped": "ETH/BTC not in universe"}
+        extra.append(("Skipped", "<p>naive_pairs: ETH/BTC not in universe.</p>"))
+    summ["skipped_assets"] = dropped
     extra.append(
         ("Run setup", f"<p>account={account} start={start} end={end} universe={', '.join(sorted(panel))}</p>")
     )

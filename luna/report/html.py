@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import html
+import logging
 import math
 from pathlib import Path
 
+import numpy as np
 import plotly.graph_objects as go
 
 from luna.engine.backtest import BacktestResult
 from luna.report.metrics import summary
 from luna.research.stats import block_bootstrap_ci
 
+log = logging.getLogger("luna.report")
 PRIMARY = [
     ("n_trades", "n_trades", "{:.0f}"),
     ("expectancy_r", "expectancy_r (net)", "{:.3f}"),
@@ -28,12 +31,17 @@ SECONDARY = [("sharpe_daily", "sharpe_daily", "{:.2f}"), ("sortino_daily", "sort
 
 
 def expectancy_ci(res: BacktestResult, n: int = 2000, ci: float = 0.90) -> tuple[float, float]:
-    """(lo, hi) day-block bootstrap CI of the mean R multiple, blocks = UTC day of the trade exit."""
+    """(lo, hi) day-block bootstrap CI of the mean R multiple, blocks = UTC day of the trade exit.
+    Trades with NaN R are dropped (and logged)."""
     tr = res.trades
     if tr.empty:
         return (math.nan, math.nan)
+    r = tr["r_multiple"].to_numpy(dtype=float)
+    ok = np.isfinite(r)
+    if not ok.all():
+        log.warning("expectancy_ci: dropped %d trades with non-finite r_multiple", int((~ok).sum()))
     days = tr["exit_ts"].dt.floor("D").astype("int64").to_numpy()
-    _, lo, hi = block_bootstrap_ci(tr["r_multiple"].to_numpy(dtype=float), days, n=n, ci=ci)
+    _, lo, hi = block_bootstrap_ci(r[ok], days[ok], n=n, ci=ci)
     return (lo, hi)
 
 
@@ -98,7 +106,7 @@ def render_report(
 
     sections = [
         ("Summary", _summary_html(m)),
-        ("Equity curves", eq.to_html(full_html=False, include_plotlyjs="cdn")),
+        ("Equity curves", eq.to_html(full_html=False, include_plotlyjs=True)),
         ("P&L breakdown", bar.to_html(full_html=False, include_plotlyjs=False)),
         *(extra_sections or []),
     ]
@@ -113,5 +121,3 @@ def render_report(
     path = out_dir / "report.html"
     path.write_text(doc, encoding="utf-8")
     return path
-
-

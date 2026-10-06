@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Annotated, Literal, NoReturn
+from typing import TYPE_CHECKING, Annotated, Literal, NoReturn
 
 import typer
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 app = typer.Typer(name="luna", help="Luna crypto research and paper-trading platform.", no_args_is_help=True)
 
@@ -58,7 +61,7 @@ def data_report() -> None:
     typer.echo(f"data report: {path}")
 
 
-def _utc(ts: datetime | None):
+def _utc(ts: datetime | None) -> pd.Timestamp | None:
     import pandas as pd
 
     if ts is None:
@@ -91,7 +94,10 @@ def baseline(
         settings, store, account, load_instruments(settings, account), _utc(start), _utc(end), out_dir
     )
     for name, m in summ.items():
-        if "skipped" in m:
+        if name == "skipped_assets":
+            if m:
+                typer.echo(f"skipped assets (no instrument): {', '.join(m)}")
+        elif "skipped" in m:
             typer.echo(f"{name}: skipped ({m['skipped']})")
         else:
             typer.echo(

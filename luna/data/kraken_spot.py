@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from collections.abc import Callable
@@ -166,14 +167,19 @@ def fetch_depth(
     return bids, asks
 
 
-def fetch_spot_instruments(client, pairs: list[str], costs: CostConfig) -> dict[str, Instrument]:
-    """Instruments (by asset) from /AssetPairs for the given altnames, e.g. ["XBTUSD", "ETHUSD"]."""
+def fetch_spot_instruments(
+    client, pairs: list[str], costs: CostConfig, allow_missing: bool = False
+) -> dict[str, Instrument]:
+    """Instruments (by asset) from /AssetPairs for the given altnames, e.g. ["XBTUSD", "XDGUSD"].
+    Unresolved pairs raise ValueError unless allow_missing (then logged and omitted)."""
     res = _result(get_json(client, f"{SPOT_BASE}/AssetPairs", {"pair": ",".join(pairs)}))
     by_alt = {v["altname"]: v for v in res.values()}
     out = {}
+    missing = []
     for pair in pairs:
         meta = by_alt.get(pair)
         if meta is None:
+            missing.append(pair)
             continue
         asset = asset_from_spot(pair)
         out[asset] = Instrument(
@@ -188,4 +194,8 @@ def fetch_spot_instruments(client, pairs: list[str], costs: CostConfig) -> dict[
             maker_fee=costs.maker_fee,
             taker_fee=costs.taker_fee,
         )
+    if missing:
+        if not allow_missing:
+            raise ValueError(f"unresolved spot pairs: {missing}")
+        logging.getLogger("luna.instruments").warning("unresolved spot pairs: %s", missing)
     return out

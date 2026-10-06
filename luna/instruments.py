@@ -20,13 +20,17 @@ def perp_symbol(asset: str) -> str:
     return f"PF_{_kraken_code(asset)}USD"
 
 
+SPOT_ALIAS = {"BTC": "XBT", "DOGE": "XDG"}  # Kraken spot altname codes that differ from the ticker
+_SPOT_UNALIAS = {v: k for k, v in SPOT_ALIAS.items()}
+
+
 def spot_pair(asset: str) -> str:
-    return f"{_kraken_code(asset)}USD"
+    return f"{SPOT_ALIAS.get(asset, asset)}USD"
 
 
 def asset_from_spot(pair: str) -> str:
     code = pair.removesuffix("USD")
-    return "BTC" if code == "XBT" else code
+    return _SPOT_UNALIAS.get(code, code)
 
 
 def asset_from_perp(symbol: str) -> str:
@@ -82,7 +86,9 @@ def load_instruments(
             found = {inst.asset: inst for inst, _ in list_perps(client, settings.costs["perp"])}
         else:
             wanted = assets if assets is not None else BarStore(settings.var_dir).assets("kraken_spot")
-            found = fetch_spot_instruments(client, [spot_pair(a) for a in wanted], settings.costs["spot"])
+            found = fetch_spot_instruments(
+                client, [spot_pair(a) for a in wanted], settings.costs["spot"], allow_missing=True
+            )
     finally:
         if own:
             client.close()
