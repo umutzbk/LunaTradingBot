@@ -257,3 +257,58 @@ def test_migration_relaxes_outcome_r_and_adds_params(tmp_path):
     assert got == [(cid, -1.5, "stop"), (cid2, None, "untradeable_short")]
     assert params == [None, '{"k": 1}']
     d.close()
+
+
+def test_migration_twice_by_two_instances_on_migrated_file(tmp_path):
+    """Two Db instances (e.g. two processes) on one already-migrated file: re-running the
+    migration is a no-op, and an ALTER racing a concurrent migration tolerates "duplicate column"."""
+    from sqlalchemy.exc import OperationalError
+
+    from luna.store.db import _add_column
+
+    path = tmp_path / "shared.db"
+    url = f"sqlite:///{path.as_posix()}"
+    a, b = Db(url), Db(url)
+    for d in (a, b, a, b):
+        d._migrate()
+    with a.engine.begin() as c:  # what the loser of a race sees: the column already exists
+        _add_column(c, "candidates", "status VARCHAR")
+        _add_column(c, "candidates", "params TEXT")
+        with pytest.raises(OperationalError):
+            _add_column(c, "no_such_table", "x TEXT")  # other errors still raise
+    with b.engine.connect() as c:
+        cols = [r[1] for r in c.exec_driver_sql("PRAGMA table_info(candidates)")]
+    assert cols.count("status") == 1 and cols.count("params") == 1
+    a.close()
+    b.close()
+
+
+def test_concurrent_migration_of_old_schema(tmp_path):
+    import threading
+
+    path = tmp_path / "old3.db"
+    url = f"sqlite:///{path.as_posix()}"
+    d = Db(url)
+    with d.engine.begin() as c:
+        c.exec_driver_sql("ALTER TABLE candidates DROP COLUMN status")
+        c.exec_driver_sql("ALTER TABLE candidates DROP COLUMN params")
+    d.close()
+    errors, dbs = [], []
+
+    def open_db():
+        try:
+            dbs.append(Db(url))
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=open_db) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    with dbs[0].engine.connect() as c:
+        cols = [r[1] for r in c.exec_driver_sql("PRAGMA table_info(candidates)")]
+    assert cols.count("status") == 1 and cols.count("params") == 1
+    for x in dbs:
+        x.close()

@@ -3,9 +3,9 @@
 Candidates are taken in descending score order. Each is checked, in order, against:
 
 1. ``short_not_allowed``   spot account and some leg would be short.
-2. ``max_positions``       open + already selected positions >= max_positions.
-3. ``opposite_exposure``   a leg trades an asset that an open/selected position holds in the other
-                           direction (pairs legs included).
+2. ``max_positions``       open + pending + already selected positions >= max_positions.
+3. ``opposite_exposure``   a leg trades an asset that an open/pending/selected position holds in
+                           the other direction (pairs legs included).
 4. ``corr_bucket``         a leg has the same direction as an open/selected exposure whose 30-day
                            return correlation is > corr_bucket_threshold (same asset = corr 1):
                            one position per risk bucket. A pair with fewer than
@@ -27,7 +27,7 @@ fees on perp (IOC) and maker fees on spot (post-only).
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -89,12 +89,18 @@ def construct(
     mids: dict[str, float],
     returns_30d: pd.DataFrame,
     regime_mult: Callable[[Candidate], float],
+    pending: Sequence[Candidate] = (),
 ) -> tuple[list[Selection], list[tuple[Candidate, str]]]:
     """Select and size candidates. Returns (selections, [(candidate, skip_reason)]). Pure: `pf` is
-    only read."""
+    only read.
+
+    ``pending``: candidates of entries still working (live: submitted, not yet registered as a
+    position). They count as open positions for ``max_positions`` and their legs as exposures for
+    ``opposite_exposure`` / ``corr_bucket`` (their risk / gross are checked by the risk engine).
+    Always empty in the backtest (orders settle on the next bar)."""
     corr = _Corr(returns_30d)
     equity = pf.equity()
-    n_positions = len(pf.positions)
+    n_positions = len(pf.positions) + len(pending)
     open_risk = pf.open_risk()
     gross_used = pf.gross_notional()
     exposures: list[tuple[str, int]] = []  # (asset, sign) of open and selected positions
@@ -102,6 +108,8 @@ def construct(
         for leg in pos.legs:
             if leg.weight != 0:
                 exposures.append((leg.asset, _sign(leg.weight * pos.direction)))
+    for c in pending:
+        exposures.extend(_leg_signs(c))
     liquidity = "taker" if pf.kind == "perp" else "maker"
 
     selected: list[Selection] = []

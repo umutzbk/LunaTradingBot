@@ -1,11 +1,11 @@
-"""Luna command line interface. Commands are stubs until their owning task lands."""
+"""Luna command line interface."""
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Literal, NoReturn
+from typing import TYPE_CHECKING, Annotated, Literal
 
 import typer
 
@@ -13,11 +13,6 @@ if TYPE_CHECKING:
     import pandas as pd
 
 app = typer.Typer(name="luna", help="Luna crypto research and paper-trading platform.", no_args_is_help=True)
-
-
-def _not_implemented(name: str) -> NoReturn:
-    typer.echo(f"{name}: not implemented", err=True)
-    raise typer.Exit(1)
 
 
 @app.command()
@@ -204,7 +199,7 @@ def holdout(
 @app.command()
 def paper(
     account: Annotated[Literal["perp", "spot"], typer.Option(help="Account to run")] = "perp",
-    db: Annotated[Path | None, typer.Option(help="SQLite file (default var/luna.db)")] = None,
+    db: Annotated[Path | None, typer.Option(help="SQLite file (default var/luna_<account>.db)")] = None,
     once: Annotated[bool, typer.Option(help="Run a single tick + minute check, then exit")] = False,
 ) -> None:
     """Run the 24/7 paper-trading loop (public data, PaperBroker; never places real orders).
@@ -222,11 +217,17 @@ def paper(
     from luna.http import make_client
     from luna.instruments import load_instruments
     from luna.notify.telegram import make_notifier
-    from luna.store.db import Db, default_url
+    from luna.store.db import LEGACY_DB_NAME, Db, db_path, default_url
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)  # request URLs would leak the Telegram token
     settings = load_settings()
+    legacy = settings.var_dir / LEGACY_DB_NAME
+    if db is None and legacy.is_file() and not db_path(settings.var_dir, account).exists():
+        # never start from an empty per-account DB while the old shared one holds the state
+        typer.echo(f"paper {account}: legacy {legacy} found but no {db_path(settings.var_dir, account)}; "
+                   f"run `luna migrate-db --account <owner>` first (see docs/RUNBOOK.md)", err=True)
+        raise typer.Exit(1)
     instruments = load_instruments(settings, account)
     store = BarStore(settings.var_dir)
     venue = "kraken_futures" if account == "perp" else "kraken_spot"
@@ -234,8 +235,9 @@ def paper(
     client = make_client()
     feed_cls = KrakenFuturesLiveFeed if account == "perp" else KrakenSpotLiveFeed
     feed = feed_cls(assets, store, client, buffer_bars=LIVE_BUFFER_BARS)
-    database = Db(f"sqlite:///{db.as_posix()}" if db is not None else default_url(settings.var_dir))
-    broker = PaperBroker(account, CostModel(settings.costs[account]), feed, database, account)
+    database = Db(f"sqlite:///{db.as_posix()}" if db is not None else default_url(settings.var_dir, account))
+    broker = PaperBroker(account, CostModel(settings.costs[account]), feed, database, account,
+                         band=settings.accounts[account].max_price_band)
     engine = LiveEngine(account, settings, feed, broker, database, make_notifier(settings, client),
                         lambda: pd.Timestamp.now(tz="UTC"), "paper", instruments=instruments,
                         http_client=client)
@@ -260,12 +262,15 @@ def paper(
         engine.close()
         database.close()
         client.close()
+    if engine.exit_code:  # e.g. feed dead for hours: exit non-zero so Docker restarts the process
+        typer.echo(f"paper {account}: exiting with code {engine.exit_code} ({engine.exit_reason})", err=True)
+        raise typer.Exit(engine.exit_code)
 
 
 @app.command()
 def health(
     account: Annotated[Literal["perp", "spot"], typer.Option(help="Account to check")] = "perp",
-    db: Annotated[Path | None, typer.Option(help="SQLite file (default var/luna.db)")] = None,
+    db: Annotated[Path | None, typer.Option(help="SQLite file (default var/luna_<account>.db)")] = None,
     max_age_min: Annotated[float, typer.Option(help="Max age of the latest equity row, minutes")] = 20,
 ) -> None:
     """Liveness probe (Docker healthcheck): exit 0 iff the account's latest equity row (written by
@@ -278,8 +283,9 @@ def health(
 
     if db is None:
         from luna.config import load_settings
+        from luna.store.db import db_path
 
-        db = load_settings().var_dir / "luna.db"
+        db = db_path(load_settings().var_dir, account)
     if not db.is_file():
         typer.echo(f"health {account}: database missing ({db})")
         raise typer.Exit(1)
@@ -305,7 +311,7 @@ def health(
 @app.command()
 def label(
     account: Annotated[Literal["perp", "spot"], typer.Option(help="Account to label")] = "perp",
-    db: Annotated[Path | None, typer.Option(help="SQLite file (default var/luna.db)")] = None,
+    db: Annotated[Path | None, typer.Option(help="SQLite file (default var/luna_<account>.db)")] = None,
 ) -> None:
     """Counterfactual labels: net R of every matured candidate (selected or rejected) simulated with
     its own stop/exit rules; idempotent."""
@@ -320,7 +326,7 @@ def label(
     from luna.store.db import Db, default_url
 
     settings = load_settings()
-    database = Db(f"sqlite:///{db.as_posix()}" if db is not None else default_url(settings.var_dir))
+    database = Db(f"sqlite:///{db.as_posix()}" if db is not None else default_url(settings.var_dir, account))
     try:
         n = label_candidates(database, BarStore(settings.var_dir), CostModel(settings.costs[account]),
                              account, pd.Timestamp.now(tz="UTC"),
@@ -337,6 +343,23 @@ def label(
         database.close()
     mean = "n/a" if mean_r is None else f"{mean_r:.3f}"
     typer.echo(f"label {account}: {n} new outcomes; {total}/{cands} candidates labeled, mean R {mean}")
+
+
+@app.command("migrate-db")
+def migrate_db(
+    account: Annotated[Literal["perp", "spot"], typer.Option(help="Owner of the legacy DB")] = "perp",
+) -> None:
+    """One-time move of the legacy shared var/luna.db to var/luna_<account>.db (one DB file per
+    account). Stop the bot first: refused while an account lock in it is fresh, or if the target
+    already exists. Checkpoints the WAL before the rename."""
+    from luna.config import load_settings
+    from luna.store.db import migrate_legacy_db
+
+    try:
+        typer.echo(migrate_legacy_db(load_settings().var_dir, account))
+    except RuntimeError as e:
+        typer.echo(f"migrate-db refused: {e}", err=True)
+        raise typer.Exit(1) from e
 
 
 if __name__ == "__main__":

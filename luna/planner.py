@@ -161,8 +161,10 @@ def plan_exit(
 ) -> ExitPlan:
     """Flatten every non-zero leg: sell if qty > 0, buy if qty < 0 (intent "close").
 
-    Legs whose rounded |qty| is 0 or below min_qty (incl. float residue) get no order and are
-    reported in `dust` (signed qty) for Portfolio.write_off_dust.
+    Legs whose rounded |qty| is 0 or below min_qty (incl. float residue), or whose notional at the
+    current mid is below min_notional, get no order and are reported in `dust` (signed qty) for
+    Portfolio.write_off_dust: an order the risk engine's R17 would veto on every attempt would
+    otherwise keep the position open forever.
     """
     orders: list[OrderRequest] = []
     dust: dict[str, float] = {}
@@ -183,7 +185,7 @@ def plan_exit(
             intent="close",
             position_id=pos.id,
             leg_group="exit",
-            check_notional=False,
+            check_notional=True,
             attempt=attempt,
         )
         if o is None:

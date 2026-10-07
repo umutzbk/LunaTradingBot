@@ -14,6 +14,7 @@ from typing import Any, Literal
 import pandas as pd
 from sqlalchemy import Connection, Engine, create_engine, event, func, select
 from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.exc import OperationalError
 
 from luna.portfolio.portfolio import Position
 from luna.risk.state import RiskState, state_from_dict, state_to_dict
@@ -24,8 +25,59 @@ _OPEN_ORDER_STATUSES = ("NEW", "OPEN", "PARTIAL")
 _LOCK_KEY = "lock"
 
 
-def default_url(var_dir: Path) -> str:
-    return f"sqlite:///{Path(var_dir).as_posix()}/luna.db"
+LEGACY_DB_NAME = "luna.db"  # single shared file before per-account databases (see migrate_legacy_db)
+
+
+def db_path(var_dir: Path, account: str) -> Path:
+    """One SQLite file per account (``var/luna_<account>.db``): each paper bot is the only writer
+    of its file, so two containers never share one WAL database over a bind mount."""
+    return Path(var_dir) / f"luna_{account}.db"
+
+
+def default_url(var_dir: Path, account: str) -> str:
+    return f"sqlite:///{db_path(var_dir, account).as_posix()}"
+
+
+def migrate_legacy_db(var_dir: Path, account: str, *, stale_after_s: float = 300) -> str:
+    """One-time move of the legacy shared ``var/luna.db`` to ``var/luna_<account>.db``.
+
+    Only when the legacy file exists and the target does not, and no account lock in it was
+    refreshed within ``stale_after_s`` (the bot must be stopped). The WAL is checkpointed
+    (TRUNCATE) first, so the main file holds every committed transaction; a leftover empty
+    ``-wal`` / ``-shm`` is removed. Returns a one-line description; raises RuntimeError if refused.
+    """
+    legacy = Path(var_dir) / LEGACY_DB_NAME
+    target = db_path(var_dir, account)
+    if not legacy.is_file():
+        return f"nothing to migrate: {legacy} does not exist"
+    if target.exists():
+        raise RuntimeError(f"{target} already exists; not overwriting it with {legacy}")
+    conn = sqlite3.connect(str(legacy), timeout=10)
+    try:
+        try:
+            rows = conn.execute("SELECT account, value FROM state WHERE key = ?", (_LOCK_KEY,)).fetchall()
+        except sqlite3.OperationalError:
+            rows = []
+        now = time.time()
+        for acc, value in rows:
+            lock = json.loads(value) if value else {}
+            if lock and now - float(lock.get("ts", 0)) < stale_after_s:
+                raise RuntimeError(f"{legacy}: the {acc} lock is held by {lock.get('owner')} "
+                                   f"(heartbeat {now - float(lock['ts']):.0f}s ago); stop the bot first")
+        busy, _, _ = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if busy:
+            raise RuntimeError(f"{legacy}: WAL checkpoint blocked by another connection; stop the bot first")
+        conn.execute("PRAGMA journal_mode=DELETE")  # folds and removes the WAL on this connection
+    finally:
+        conn.close()
+    for suffix in ("-wal", "-shm"):
+        side = legacy.with_name(legacy.name + suffix)
+        if side.exists():
+            if suffix == "-wal" and side.stat().st_size > 0:
+                raise RuntimeError(f"{side} is not empty after the checkpoint; not moving {legacy}")
+            side.unlink()
+    legacy.rename(target)
+    return f"migrated {legacy} -> {target}"
 
 
 def _jsonable(v: Any) -> Any:
@@ -42,6 +94,16 @@ def _jsonable(v: Any) -> Any:
 
 def _dump_opt(v: Any) -> str | None:
     return None if v is None else m.dumps(_jsonable(v))
+
+
+def _add_column(c: Connection, table: str, column_def: str) -> None:
+    """``ALTER TABLE ... ADD COLUMN``, tolerating "duplicate column" (another process opening the
+    same file migrated it between our PRAGMA table_info and the ALTER)."""
+    try:
+        c.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column_def}")
+    except OperationalError as e:
+        if "duplicate column" not in str(e).lower():
+            raise
 
 
 class Db:
@@ -64,19 +126,22 @@ class Db:
 
         @event.listens_for(self.engine, "begin")
         def _on_begin(conn: Connection) -> None:
-            conn.exec_driver_sql("BEGIN")
+            immediate = conn.get_execution_options().get("luna_immediate", False)
+            conn.exec_driver_sql("BEGIN IMMEDIATE" if immediate else "BEGIN")
 
         m.metadata.create_all(self.engine)
         self._migrate()
 
     def _migrate(self) -> None:
-        """Additive column migrations for databases created by an older schema."""
-        with self.engine.begin() as c:
+        """Additive column migrations for databases created by an older schema. Runs under BEGIN
+        IMMEDIATE (schema check and ALTER atomic against another process opening the same file);
+        a "duplicate column" from a concurrent migration is tolerated anyway."""
+        with self.engine.connect() as c, c.execution_options(luna_immediate=True).begin():
             cols = {r[1] for r in c.exec_driver_sql("PRAGMA table_info(candidates)")}
             if "status" not in cols:
-                c.exec_driver_sql("ALTER TABLE candidates ADD COLUMN status VARCHAR")
+                _add_column(c, "candidates", "status VARCHAR")
             if "params" not in cols:
-                c.exec_driver_sql("ALTER TABLE candidates ADD COLUMN params TEXT")
+                _add_column(c, "candidates", "params TEXT")
             out = {r[1]: r for r in c.exec_driver_sql("PRAGMA table_info(candidate_outcomes)")}
             if out.get("outcome_r") is not None and out["outcome_r"][3]:  # NOT NULL: relax (rebuild)
                 c.exec_driver_sql("ALTER TABLE candidate_outcomes RENAME TO _candidate_outcomes_old")

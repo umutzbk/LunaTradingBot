@@ -174,7 +174,7 @@ class ReplayBroker:
         self.pending: dict[str, tuple[OrderRequest, pd.Timestamp]] = {}
         self.last = None
 
-    def submit(self, o):
+    def submit(self, o, ref_mid=None):
         self.db.record_order(self.account, o, "NEW")
         decided = o.ts.floor("15min") - BAR
         self.sim.submit(dataclasses.replace(o, ts=decided))
@@ -212,7 +212,8 @@ def engine(db, panel, clock, strat, *, kind="perp", mode="paper", broker=None, f
            settings=SETTINGS):
     feed = feed or FakeFeed(panel, clock)
     instruments = insts(panel, kind)
-    broker = broker or PaperBroker(kind, CostModel(settings.costs[kind]), feed, db, kind)
+    broker = broker or PaperBroker(kind, CostModel(settings.costs[kind]), feed, db, kind,
+                                   band=settings.accounts[kind].max_price_band)
     model = model_of(strat, sorted(panel))
     eng = LiveEngine(kind, settings, feed, broker, db, notifier or RecNotifier(), clock, mode,
                      instruments=instruments, model_fn=lambda now: model)
@@ -337,6 +338,77 @@ def test_tick_skips_on_feed_error(db):
     assert len(orders(db)) == n_orders
 
 
+def test_dead_feed_exits_for_restart_after_8_ticks(db):
+    """feed_error ticks (stale DNS): pause with positions after 2, exit code 3 + risk event
+    feed_dead_exit after 8 in a row; state persisted, lock released, a restart resumes."""
+    panel = panel_of(200)
+    idx = panel["BTC"].index
+    clock = Clock(tick_at(idx[40]))
+    eng, feed, _ = engine(db, panel, clock, Scripted({("BTC", idx[40]): 1}))
+    eng.start()
+    eng.tick(clock.now)
+    clock.now = tick_at(idx[41])
+    eng.tick(clock.now)
+    assert len(eng.pf.positions) == 1
+    feed.fail = True
+    for k in range(42, 49):  # 7 dead ticks: paused, still running
+        clock.now = tick_at(idx[k])
+        eng.tick(clock.now)
+    assert eng.exit_code == 0 and not eng._stop.is_set()
+    assert db.get_state("perp", "paused") is True
+    feed.fail = False
+    clock.now = tick_at(idx[49])
+    eng.tick(clock.now)  # the feed answers again: the dead counter resets
+    feed.fail = True
+    for k in range(50, 57):
+        clock.now = tick_at(idx[k])
+        eng.tick(clock.now)
+    assert eng.exit_code == 0
+    clock.now = tick_at(idx[57])
+    eng.tick(clock.now)  # 8th dead tick in a row
+    assert eng.exit_code == 3 and eng.exit_reason == "feed_dead_exit" and eng._stop.is_set()
+    assert len(risk_events(db, "feed_dead_exit")) == 1
+    eng.run_forever()  # returns at once (stopped)
+    eng.close()
+    assert db.get_state("perp", "lock") is None  # released cleanly
+
+    feed.fail = False
+    b, _, _ = engine(db, panel, clock, Scripted({}))
+    b.start()  # the restarted process reloads the position
+    assert len(b.pf.positions) == 1 and b.exit_code == 0
+    b.close()
+
+
+def test_cli_paper_exits_nonzero_when_engine_requests_it(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    import luna.engine.live as live_mod
+    import luna.instruments
+    from luna.cli import app
+    from luna.engine.backtest import default_instruments
+
+    def fake_start(self):
+        self._started = True
+
+    def fake_run(self):
+        self.exit_code, self.exit_reason = 3, "feed_dead_exit"
+
+    monkeypatch.setenv("LUNA_VAR_DIR", str(tmp_path))
+    monkeypatch.setattr(luna.instruments, "load_instruments",
+                        lambda settings, kind, *a, **k: default_instruments(["BTC"], kind, SETTINGS))
+    monkeypatch.setattr(live_mod.LiveEngine, "start", fake_start)
+    monkeypatch.setattr(live_mod.LiveEngine, "run_forever", fake_run)
+    monkeypatch.setattr(live_mod.LiveEngine, "close", lambda self: None)
+    import logging
+
+    level = logging.getLogger("httpx").level
+    try:
+        res = CliRunner().invoke(app, ["paper", "--account", "perp"])
+    finally:
+        logging.getLogger("httpx").setLevel(level)  # the CLI sets it globally
+    assert res.exit_code == 3 and "feed_dead_exit" in res.output
+
+
 def test_stale_bars_block_entries(db):
     panel = panel_of(200)
     idx = panel["BTC"].index
@@ -426,6 +498,48 @@ def test_restart_cancels_working_post_only_orders(db):
         clock.now = tick_at(idx[k])
         b.tick(clock.now)
     assert len(orders(db)) == 1
+
+
+def test_spot_entry_resting_order_carries_risk_reference_mid(db):
+    """The engine hands the broker the mid the risk check used: reprices are band-bounded by it."""
+    panel = panel_of(200)
+    idx = panel["BTC"].index
+    clock = Clock(tick_at(idx[40]))
+    eng, _, broker = engine(db, panel, clock, Scripted({("BTC", idx[40]): 1}), kind="spot")
+    eng.start()
+    eng.tick(clock.now)
+    ((cid, (o, ref)),) = eng.pipe.submitted.items()
+    assert o.tif == "POST_ONLY"
+    assert broker._resting[cid].ref_mid == pytest.approx(ref)
+    assert broker.band == SETTINGS.accounts["spot"].max_price_band
+
+
+def test_working_spot_entry_blocks_same_bucket_entry(db):
+    """A resting (unfilled) spot entry counts in construct: a second strategy's same-asset,
+    same-direction entry on the next bar is rejected (corr_bucket) instead of bypassing it."""
+
+    class Other(Scripted):
+        name = "other"
+
+    panel = panel_of(200)
+    idx = panel["BTC"].index
+    clock = Clock(tick_at(idx[40]))
+    first, second = Scripted({("BTC", idx[40]): 1}), Other({("BTC", idx[41]): 1})
+    model = SimpleNamespace(strategies=[first, second], keys={"scripted": ["BTC"], "other": ["BTC"]},
+                            ranker=AcceptAllRanker(), table={}, window=None)
+    feed = FakeFeed(panel, clock)
+    broker = PaperBroker("spot", CostModel(SETTINGS.costs["spot"]), feed, db, "spot",
+                         band=SETTINGS.accounts["spot"].max_price_band)
+    eng = LiveEngine("spot", SETTINGS, feed, broker, db, RecNotifier(), clock, "paper",
+                     instruments=insts(panel, "spot"), model_fn=lambda now: model)
+    eng.start()
+    eng.tick(clock.now)
+    assert len(eng.pipe.entry_groups) == 1 and eng.pf.positions == {}  # resting, unfilled
+    clock.now = tick_at(idx[41]) - pd.Timedelta(seconds=1)  # entry still inside its 15-min TTL
+    eng.tick(clock.now)
+    assert len(orders(db)) == 1 and len(eng.pipe.entry_groups) == 1
+    (c,) = [r for r in rows(db, m.candidates) if r["strategy"] == "other"]
+    assert c["reject_reason"] == "corr_bucket"
 
 
 def test_day_start_set_after_downtime(db):
@@ -529,7 +643,13 @@ def test_telegram_commands(db):
     eng.minute_check(clock.now + pd.Timedelta(seconds=30))
     assert any("equity" in s for s in note.sent) and any("BTC" in s and "stop" in s for s in note.sent)
 
-    note.queue = [[("/kill", "")]]
+    n_sent = len(note.sent)
+    note.queue = [[("/kill", "spot"), ("/pause", "spot")]]  # addressed to the other bot: ignored
+    eng.minute_check(clock.now + pd.Timedelta(seconds=40))
+    assert not db.get_state("perp", "kill_switch", False) and not db.get_state("perp", "paused", False)
+    assert len(note.sent) == n_sent  # silent
+
+    note.queue = [[("/kill", "perp")]]
     eng.minute_check(clock.now + pd.Timedelta(seconds=50))
     assert db.get_state("perp", "kill_switch") is True
     closes = [o for o in orders(db) if o["intent"] == "close"]

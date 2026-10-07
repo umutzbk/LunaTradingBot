@@ -1,4 +1,5 @@
 import json
+import os
 import time
 
 import pandas as pd
@@ -13,7 +14,7 @@ T = pd.Timestamp("2026-01-01", tz="UTC")
 
 @pytest.fixture
 def db(tmp_path):
-    d = Db(f"sqlite:///{(tmp_path / 'luna.db').as_posix()}")
+    d = Db(f"sqlite:///{(tmp_path / 'luna_perp.db').as_posix()}")
     yield d
     d.close()
 
@@ -40,12 +41,13 @@ def test_missing_tables_do_not_raise(tmp_path):
     eng = sa.create_engine(f"sqlite:///{(tmp_path / 'x.db').as_posix()}")
     assert q.equity_curve(eng, "perp").empty
     assert q.state_df(eng, "perp").shape[0] == 1
-    assert q.open_readonly(tmp_path / "nope") is None
+    assert q.open_readonly(tmp_path / "nope", "perp") is None
 
 
 def test_readonly_engine_reads_and_cannot_write(db, tmp_path):
     db.record_equity("perp", T, 100.0)
-    eng = q.open_readonly(tmp_path)
+    eng = q.open_readonly(tmp_path, "perp")
+    assert q.open_readonly(tmp_path, "spot") is None  # one file per account
     assert q.equity_curve(eng, "perp")["equity"].tolist() == [100.0]
     with pytest.raises(sa.exc.OperationalError), eng.begin() as c:
         c.exec_driver_sql("DELETE FROM equity")
@@ -120,6 +122,8 @@ def test_report_index(tmp_path):
     (r / "baseline_perp_20261007T000000" / "summary.json").write_text("{}")
     (r / "data").mkdir()
     (r / "data" / "report.html").write_text("d")
+    old = pd.Timestamp("2026-01-01", tz="UTC").timestamp()  # undated dir: ts = mtime (pinned, not "now")
+    os.utime(r / "data", (old, old))
     (r / "empty_dir").mkdir()
     df = q.report_index(tmp_path)
     assert len(df) == 3 and df.iloc[0]["kind"] == "baseline" and pd.isna(df.iloc[0]["verdict"])
@@ -179,13 +183,19 @@ def test_report_index_malformed_summary(tmp_path):
 def test_readonly_candidates_state_and_accounts(db, tmp_path):
     db.record_candidates("r", [cand(0)], account="perp")
     db.set_flag("perp", "paused", True)
-    db.record_equity("spot", T, 1.0)
-    eng = q.open_readonly(tmp_path)
+    eng = q.open_readonly(tmp_path, "perp")
     assert q.recent_candidates(eng, "perp")["key"].tolist() == ["K0"]
     assert q.state_df(eng, "perp").iloc[0]["paused"]
-    assert q.list_accounts(eng) == ["perp", "spot"]
     eng.dispose()
 
 
-def test_list_accounts_fallback(db):
-    assert q.list_accounts(db) == ["perp", "spot"]
+def test_available_accounts_from_db_files(tmp_path):
+    assert q.available_accounts(tmp_path / "missing") == ["perp", "spot"]
+    assert q.available_accounts(tmp_path) == ["perp", "spot"]  # no DB file: fallback
+    (tmp_path / "luna.db").write_bytes(b"")  # the legacy shared file is not an account
+    (tmp_path / "luna_spot.db").write_bytes(b"")
+    (tmp_path / "luna_spot.db-wal").write_bytes(b"")
+    assert q.available_accounts(tmp_path) == ["spot"]
+    (tmp_path / "luna_perp.db").write_bytes(b"")
+    assert q.available_accounts(tmp_path) == ["perp", "spot"]
+    assert q.db_file(tmp_path, "perp") == tmp_path / "luna_perp.db"

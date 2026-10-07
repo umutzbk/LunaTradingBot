@@ -16,13 +16,15 @@ API = "https://api.telegram.org"
 MAX_TEXT = 4000
 
 HELP = (
-    "Commands:\n"
+    "Commands (TARGET = perp | spot | all; omitted = the bot that reads the message):\n"
     "/status - engine status\n"
     "/positions - open positions\n"
-    "/pause - stop opening new positions\n"
-    "/resume - clear kill switch and pause, reset peak equity\n"
-    "/kill - kill switch: flatten everything"
+    "/pause [TARGET] - stop opening new positions\n"
+    "/resume [TARGET] - clear kill switch and pause, reset peak equity\n"
+    "/kill [TARGET] - kill switch: flatten everything"
 )
+TARGETED = ("/pause", "/resume", "/kill")
+TARGETS = ("perp", "spot", "all")
 
 
 class EngineControl(Protocol):
@@ -81,17 +83,20 @@ class TelegramNotifier:
             log.warning("telegram getUpdates failed: %s", type(e).__name__)
             return []
         out: list[tuple[str, str]] = []
-        for u in updates:
-            self._offset = max(self._offset, int(u["update_id"]) + 1)
-            msg = u.get("message") or {}
-            if str(msg.get("chat", {}).get("id")) != self._chat_id:
-                log.warning("ignoring telegram message from foreign chat")
-                continue
-            text = (msg.get("text") or "").strip()
-            if not text.startswith("/"):
-                continue
-            head, _, arg = text.partition(" ")
-            out.append((head.split("@", 1)[0].lower(), arg.strip()))
+        for u in updates if isinstance(updates, list) else []:
+            try:  # one malformed update never drops the rest of the batch
+                self._offset = max(self._offset, int(u["update_id"]) + 1)
+                msg = u.get("message") or {}
+                if str(msg.get("chat", {}).get("id")) != self._chat_id:
+                    log.warning("ignoring telegram message from foreign chat")
+                    continue
+                text = (msg.get("text") or "").strip()
+                if not text.startswith("/"):
+                    continue
+                head, _, arg = text.partition(" ")
+                out.append((head.split("@", 1)[0].lower(), arg.strip()))
+            except Exception as e:  # noqa: BLE001
+                log.warning("skipping malformed telegram update: %s", type(e).__name__)
         return out
 
 
@@ -101,7 +106,21 @@ def make_notifier(settings: Settings, client: httpx.Client | None = None) -> Not
     return NullNotifier()
 
 
-def handle_command(cmd: str, arg: str, engine: EngineControl) -> str:
+def handle_command(cmd: str, arg: str, engine: EngineControl, account: str | None = None) -> str | None:
+    """Run one command; returns the reply, or None when a targeted command (/pause, /resume, /kill
+    with a TARGET) is addressed to the other account (this bot stays silent).
+
+    TARGET ``all`` or this bot's ``account`` -> act; omitted -> act (the bot that read it).
+    Caveat: with ONE bot token shared by both accounts, Telegram hands each update to whichever bot
+    polls first (getUpdates confirms it for the token), so a command may never reach the other bot
+    whatever its target; use one bot token per account for reliable targeting (docs/RUNBOOK.md).
+    """
+    if cmd in TARGETED and account is not None:
+        target = arg.strip().lower()
+        if target and target not in TARGETS:
+            return f"{cmd}: unknown target {arg.strip()!r} (use perp, spot or all)"
+        if target and target not in ("all", account):
+            return None
     if cmd == "/status":
         return engine.status()
     if cmd == "/positions":

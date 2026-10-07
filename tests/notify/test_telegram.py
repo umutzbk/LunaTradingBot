@@ -148,3 +148,38 @@ def test_ping_never_raises():
     ping(httpx.Client(transport=httpx.MockTransport(boom)), "https://hc.example/abc")
     ping(httpx.Client(transport=httpx.MockTransport(ok)), None)
     assert len(calls) == 1
+
+
+def test_malformed_update_does_not_drop_the_rest():
+    def handler(req):
+        if req.url.params.get("offset") == "0":
+            return httpx.Response(200, json={"ok": True, "result": [
+                {"update_id": 1, "message": {"chat": {"id": 42}, "text": "/status"}},
+                {"message": {"chat": {"id": 42}, "text": "/kill"}},  # no update_id
+                {"update_id": 3, "message": "not-a-dict"},
+                {"update_id": 4, "message": {"chat": {"id": 42}, "text": "/positions"}},
+            ]})
+        return httpx.Response(200, json={"ok": True, "result": []})
+
+    seen = []
+    n = _notifier(lambda req: (seen.append(dict(req.url.params)), handler(req))[1])
+    assert n.commands() == [("/status", ""), ("/positions", "")]
+    n.commands()
+    assert seen[1]["offset"] == "5"  # advanced per update, past the malformed ones
+
+
+def test_targeted_commands_act_only_on_own_account():
+    for cmd, flag in (("/kill", "kill_switch"), ("/pause", "paused")):
+        for arg, acts in (("", True), ("perp", True), ("ALL", True), ("spot", False)):
+            e = FakeEngine()
+            out = handle_command(cmd, arg, e, account="perp")
+            assert e.flags[flag] is acts, (cmd, arg)
+            assert (out is None) is (not acts)
+    e = FakeEngine()
+    e.flags["paused"] = True
+    assert handle_command("/resume", "spot", e, account="perp") is None and e.flags["paused"]
+    assert handle_command("/resume", "perp", e, account="perp") == "resumed" and not e.flags["paused"]
+    e = FakeEngine()
+    out = handle_command("/kill", "bogus", e, account="perp")
+    assert "unknown target" in out and not e.flags["kill_switch"]
+    assert handle_command("/status", "spot", e, account="perp") == "status-ok"  # not targeted

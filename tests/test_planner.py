@@ -155,3 +155,16 @@ def test_plan_exit_reports_dust_and_position_can_close(residue):
     pf.close_position("p1", TS, "exit")
     pf.mark({"ETH": 101.0, "BTC": 80.0})
     assert pos.net_pnl() == pytest.approx(pf.equity() - start)
+
+
+def test_plan_exit_below_min_notional_at_current_mark_is_dust():
+    """qty above min_qty but notional at the current mid below min_notional: dust, not an order
+    R17 would veto forever (e.g. a partly filled spot exit after the price fell)."""
+    inst = {a: Instrument(a, a, "kraken_spot", "spot", 0.001, 0.1, 0.001, 5.0, 0.0016, 0.0026)
+            for a in ("ETH", "BTC")}
+    pos = _pos({"ETH": 0.06, "BTC": 1.0})
+    plan = plan_exit(pos, {"ETH": 80.0, "BTC": 80.0}, inst, "spot", TS, 0.01, costs=_spot_costs())
+    assert plan.dust == {"ETH": pytest.approx(0.06)}  # 0.06 * 80 = 4.8 < 5
+    assert [o.asset for o in plan.orders] == ["BTC"]
+    plan = plan_exit(pos, {"ETH": 100.0, "BTC": 80.0}, inst, "spot", TS, 0.01, costs=_spot_costs())
+    assert plan.dust == {} and sorted(o.asset for o in plan.orders) == ["BTC", "ETH"]  # 6.0 >= 5

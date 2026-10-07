@@ -156,3 +156,26 @@ def test_constructor_short_overlap_is_uncorrelated():
     ret.iloc[:-96, [0, 1]] = np.nan  # 96 joint observations: enough
     _, skipped = run([cand("A", score=2), cand("B", score=1)], returns=ret)
     assert skipped[0][1] == "corr_bucket"
+
+
+def test_constructor_counts_pending_entries():
+    """Working (unfilled) entries count for max_positions / opposite_exposure / corr_bucket."""
+    pf = Portfolio("perp", 265.0)
+    pend = [cand("A")]
+    sels, skipped = construct([cand("A", direction=-1)], pf, LIMITS, COSTS, insts(), MIDS,
+                              independent_returns(), lambda c: 1.0, pending=pend)
+    assert sels == [] and [r for _, r in skipped] == ["opposite_exposure"]
+    sels, skipped = construct([cand("A")], pf, LIMITS, COSTS, insts(), MIDS,
+                              independent_returns(), lambda c: 1.0, pending=pend)
+    assert sels == [] and [r for _, r in skipped] == ["corr_bucket"]  # same asset = corr 1
+    r = independent_returns()
+    r["B"] = r["A"] + np.random.default_rng(1).normal(0, 0.0002, len(r))  # B ~ A
+    sels, skipped = construct([cand("B"), cand("C")], pf, LIMITS, COSTS, insts(), MIDS, r,
+                              lambda c: 1.0, pending=pend)
+    assert [s.cand.key for s in sels] == ["C"] and [(c.key, x) for c, x in skipped] == [("B", "corr_bucket")]
+    sels, skipped = construct([cand("D")], pf, LIMITS, COSTS, insts(), MIDS, independent_returns(),
+                              lambda c: 1.0, pending=[cand("A"), cand("B"), cand("C")])
+    assert sels == [] and [r for _, r in skipped] == ["max_positions"]
+    # no pending entries: unchanged (the backtest's case)
+    sels, _ = construct([cand("A")], pf, LIMITS, COSTS, insts(), MIDS, independent_returns(), lambda c: 1.0)
+    assert [s.cand.key for s in sels] == ["A"]

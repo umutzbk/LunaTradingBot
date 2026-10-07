@@ -109,7 +109,22 @@ def render_report(
 EVAL_SECTIONS = [
     "Verdict", "Summary", "P&L breakdown", "Funding known vs unknown",
     "Strategy × asset × regime heatmap", "Expectancy table", "Pair selection per window",
-    "Ablations", "Baselines", "Sensitivity", "Data caveats",
+    "Ablations", "Baselines", "Sensitivity", "Data caveats", "Metric glossary",
+]
+GLOSSARY = [  # (term, definition): two R definitions coexist and are not interchangeable
+    ("expectancy_r / trade R (r_multiple)",
+     "Portfolio backtest and live engine: pnl_net / risk_amount per closed trade, in USD. "
+     "risk_amount is the sized position's planned loss at the stop including round-trip costs "
+     "(gross_notional x (stop_distance + round_trip)); pnl_net includes fees, spread / slippage "
+     "and funding. Used by the GO/NO-GO checks, these tables and the exit notifications."),
+    ("r_net (research trade lists, expectancy table mean_r / shrunk_r, dashboard outcome_r)",
+     "Single-trade research kernel: net return of the trade (as a fraction of notional, after "
+     "costs) divided by the signal's stop distance (fraction). No sizing, no portfolio "
+     "constraints; drives parameter selection, the expectancy ranker and the counterfactual "
+     "labels (luna label)."),
+    ("expectancy_bps", "mean pnl_net / entry gross notional per trade, in basis points."),
+    ("profit_factor", "sum of winning pnl_net / |sum of losing pnl_net|."),
+    ("max_dd", "maximum peak-to-trough drawdown of the equity curve (fraction)."),
 ]
 SECONDARY_HEADING = "Secondary — informational, daily returns"
 EXTRA_PRIMARY = [
@@ -412,6 +427,8 @@ def render_evaluation(rep, out_dir: Path, title: str) -> Path:
         "Baselines": _baselines_eval(rep, m, best_naive_expectancy(rep.naive)),
         "Sensitivity": _sensitivity_eval(rep, m),
         "Data caveats": "<ul>" + "".join(f"<li>{_e(c)}</li>" for c in rep.caveats) + "</ul>" + setup,
+        "Metric glossary": "<dl>" + "".join(f"<dt><b>{_e(t)}</b></dt><dd>{_e(d)}</dd>"
+                                            for t, d in GLOSSARY) + "</dl>",
     }
     sections = "".join(f"<section><h2>{_e(h)}</h2>{body[h]}</section>" for h in EVAL_SECTIONS)
     doc = (

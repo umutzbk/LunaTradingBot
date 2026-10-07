@@ -12,8 +12,28 @@ Bütün komutlar repo kökünden (`docker-compose.yml`'in olduğu klasör) çal�
 | `bot-spot` | `luna paper --account spot` | Kraken spot public verisi + PaperBroker, aynı ayarlar |
 | `dashboard` | `streamlit run dashboard/app.py` | http://localhost:8501 (yalnızca `127.0.0.1`'e bağlı, kimlik doğrulaması yok) |
 
-Hepsi `./var` klasörünü `/app/var` olarak paylaşır: `var/luna.db` (SQLite), `var/bars/`, `var/funding/`,
-`var/models/live_<account>.pkl` (canlı model cache'i), `var/reports/`. Secrets `.env` dosyasındadır (git'e girmez).
+Hepsi `./var` klasörünü `/app/var` olarak paylaşır: **hesap başına bir SQLite dosyası**
+`var/luna_perp.db` / `var/luna_spot.db` (her botun tek yazarı kendisidir; iki konteyner aynı WAL veritabanını
+Windows bind mount üzerinden paylaşmaz), `var/bars/`, `var/funding/`, `var/models/live_<account>.pkl` (canlı model
+cache'i), `var/reports/`. Dashboard her iki dosyayı salt okunur açar. Secrets `.env` dosyasındadır (git'e girmez).
+
+### Eski tek dosyalı DB'den geçiş (`var/luna.db` → `var/luna_perp.db`, bir kez)
+
+Eski sürümler iki hesabı tek `var/luna.db`'de tutuyordu. Yeni kod bu dosya varken ve `var/luna_<account>.db`
+yokken `luna paper`'ı başlatmaz (boş bir DB'den başlayıp pozisyonları "unutmamak" için). Geçiş:
+
+```bash
+docker compose build bot-perp dashboard                        # yeni kod (migrate-db komutu dahil)
+docker compose stop bot-perp                                   # temiz durdurma: lock bırakılır
+docker compose run --rm --no-deps bot-perp migrate-db --account perp   # veya host'ta: uv run luna migrate-db --account perp
+docker compose up -d bot-perp dashboard
+```
+
+`luna migrate-db` yalnızca `var/luna.db` varsa ve `var/luna_perp.db` yoksa çalışır; dosyada taze bir lock varsa
+(bot çalışıyor) reddeder; WAL'ı checkpoint edip (`TRUNCATE`) dosyayı yeniden adlandırır ve boş `-wal`/`-shm`
+dosyalarını siler. Elle yapmak isterseniz: bot durmuşken `luna.db`'yi (ve varsa `-wal`/`-shm`'yi) aynı adlarla
+`luna_perp.db`, `luna_perp.db-wal`, `luna_perp.db-shm` olarak yeniden adlandırın. Eski dosyada spot satırı
+varsa (ör. smoke testten) zararsızdır: tüm sorgular hesaba göre filtrelenir.
 
 perp ve spot **alternatif** deneylerdir (her biri $265); bakiyeleri toplanmaz.
 
@@ -29,7 +49,7 @@ docker compose restart bot-perp            # yeniden başlat (state SQLite'tan y
 docker compose down                        # tüm konteynerleri kaldır (var/ verisi kalır)
 ```
 
-Yeniden başlatma güvenlidir: engine lock'u yeniden alır, pozisyonları/risk state'ini `var/luna.db`'den yükler,
+Yeniden başlatma güvenlidir: engine lock'u yeniden alır, pozisyonları/risk state'ini `var/luna_<account>.db`'den yükler,
 açık emirleri iptal eder (yeniden planlanır), mutabakat yapar (R18) ve bilinen bir `client_id`'yi asla tekrar
 göndermez. Aynı hesap için ikinci bir süreç başlatılırsa lock nedeniyle çıkış kodu 1 ile reddedilir.
 
@@ -57,7 +77,7 @@ docker inspect --format '{{.State.Health.Status}}' lunatradingbot-bot-perp-1
 docker compose exec bot-perp uv run luna health --account perp     # elle; exit 0 = sağlıklı
 ```
 
-`luna health --account X [--max-age-min 20] [--db PATH]`: hesabın son `equity` satırı (her başarılı 15 dk'lık
+`luna health --account X [--max-age-min 20] [--db PATH]` (varsayılan DB: `var/luna_X.db`): hesabın son `equity` satırı (her başarılı 15 dk'lık
 tick'te yazılır) 20 dakikadan gençse 0, değilse 1 döner (DB yoksa / satır yoksa da 1). Salt okunurdur.
 
 Compose healthcheck: `interval 60s`, `timeout 20s`, `retries 3`, `start_period 30m`. 30 dakika, soğuk
@@ -65,6 +85,13 @@ başlangıçtaki model fit'i + ilk 15 dakikalık sınıra kadar bekleme süresin
 başarısızlıklar sayılmaz, ilk başarı konteyneri hemen `healthy` yapar. Tek bir tick Kraken hatası yüzünden
 atlanırsa konteyner birkaç dakika `unhealthy` görünebilir; bir sonraki başarılı tick'te düzelir. Docker
 `unhealthy` konteyneri kendiliğinden yeniden başlatmaz — bu bir uyarıdır, logları inceleyin.
+
+**Kendini iyileştirme (`feed_dead_exit`):** feed art arda 8 tick (~2 saat) hiç cevap vermezse (`feed_error` /
+`no_data`; ör. host ağ değişikliği / uyku sonrası konteynerde bayatlamış DNS → `ConnectError: Name or service not
+known`) engine loglar, `risk_events`'e `feed_dead_exit` yazar, state'i kaydeder, lock'u temizce bırakır ve **çıkış
+kodu 3** ile çıkar; `restart: unless-stopped` süreci yeniden başlatır (açık pozisyonlar 2. veri kaybı tick'inde
+zaten `paused`; yeniden başlatma state'i yükler, güvenlidir). Yeniden başlatmadan sonra da DNS bozuksa
+konteyneri yeniden oluşturun: `docker compose up -d --force-recreate bot-perp`.
 
 ### healthchecks.io (dış izleme, önerilir)
 
@@ -78,7 +105,8 @@ ayrı URL istenirse servis bazında `environment:` ile `LUNA_HEALTHCHECK_URL` ov
 
 ## 5. Dashboard
 
-http://localhost:8501 — sol menüden hesap (`perp`/`spot`) ve sayfa seçilir.
+http://localhost:8501 — sol menüden hesap ve sayfa seçilir. Hesap listesi mevcut `var/luna_<account>.db`
+dosyalarından gelir (hiç yoksa `perp`/`spot`); seçilen hesap kendi dosyasından okunur.
 
 - **Overview:** kill switch / paused, lock heartbeat yaşı (60 sn civarı normal), equity eğrisi, kaldıraç, açık risk.
 - **Positions:** açık pozisyonlar.
@@ -91,6 +119,12 @@ http://localhost:8501 — sol menüden hesap (`perp`/`spot`) ve sayfa seçilir.
   reddedilen adayların ortalama `outcome_r`'ı, etiketlenemeyen "terminal" sonuçlar). Reddedilen adayların
   ortalaması seçilenlerden iyiyse ranker değer katmıyor demektir.
 
+**İki farklı R tanımı (birbirinin yerine kullanılmaz):** Dataset/Scanner'daki `outcome_r` araştırma
+`r_net`'idir = karşı-olgusal işlemin net getirisi / adayın stop mesafesi (ikisi de notional'ın kesri). İşlem R'ı
+(engine `r_multiple`, çıkış bildirimleri, rapordaki `expectancy_r`) = `pnl_net / risk_amount` (USD; `risk_amount`
+= boyutlandırılmış pozisyonun stop'taki planlı kaybı, gidiş-dönüş maliyet dahil). Raporun "Metric glossary"
+bölümüne bakın.
+
 Dashboard'un kimlik doğrulaması yoktur; bu yüzden port yalnızca `127.0.0.1`'e açılır. VPS'te
 `ssh -L 8501:localhost:8501 user@vps` ile tünelleyip http://localhost:8501 açın; portu internete açmayın.
 
@@ -99,7 +133,8 @@ Dashboard'un kimlik doğrulaması yoktur; bu yüzden port yalnızca `127.0.0.1`'
 Engine başlarken ranker'ı son 6 aylık veriyle fit eder. Hiçbir (strateji × rejim) hücresi expectancy kapısını
 geçmezse logda `model has no accepted expectancy cell: managing positions, opening nothing` ve `risk_events`'te
 `no_model` görülür: bot **yeni pozisyon açmaz**, yalnızca varsa açık pozisyonları yönetir, equity'yi yazar ve
-heartbeat atar. Bu durumda aday satırı da yazılmaz (Scanner boş kalır). Bu bir arıza değil, mevcut walk-forward
+heartbeat atar. Stratejilerin ürettiği adaylar yine her tick kaydedilir, ama hepsi `reject_reason = ranker`
+ile **reddedilmiş** olarak (Scanner'da görünür, `luna label` ile etiketlenebilir; hiçbiri gönderilmez). Bu bir arıza değil, mevcut walk-forward
 sonucunun (perp: INSUFFICIENT DATA, edge kanıtlanmadı — bkz. `docs/results/walkforward.md`) doğal karşılığıdır.
 Model `test_months` dolunca yeniden fit edilir; bir hücre kabul edilirse işlem açılmaya başlar. Strateji
 parametrelerini paper'ı "çalışır göstermek" için değiştirmeyin.
@@ -123,12 +158,22 @@ Komutlar (yalnızca bu chat id'den gelenler işlenir; bot kapalıyken gelen komu
 |---|---|
 | `/status` | equity, bayraklar, son bar, entries on/off |
 | `/positions` | açık pozisyonlar |
-| `/pause` | yeni girişleri durdur (açık pozisyonlar yönetilmeye devam eder) |
-| `/resume` | **hem kill switch'i hem pause'u kaldırır** ve peak equity'yi (drawdown çapası, R4) o anki equity'ye sıfırlar; kill switch'in kapatmakta olduğu pozisyonlar strateji yönetimine geri döner. ⚠️ Bilinçli kullanın: drawdown kill'inden sonra `/resume` drawdown sayacını sıfırlar ve %15'lik limit yeni zirveden tekrar başlar. |
-| `/kill` | **kill switch**: yeni giriş yok, tüm pozisyonlar kapatılır; yeniden başlatmada da açık kalır |
+| `/pause [perp\|spot\|all]` | yeni girişleri durdur (açık pozisyonlar yönetilmeye devam eder) |
+| `/resume [perp\|spot\|all]` | **hem kill switch'i hem pause'u kaldırır** ve peak equity'yi (drawdown çapası, R4) o anki equity'ye sıfırlar; kill switch'in kapatmakta olduğu pozisyonlar strateji yönetimine geri döner. ⚠️ Bilinçli kullanın: drawdown kill'inden sonra `/resume` drawdown sayacını sıfırlar ve %15'lik limit yeni zirveden tekrar başlar. |
+| `/kill [perp\|spot\|all]` | **kill switch**: yeni giriş yok, tüm pozisyonlar kapatılır; yeniden başlatmada da açık kalır |
 
-Her iki bot aynı token'ı kullanırsa komutu ilk okuyan bot alır; perp ve spot'u birlikte çalıştırıyorsanız iki ayrı
-bot (iki token) kullanın ve servis bazında `environment:` ile override edin.
+Hedef argümanı (`/pause`, `/resume`, `/kill`): bot yalnızca argüman kendi hesabıysa veya `all` ise uygular;
+argümansız komutu onu okuyan bot uygular; diğer hesaba yazılmış komutu sessizce yok sayar; bilinmeyen argüman
+hata mesajı döner. Örnek: `/kill spot`, `/kill all`.
+
+⚠️ Her iki bot **aynı token'ı** kullanırsa Telegram her güncellemeyi yalnızca önce `getUpdates` yapan bota verir
+(diğeri hiç görmez) — `/kill all` bile yalnızca bir botu durdurabilir. perp ve spot'u birlikte çalıştırıyorsanız
+iki ayrı bot (iki token) kullanın ve servis bazında `environment:` ile `LUNA_TELEGRAM_TOKEN`'ı override edin;
+hedef argümanı o zaman aynı sohbette iki botu ayrı ayrı yönetmeyi sağlar.
+
+Telegram'dan bağımsız kill switch (`docker compose stop` pozisyonları kapatmaz): bayrağı hesabın DB'sine yazın;
+engine bir dakika içinde (minute check / tick) okur ve tüm pozisyonları kapatır:
+`docker compose exec bot-perp uv run python -c "from luna.config import load_settings; from luna.store.db import Db, default_url; Db(default_url(load_settings().var_dir, 'perp')).set_flag('perp', 'kill_switch', True)"`
 
 ## 7. bot-spot'u başlatma (spot backfill bittikten sonra)
 
@@ -141,6 +186,8 @@ docker compose up -d bot-spot
 docker compose logs -f bot-spot                  # model fit + "engine started (paper)"
 docker compose ps                                # ~30 dk içinde (healthy)
 ```
+
+Spot botu kendi dosyasını (`var/luna_spot.db`) ilk başlangıçta oluşturur; geçiş gerekmez.
 
 Tek seferlik deneme (gerçek DB'ye yazmadan): `docker compose run --rm bot-spot paper --account spot --once --db /app/var/smoke_spot.db`
 (sonra `var/smoke_spot.db*` dosyalarını silin).
@@ -204,7 +251,7 @@ Host'ta uv komutları için: `UV_SYSTEM_CERTS=1 uv run ...`.
 
 1. VPS (Ubuntu, ≥ 2 GB RAM önerilir; AWS Lightsail / Hetzner) üzerinde Docker Engine + compose plugin kurun.
 2. Lokal botları durdurun: `docker compose stop bot-perp bot-spot` (aynı hesabı iki makinede çalıştırmayın).
-3. Kopyalayın: repo (git clone veya rsync), **`var/`** (özellikle `var/luna.db`, `var/bars`, `var/funding`,
+3. Kopyalayın: repo (git clone veya rsync), **`var/`** (özellikle `var/luna_perp.db` / `var/luna_spot.db`, `var/bars`, `var/funding`,
    `var/instruments`, `var/models`) ve **`.env`**. `docker/certs/` gerekmez (proxy yok).
    ```bash
    rsync -av --exclude .venv --exclude docker/certs ./ user@vps:/opt/luna/

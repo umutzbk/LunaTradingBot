@@ -348,17 +348,19 @@ class Pipeline:
         if not cands:
             return math.nan
 
-        assets = sorted({leg.asset for c in cands for leg in c.legs} | set(pf.holdings))
+        assets = sorted({leg.asset for c in cands for leg in c.legs} | set(pf.holdings)
+                        | {leg.asset for g in pend for leg in g.sel.cand.legs if leg.asset in mkt.col})
         lo = max(0, i - CORR_WINDOW + 1)
         returns = pd.DataFrame(mkt.logret[lo:i + 1, [mkt.col[a] for a in assets]], columns=assets)
+        # working entries not yet registered as positions count as if filled (a partially filled
+        # one is already in the portfolio's positions / risk / gross): in construct (positions,
+        # opposite / corr-bucket exposures) and in the risk check (positions, risk, gross, cash)
+        unreg = [g for pid, g in self.entry_groups.items() if pid not in pf.positions]
         sels, skipped = construct(cands, pf, self.limits, self.costs, self.instruments, mids, returns,
-                                  self.regime_mult)
+                                  self.regime_mult, pending=[g.sel.cand for g in unreg])
         for c, reason in skipped:
             self.cand_row(c, "rejected", reason)
 
-        # working entries not yet registered as positions count as if filled (a partially filled
-        # one is already in the portfolio's positions / risk / gross)
-        unreg = [g for pid, g in self.entry_groups.items() if pid not in pf.positions]
         pend_pos = len(unreg)
         pend_risk = sum(g.sel.risk_amount for g in unreg)
         pend_gross = sum(g.sel.gross_notional for g in unreg)

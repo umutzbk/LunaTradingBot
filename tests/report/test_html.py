@@ -79,8 +79,10 @@ def test_report_contains_required_sections(case):
     assert EVAL_SECTIONS == [
         "Verdict", "Summary", "P&L breakdown", "Funding known vs unknown",
         "Strategy × asset × regime heatmap", "Expectancy table", "Pair selection per window",
-        "Ablations", "Baselines", "Sensitivity", "Data caveats",
+        "Ablations", "Baselines", "Sensitivity", "Data caveats", "Metric glossary",
     ]
+    glossary = _sections(page)["Metric glossary"]
+    assert "pnl_net / risk_amount" in glossary and "r_net" in glossary  # both R definitions
     # "Sharpe" appears only inside the Secondary block of the Summary
     secondary = re.findall(r'<div id="secondary">(.*?)</div>', page, flags=re.S)
     assert len(secondary) == 1 and SECONDARY_HEADING in secondary[0]

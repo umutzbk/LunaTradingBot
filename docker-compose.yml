@@ -1,5 +1,9 @@
 # Paper trading only (live_enabled is false; no live broker exists). See docs/RUNBOOK.md.
 #
+# Databases: one SQLite file per account (var/luna_perp.db, var/luna_spot.db); each bot is the only
+# writer of its own file (no shared WAL database across containers over the bind mount); the
+# dashboard opens them read-only. Legacy var/luna.db: `luna migrate-db --account perp` (RUNBOOK §1).
+#
 # Bot healthcheck: `luna health` exits 0 iff the account's latest equity row (written by every
 # completed 15-minute tick) is < 20 min old. start_period 30m covers the startup work before the
 # first equity row can exist: the model fit on a cold start (trade lists over the full history;

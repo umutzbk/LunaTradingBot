@@ -209,6 +209,49 @@ def test_post_only_reprices_every_5m_at_most_twice(db):
     assert f.price == 101.0 and f.qty == pytest.approx(1.0)
 
 
+def test_post_only_reprice_never_leaves_the_band_when_market_runs_away(db):
+    """Buy approved at ref mid 100 with band 0.5%: the bid runs to 103 -> the reprice keeps the old
+    limit (never above 100.5); the entry stays unfilled and expires."""
+    feed = FakeFeed()
+    br = PaperBroker("spot", COSTS, feed, db, "spot", band=0.005)
+    br.submit(order(tif="POST_ONLY", qty=1.0, limit=99.97), ref_mid=100.0)
+    feed.books["BTC"] = ([(103.0, 1.0)], [(103.2, 1.0)])  # ran away above the band
+    br.poll(T0 + 5 * MIN)
+    assert order_row(db, "o1")["price"] == 99.97
+    feed.books["BTC"] = ([(100.8, 1.0)], [(101.0, 1.0)])  # still beyond 100.5: kept
+    br.poll(T0 + 10 * MIN)
+    assert order_row(db, "o1")["price"] == 99.97
+    feed.trades["BTC"] = [(T0 + 11 * MIN, 101.5, 5.0), (T0 + 12 * MIN, 102.0, 5.0)]
+    assert br.poll(T0 + 13 * MIN) == []
+    assert br.poll(T0 + 15 * MIN) == []
+    assert order_row(db, "o1")["status"] == "CANCELED"
+    assert fill_rows(db) == []
+
+
+def test_post_only_reprice_is_clipped_to_the_band(db):
+    """Within / favourable side: the touch is clipped to ref_mid * (1 +/- band)."""
+    feed = FakeFeed()
+    br = PaperBroker("spot", COSTS, feed, db, "spot", band=0.005)
+    br.submit(order("b", tif="POST_ONLY", qty=1.0, limit=99.97), ref_mid=100.0)
+    br.submit(order("s", side="sell", tif="POST_ONLY", qty=1.0, limit=100.03), ref_mid=100.0)
+    feed.books["BTC"] = ([(100.3, 1.0)], [(100.4, 1.0)])  # inside the band: plain touch
+    br.poll(T0 + 5 * MIN)
+    assert order_row(db, "b")["price"] == 100.3 and order_row(db, "s")["price"] == 100.4
+    feed.books["BTC"] = ([(98.0, 1.0)], [(98.1, 1.0)])  # dropped: buy clipped to the lower edge,
+    br.poll(T0 + 10 * MIN)                              # sell (adverse side) keeps its limit
+    assert order_row(db, "b")["price"] == pytest.approx(99.5)
+    assert order_row(db, "s")["price"] == 100.4
+
+
+def test_post_only_reprice_band_defaults_to_limit_as_reference(db):
+    feed = FakeFeed()
+    br = PaperBroker("spot", COSTS, feed, db, "spot", band=0.005)
+    br.submit(order(tif="POST_ONLY", qty=1.0, limit=100.0))  # no ref_mid: band around the limit
+    feed.books["BTC"] = ([(101.0, 1.0)], [(101.2, 1.0)])
+    br.poll(T0 + 5 * MIN)
+    assert order_row(db, "o1")["price"] == 100.0
+
+
 def test_post_only_survives_feed_errors_and_still_expires(db):
     feed = FakeFeed()
     feed.fail = True

@@ -12,6 +12,8 @@ import pandas as pd
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.exc import OperationalError
 
+from luna.store.db import db_path
+
 EQUITY_COLS = ["ts", "equity", "gross_leverage", "open_risk"]
 POSITION_COLS = ["id", "strategy", "key", "direction", "opened_at", "bars_held", "regime",
                  "risk_amount", "legs", "qty", "entry_price", "stop", "pnl_net"]
@@ -27,9 +29,26 @@ STATS_COLS = ["strategy", "n_labeled", "n_terminal", "n_selected", "n_rejected",
 _REPORT_DIR = re.compile(r"^(?P<kind>[a-z]+)_(?P<account>[A-Za-z0-9]+)_(?P<ts>\d{8}T\d{6})$")
 
 
-def open_readonly(var_dir: Path) -> Engine | None:
-    """Read-only SQLite engine on ``var_dir/luna.db`` (None if it does not exist yet)."""
-    path = Path(var_dir) / "luna.db"
+_DB_FILE = re.compile(r"^luna_(?P<account>[A-Za-z0-9]+)\.db$")
+
+
+def db_file(var_dir: Path, account: str) -> Path:
+    """The account's SQLite file (one per account: ``var/luna_<account>.db``)."""
+    return db_path(var_dir, account)
+
+
+def available_accounts(var_dir: Path) -> list[str]:
+    """Accounts with a database file under ``var_dir`` (sorted); perp/spot when there is none."""
+    root = Path(var_dir)
+    found = sorted(m["account"] for p in (root.iterdir() if root.is_dir() else [])
+                   if p.is_file() and (m := _DB_FILE.match(p.name)))
+    return found or ["perp", "spot"]
+
+
+def open_readonly(var_dir: Path, account: str) -> Engine | None:
+    """Read-only SQLite engine on the account's ``var_dir/luna_<account>.db`` (None if it does not
+    exist yet)."""
+    path = db_file(var_dir, account)
     if not path.exists():
         return None
     return create_engine(f"sqlite:///file:{path.resolve().as_posix()}?mode=ro&uri=true")
@@ -65,14 +84,6 @@ def equity_curve(db: Any, account: str) -> pd.DataFrame:
     df = _read(db, "SELECT ts, equity, gross_leverage, open_risk FROM equity "
                    "WHERE account = :a ORDER BY ts, id", EQUITY_COLS, a=account)
     return _ts(df)
-
-
-def list_accounts(db: Any) -> list[str]:
-    """Distinct accounts seen in the DB (fallback perp/spot when none)."""
-    df = _read(db, "SELECT account FROM equity UNION SELECT account FROM state "
-                   "UNION SELECT account FROM candidates UNION SELECT account FROM positions "
-                   "ORDER BY 1", ["account"])
-    return df["account"].tolist() or ["perp", "spot"]
 
 
 def open_positions_df(db: Any, account: str) -> pd.DataFrame:

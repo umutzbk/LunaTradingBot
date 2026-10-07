@@ -45,3 +45,13 @@ def test_health_fails_without_rows_or_db(tmp_path):
     assert res.exit_code == 1
     assert "missing" in res.output
     assert not missing.exists()  # a health probe never creates the database
+
+
+def test_health_default_db_is_per_account(tmp_path, monkeypatch):
+    monkeypatch.setenv("LUNA_VAR_DIR", str(tmp_path))
+    now = pd.Timestamp.now(tz="UTC")
+    _seed(tmp_path / "luna_perp.db", [("perp", now)])
+    res = CliRunner().invoke(app, ["health", "--account", "perp"])
+    assert res.exit_code == 0, res.output
+    res = CliRunner().invoke(app, ["health", "--account", "spot"])
+    assert res.exit_code == 1 and "luna_spot.db" in res.output  # never reads the perp file

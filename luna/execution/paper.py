@@ -13,6 +13,11 @@ Every order is persisted (status NEW) before it is simulated; status transitions
   best bid (buy) / ask (sell) at +5 min and +10 min (at most 2 times, on the first poll at/after
   each mark, judged against the limit active when the trades are read). Cancelled 15 min after
   submission; trades printed at/after expiry are ignored. Feed errors leave the order resting.
+  Reprices stay inside the R15 price band the order was approved in: the target touch is clipped
+  to ``ref_mid * (1 +/- band)`` (``ref_mid``: the mid the risk check used, passed to ``submit``;
+  ``band``: the account's max_price_band). A touch beyond the band on the adverse side (a buy whose
+  bid ran above ``ref_mid * (1 + band)``, a sell whose ask fell below ``ref_mid * (1 - band)``)
+  keeps the old limit: the order is never chased outside the band and simply expires unfilled.
 """
 
 from __future__ import annotations
@@ -44,11 +49,16 @@ class _Resting:
     cursor_ns: int
     filled: float = 0.0
     reprices: int = 0
+    ref_mid: float | None = None  # mid used by the risk check (R15 band centre)
 
 
 class PaperBroker:
-    def __init__(self, kind: AccountKind, costs: CostModel, feed: LiveFeed, db: Db, account: str) -> None:
+    def __init__(self, kind: AccountKind, costs: CostModel, feed: LiveFeed, db: Db, account: str,
+                 *, band: float | None = None) -> None:
+        """``band``: the account's max_price_band (R15); reprices of resting orders are clipped to
+        ``ref_mid * (1 +/- band)``. None disables the clip (unit tests only; the CLI passes it)."""
         self.kind = kind
+        self.band = band
         self.costs = costs
         self.feed = feed
         self.db = db
@@ -59,9 +69,11 @@ class PaperBroker:
 
     # --- submission ------------------------------------------------------------------------------
 
-    def submit(self, order: OrderRequest) -> None:
+    def submit(self, order: OrderRequest, ref_mid: float | None = None) -> None:
         """Persist (NEW), then simulate. A client_id already known (in memory or in the Db, e.g.
-        after a restart) is ignored, so a resubmission never duplicates an order."""
+        after a restart) is ignored, so a resubmission never duplicates an order. ``ref_mid`` is the
+        mid the risk check approved the order against (default: its limit price); it bounds the
+        reprices of a resting POST_ONLY order."""
         if order.tif == "POST_ONLY" and self.kind != "spot":
             raise ValueError("POST_ONLY is only simulated for spot; perp orders must be IOC")
         if order.qty <= 0:
@@ -74,7 +86,8 @@ class PaperBroker:
         if order.tif == "IOC":
             self._simulate_ioc(order)
         else:
-            self._resting[order.client_id] = _Resting(order, order.ts, int(order.ts.value) - 1)
+            ref = float(ref_mid) if ref_mid is not None and ref_mid > 0 else float(order.limit_price)
+            self._resting[order.client_id] = _Resting(order, order.ts, int(order.ts.value) - 1, ref_mid=ref)
             self._status(order.client_id, "OPEN")
 
     def _status(self, client_id: str, status: str) -> None:
@@ -183,13 +196,27 @@ class PaperBroker:
         except FeedError as e:
             log.warning("reprice of %s skipped: %s", r.order.client_id, e)
             return
-        side = bids if r.order.side == "buy" else asks
+        buy = r.order.side == "buy"
+        side = bids if buy else asks
         if not side:
             return
-        r.order = dataclasses.replace(r.order, limit_price=side[0][0])
         r.reprices = due
+        target = self._reprice_target(r, float(side[0][0]))
+        if target is None or target == r.order.limit_price:
+            return
+        r.order = dataclasses.replace(r.order, limit_price=target)
         status = "PARTIAL" if r.filled > 0 else "OPEN"
         self.db.record_order(self.account, r.order, status)  # upsert: new limit price
+
+    def _reprice_target(self, r: _Resting, touch: float) -> float | None:
+        """The touch clipped to the R15 band around the order's reference mid; None (keep the old
+        limit) when the touch is beyond the band on the adverse side."""
+        if self.band is None or r.ref_mid is None:
+            return touch
+        lo, hi = r.ref_mid * (1.0 - self.band), r.ref_mid * (1.0 + self.band)
+        if r.order.side == "buy":
+            return None if touch > hi else max(touch, lo)
+        return None if touch < lo else min(touch, hi)
 
     # --- calibration -----------------------------------------------------------------------------
 

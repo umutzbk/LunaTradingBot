@@ -18,6 +18,19 @@ st.set_page_config(page_title="Luna", layout="wide")
 
 NO_DATA = "No data yet."
 
+# Two R definitions (not interchangeable): see also the report's "Metric glossary".
+R_DATASET = ("outcome_r (Dataset / Scanner) is the research r_net: the counterfactual trade's net "
+             "return divided by the candidate's stop distance (both as fractions of notional), from "
+             "`luna label`.")
+R_TRADES = ("Trade R (engine r_multiple, exit notifications, report expectancy_r) is pnl_net / "
+            "risk_amount in USD, where risk_amount is the sized position's planned loss at the stop "
+            "incl. round-trip costs; fills, sizing clips and funding make it differ from r_net.")
+CAPTIONS = {
+    "stats": R_DATASET + " " + R_TRADES,
+    "candidates": R_DATASET,
+    "positions": "risk_amount is the denominator of the engine's trade R. " + R_TRADES,
+}
+
 
 def _var_dir() -> Path:
     try:
@@ -30,8 +43,9 @@ def _var_dir() -> Path:
 VAR_DIR = _var_dir()
 
 
-def _query(fn: Callable[..., Any], var_dir: str, *args: Any) -> Any:
-    eng = q.open_readonly(Path(var_dir))
+def _query(fn: Callable[..., Any], var_dir: str, account: str, *args: Any) -> Any:
+    """Run ``fn`` on the account's own database file (``var/luna_<account>.db``)."""
+    eng = q.open_readonly(Path(var_dir), account)
     if eng is None:
         return None
     try:
@@ -49,19 +63,20 @@ def _slow(name: str, var_dir: str, account: str, limit: int) -> tuple[Any, float
         "risk": lambda e: q.risk_events_df(e, account, limit),
         "stats": lambda e: (q.candidate_outcome_stats(e, account), q.terminal_reasons_df(e, account)),
     }
-    return _query(fns[name], var_dir), time.time()
+    return _query(fns[name], var_dir, account), time.time()
 
 
 @st.cache_data(ttl=5)
 def _fast_state(var_dir: str, account: str) -> tuple[Any, float]:
-    return _query(lambda e: q.state_df(e, account), var_dir), time.time()
+    return _query(lambda e: q.state_df(e, account), var_dir, account), time.time()
 
 
 @st.cache_data(ttl=30)
 def _accounts(var_dir: str) -> list[str]:
+    """Accounts with a ``luna_<account>.db`` file (perp/spot when none exists yet)."""
     try:
-        return _query(q.list_accounts, var_dir) or ["perp", "spot"]
-    except Exception:  # noqa: BLE001 - selector falls back; the page itself reports the error
+        return q.available_accounts(Path(var_dir))
+    except OSError:  # selector falls back; the page itself reports a missing DB
         return ["perp", "spot"]
 
 
@@ -122,6 +137,8 @@ def _page(page: str, account: str, limit: int) -> None:
     else:
         name = {"Positions": "positions", "Scanner": "candidates", "Risk": "risk", "Dataset": "stats"}[page]
         df, t = _slow(name, v, account, limit)
+        if name in CAPTIONS:
+            st.caption(CAPTIONS[name])
         if name == "stats":
             stats, reasons = df if df is not None else (None, None)
             _table(stats)
@@ -145,8 +162,9 @@ def main() -> None:
         st.cache_data.clear()
         st.rerun()
     st.title(f"{page} - {account}")
-    if not (VAR_DIR / "luna.db").exists():
-        st.warning(f"No database at {VAR_DIR / 'luna.db'} yet. {NO_DATA}")
+    path = q.db_file(VAR_DIR, account)
+    if page != "Research" and not path.exists():
+        st.warning(f"No database at {path} yet. {NO_DATA}")
     try:
         _page(page, account, int(limit))
     except Exception as e:  # noqa: BLE001 - a locked/corrupt DB must not look like "no data"

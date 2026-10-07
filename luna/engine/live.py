@@ -19,6 +19,9 @@ tick(now):
   2. ``feed.refresh(now)`` - ``FeedError``: skip the tick, record risk event ``feed_error``. Every
      tick without fresh data (feed error, no bars, no new bar, a stale newest bar) is a data miss
      (spec §7.4): 4 in a row -> notify; 2 in a row with open positions -> pause + notify;
+     8 feed_error / no_data ticks in a row (~2 h, e.g. stale DNS in the container) -> risk event
+     ``feed_dead_exit``, the loop stops with ``exit_code`` 3 (lock released by ``close()``) so the
+     container's restart policy starts a fresh process;
   3. poll the broker and book every fill row recorded since the last one booked (the Db is the
      source of truth, so fills recorded before a crash are booked exactly once after a restart);
      resolve entry groups whose orders are all terminal;
@@ -111,6 +114,9 @@ LIVE_BUFFER_BARS = 96 * 120  # 120 days: indicator / regime warm-up (regime look
 LOCK_STALE_S = 300  # a lock not refreshed for 5 minutes (heartbeat every 60 s) is stale
 FEED_NOTIFY_AFTER = 4
 FEED_PAUSE_AFTER = 2
+FEED_DEAD_EXIT_AFTER = 8  # consecutive feed_error / no_data ticks (~2 h): exit so Docker restarts us
+FEED_DEAD_EXIT_CODE = 3
+_DEAD_RULES = ("feed_error", "no_data")
 ENGINE_KEY = "engine"
 _OPEN = ("NEW", "OPEN", "PARTIAL")
 _FLAGS = ("kill_switch", "paused")
@@ -265,7 +271,8 @@ class _Submitter:
     """What the pipeline submits to. Before handing an order to the broker it (1) verifies that
     this process still holds the account lock (refreshing it; on loss the engine stops and nothing
     more is submitted), (2) commits a snapshot (the order is already registered as in flight) and
-    (3) refuses a client_id the Db already knows (risk event ``duplicate_client_id``)."""
+    (3) refuses a client_id the Db already knows (risk event ``duplicate_client_id``). The broker
+    gets the order's reference mid (the one the risk check used) to keep reprices inside R15."""
 
     def __init__(self, engine: LiveEngine) -> None:
         self.engine = engine
@@ -284,7 +291,8 @@ class _Submitter:
             eng._event(now, "duplicate_client_id", f"{order.client_id} {order.intent} not resubmitted",
                        "skip")
             return
-        eng.broker.submit(order)
+        ref = eng.pipe.submitted.get(order.client_id)
+        eng.broker.submit(order, ref_mid=ref[1] if ref is not None else None)
 
 
 # --- engine -----------------------------------------------------------------------------------------
@@ -344,6 +352,9 @@ class LiveEngine:
         self._last_fill_id = 0
         self._closed_pending: list[tuple[Position, pd.Timestamp, str]] = []
         self._data_misses = 0  # consecutive ticks without fresh data (feed error / stale / none)
+        self._feed_dead = 0  # consecutive ticks whose feed failed or returned nothing at all
+        self.exit_code = 0  # non-zero: the process should exit with it (``run_forever`` stopped)
+        self.exit_reason = ""
         self._started = False
         self._lock_lost = False
         self._cand_ids: dict[str, int] = {}  # entry position id -> candidates row id (Db)
@@ -640,6 +651,7 @@ class LiveEngine:
             self._data_miss(now, "no_data", "feed returned no closed bars", "skip")
             self._commit(now)
             return
+        self._feed_dead = 0  # the feed answers (a stale bar is handled by R16, not by an exit)
         idx = pd.DatetimeIndex([])
         for df in panel.values():
             idx = idx.union(df.index)
@@ -721,9 +733,12 @@ class LiveEngine:
 
     def _data_miss(self, now: pd.Timestamp, rule: str, detail: str, action: str) -> None:
         """A tick without fresh data (feed error, no bars, no new or a stale bar), spec §7.4:
-        4 in a row -> notify; 2 in a row with open positions -> pause + notify."""
+        4 in a row -> notify; 2 in a row with open positions -> pause + notify;
+        ``FEED_DEAD_EXIT_AFTER`` feed_error / no_data ticks in a row -> ``_feed_dead_exit``."""
         self._data_misses += 1
         self._event(now, rule, detail, action)
+        if rule in _DEAD_RULES:
+            self._feed_dead += 1
         if self._data_misses == FEED_NOTIFY_AFTER:
             self._notify(f"feed failing: {self._data_misses} ticks in a row without fresh data ({rule})")
         if (self._data_misses >= FEED_PAUSE_AFTER and self.pf.positions
@@ -732,6 +747,22 @@ class LiveEngine:
             self._event(now, "feed_pause", f"{self._data_misses} ticks without data with open positions",
                         "pause")
             self._notify("no market data with open positions: trading paused (/resume to clear)")
+        if self._feed_dead >= FEED_DEAD_EXIT_AFTER and not self.exit_code:
+            self._feed_dead_exit(now, rule, detail)
+
+    def _feed_dead_exit(self, now: pd.Timestamp, rule: str, detail: str) -> None:
+        """The feed has been dead for hours (e.g. stale DNS in a long-running container after a host
+        network change / sleep): stop the loop with a non-zero exit code so ``restart:
+        unless-stopped`` starts a fresh process. Safe: open positions are already paused
+        (FEED_PAUSE_AFTER), the tick's snapshot is committed and ``close()`` releases the lock;
+        a restart reloads the state and re-plans."""
+        msg = f"{self._feed_dead} ticks in a row without a feed ({rule}: {detail})"[:900]
+        log.error("feed dead: %s; exiting with code %d for a restart", msg, FEED_DEAD_EXIT_CODE)
+        self._event(now, "feed_dead_exit", msg, "exit")
+        self._notify(f"feed dead for {self._feed_dead} ticks: restarting the process")
+        self.exit_code = FEED_DEAD_EXIT_CODE
+        self.exit_reason = "feed_dead_exit"
+        self.stop()
 
     def _book_fills(self, now: pd.Timestamp) -> None:
         pipe = self.pipe
@@ -848,11 +879,12 @@ class LiveEngine:
             return
         for cmd, arg in cmds:
             try:
-                reply = handle_command(cmd, arg, self)
+                reply = handle_command(cmd, arg, self, account=self.account)
             except Exception as e:  # noqa: BLE001 - a command never crashes the loop
                 log.exception("command %s failed", cmd)
                 reply = f"{cmd} failed: {type(e).__name__}"
-            self._notify(reply)
+            if reply is not None:  # None: addressed to the other account
+                self._notify(reply)
 
     def heartbeat(self, now=None) -> None:
         """Refresh the account lock (stop on loss) and ping the dead-man's switch."""
