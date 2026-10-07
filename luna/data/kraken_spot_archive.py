@@ -13,8 +13,19 @@ import pandas as pd
 from luna.data.store import _empty_bars, _normalize
 
 ARCHIVE_BASE = "https://assets.kraken.com/marketing/institutions/"
-PARTS = [f"Kraken_OHLCVT_Full_2026Q2.zip.part0{i}" for i in range(5)]
-SUMS = "OHLCVT_Full_PARTS_SHA256SUMS.txt"
+SUMS = "OHLCVT_Full_PARTS_SHA256SUMS.txt"  # remote file name (informational only)
+REMOTE_SUMS = "OHLCVT_Full_PARTS_SHA256SUMS.remote.txt"
+ARCHIVE_VERSION = "Kraken_OHLCVT_Full_2026Q2"
+# Hashes verified when the 2026Q2 parts were first downloaded (2026-10-06). Pinned in the repo:
+# Kraken later replaced the remote sums file with a newer archive's, so it cannot be trusted.
+PINNED_SHA256 = {
+    f"{ARCHIVE_VERSION}.zip.part00": "3dcb68a95e2016c5544787ac8ec8269b478c8267b71dec4fc1169e2e83a68b97",
+    f"{ARCHIVE_VERSION}.zip.part01": "bc500956623e3317c3b7083189a779ac0c99ff60c0ba36b9b684304a5f8200aa",
+    f"{ARCHIVE_VERSION}.zip.part02": "0e328cadfc6038cf3a5c80b1ad169c022ede9940fa9fd6e065624cf2c6cb114f",
+    f"{ARCHIVE_VERSION}.zip.part03": "6300b1c97e5d142435bbeb2946c73ee886b0bbc7d2ec92ba39e120d5b5506c37",
+    f"{ARCHIVE_VERSION}.zip.part04": "1815279f0470724f187faf3f68392ddc27f644f52cc1bd10cc6ca3de2b7fad00",
+}
+PARTS = list(PINNED_SHA256)
 CHUNK = 8 * 1024 * 1024
 _CSV_COLUMNS = ["time", "open", "high", "low", "close", "volume", "trades"]
 
@@ -55,27 +66,44 @@ def _fetch(client: httpx.Client, url: str, path: Path) -> None:
                 f.write(chunk)
 
 
-def download_archive(client: httpx.Client, dest: Path, parts: list[str] = PARTS) -> list[Path]:
-    """Download (or resume) each part into dest and verify its SHA256; return local paths.
+def download_archive(
+    client: httpx.Client,
+    dest: Path,
+    parts: list[str] = PARTS,
+    pinned: dict[str, str] = PINNED_SHA256,
+) -> list[Path]:
+    """Download (or resume) each part into dest and verify it against the PINNED SHA256.
 
-    Parts whose local file already matches their checksum are not requested again."""
+    The pinned hashes are committed in the repo; the remote sums file (Kraken replaces it when
+    a newer archive is published) is saved for information only and never used to verify.
+    Parts whose local file already matches their pinned hash are not requested again."""
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
-    sums_path = dest / SUMS
-    resp = client.get(ARCHIVE_BASE + SUMS)
-    resp.raise_for_status()
-    sums_path.write_bytes(resp.content)
-    sums = _parse_sums(resp.text)
+    try:  # informational only, separate file; its content is never trusted or consulted
+        resp = client.get(ARCHIVE_BASE + SUMS)
+        resp.raise_for_status()
+        (dest / REMOTE_SUMS).write_bytes(resp.content)
+    except httpx.HTTPError:
+        pass
     paths = []
     for name in parts:
-        if name not in sums:
-            raise ChecksumError(f"{name}: no checksum listed in {SUMS}")
+        expected = pinned.get(name)
+        if expected is None:
+            raise ChecksumError(f"{name}: no pinned checksum for archive {ARCHIVE_VERSION}")
         path = dest / name
-        if not (path.exists() and _sha256(path) == sums[name]):
-            _fetch(client, ARCHIVE_BASE + name, path)
+        if not (path.exists() and _sha256(path) == expected):
+            try:
+                _fetch(client, ARCHIVE_BASE + name, path)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    raise RuntimeError(
+                        f"{name}: archive {ARCHIVE_VERSION} is no longer available at "
+                        f"{ARCHIVE_BASE + name} (404) and no verified local copy exists"
+                    ) from e
+                raise
             actual = _sha256(path)
-            if actual != sums[name]:
-                raise ChecksumError(f"{name}: sha256 {actual} != expected {sums[name]}")
+            if actual != expected:
+                raise ChecksumError(f"{name}: sha256 {actual} != pinned {expected}")
         paths.append(path)
     return paths
 

@@ -81,35 +81,75 @@ def serve(files: dict[str, bytes], seen: list):
     return make_client(httpx.MockTransport(handler))
 
 
-def sums_for(files: dict[str, bytes]) -> bytes:
-    return "".join(f"{hashlib.sha256(b).hexdigest()}  {n}\n" for n, b in files.items()).encode()
+def pins_for(files: dict[str, bytes]) -> dict[str, str]:
+    return {n: hashlib.sha256(b).hexdigest() for n, b in files.items()}
 
 
 def test_download_verifies_and_skips_complete(tmp_path):
     parts = {"p0": b"a" * 100, "p1": b"b" * 50}
-    files = {**parts, ka.SUMS: sums_for(parts)}
+    pins = pins_for(parts)
+    files = {**parts, ka.SUMS: b"deadbeef  Other.zip.part00\n"}  # remote lists different names
     seen: list = []
     client = serve(files, seen)
-    paths = ka.download_archive(client, tmp_path, list(parts))
+    paths = ka.download_archive(client, tmp_path, list(parts), pins)
     assert [p.read_bytes() for p in paths] == list(parts.values())
-    assert seen[0][0] == ka.SUMS
     seen.clear()
-    ka.download_archive(client, tmp_path, list(parts))
+    ka.download_archive(client, tmp_path, list(parts), pins)
     assert [n for n, _ in seen] == [ka.SUMS]  # parts not re-requested
 
 
-def test_checksum_mismatch_raises(tmp_path):
+def test_remote_sums_never_overwrite_pins_or_local_verification(tmp_path):
     parts = {"p0": b"a" * 100}
-    files = {"p0": b"x" * 100, ka.SUMS: sums_for(parts)}
+    pins = pins_for(parts)
+    remote = b"0" * 64 + b"  p0\n"  # remote claims a different hash for the same name
+    (tmp_path / "p0").write_bytes(parts["p0"])
+    seen: list = []
+    paths = ka.download_archive(serve({ka.SUMS: remote}, seen), tmp_path, ["p0"], pins)
+    assert paths == [tmp_path / "p0"]
+    assert [n for n, _ in seen] == [ka.SUMS]
+    assert (tmp_path / ka.REMOTE_SUMS).read_bytes() == remote
+    assert not (tmp_path / ka.SUMS).exists()
+    assert pins == pins_for(parts)
+
+
+def test_checksum_mismatch_raises(tmp_path):
+    pins = pins_for({"p0": b"a" * 100})
+    files = {"p0": b"x" * 100, ka.SUMS: b""}
     with pytest.raises(ka.ChecksumError):
-        ka.download_archive(serve(files, []), tmp_path, ["p0"])
+        ka.download_archive(serve(files, []), tmp_path, ["p0"], pins)
+
+
+def test_mismatching_local_part_is_refetched_and_bad_remote_raises(tmp_path):
+    (tmp_path / "p0").write_bytes(b"corrupt-local-bytes")
+    pins = pins_for({"p0": b"a" * 100})
+    with pytest.raises(ka.ChecksumError):
+        ka.download_archive(serve({"p0": b"z" * 10, ka.SUMS: b""}, []), tmp_path, ["p0"], pins)
+
+
+def test_unpinned_part_raises(tmp_path):
+    with pytest.raises(ka.ChecksumError, match="no pinned checksum"):
+        ka.download_archive(serve({ka.SUMS: b""}, []), tmp_path, ["p9"], {})
+
+
+def test_missing_part_404_names_archive_version(tmp_path):
+    def handler(req):
+        return httpx.Response(404)
+
+    pins = {"p0": "0" * 64}
+    with pytest.raises(RuntimeError, match=ka.ARCHIVE_VERSION):
+        ka.download_archive(make_client(httpx.MockTransport(handler)), tmp_path, ["p0"], pins)
+
+
+def test_pinned_constants_cover_default_parts():
+    assert ka.PARTS == list(ka.PINNED_SHA256) and len(ka.PARTS) == 5
+    assert all(len(h) == 64 for h in ka.PINNED_SHA256.values())
 
 
 def test_download_resumes_with_range(tmp_path):
     parts = {"p0": bytes(range(200))}
-    files = {**parts, ka.SUMS: sums_for(parts)}
+    files = {**parts, ka.SUMS: b""}
     (tmp_path / "p0").write_bytes(parts["p0"][:60])
     seen: list = []
-    ka.download_archive(serve(files, seen), tmp_path, ["p0"])
+    ka.download_archive(serve(files, seen), tmp_path, ["p0"], pins_for(parts))
     assert ("p0", "bytes=60-") in seen
     assert (tmp_path / "p0").read_bytes() == parts["p0"]
