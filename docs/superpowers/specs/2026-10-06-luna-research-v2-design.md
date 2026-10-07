@@ -1,7 +1,7 @@
 # Luna Research V2: Momentum Odaklı Araştırma · Tasarım Spec'i (Final Revizyon)
 
 - **Tarih:** 2026-10-07 (rev 3: final cleanup, pre-commit risk değerleri, sabit holdout kesimi, CVaR/ES, tutarlılık gözden geçirmesi)
-- **Durum:** **ONAY BEKLİYOR.** Uygulamaya ancak (a) P2 final acceptance tamamlanıp (b) kullanıcı bu spec'i açıkça onayladıktan sonra başlanır.
+- **Durum:** **ONAYLANDI ve FROZEN (2026-10-07, kullanıcı).** Bu spec yalnızca açık bir V3/spec-change kaydıyla değiştirilebilir. V2 sonuçları görüldükten sonra kriter veya parametre değiştirilmez. Uygulama P2 final acceptance COMPLETE olduktan ve detaylı implementation planı kullanıcıya sunulup onaylandıktan sonra başlar.
 - **Ön koşullar:** Luna Core + Crypto (alt proje #1) P0–P2 COMPLETE.
 - **Girdiler:** `docs/results/walkforward.md`, `docs/results/baseline.md`, `docs/results/interim-findings-2026-10-06.md`, `docs/results/xrp-outlier-investigation.md`
 
@@ -192,7 +192,11 @@ Onaydan sonra writing-plans ile detaylandırılır. Her task V1'deki gibi implem
 - **Spot verisi:** P2 kapanışında spot backfill'in tamamlanmış olması gerekir.
 - **Hesaplama yükü:** leave-one-out koşuları walk-forward sayısını katlar. §5 kapsamı (raporlanan konfigürasyonlar) bunu sınırlar; işlem listesi cache'i ve üst timeframe'lerdeki az bar sayısı yükü dengeler.
 
-## 11. Tutarlılık kontrolü (rev 3)
+## 11. Terminoloji: değerlendirme setleri (freeze ile eklendi)
+- **Development walk-forward OOS:** 2024-09 → 2026-07 aralığındaki walk-forward test pencereleri. V2'nin tüm OOS sonuçları, robustness çıktıları ve GO/NO-GO kararları bu set üzerindedir ve raporlarda bu adla anılır.
+- **Final generalization seti (untouched holdout):** 2026-07 → 2026-10. V2 sırasında hiçbir koşulda okunmaz ve kullanılmaz (D7, §3.4). V2 raporları bu setle ilgili hiçbir metrik içermez.
+
+## 12. Tutarlılık kontrolü (rev 3)
 
 | Kontrol | Sonuç |
 |---|---|
