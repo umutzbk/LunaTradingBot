@@ -1,6 +1,6 @@
 # Luna Research V2: Momentum Odaklı Araştırma · Tasarım Spec'i (Final Revizyon)
 
-- **Tarih:** 2026-10-07 (rev 2: kullanıcı kararları sabitlendi)
+- **Tarih:** 2026-10-07 (rev 3: final cleanup, pre-commit risk değerleri, sabit holdout kesimi, CVaR/ES, tutarlılık gözden geçirmesi)
 - **Durum:** **ONAY BEKLİYOR.** Uygulamaya ancak (a) P2 final acceptance tamamlanıp (b) kullanıcı bu spec'i açıkça onayladıktan sonra başlanır.
 - **Ön koşullar:** Luna Core + Crypto (alt proje #1) P0–P2 COMPLETE.
 - **Girdiler:** `docs/results/walkforward.md`, `docs/results/baseline.md`, `docs/results/interim-findings-2026-10-06.md`, `docs/results/xrp-outlier-investigation.md`
@@ -66,19 +66,20 @@ Mean reversion, pairs (D6); holdout (D7); canlı emir; ML ranker; LLM.
 - Denenen her konfigürasyon sayılır ve raporlanır. Kalan **tek bir aday** seçimi train performansına dayanır; OOS sonuçları seçim sonrası raporlanır.
 
 ### 3.4 Holdout izolasyonu
-- V2 veri yükleyicileri `data_end = holdout_start` ile çağrılır (perp: V1 kaydına göre son 3 ay). Spot için aynı takvim aralığı V2 dışında bırakılır.
-- Test: V2 hiçbir koşuda holdout dönemine ait bir barı okumaz (assert + birim testi).
+- **Sabit kesim tarihi:** `V2_DATA_END = 2026-07-01T00:00:00Z`. Bu, V1 walk-forward'ın son OOS test penceresinin bitişidir; V1 holdout'u ve V1'in holdout öncesi 5 günlük boşluğu bu tarihten sonradır.
+- V2'nin tüm veri yükleyicileri (perp ve spot, tüm timeframe'ler) bu tarihten itibaren hiçbir barı okumaz. Tarih sabittir; veri store'una yeni barlar eklense de kaymaz.
+- Test: V2 yükleyicisi `V2_DATA_END` sonrası bar döndürürse hata verir (assert + birim testi). `luna holdout` V2 kodundan çağrılmaz.
 
 ### 3.5 GO/NO-GO (hesap başına, ayrı)
-V1 kriterleri aynen uygulanır:
-- n ≥ 30
-- Bootstrap alt sınırı > 0
-- PF ≥ 1.2
-- Max DD < %15, en kötü gün > −%3, günlük CVaR5 > −%2
-- 2× maliyetle net ≥ 0
-- Funding'in bilindiği dönemde net > 0 (yalnızca perp)
-- Pencerelerin ≥ %60'ında net > 0
-- En iyi naive baseline'ı geçmek
+V1 kriterleri aynen uygulanır ve **robustness çıktıları (§5) GO/NO-GO kriteri değildir** (D3):
+1. n ≥ 30 (altında sonuç "INSUFFICIENT DATA")
+2. Bootstrap %90 alt sınırı > 0
+3. PF ≥ 1.2
+4. Max DD < %15, en kötü gün > −%3, günlük CVaR5 > −%2 (gerçekçi varyant)
+5. 2× maliyetle net expectancy ≥ 0
+6. Funding'in bilindiği dönemde net > 0 (yalnızca perp)
+7. Walk-forward pencerelerinin ≥ %60'ında net > 0
+8. Aynı hesap ve aynı OOS aralığında **en iyi naive baseline'ı** OOS net expectancy'de geçmek. Perp için V1 naive momentum; spot için V1 naive momentum'un long-only versiyonu.
 
 V2 eki: **perp ve spot ayrı karar alır, sonuçları toplanmaz** (D4).
 
@@ -91,24 +92,33 @@ V2 eki: **perp ve spot ayrı karar alır, sonuçları toplanmaz** (D4).
 ### 4.2 Cross-sectional (perp market-neutral), D2
 Portföy seviyesi risk motoru eklenir. V1 risk motoru emir seviyesinde (R1–R19) aynen kalır, bu motor onun üstüne konur.
 
-| Kontrol | Tanım | Varsayılan (train'de doğrulanacak, OOS'ta değiştirilmez) |
-|---|---|---|
-| Gross exposure | Σ\|notional\| / equity | ≤ 1.5x |
-| Net exposure | \|Σ notional\| / equity | ≤ 0.10x (market-neutral) |
-| Volatility targeting | Hedef portföy volatilitesi; ölçek = hedef / tahmini vol (causal EWMA kovaryans) | yıllık %15, ölçek tavanı 1.0 |
-| Asset cap | Tek varlık \|notional\| / equity | ≤ %30 |
-| Concentration / correlation | Aynı yönde, 30 günlük korelasyonu > 0.8 olan varlıkların toplam ağırlığı | ≤ %50 |
-| Portföy risk bütçesi | Tahmini 1-günlük %95 VaR / equity | ≤ %2 |
-| Emergency safety stop | Varlık başına felaket kaybı (equity'nin %3'ü) veya portföy seviyesinde günlük kayıp; **alpha exit değil** | V1 R3/R4 + acil stop |
+**Pre-commit:** Aşağıdaki değerler bu spec'in onayıyla **sabitlenir**. Hiçbiri OOS sonuçlarına göre ayarlanmaz. Seçim yapılan iki parametre için önceden tanımlı küçük bir grid vardır; seçim **yalnızca train pencerelerinde**, strateji parametreleriyle aynı train-only süreçte yapılır. Grid kombinasyonları §3.3'teki deneme sayımına dahildir. Diğer tüm değerler sabittir ve grid'e girmez.
 
-Rebalance haftalık yapılır (D1); hedef ağırlıklar bu kısıtlar altında projekte edilir. Çıkışlar yalnızca rebalance ile olur, emergency stop hariç. Cross-sectional için "işlem" tanımı **rebalance dönemi × varlık bacağı**dır. R için planned risk, portföy risk bütçesinin bacağa düşen payıdır (§6'da tanımlı).
+| Kontrol | Tanım | Değer |
+|---|---|---|
+| Gross exposure | Σ\|notional\| / equity | **grid: {1.0x, 1.5x}** (train-only seçim) |
+| Volatility targeting | Hedef yıllık portföy volatilitesi; ölçek = hedef / tahmini vol (causal EWMA kovaryans, span 30 gün), ölçek tavanı 1.0 | **grid: {%10, %15}** (train-only seçim) |
+| Net exposure | \|Σ notional\| / equity | sabit ≤ 0.10x |
+| Asset cap | Tek varlık \|notional\| / equity | sabit ≤ %30 |
+| Concentration / correlation | Aynı yönde, 30 günlük korelasyonu > 0.8 olan varlıkların toplam ağırlığı | sabit ≤ %50 |
+| Portföy risk bütçesi | Tahmini 1-günlük %95 VaR / equity (causal kovaryans) | sabit ≤ %1.5 |
+| Per-asset catastrophic safety stop | Tek bir varlık bacağının mark-to-market kaybı equity'nin **%1.5**'ine ulaşırsa o bacak IOC ile kapatılır; **alpha exit değildir**. Bir sonraki haftalık rebalance'a kadar o varlığa yeniden giriş yapılmaz. | sabit %1.5 |
+| Portföy günlük kayıp | V1 R3 (%2): o gün yeni pozisyon/rebalance yok. V1 R4 (%15 drawdown): kalıcı kill + flatten. | V1 ile aynı |
+
+**Tutarlılık:**
+- Per-asset stop (%1.5) tek başına V1 günlük kayıp limitinin (%2) altında kalır.
+- VaR bütçesi (%1.5) de günlük kayıp limitinin altındadır, yani normal koşulda tek günlük beklenen kuyruk kaybı limit içinde kalır.
+- Birden fazla bacak aynı gün stop olursa R3 o günün geri kalanında yeni pozisyonu engeller (V1 davranışı).
+- TSMOM ve breakout V1'in pozisyon başına %2 acil stop'unu değiştirmeden kullanır (D8). %1.5'lik stop yalnızca cross-sectional bacaklar içindir.
+
+Rebalance haftalık yapılır (D1); hedef ağırlıklar bu kısıtlar altında projekte edilir. Çıkışlar yalnızca rebalance ile olur, catastrophic stop hariç. Cross-sectional için "işlem" tanımı **rebalance dönemi × varlık bacağı**dır. Planned risk = bacağın notional'ı × per-asset stop mesafesi (%1.5 equity sınırına karşılık gelen fiyat hareketi) + gidiş-dönüş maliyet. R bu planned risk'e göre hesaplanır (§6).
 
 ### 4.3 Spot cross-sectional (top-k long)
 Long-only, gross ≤ 1x, eşit veya vol-ağırlıklı top-k, asset cap %40, haftalık rebalance.
 
 ## 5. Zorunlu robustness çıktıları (D3)
 
-Her konfigürasyon ve her hesap için, OOS sonuçları üzerinde hesaplanır:
+**Kapsam:** Raporlanan her konfigürasyon için hesaplanır. Raporlanan konfigürasyon = her hesap × aile × timeframe × evren için train-only süreçle seçilmiş walk-forward sonucu. Grid noktalarının tek tek hepsi değil. Hesaplama OOS sonuçları üzerinde yapılır:
 
 | Çıktı | Tanım |
 |---|---|
@@ -121,13 +131,13 @@ Her konfigürasyon ve her hesap için, OOS sonuçları üzerinde hesaplanır:
 | Time-period leave-one-out | Her test penceresi sırayla çıkarılır → kalan OOS metrikleri |
 | Best-month / best-quarter removal | En iyi takvim ayı ve en iyi çeyrek çıkarıldıktan sonra metrikler |
 
-Bu çıktılar ranker kabulünü değiştirmez (D3), ama GO/NO-GO raporunda zorunlu bölüm olarak yer alır. Yorum kuralı: bir sonuç yalnızca full'da pozitif, ex-top1 veya leave-one-out'ta negatifse rapor bunu açıkça **"kırılgan"** diye etiketler.
+Bu çıktılar **yalnızca robustness diagnostic'tir**. Ranker kabulünü ve GO/NO-GO kararını değiştirmez, hiçbiri hard veto değildir (D3). Raporda zorunlu bölüm olarak yer alırlar. Bir sonuç full'da pozitif ama ex-top1 veya herhangi bir leave-one-out'ta negatifse rapor yanına bilgilendirici **"kırılgan"** etiketi koyar. Bu etiket GO/NO-GO verdict'ini değiştirmez; okuyucunun kararına girdi olarak sunulur.
 
 ## 6. Raporlama (D5)
 
 | Metrik | Tanım |
 |---|---|
-| Planned R | Girişte planlanan risk tutarı (stop mesafesi × notional + gidiş-dönüş maliyet). Cross-sectional'da risk bütçesi payı. |
+| Planned R | Girişte planlanan risk tutarı (stop mesafesi × notional + gidiş-dönüş maliyet). Cross-sectional'da per-asset catastrophic stop mesafesi kullanılır (§4.2). |
 | Cap-adjusted realized R | Net P&L / *cap öncesi planlanan* risk. V1'deki "cap küçültünce R şişer" sorununu görünür kılar. Engine `r_multiple` ile birlikte raporlanır. |
 | Gross / net R | Maliyet öncesi ve sonrası R |
 | Equity contribution | Konfigürasyon, varlık ve işlem bazında equity değişimine katkı ($ ve %) |
@@ -140,6 +150,8 @@ Bu çıktılar ranker kabulünü değiştirmez (D3), ama GO/NO-GO raporunda zoru
 | MFE / MAE | İşlem içi maksimum lehte ve aleyhte hareket (R cinsinden) |
 | Payoff ratio | Ortalama kazanç / ortalama kayıp |
 | Winner concentration | Kârın en büyük k işlemdeki payı; Gini |
+| Portföy kuyruk riski | Günlük getiriler üzerinden **CVaR / Expected Shortfall %95 ve %99**, historical VaR %95/%99, en kötü gün, en kötü hafta; cross-sectional için ayrıca ex-ante (tahmini) VaR/ES ile gerçekleşen kaybın karşılaştırması |
+| Exposure izleme | Zaman içinde gross, net, en büyük varlık payı, vol-targeting ölçeği |
 
 R tanımları raporda açıkça yazılır. Research `r_net` = net getiri / stop mesafesi; engine `r_multiple` = net P&L / risk tutarı; ve yeni cap-adjusted R.
 
@@ -156,15 +168,15 @@ Onaydan sonra writing-plans ile detaylandırılır. Her task V1'deki gibi implem
 
 | # | Task | İçerik |
 |---|---|---|
-| V2-1 | Holdout izolasyonu + causal resampler | `data_end = holdout_start` zorlaması ve testi; 15m → 1h/4h/1d causal resample, karar/fill zamanlaması, nedensellik testleri |
+| V2-1 | Holdout izolasyonu + causal resampler | Sabit `V2_DATA_END = 2026-07-01Z` zorlaması ve testi (§3.4); 15m → 1h/4h/1d causal resample, karar/fill zamanlaması, nedensellik testleri |
 | V2-2 | Zaman-ölçekli parametreler | Uzunlukların zaman cinsinden tanımı; timeframe başına grid |
 | V2-3 | TSMOM ailesi (perp + spot) | Tradelist ↔ engine eşdeğerlik testi (V1 kalıbı) |
 | V2-4 | Volatility breakout (perp + spot) | Eşdeğerlik testi |
-| V2-5 | Portföy risk motoru | Gross/net, vol targeting, asset cap, concentration/correlation, VaR bütçesi, emergency stop; birim testleri |
+| V2-5 | Portföy risk motoru | §4.2 sabit değerleri ve train-only grid (gross {1.0, 1.5}, vol hedefi {%10, %15}); net/asset cap/korelasyon/VaR %1.5 bütçesi; per-asset %1.5 catastrophic stop + V1 R3/R4 ile tutarlılık testleri |
 | V2-6 | Cross-sectional momentum | Haftalık rebalance (günlük sensitivity), perp market-neutral + spot top-k long; rebalance tabanlı işlem tanımı |
 | V2-7 | Perp maker emir modeli | SimBroker + tradelist; maker fill rate ve missed-fill counterfactual |
-| V2-8 | Raporlama genişlemesi | §6 metrikleri; R tanımları; maliyet atribüsyonu |
-| V2-9 | Robustness motoru | §5 çıktılarının tamamı (leave-one-out koşuları dahil) |
+| V2-8 | Raporlama genişlemesi | §6 metriklerinin tamamı (CVaR/ES dahil); R tanımları; maliyet atribüsyonu |
+| V2-9 | Robustness motoru | §5 diagnostic'lerinin tamamı (leave-one-out koşuları dahil); GO/NO-GO'ya etki etmez |
 | V2-10 | V2 walk-forward orkestrasyonu | Konfigürasyon grid'i, train-only seçim, deneme sayımı; perp ve spot ayrı |
 | V2-11 | V2 GO/NO-GO raporu | Hesap başına ayrı karar, robustness bölümü, "kırılgan" etiketleri, aday ya da "aday yok"; holdout yok |
 
@@ -178,4 +190,20 @@ Onaydan sonra writing-plans ile detaylandırılır. Her task V1'deki gibi implem
 - **Az işlem:** 1d timeframe ve haftalık rebalance OOS'ta az işlem üretebilir. n ≥ 30 sağlanamazsa sonuç "INSUFFICIENT DATA" olur, bu da dürüst bir sonuçtur.
 - **Funding geçmişi kısa:** V1'deki gibi bilinmeyen dönem uydurulmaz.
 - **Spot verisi:** P2 kapanışında spot backfill'in tamamlanmış olması gerekir.
-- **Hesaplama yükü:** leave-one-out koşuları walk-forward sayısını katlar. İşlem listesi cache'i ve üst timeframe'lerdeki az bar sayısı bunu dengeler; gerekirse leave-one-out yalnızca finalist konfigürasyonlara uygulanır (bu, train-only seçim sonrası yapılır).
+- **Hesaplama yükü:** leave-one-out koşuları walk-forward sayısını katlar. §5 kapsamı (raporlanan konfigürasyonlar) bunu sınırlar; işlem listesi cache'i ve üst timeframe'lerdeki az bar sayısı yükü dengeler.
+
+## 11. Tutarlılık kontrolü (rev 3)
+
+| Kontrol | Sonuç |
+|---|---|
+| D3 ↔ §3.2 / §3.5 / §5 | Top-winner removal ve diğer robustness çıktıları yalnızca diagnostic. Ranker kabulü (n/shrinkage/bootstrap) ve GO/NO-GO kriterleri (§3.5 madde 1–8) bunlara bağlı değil. Eski "top-1 çıkarıldığında CI > 0 GO şartı" ifadesi bu revizyonda yok. "Kırılgan" etiketi bilgilendirici. |
+| D1 ↔ §2.2 / §4.2 / V2-6 | Cross-sectional rebalance birincil olarak haftalık, günlük yalnızca sensitivity. Tüm seçimler, risk grid'i dahil, yalnızca train'de. |
+| D2 ↔ §4.2 | Portföy seviyesi kontroller tanımlı. Per-asset stop yalnızca catastrophic (%1.5) ve alpha exit değil. Çıkışlar rebalance ile. |
+| §4.2 ↔ V1 risk (D8) | Per-asset %1.5 < V1 günlük kayıp %2; VaR bütçesi %1.5 < %2; R3/R4 değişmedi; TSMOM/breakout V1'in %2 acil stop'unu kullanıyor. Çelişki yok. |
+| Pre-commit ↔ §3.3 | Risk değerleri sabit. Yalnızca 2×2 grid (gross {1.0, 1.5} × vol hedefi {%10, %15}) train-only seçiliyor ve deneme sayımına dahil. OOS'a göre ayar yok. |
+| D4 ↔ §2.1 / §3.5 / §9 | Spot ayrı deney (long-only 1x; 1h/4h/1d; TSMOM/breakout/top-k). Perp ve spot ayrı GO/NO-GO; sonuçlar birleştirilmiyor. |
+| D5 ↔ §6 / V2-8 | Tüm istenen metrikler ve CVaR/ES §6'da; V2-8 hepsini kapsıyor. |
+| D6 ↔ §2.4 | Mean reversion ve pairs kapsam dışı; V2 task listesinde yok. |
+| D7 ↔ §3.4 / §9 / V2-1 / V2-11 | Sabit `V2_DATA_END = 2026-07-01Z`, testle zorlanıyor. `luna holdout` V2'de hiç çağrılmıyor. Holdout V2 çıktısı değil. |
+| D8 ↔ §2.1 / §4.1 | V1 sınıfları ve parametreleri değişmiyor; V2 yeni sınıflar ekliyor. |
+| Task listesi | Tek canonical plan V2-1 … V2-11. Eski 9 görevlik taslak ve açık sorular bölümü bu revizyonda yok. |
