@@ -10,7 +10,15 @@ import pandas as pd
 
 from luna.execution.costs import CostModel
 from luna.portfolio.portfolio import Position
-from luna.types import AccountKind, Candidate, Instrument, OrderRequest, Side
+from luna.types import (
+    AccountKind,
+    Candidate,
+    Instrument,
+    OrderModel,
+    OrderRequest,
+    Side,
+    default_order_model,
+)
 
 Intent = Literal["open", "close", "reduce"]
 
@@ -70,6 +78,7 @@ def _make_order(
     leg_group: str,
     check_notional: bool,
     attempt: int = 0,
+    order_model: OrderModel | None = None,
 ) -> OrderRequest | None:
     """None if the rounded qty is 0, below min_qty (or, for entries, below min_notional)."""
     qty = round_qty(abs(qty), inst.qty_step)
@@ -78,12 +87,12 @@ def _make_order(
     if check_notional and qty * mid < inst.min_notional:
         return None
     sign = 1.0 if side == "buy" else -1.0
-    if kind == "perp":
+    if (order_model or default_order_model(kind)) == "taker":
         tif = "IOC"
         limit = mid * (1.0 + sign * band)
     else:
         if costs is None:
-            raise ValueError("costs is required to price spot POST_ONLY orders")
+            raise ValueError("costs is required to price POST_ONLY orders")
         tif = "POST_ONLY"
         limit = mid * (1.0 - sign * costs.half_spread(asset))
     return OrderRequest(
@@ -111,11 +120,13 @@ def plan_entry(
     *,
     costs: CostModel | None = None,
     attempt: int = 0,
+    order_model: OrderModel | None = None,
 ) -> PlanResult:
     """Per-leg notional = gross * |w| / sum|w|. All-or-nothing: if any leg rounds to zero qty,
     is below min_qty or below min_notional, returns PlanResult([], "below_min_notional").
 
-    `costs` is required for spot (POST_ONLY limit = mid * (1 -/+ half_spread)).
+    `costs` is required for post-only orders (limit = mid * (1 -/+ half_spread)). ``order_model``:
+    None = the account default (perp IOC taker, spot post-only maker).
     """
     total = sum(abs(leg.weight) for leg in cand.legs)
     position_id = f"{cand.strategy}:{cand.key}:{ts:%Y%m%d%H%M}"
@@ -141,6 +152,7 @@ def plan_entry(
             leg_group="entry",
             check_notional=True,
             attempt=attempt,
+            order_model=order_model,
         )
         if o is None:
             return PlanResult([], "below_min_notional")
@@ -158,6 +170,7 @@ def plan_exit(
     *,
     costs: CostModel | None = None,
     attempt: int = 0,
+    order_model: OrderModel | None = None,
 ) -> ExitPlan:
     """Flatten every non-zero leg: sell if qty > 0, buy if qty < 0 (intent "close").
 
@@ -187,6 +200,7 @@ def plan_exit(
             leg_group="exit",
             check_notional=True,
             attempt=attempt,
+            order_model=order_model,
         )
         if o is None:
             dust[asset] = q

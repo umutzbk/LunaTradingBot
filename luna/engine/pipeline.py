@@ -43,7 +43,7 @@ from luna.portfolio.constructor import Selection, construct
 from luna.portfolio.portfolio import Portfolio, Position
 from luna.risk.engine import Action, OrderCheck, RiskContext, apply_actions, check, portfolio_actions
 from luna.risk.state import RiskState, roll_day
-from luna.types import AccountKind, Candidate, Fill, Instrument, OrderRequest
+from luna.types import AccountKind, Candidate, Fill, Instrument, OrderModel, OrderRequest
 
 CORR_WINDOW = 30 * 96  # 30 days of 15-minute bars
 
@@ -73,6 +73,7 @@ class Pipeline:
         *,
         keep_candidates: bool = False,
         track_attempts: bool = False,
+        order_model: OrderModel | None = None,
     ) -> None:
         self.pf = pf
         self.state = state
@@ -83,6 +84,7 @@ class Pipeline:
         self.broker = broker
         self.mode = mode
         self.band = limits.max_price_band
+        self.order_model = order_model  # None = account default (perp IOC, spot post-only)
         self.min_qty = {a: inst.min_qty for a, inst in instruments.items()}
         self.min_notional = {a: inst.min_notional for a, inst in instruments.items()}
         self.submitted: dict[str, tuple[OrderRequest, float]] = {}  # client_id -> (order, ref price)
@@ -283,7 +285,7 @@ class Pipeline:
                 attempt = self.exit_attempts.get(pid, 0)
                 self.exit_attempts[pid] = attempt + 1
             plan = plan_exit(pos, mids, self.instruments, self.kind, now, self.band, costs=self.costs,
-                             attempt=attempt)
+                             attempt=attempt, order_model=self.order_model)
             for a in plan.dust:
                 pf.mark({a: mids[a]})
                 pf.write_off_dust(pid, a, mids[a], t)
@@ -357,7 +359,8 @@ class Pipeline:
         # opposite / corr-bucket exposures) and in the risk check (positions, risk, gross, cash)
         unreg = [g for pid, g in self.entry_groups.items() if pid not in pf.positions]
         sels, skipped = construct(cands, pf, self.limits, self.costs, self.instruments, mids, returns,
-                                  self.regime_mult, pending=[g.sel.cand for g in unreg])
+                                  self.regime_mult, pending=[g.sel.cand for g in unreg],
+                                  liquidity=self.order_model)
         for c, reason in skipped:
             self.cand_row(c, "rejected", reason)
 
@@ -371,7 +374,7 @@ class Pipeline:
         for sel in sels:
             c = sel.cand
             pr = plan_entry(c, sel.gross_notional, mids, self.instruments, kind, now, self.band,
-                            costs=self.costs)
+                            costs=self.costs, order_model=self.order_model)
             if pr.reject_reason:
                 self.cand_row(c, "rejected", pr.reject_reason)
                 continue

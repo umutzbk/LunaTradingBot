@@ -10,6 +10,12 @@ import pandas as pd
 Venue = Literal["kraken_futures", "kraken_spot"]
 AccountKind = Literal["perp", "spot"]
 Side = Literal["buy", "sell"]
+OrderModel = Literal["taker", "maker"]  # taker = IOC within the band, maker = post-only
+
+
+def default_order_model(kind: AccountKind) -> OrderModel:
+    """V1 execution per account: perp IOC (taker), spot post-only (maker)."""
+    return "taker" if kind == "perp" else "maker"
 
 
 @dataclass(frozen=True)

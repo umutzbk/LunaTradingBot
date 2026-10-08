@@ -63,7 +63,7 @@ from luna.portfolio.portfolio import Portfolio
 from luna.ranking.ranker import Ranker
 from luna.risk.state import RiskState
 from luna.strategy.base import SignalFrame, Strategy
-from luna.types import AccountKind, Instrument, OrderRequest
+from luna.types import AccountKind, Instrument, OrderModel, OrderRequest
 
 FundingMode = Literal["known_only", "zero", "estimated", "estimated_x2"]
 
@@ -242,6 +242,7 @@ def run_backtest(
     instruments: dict[str, Instrument] | None = None,
     initial_state: RiskState | None = None,
     initial_exiting: PendingExits | None = None,
+    order_model: OrderModel | None = None,
 ) -> BacktestResult:
     """Simulate [start, end) on the union of the panel's bar indexes (see module docstring).
 
@@ -250,6 +251,8 @@ def run_backtest(
     `initial_state` / `initial_exiting` continue a previous window's ``risk_state`` /
     ``pending_exits`` (see "Window continuity").
     `instruments` defaults to `default_instruments` (synthetic, permissive).
+    `order_model` (None = account default: perp IOC taker, spot post-only maker) sets the entry and
+    exit order type and the constructor's round-trip fee side.
     """
     if funding_mode not in ("known_only", "zero", "estimated", "estimated_x2"):
         raise ValueError(f"unknown funding_mode {funding_mode!r}")
@@ -293,7 +296,8 @@ def run_backtest(
 
     broker = SimBroker(kind, costs, instruments, cost_mult)
     state = dataclasses.replace(initial_state) if initial_state is not None else RiskState()
-    pipe = Pipeline(pf, state, kind, limits, costs, instruments, broker, "backtest")
+    pipe = Pipeline(pf, state, kind, limits, costs, instruments, broker, "backtest",
+                    order_model=order_model)
     if initial_exiting is not None:
         stray = (set(initial_exiting.reasons) | {o.position_id for o, _ in initial_exiting.orders}) - set(
             pf.positions

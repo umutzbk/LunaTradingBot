@@ -37,7 +37,7 @@ from luna.config import RiskLimits
 from luna.execution.costs import CostModel
 from luna.planner import round_qty
 from luna.portfolio.portfolio import Portfolio
-from luna.types import Candidate, Instrument
+from luna.types import Candidate, Instrument, OrderModel, default_order_model
 
 MIN_CORR_OVERLAP = 96  # one day of 15-minute bars
 
@@ -90,6 +90,7 @@ def construct(
     returns_30d: pd.DataFrame,
     regime_mult: Callable[[Candidate], float],
     pending: Sequence[Candidate] = (),
+    liquidity: OrderModel | None = None,
 ) -> tuple[list[Selection], list[tuple[Candidate, str]]]:
     """Select and size candidates. Returns (selections, [(candidate, skip_reason)]). Pure: `pf` is
     only read.
@@ -97,7 +98,9 @@ def construct(
     ``pending``: candidates of entries still working (live: submitted, not yet registered as a
     position). They count as open positions for ``max_positions`` and their legs as exposures for
     ``opposite_exposure`` / ``corr_bucket`` (their risk / gross are checked by the risk engine).
-    Always empty in the backtest (orders settle on the next bar)."""
+    Always empty in the backtest (orders settle on the next bar).
+
+    ``liquidity``: fee side of the round trip (None = the account default order model)."""
     corr = _Corr(returns_30d)
     equity = pf.equity()
     n_positions = len(pf.positions) + len(pending)
@@ -110,7 +113,7 @@ def construct(
                 exposures.append((leg.asset, _sign(leg.weight * pos.direction)))
     for c in pending:
         exposures.extend(_leg_signs(c))
-    liquidity = "taker" if pf.kind == "perp" else "maker"
+    liquidity = liquidity or default_order_model(pf.kind)
 
     selected: list[Selection] = []
     skipped: list[tuple[Candidate, str]] = []

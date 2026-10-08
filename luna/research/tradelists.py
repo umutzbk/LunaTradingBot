@@ -56,7 +56,7 @@ from luna.strategy.base import SignalFrame, SignalStrategy
 from luna.strategy.mean_reversion import STOP_DZ, MeanReversion
 from luna.strategy.momentum import Momentum
 from luna.strategy.naive import NaiveMeanReversion, NaiveMomentum
-from luna.types import AccountKind
+from luna.types import AccountKind, OrderModel, default_order_model
 
 _KEY_META = b"luna_cache_key"
 CODE_VERSION = "tradelists-v1"  # bump when trade-list semantics change (invalidates caches)
@@ -146,6 +146,7 @@ def build_tradelist(
     strategy: object,
     band: float,
     market: ResearchMarket | None = None,
+    order_model: OrderModel | None = None,
 ) -> pd.DataFrame:
     """Trade list of ``strategy`` on ``sf.key`` (module docstring). ``band`` is the account's
     ``max_price_band`` (``settings.accounts[kind].max_price_band``; the engine cancels perp IOC
@@ -192,17 +193,17 @@ def build_tradelist(
     entry = np.where(valid, d, 0).astype(np.int8)
 
     mode, stop_z, trail_mult = _exit_rule(strategy, sf)
-    perp = kind == "perp"
+    model = order_model or default_order_model(kind)
     fric = np.array([costs.half_spread(a) + costs.slippage for a in assets])
     half_spread = np.array([costs.half_spread(a) for a in assets])
-    fee = costs.fee_rate("taker" if perp else "maker")
+    fee = costs.fee_rate(model)
 
     out = simulate(
         np.ascontiguousarray(mkt.open[:, cols]), np.ascontiguousarray(mkt.high[:, cols]),
         np.ascontiguousarray(mkt.low[:, cols]), np.ascontiguousarray(mkt.last[:, cols]),
         np.ascontiguousarray(real), entry, np.ascontiguousarray(weight), ok,
         _on_union(sf.exit_long, rows, ok, False, bool), _on_union(sf.exit_short, rows, ok, False, bool),
-        ref, dist, z, atr, mode, stop_z, trail_mult, int(sf.exit_spec.max_hold_bars), not perp,
+        ref, dist, z, atr, mode, stop_z, trail_mult, int(sf.exit_spec.max_hold_bars), model == "maker",
         float(band), fric, fee, half_spread, mk.boundary, np.ascontiguousarray(mk.rate[:, cols]),
     )
     sig, ent, ext, dirn, rsn, gross, cost, fund, unk = out
@@ -286,13 +287,15 @@ def _data_hash(panel: dict[str, pd.DataFrame], funding: dict[str, pd.DataFrame])
 
 
 def cache_key(strategies: dict[str, type], panel, funding, costs: CostModel, kind: AccountKind,
-              keys: dict[str, list[str]], band: float, use_regime: bool) -> str:
+              keys: dict[str, list[str]], band: float, use_regime: bool,
+              order_model: OrderModel | None = None) -> str:
     spec = {
         "code": CODE_VERSION,
         "source": _code_hash(strategies),
         "kind": kind,
         "band": repr(float(band)),
         "use_regime": use_regime,
+        "order_model": order_model or default_order_model(kind),
         "costs": costs.cfg.model_dump(),
         "strategies": {
             name: {"cls": f"{cls.__module__}.{cls.__qualname__}",
@@ -316,6 +319,7 @@ def build_all_tradelists(
     band: float,
     use_regime: bool = True,
     cache_dir: Path | None = Path("var/research"),
+    order_model: OrderModel | None = None,
 ) -> pd.DataFrame:
     """Trade lists of every grid point (or the single default instance of a non-grid strategy)
     on every key of ``keys[name]``; ``strategies`` maps each class's ``name`` to the class.
@@ -331,7 +335,7 @@ def build_all_tradelists(
     for name, cls in strategies.items():
         if getattr(cls, "name", None) != name:
             raise ValueError(f"strategies key {name!r} != {cls.__name__}.name {getattr(cls, 'name', None)!r}")
-    key = cache_key(strategies, panel, funding, costs, kind, keys, band, use_regime)
+    key = cache_key(strategies, panel, funding, costs, kind, keys, band, use_regime, order_model)
     path = None
     if cache_dir is not None:
         path = Path(cache_dir) / f"tradelists_{kind}_{key[:16]}.parquet"
@@ -347,7 +351,7 @@ def build_all_tradelists(
         for strat in _instances(cls, use_regime):
             for sf in strat.signals(panel, ks).values():
                 frames.append(build_tradelist(sf, panel, funding, costs, kind, strategy=strat,
-                                              band=band, market=market))
+                                              band=band, market=market, order_model=order_model))
     frames = [f for f in frames if len(f)]
     out = pd.concat(frames, ignore_index=True) if frames else _empty()
     if path is not None:

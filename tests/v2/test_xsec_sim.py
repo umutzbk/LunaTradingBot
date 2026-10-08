@@ -169,3 +169,11 @@ def test_spot_rebalance_buys_wait_for_sells(settings):
     assert res.risk_events["detail"].str.match(r"R8_gross_leverage|R17_minimums_balance").any()
     assert {"A", "C"} <= set(res.trades["key"])
     assert (res.portfolio.cash >= -1e-9)
+
+
+def test_xsec_maker_variant_posts_post_only(trend, settings):
+    t = _run(trend, settings, order_model="maker").trades.sort_values("period")
+    first = t[t.key == "A"].iloc[0]
+    fee = settings.costs["perp"].maker_fee * first["gross_notional"]
+    assert first["fees"] == pytest.approx(fee, rel=1e-6)
+    assert first["spread_slip"] < 0  # maker fills at mid - half spread: better than the reference

@@ -21,8 +21,9 @@ Per 15m bar ``t`` (index ``i``) of ``[start, end)``:
 
 Trades (P8): one per (period, asset) position, ``risk_amount = 1.5% x equity + round_trip x
 |target notional|`` at the decision, ``risk_precap`` the same with the pre-projection notional,
-``r_multiple = pnl_net / risk_amount``. ``flatten_at_end`` closes every leg at the last bar at the
-worse of its open and close with taker frictions and fee (exit ``model_switch``, P10).
+``r_multiple = pnl_net / risk_amount``. ``order_model`` (None = account default) sets the rebalance
+order type; catastrophic-stop and kill exits are always IOC. ``flatten_at_end`` closes every leg at
+the last bar at the worse of its open and close with taker frictions and fee (exit ``model_switch``, P10).
 """
 
 from __future__ import annotations
@@ -53,7 +54,17 @@ from luna.planner import round_qty
 from luna.portfolio.portfolio import Portfolio, Position
 from luna.risk.engine import OrderCheck, RiskContext, apply_actions, check, portfolio_actions
 from luna.risk.state import RiskState, roll_day
-from luna.types import AccountKind, ExitSpec, Fill, Instrument, Leg, OrderRequest, StopSpec
+from luna.types import (
+    AccountKind,
+    ExitSpec,
+    Fill,
+    Instrument,
+    Leg,
+    OrderModel,
+    OrderRequest,
+    StopSpec,
+    default_order_model,
+)
 from luna.v2.portfolio_risk import (
     CAT_STOP,
     catastrophic_stop_hit,
@@ -114,6 +125,7 @@ def run_xsec(
     initial_portfolio: Portfolio | None = None,
     initial_state: RiskState | None = None,
     flatten_at_end: bool = False,
+    order_model: OrderModel | None = None,
 ) -> BacktestResult:
     """Simulate the cross-sectional book over [start, end) (module docstring)."""
     v1 = settings.accounts[kind]
@@ -137,7 +149,7 @@ def run_xsec(
     broker = SimBroker(kind, costs, instruments, cost_mult)
     dc = daily_closes(panel)
     stamps = set(rebalance_stamps(idx[i0:i1], params.rebalance))
-    liquidity = "taker" if kind == "perp" else "maker"
+    liquidity = order_model or default_order_model(kind)
     band = v1.max_price_band
 
     st = _State()
