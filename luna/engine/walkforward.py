@@ -58,11 +58,12 @@ from luna.ranking.expectancy import ANY, CellStat, ExpectancyRanker, fit_expecta
 from luna.ranking.ranker import RandomRanker, Ranker
 from luna.research.pairs_select import PairSelection, select_pairs
 from luna.research.tradelists import build_all_tradelists
+from luna.risk.state import RiskState
 from luna.strategy.base import GridStrategy, SignalFrame
 from luna.strategy.mean_reversion import MeanReversion
 from luna.strategy.momentum import Momentum
 from luna.strategy.pairs import Pairs
-from luna.types import AccountKind, Instrument
+from luna.types import AccountKind, Instrument, OrderModel
 from luna.universe import select_universe
 
 Ablation = Literal["none", "no_regime", "random_ranker"]
@@ -427,26 +428,44 @@ def _simulate(
     models: list[WindowModel],
     panel, funding, settings: Settings, kind: AccountKind, cost_mult: float,
     funding_mode: FundingMode, instruments: dict[str, Instrument] | None,
+    *,
+    initial: tuple[Portfolio, RiskState, PendingExits] | None = None,
+    flatten_last: bool = False,
+    order_model: OrderModel | None = None,
+    owners: dict[str, tuple[object, str]] | None = None,
 ) -> list[BacktestResult]:
-    """Sequential, contiguous test windows, carrying Portfolio / RiskState / PendingExits."""
+    """Sequential, contiguous test windows, carrying Portfolio / RiskState / PendingExits.
+
+    Research V2 extensions (defaults reproduce V1): ``initial`` starts from a carried account state
+    (its open positions must be listed in ``owners``: position id -> (opening strategy, key));
+    ``flatten_last`` closes everything at the end of the last window (``run_backtest``
+    ``flatten_at_end``); ``order_model`` is passed to ``run_backtest``. Strategy names outside V1's
+    ``STRATEGIES`` run after the V1 ones, in name order."""
     for a, b in zip(models, models[1:], strict=False):
         if b.window.test_start != a.window.test_end:
             raise ValueError(f"test windows not contiguous: {a.window.test_end} -> {b.window.test_start}")
     results: list[BacktestResult] = []
-    owners: dict[str, tuple[object, str]] = {}  # open position id -> (opening strategy, key)
+    owners = dict(owners or {})  # open position id -> (opening strategy, key)
     pf = state = exiting = None
-    for m in models:
+    if initial is not None:
+        pf, state, exiting = initial
+        missing = set(pf.positions) - set(owners)
+        if missing:
+            raise ValueError(f"carried positions without an owner: {sorted(missing)}")
+    for n_m, m in enumerate(models):
         inner = {s.name: s for s in m.strategies}
         carried: dict[str, dict[str, tuple[object, str]]] = {}
         for pid, (owner, key) in owners.items():
             carried.setdefault(pf.positions[pid].strategy, {})[pid] = (owner, key)
-        names = [n for n in STRATEGIES if n in inner or n in carried]
+        present = set(inner) | set(carried)
+        names = [n for n in STRATEGIES if n in present] + sorted(present - set(STRATEGIES))
         strats = [WindowStrategy(n, inner.get(n), carried.get(n, {})) for n in names]
         res = run_backtest(
             panel, funding, strats, m.keys, m.ranker, kind, settings,
             m.window.test_start, m.window.test_end, cost_mult, funding_mode,
             initial_portfolio=pf, instruments=instruments, initial_state=state,
-            initial_exiting=exiting,
+            initial_exiting=exiting, order_model=order_model,
+            flatten_at_end=flatten_last and n_m == len(models) - 1,
         )
         results.append(res)
         pf, state = res.portfolio, res.risk_state

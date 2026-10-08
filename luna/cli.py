@@ -196,6 +196,40 @@ def holdout(
     _echo_verdict(rep, out_dir)
 
 
+@app.command("research-v2")
+def research_v2(
+    account: Annotated[Literal["perp", "spot"], typer.Option(help="Account to run")] = "perp",
+    jobs: Annotated[int, typer.Option(help="Worker processes (each holds one copy of the inputs)")] = 2,
+    assets: Annotated[str | None, typer.Option(help="Comma-separated asset subset (default: all)")] = None,
+    resume: Annotated[
+        Path | None, typer.Option(help="Report directory of an interrupted run to resume")
+    ] = None,
+) -> None:
+    """Research V2 (frozen spec 2026-10-06 + SC-1): every configuration's development walk-forward
+    OOS (2024-09 -> 2026-07), the account candidate, robustness and the GO/NO-GO report. Reads no
+    bar at or after V2_DATA_END = 2026-07-01 and never touches the final generalization set."""
+    import pandas as pd
+
+    from luna.config import load_settings
+    from luna.data.store import BarStore
+    from luna.instruments import load_instruments
+    from luna.v2.data import load_v2_inputs
+    from luna.v2.runner import run_research
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    settings = load_settings()
+    subset = [a.strip() for a in assets.split(",")] if assets else None
+    inp = load_v2_inputs(settings, BarStore(settings.var_dir), account, load_instruments(settings, account),
+                         assets=subset)
+    ts = pd.Timestamp.now(tz="UTC").strftime("%Y%m%dT%H%M%S")
+    out_dir = resume or settings.var_dir / "reports" / f"research_v2_{account}_{ts}"
+    res = run_research(settings, account, inp, Path(out_dir), jobs=jobs, resume=resume is not None,
+                       tl_cache_dir=settings.var_dir / "research_v2")
+    typer.echo(f"research v2 {account}: {len(res.configs)} configurations, span {res.span[0]:%Y-%m-%d} .. "
+               f"{res.span[1]:%Y-%m-%d}; results in {out_dir}")
+
+
 @app.command()
 def paper(
     account: Annotated[Literal["perp", "spot"], typer.Option(help="Account to run")] = "perp",

@@ -166,3 +166,8 @@ def V2_STRATEGY_CLASSES(kind: AccountKind) -> dict[str, type[GridStrategy]]:  # 
             cls = maker(tf)
             out[cls.name] = cls
     return out
+
+
+# build every class at import so pickled instances (worker processes, checkpoints) resolve by name
+for _kind in ("perp", "spot"):
+    V2_STRATEGY_CLASSES(_kind)

@@ -29,7 +29,7 @@ def v2_panel():
     return panel
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def v2_settings_small(settings: Settings) -> Settings:
     wf = settings.walkforward.model_copy(
         update={"train_months": 2, "test_months": 1, "step_months": 1, "holdout_months": 0})
