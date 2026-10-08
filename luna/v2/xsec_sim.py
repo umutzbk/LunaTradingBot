@@ -79,7 +79,7 @@ BAR = pd.Timedelta("15min")
 RETRY_BARS = 96
 COV_HISTORY_DAYS = 200
 XSEC_TRADE_EXTRA = ["risk_precap", "period"]
-XSEC_BAR_EXTRA = ["net_leverage", "max_asset_share", "vol_scale", "ex_ante_var"]
+XSEC_BAR_EXTRA = ["vol_scale", "ex_ante_var"]  # net / max share are V1 BAR_STAT_COLUMNS
 
 
 @dataclass
@@ -351,7 +351,7 @@ def run_xsec(
             book(Fill(f"{plan.pid}:transfer:{a}", t, a, in_side, abs(q), px, 0.0, "maker"), plan.pid, px)
 
     n_out = max(i1 - i0, 0)
-    cols = BAR_STAT_COLUMNS + [c for c in XSEC_BAR_EXTRA if c not in BAR_STAT_COLUMNS]
+    cols = BAR_STAT_COLUMNS + XSEC_BAR_EXTRA
     stats = np.full((n_out, len(cols)), np.nan)
     equity = np.empty(n_out)
     initial_equity = float(pf.equity())

@@ -82,7 +82,9 @@ EVENT_COLUMNS = ["ts", "kind", "position_id", "asset", "detail"]
 # entry_gross_leverage: (gross at decision marks + entries submitted this bar) / equity, the quantity
 # R8 bounds; NaN on bars without new entries. gross_leverage at the close may drift above the limit
 # with prices (R8 applies at order time; there is no forced deleveraging).
-BAR_STAT_COLUMNS = ["equity", "gross_leverage", "n_positions", "open_risk", "entry_gross_leverage"]
+# net_leverage: signed net notional / equity; max_asset_share: largest single-asset |notional| / equity
+BAR_STAT_COLUMNS = ["equity", "gross_leverage", "n_positions", "open_risk", "entry_gross_leverage",
+                    "net_leverage", "max_asset_share"]
 
 
 @dataclass
@@ -386,7 +388,11 @@ def run_backtest(
         k = i - i0
         eq = pf.equity()
         equity[k] = eq
-        stats[k] = (eq, pf.gross_leverage(), len(pf.positions), pf.open_risk(), entry_lev)
+        notional = {a: pf.notional(a) for a in pf.holdings}
+        net = sum(math.copysign(v, pf.holdings[a]) for a, v in notional.items())
+        big = max(notional.values(), default=0.0)
+        stats[k] = (eq, pf.gross_leverage(), len(pf.positions), pf.open_risk(), entry_lev,
+                    net / eq if eq > 0 else math.nan, big / eq if eq > 0 else math.nan)
 
     out_idx = full_idx[i0:i1]
     benchmark = None
