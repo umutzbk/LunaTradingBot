@@ -4,7 +4,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from luna.engine.backtest import BacktestResult
 from luna.v2 import robustness as rb
 
 T0 = pd.Timestamp("2024-01-01", tz="UTC")
@@ -66,16 +65,12 @@ def test_best_month_and_quarter_removal():
     assert out["ex_best_quarter"]["net_usd"] == pytest.approx(1.0)  # Q1 (1 + 9) removed
 
 
-def _res(t):
-    return BacktestResult(pd.Series(dtype=float), t, pd.DataFrame(), pd.DataFrame(), {})
-
-
 def test_asset_loo_calls_runner_per_asset():
     calls = []
 
     def run_without(a):
         calls.append(a)
-        return _res(_t([1.0, -3.0] if a == "BTC" else [2.0]))
+        return _t([1.0, -3.0] if a == "BTC" else [2.0])
 
     out = rb.asset_loo(run_without, ["BTC", "ETH"])
     assert calls == ["BTC", "ETH"]
@@ -88,7 +83,7 @@ def test_fragile_label_rules():
     one = rb.robustness(_t([100.0] + [-1.0] * 39), pd.DataFrame(), run_without=None, assets=[])
     assert one["full"]["mean_r"] > 0 and one["ex_top1"]["mean_r"] < 0 and one["fragile"] is True
     neg_loo = rb.robustness(_t([1.0] * 40), pd.DataFrame(),
-                            run_without=lambda a: _res(_t([-1.0])), assets=["BTC"])
+                            run_without=lambda a: _t([-1.0]), assets=["BTC"])
     assert neg_loo["fragile"] is True
     neg_full = rb.robustness(_t([-1.0] * 40), pd.DataFrame(), run_without=None, assets=[])
     assert neg_full["fragile"] is False  # the label only flags positive results

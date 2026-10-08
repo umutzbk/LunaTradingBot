@@ -72,3 +72,60 @@ def test_parallel_jobs_match_inline(small, tmp_path):
         pd.testing.assert_frame_equal(
             one.config_runs[cid]["edge"].oos.trades, two.config_runs[cid]["edge"].oos.trades
         )
+
+
+def test_loo_results_are_trades_only(small, tmp_path):
+    settings, inp, windows = small
+    res = run_research(settings, "spot", inp, tmp_path, windows=windows, configs=CONFIGS[:1], loo=True)
+    cid = CONFIGS[0].id
+    assert all(isinstance(t, pd.DataFrame) for t in res.config_loo[cid].values())
+    assert all(isinstance(t, pd.DataFrame) for t in res.candidate_loo.values())
+
+
+def test_refit_without_reuses_windows_without_the_asset(small):
+    from luna.v2.walkforward import build_v2_tradelists, fit_config, refit_without
+
+    settings, inp, windows = small
+    tl = build_v2_tradelists(inp, settings, "spot", windows, cache_dir=None)
+    cfg = CONFIGS[0]
+    orig = fit_config(cfg, windows, tl, inp, settings)
+    out = refit_without(cfg, orig, "ZZZ", tl, inp, settings)  # never in a universe: nothing refitted
+    assert all(a is b for a, b in zip(out, orig, strict=True))
+    out = refit_without(cfg, orig, "BTC", tl, inp, settings)
+    assert all("BTC" not in cw.universe for cw in out)
+
+
+def test_resume_refuses_a_different_run(small, tmp_path):
+    settings, inp, windows = small
+    run_research(settings, "spot", inp, tmp_path, windows=windows, configs=CONFIGS[:1], loo=False)
+    with pytest.raises(runner_mod.ManifestMismatch, match="configs"):
+        run_research(
+            settings, "spot", inp, tmp_path, windows=windows, configs=CONFIGS[1:2], loo=False, resume=True
+        )
+    with pytest.raises(runner_mod.ManifestMismatch, match="no manifest"):
+        run_research(
+            settings,
+            "spot",
+            inp,
+            tmp_path / "empty",
+            windows=windows,
+            configs=CONFIGS[:1],
+            loo=False,
+            resume=True,
+        )
+
+
+def _boom(x):
+    if x == 1:
+        raise RuntimeError("unit failed")
+    return x
+
+
+def test_pool_checkpoints_finished_units_and_cancels_on_failure(tmp_path):
+    from concurrent.futures import ProcessPoolExecutor
+
+    units = [(f"u{i}", _boom, (i,)) for i in (0, 1, 2, 3)]
+    with ProcessPoolExecutor(2) as pool, pytest.raises(RuntimeError, match="unit failed"):
+        runner_mod._execute(units, tmp_path, 2, False, pool)
+    assert (tmp_path / "u0.pkl").exists()  # finished before the failure: kept
+    assert not (tmp_path / "u1.pkl").exists()

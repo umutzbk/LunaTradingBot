@@ -14,7 +14,6 @@ from collections.abc import Callable
 import numpy as np
 import pandas as pd
 
-from luna.engine.backtest import BacktestResult
 from luna.research.stats import block_bootstrap_ci, profit_factor
 
 BOOT_SAMPLES = 2000
@@ -97,11 +96,12 @@ def best_period_removal(trades: pd.DataFrame) -> dict:
     return out
 
 
-def asset_loo(run_without: Callable[[str], BacktestResult], assets: list[str]) -> pd.DataFrame:
-    """Re-run the walk-forward without each asset in turn (``run_without(asset)``)."""
+def asset_loo(run_without: Callable[[str], pd.DataFrame], assets: list[str]) -> pd.DataFrame:
+    """Metrics of the walk-forward re-run without each asset in turn (``run_without(asset)`` returns
+    that run's closed trades)."""
     rows = []
     for a in assets:
-        m = trade_metrics(run_without(a).trades)
+        m = trade_metrics(run_without(a))
         rows.append({"asset": a, "n": m["n"], "mean_r": m["mean_r"], "net_usd": m["net_usd"]})
     return pd.DataFrame(rows, columns=["asset", "n", "mean_r", "net_usd"])
 
@@ -114,7 +114,7 @@ def robustness(
     trades: pd.DataFrame,
     per_window: pd.DataFrame,
     *,
-    run_without: Callable[[str], BacktestResult] | None,
+    run_without: Callable[[str], pd.DataFrame] | None,
     assets: list[str],
 ) -> dict:
     """Every §5 output for one reported configuration (module docstring)."""

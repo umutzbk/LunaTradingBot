@@ -12,11 +12,12 @@ Nothing here reads data at or after ``V2_DATA_END`` (the caller passes inputs fr
 
 from __future__ import annotations
 
+import json
 import logging
 import pickle
 import time
 from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -25,17 +26,18 @@ import pandas as pd
 
 from luna.config import Settings
 from luna.engine.backtest import BacktestResult
-from luna.engine.walkforward import WalkForwardResult, Window
+from luna.engine.walkforward import WalkForwardResult, Window, _git_dirty, _git_sha
 from luna.report.walkforward import Inputs, run_naive
 from luna.types import AccountKind
 from luna.v2.configs import V2Config, primary_configs, sensitivity_configs
-from luna.v2.data import v2_settings, v2_windows
+from luna.v2.data import V2_DATA_END, v2_settings, v2_windows
 from luna.v2.walkforward import (
     ConfigWindowModel,
     build_v2_tradelists,
     count_trials,
     first_active,
     fit_config,
+    refit_without,
     run_config_walkforward,
     run_selected_walkforward,
     select_candidate,
@@ -61,8 +63,8 @@ class ResearchResults:
     naive: dict[str, BacktestResult]
     naive_skipped: dict[str, str]
     trials: dict
-    config_loo: dict[str, dict[str, BacktestResult]] = field(default_factory=dict)
-    candidate_loo: dict[str, BacktestResult] = field(default_factory=dict)
+    config_loo: dict[str, dict[str, pd.DataFrame]] = field(default_factory=dict)  # closed trades only
+    candidate_loo: dict[str, pd.DataFrame] = field(default_factory=dict)  # closed trades only
     loo_assets: dict[str, list[str]] = field(default_factory=dict)
     runtime: dict[str, float] = field(default_factory=dict)
 
@@ -88,6 +90,21 @@ def _u_selected(
     return run_selected_walkforward(
         selected, _CTX["windows"], start_k, _CTX["inp"], _CTX["settings"], kind, **variant
     )
+
+
+def _u_refit(cfg: V2Config, original: list[ConfigWindowModel], asset: str) -> list[ConfigWindowModel]:
+    return refit_without(cfg, original, asset, _CTX["tl"], _CTX["inp"], _CTX["settings"])
+
+
+def _u_run_trades(fitted: list[ConfigWindowModel], start_k: int, variant: dict) -> pd.DataFrame:
+    """Leave-one-out runs: robustness reads only the closed trades (keeps memory small)."""
+    return _u_run(fitted, start_k, variant).oos.trades
+
+
+def _u_selected_trades(
+    selected: list[ConfigWindowModel | None], start_k: int, kind: AccountKind, variant: dict
+) -> pd.DataFrame:
+    return _u_selected(selected, start_k, kind, variant).oos.trades
 
 
 def _safe(name: str) -> str:
@@ -122,11 +139,58 @@ def _execute(
     if pool is None:
         for name, fn, args, path in todo:
             keep(name, path, fn(*args))
-    else:
-        futs = {pool.submit(fn, *args): (name, path) for name, fn, args, path in todo}
-        for fut, (name, path) in futs.items():
+        return out
+    futs = {pool.submit(fn, *args): (name, path) for name, fn, args, path in todo}
+    try:
+        for fut in as_completed(futs):  # checkpoint each unit as soon as it finishes
+            name, path = futs[fut]
             keep(name, path, fut.result())
+    except BaseException:
+        for f in futs:
+            f.cancel()  # queued units are dropped; finished ones are already checkpointed
+        raise
     return out
+
+
+# --- manifest -------------------------------------------------------------------------------------
+
+
+class ManifestMismatch(RuntimeError):
+    """A resume would mix checkpoints of a different run (code, account, assets, windows, configs)."""
+
+
+def run_manifest(
+    account: AccountKind, inp: Inputs, windows: list[Window], configs: list[V2Config], loo: bool
+) -> dict:
+    """What a checkpoint directory belongs to; a resume must match it exactly."""
+    last = max(df.index[-1] for df in inp.panel.values() if len(df))
+    return {
+        "git_sha": _git_sha(),
+        "git_dirty": _git_dirty(),
+        "account": account,
+        "assets": sorted(inp.panel),
+        "data_end": V2_DATA_END.isoformat(),
+        "last_bar": last.isoformat(),
+        "windows": [w.test_start.isoformat() for w in windows],
+        "configs": [c.id for c in configs],
+        "loo": loo,
+    }
+
+
+def check_manifest(out_dir: Path, manifest: dict, resume: bool) -> None:
+    path = out_dir / "manifest.json"
+    if resume:
+        if not path.exists():
+            raise ManifestMismatch(f"{out_dir}: no manifest.json, refusing to resume")
+        old = json.loads(path.read_text(encoding="utf-8"))
+        diff = sorted(k for k in set(old) | set(manifest) if old.get(k) != manifest.get(k))
+        if diff:
+            raise ManifestMismatch(f"{out_dir}: resume differs from the original run in {diff}")
+        return
+    if any((out_dir / "units").glob("*.pkl")):
+        for f in (out_dir / "units").glob("*.pkl"):  # a fresh run never reuses old checkpoints
+            f.unlink()
+    path.write_text(json.dumps(manifest, indent=1), encoding="utf-8")
 
 
 # --- the run --------------------------------------------------------------------------------------
@@ -154,6 +218,7 @@ def run_research(
     primary = [c for c in configs if c.rebalance == "weekly"]
     ckpt = Path(out_dir) / "units"
     ckpt.mkdir(parents=True, exist_ok=True)
+    check_manifest(Path(out_dir), run_manifest(account, inp, windows, configs, loo), resume)
     runtime: dict[str, float] = {}
 
     t0 = time.perf_counter()
@@ -185,7 +250,7 @@ def run_research(
             units.append((f"cand:{vname}", _u_selected, (selected, start_k, account, kw)))
         for cid, assets in loo_assets.items():
             cfg = next(c for c in primary if c.id == cid)
-            units += [(f"loofit:{cid}:{a}", _u_fit, (cfg, (a,))) for a in assets]
+            units += [(f"loofit:{cid}:{a}", _u_refit, (cfg, fitted[cid], a)) for a in assets]
         done = _execute(units, ckpt, jobs, resume, pool)
         runtime["walk-forwards"] = time.perf_counter() - t0
 
@@ -195,19 +260,21 @@ def run_research(
         every_asset = sorted({a for v in loo_assets.values() for a in v})
         for cid, assets in loo_assets.items():
             loo_units += [
-                (f"loo:{cid}:{a}", _u_run, (done[f"loofit:{cid}:{a}"], start_k, edge)) for a in assets
+                (f"loo:{cid}:{a}", _u_run_trades, (done[f"loofit:{cid}:{a}"], start_k, edge)) for a in assets
             ]
         for a in every_asset:
             refit = {
                 cid: (done[f"loofit:{cid}:{a}"] if a in loo_assets[cid] else primary_fitted[cid])
                 for cid in primary_fitted
             }
-            loo_units.append((f"candloo:{a}", _u_selected, (select_candidate(refit), start_k, account, edge)))
+            loo_units.append(
+                (f"candloo:{a}", _u_selected_trades, (select_candidate(refit), start_k, account, edge))
+            )
         loo_done = _execute(loo_units, ckpt, jobs, resume, pool)
         runtime["leave-one-out"] = time.perf_counter() - t0
     finally:
         if pool is not None:
-            pool.shutdown()
+            pool.shutdown(cancel_futures=True)
 
     t0 = time.perf_counter()
     naive, naive_skipped = run_naive(inp, s2, account, *span)
@@ -234,10 +301,10 @@ def run_research(
         naive_skipped=naive_skipped,
         trials=trials,
         config_loo={
-            cid: {a: loo_done[f"loo:{cid}:{a}"].oos for a in assets} for cid, assets in loo_assets.items()
+            cid: {a: loo_done[f"loo:{cid}:{a}"] for a in assets} for cid, assets in loo_assets.items()
         },
         candidate_loo={
-            a: loo_done[f"candloo:{a}"].oos for a in sorted({a for v in loo_assets.values() for a in v})
+            a: loo_done[f"candloo:{a}"] for a in sorted({a for v in loo_assets.values() for a in v})
         },
         loo_assets=loo_assets,
         runtime=runtime,

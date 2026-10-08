@@ -102,6 +102,14 @@ def build_v2_tradelists(
 # --- fitting --------------------------------------------------------------------------------------
 
 
+def _subset(inp: Inputs, assets: set[str]) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
+    """Panel / funding restricted to ``assets`` plus BTC (benchmark): the cross-sectional simulator
+    rebuilds its market view per call, so it only gets the assets it can trade or holds."""
+    keep = (set(assets) | {"BTC"}) & set(inp.panel)
+    return ({a: inp.panel[a] for a in sorted(keep)},
+            {a: f for a, f in inp.funding.items() if a in keep})
+
+
 def _config_universe(cfg: V2Config, w: Window, inp: Inputs, settings: Settings,
                      exclude: tuple[str, ...]) -> list[str]:
     u = universe_at(inp.panel, w.train_end, settings, inp.universe_panel)
@@ -168,7 +176,8 @@ def fit_xsec_config(cfg: V2Config, w: Window, inp: Inputs, settings: Settings,
     best: tuple[float, str, XSecParams, pd.DataFrame] | None = None
     for g in cfg.grid():
         p = XSecParams(g["lookback_days"], g["k"], g.get("gross", 1.0), g.get("vol_target"), cfg.rebalance)
-        res = run_xsec(inp.panel, inp.funding, p, universe, kind, edge, w.train_start, w.train_end,
+        panel, funding = _subset(inp, set(universe))
+        res = run_xsec(panel, funding, p, universe, kind, edge, w.train_start, w.train_end,
                        name=cfg.strategy_name, instruments=inp.instruments)
         tr = res.trades
         if tr.empty:
@@ -193,6 +202,16 @@ def fit_config(cfg: V2Config, windows: list[Window], tl: pd.DataFrame, inp: Inpu
     if cfg.engine == "xsec":
         return [fit_xsec_config(cfg, w, inp, settings, exclude) for w in windows]
     return [fit_signal_config(cfg, w, tl, inp, settings, exclude) for w in windows]
+
+
+def refit_without(cfg: V2Config, original: list[ConfigWindowModel], asset: str, tl: pd.DataFrame,
+                  inp: Inputs, settings: Settings) -> list[ConfigWindowModel]:
+    """Asset leave-one-out fit: windows whose universe held ``asset`` are re-fitted without it; the
+    others keep their original fit (removing an absent asset changes nothing)."""
+    fit = fit_xsec_config if cfg.engine == "xsec" else (
+        lambda c, w, i, s, exclude: fit_signal_config(c, w, tl, i, s, exclude))
+    return [fit(cfg, cw.window, inp, settings, exclude=(asset,)) if asset in cw.universe else cw
+            for cw in original]
 
 
 def first_active(fitted: dict[str, list[ConfigWindowModel]]) -> int:
@@ -268,7 +287,9 @@ def _run_segment_xsec(cws, windows, inp, settings, kind, carry: _Carry, flatten_
         else:
             params, universe = XSecParams(30, 1), []
         name = cw.config.strategy_name if cw is not None else "xsec"
-        res = run_xsec(inp.panel, inp.funding, params, universe, kind, settings, w.test_start, w.test_end,
+        held = set(carry.pf.holdings) if carry.pf is not None else set()
+        panel, funding = _subset(inp, set(universe) | held)
+        res = run_xsec(panel, funding, params, universe, kind, settings, w.test_start, w.test_end,
                        name=name, cost_mult=cost_mult, funding_mode=funding_mode,
                        instruments=inp.instruments, initial_portfolio=carry.pf, initial_state=carry.state,
                        flatten_at_end=flatten_last and n == len(cws) - 1, order_model=order_model)

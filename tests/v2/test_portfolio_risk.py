@@ -159,3 +159,16 @@ def test_xsec_limits_only_relax_r5_r6_r7_r9(settings):
 def test_section12_consistency(settings):
     dl = settings.accounts["perp"].daily_loss_limit
     assert CAT_STOP < dl and VAR_BUDGET < dl
+
+
+def test_ewma_cov_matches_pandas_exactly_with_gaps():
+    rng = np.random.default_rng(5)
+    r = pd.DataFrame(rng.normal(0, 0.02, (120, 5)), columns=list("ABCDE"))
+    r.iloc[:50, 1] = np.nan  # late listing
+    r.iloc[[10, 70, 71], 2] = np.nan  # gaps
+    r.iloc[:, 3] = 0.01  # constant series
+    ref = r.ewm(span=30, min_periods=30).cov().loc[r.index[-1]]
+    np.testing.assert_allclose(ewma_cov(r).to_numpy(), ref.to_numpy(), rtol=1e-10, atol=1e-15)
+    short = r.iloc[:40]
+    ref_s = short.ewm(span=30, min_periods=30).cov().loc[short.index[-1]]
+    np.testing.assert_allclose(ewma_cov(short).to_numpy(), ref_s.to_numpy(), rtol=1e-10, atol=1e-15)

@@ -356,6 +356,17 @@ def run_xsec(
     equity = np.empty(n_out)
     initial_equity = float(pf.equity())
 
+    # a rebalance stamp on the bar just before ``start`` (the previous window's last bar) is decided
+    # here, from data up to that bar, so its orders fill on this window's first bar instead of being
+    # dropped at the window boundary
+    if 0 < i0 < i1 and len(rebalance_stamps(idx[i0 - 1:i0], params.rebalance)) and not rs.kill_switch:
+        tp = idx[i0 - 1]
+        if pf.holdings:
+            pf.mark({a: float(mkt.last[i0 - 1, mkt.col[a]]) for a in pf.holdings})
+        eq0 = float(pf.equity())
+        decide(i0 - 1, tp, eq0)
+        plan_orders(i0 - 1, tp, eq0, set())
+
     for i in range(i0, i1):
         t = idx[i]
         last = mkt.last[i]
@@ -403,11 +414,12 @@ def run_xsec(
         rs = apply_actions(rs, portfolio_actions(ctx(t, eq, {})), t)
         if rs.kill_switch and not was_killed:
             event(t, "FLATTEN_AND_KILL", detail=f"equity {eq:.4f} vs peak {rs.peak_equity}")
+        if rs.kill_switch:  # also a kill carried in from an earlier window: flatten until flat
             st.targets = {}
             st.retry_until = 10**12
         # (4) catastrophic stops
         stop_assets: set[str] = set()
-        for pid, pos in pf.positions.items():
+        for pid, pos in pf.positions.items() if not rs.kill_switch else []:  # killed: all legs close
             a = pos.key
             q = pos.qty.get(a, 0.0)
             if q == 0.0 or a in st.blocked:

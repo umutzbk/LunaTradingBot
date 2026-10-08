@@ -12,8 +12,13 @@ START = pd.Timestamp("2024-01-01", tz="UTC")
 BIG = XSecParams(lookback_days=14, k=1, gross=1.0, vol_target=10.0)
 
 
-def _panel(drifts: dict[str, list[float]], days: int, seed: int = 0, sigma: float = 0.0005,
-           shocks: dict[str, tuple[int, float]] | None = None):
+def _panel(
+    drifts: dict[str, list[float]],
+    days: int,
+    seed: int = 0,
+    sigma: float = 0.0005,
+    shocks: dict[str, tuple[int, float]] | None = None,
+):
     """15m bars; asset a has daily log drift drifts[a][d // 7 % len] (weekly regimes)."""
     rng = np.random.default_rng(seed)
     n = days * DAY
@@ -27,10 +32,18 @@ def _panel(drifts: dict[str, list[float]], days: int, seed: int = 0, sigma: floa
             step[bar] += size
         close = 100.0 * np.exp(np.cumsum(step))
         open_ = np.r_[close[0], close[:-1]]
-        out[a] = pd.DataFrame({"open": open_, "high": np.maximum(open_, close) * 1.0002,
-                               "low": np.minimum(open_, close) * 0.9998, "close": close,
-                               "volume": 1.0, "trades": np.ones(n, dtype="int64"),
-                               "filled": np.zeros(n, dtype=bool)}, index=idx)
+        out[a] = pd.DataFrame(
+            {
+                "open": open_,
+                "high": np.maximum(open_, close) * 1.0002,
+                "low": np.minimum(open_, close) * 0.9998,
+                "close": close,
+                "volume": 1.0,
+                "trades": np.ones(n, dtype="int64"),
+                "filled": np.zeros(n, dtype=bool),
+            },
+            index=idx,
+        )
     return out
 
 
@@ -41,14 +54,26 @@ def _run(panel, settings, params=BIG, kind="perp", start_day=40, end_day=None, *
         s = s.model_copy(update={"accounts": {**s.accounts, kind: acc}})
     idx = next(iter(panel.values())).index
     end = idx[-1] + pd.Timedelta("15min") if end_day is None else START + pd.Timedelta(days=end_day)
-    return run_xsec(panel, {}, params, sorted(panel), kind, s, START + pd.Timedelta(days=start_day), end,
-                    instruments=default_instruments(sorted(panel), kind, s), **kw)
+    return run_xsec(
+        panel,
+        {},
+        params,
+        sorted(panel),
+        kind,
+        s,
+        START + pd.Timedelta(days=start_day),
+        end,
+        instruments=default_instruments(sorted(panel), kind, s),
+        **kw,
+    )
 
 
 def _open_unrealized(res):
     pf = res.portfolio
-    return sum(p.net_pnl() + sum(q * (pf.marks[a] - p.entry_ref_price[a]) for a, q in p.qty.items() if q)
-               for p in pf.positions.values())
+    return sum(
+        p.net_pnl() + sum(q * (pf.marks[a] - p.entry_ref_price[a]) for a, q in p.qty.items() if q)
+        for p in pf.positions.values()
+    )
 
 
 @pytest.fixture(scope="module")
@@ -61,7 +86,8 @@ def test_xsec_equity_identity(trend, settings, kind):
     res = _run(trend, settings, kind=kind)
     assert len(res.trades) > 5
     assert res.equity.iloc[-1] - res.initial_equity == pytest.approx(
-        res.trades["pnl_net"].sum() + _open_unrealized(res), abs=1e-6)
+        res.trades["pnl_net"].sum() + _open_unrealized(res), abs=1e-6
+    )
 
 
 def test_rebalance_fills_on_next_bar_open(trend, settings):
@@ -80,7 +106,10 @@ def test_one_trade_per_period_leg_and_direction(trend, settings):
     assert (t["risk_precap"] >= t["risk_amount"] - 1e-9).all()  # projection only scales down
 
 
-def test_carried_leg_rereferenced_without_cost(trend, settings, ):
+def test_carried_leg_rereferenced_without_cost(
+    trend,
+    settings,
+):
     t = _run(trend, settings).trades.sort_values("period")
     a = t[t.key == "A"]
     first, later = a.iloc[0], a.iloc[1:]
@@ -105,9 +134,10 @@ def test_catastrophic_stop_closes_leg_and_blocks_until_next_rebalance(settings):
 
 
 def test_daily_loss_blocks_rebalance_opens(trend, settings):
-    first = rebalance_stamps(next(iter(trend.values())).index[40 * DAY:], "weekly")[0]
-    state = RiskState(day=first.date(), day_start_equity=265.0, peak_equity=265.0,
-                      entries_blocked_day=first.date())
+    first = rebalance_stamps(next(iter(trend.values())).index[40 * DAY :], "weekly")[0]
+    state = RiskState(
+        day=first.date(), day_start_equity=265.0, peak_equity=265.0, entries_blocked_day=first.date()
+    )
     res = _run(trend, settings, initial_state=state)
     assert res.risk_events["detail"].str.startswith("R3_daily_loss").any()
     assert res.trades["entry_ts"].min().date() > first.date()
@@ -125,7 +155,7 @@ def test_drawdown_kill_flattens_in_realistic_not_in_edge(settings):
 
 def test_xsec_skips_assets_without_real_bar_or_history(settings):
     panel = _panel({"A": [0.02], "B": [-0.02], "C": [0.01], "D": [0.05]}, days=90)
-    panel["D"] = panel["D"].iloc[60 * DAY:]  # listed late: < 31 daily closes for weeks
+    panel["D"] = panel["D"].iloc[60 * DAY :]  # listed late: < 31 daily closes for weeks
     stamp = rebalance_stamps(panel["A"].index, "weekly")[8]
     panel["C"].loc[stamp, "filled"] = True
     res = _run(panel, settings, params=XSecParams(14, 2, 1.0, 10.0), start_day=40)
@@ -136,8 +166,9 @@ def test_xsec_skips_assets_without_real_bar_or_history(settings):
 
 def test_k_clipped_and_empty_universe_runs_flat(trend, settings):
     s = settings
-    res = run_xsec(trend, {}, BIG, [], "perp", s, START + pd.Timedelta(days=40),
-                   START + pd.Timedelta(days=80))
+    res = run_xsec(
+        trend, {}, BIG, [], "perp", s, START + pd.Timedelta(days=40), START + pd.Timedelta(days=80)
+    )
     assert res.trades.empty and res.equity.iloc[-1] == res.initial_equity
     two = _run(trend, settings, params=XSecParams(14, 2, 1.0, 10.0))  # 3 assets: k clipped to 1
     assert two.trades.groupby("period").size().max() <= 2
@@ -161,14 +192,15 @@ def test_flatten_at_end_books_model_switch(trend, settings):
 
 def test_spot_rebalance_buys_wait_for_sells(settings):
     # leaders rotate every week: A/B up then C/D up -> a full rotation of a k=2 long book
-    panel = _panel({"A": [0.003, -0.003], "B": [0.003, -0.003], "C": [-0.003, 0.003],
-                    "D": [-0.003, 0.003]}, days=100)
+    panel = _panel(
+        {"A": [0.003, -0.003], "B": [0.003, -0.003], "C": [-0.003, 0.003], "D": [-0.003, 0.003]}, days=100
+    )
     res = _run(panel, settings, params=XSecParams(3, 2), kind="spot", max_drawdown=1.0)
     assert not (res.risk_events["kind"] == "catastrophic_stop").any()
     # buys that need the sells' proceeds are vetoed (R8 gross 1x / R17 cash) and retried later
     assert res.risk_events["detail"].str.match(r"R8_gross_leverage|R17_minimums_balance").any()
     assert {"A", "C"} <= set(res.trades["key"])
-    assert (res.portfolio.cash >= -1e-9)
+    assert res.portfolio.cash >= -1e-9
 
 
 def test_xsec_maker_variant_posts_post_only(trend, settings):
@@ -177,3 +209,59 @@ def test_xsec_maker_variant_posts_post_only(trend, settings):
     fee = settings.costs["perp"].maker_fee * first["gross_notional"]
     assert first["fees"] == pytest.approx(fee, rel=1e-6)
     assert first["spread_slip"] < 0  # maker fills at mid - half spread: better than the reference
+
+
+def test_kill_carried_into_next_window_flattens(settings):
+    panel = _panel({"A": [0.02, -0.03], "B": [-0.02, 0.03], "C": [0.0]}, days=100)
+    first = _run(panel, settings, max_drawdown=1.0, end_day=60)
+    assert first.portfolio.positions
+    killed = RiskState(kill_switch=True)
+    nxt = run_xsec(
+        panel,
+        {},
+        BIG,
+        sorted(panel),
+        "perp",
+        settings,
+        START + pd.Timedelta(days=60),
+        START + pd.Timedelta(days=62),
+        instruments=default_instruments(sorted(panel), "perp", settings),
+        initial_portfolio=first.portfolio,
+        initial_state=killed,
+    )
+    assert not nxt.portfolio.positions
+    assert set(nxt.trades["exit_reason"]) == {"kill_switch"}
+    assert nxt.trades["exit_ts"].max() <= START + pd.Timedelta(days=60, hours=1)
+
+
+def test_rebalance_on_window_boundary_is_not_dropped(trend, settings):
+    inst = default_instruments(sorted(trend), "perp", settings)
+    boundary = START + pd.Timedelta(days=42)  # Monday 00:00: the Sunday 23:45 stamp ends the window
+    stamp = boundary - pd.Timedelta("15min")
+    w1 = run_xsec(
+        trend,
+        {},
+        BIG,
+        sorted(trend),
+        "perp",
+        settings,
+        START + pd.Timedelta(days=40),
+        boundary,
+        instruments=inst,
+    )
+    assert w1.trades.empty and not w1.portfolio.positions  # decided on its last bar, filled after it
+    w2 = run_xsec(
+        trend,
+        {},
+        BIG,
+        sorted(trend),
+        "perp",
+        settings,
+        boundary,
+        START + pd.Timedelta(days=60),
+        instruments=inst,
+        initial_portfolio=w1.portfolio,
+        initial_state=w1.risk_state,
+    )
+    first = w2.trades.sort_values("entry_ts").iloc[0]
+    assert first["period"] == stamp and first["entry_ts"] == boundary

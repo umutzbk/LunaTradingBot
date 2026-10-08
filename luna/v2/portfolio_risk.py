@@ -50,13 +50,52 @@ class Projection:
 
 
 def ewma_cov(daily_logret: pd.DataFrame) -> pd.DataFrame:
-    """EWMA covariance (span 30 days, min 30 observations) at the last row of ``daily_logret``."""
+    """EWMA covariance (span 30 days, min 30 observations) at the last row of ``daily_logret``.
+
+    Identical to ``daily_logret.ewm(span=30, min_periods=30).cov()`` at the last row (pandas'
+    ``ewmcov`` recursion: adjust=True, bias-corrected, pairwise-complete observations, weights decay
+    over missing rows), computed for all pairs at once in numpy (the pandas pairwise path dominated
+    the cross-sectional simulator's runtime)."""
     cols = list(daily_logret.columns)
-    if len(daily_logret) == 0:
+    v = daily_logret.to_numpy(dtype=float)
+    k = len(cols)
+    if len(v) == 0 or k == 0:
         return pd.DataFrame(np.nan, index=cols, columns=cols)
-    cov = daily_logret.ewm(span=COV_SPAN_DAYS, min_periods=COV_SPAN_DAYS).cov()
-    last = cov.loc[daily_logret.index[-1]]
-    return last.reindex(index=cols, columns=cols)
+    f = 1.0 - 2.0 / (COV_SPAN_DAYS + 1.0)  # old weight factor; new weight 1 (adjust=True)
+    shape = (k, k)
+    mean_x = np.full(shape, np.nan)
+    mean_y = np.full(shape, np.nan)
+    cov = np.zeros(shape)
+    sum_wt = np.ones(shape)
+    sum_wt2 = np.ones(shape)
+    old_wt = np.ones(shape)
+    nobs = np.zeros(shape)
+    for row in v:
+        cx = np.broadcast_to(row[:, None], shape)
+        cy = np.broadcast_to(row[None, :], shape)
+        obs = np.isfinite(cx) & np.isfinite(cy)
+        nobs += obs
+        defined = np.isfinite(mean_x)
+        decay = defined  # ignore_na=False: weights decay on every row once a mean exists
+        sum_wt = np.where(decay, sum_wt * f, sum_wt)
+        sum_wt2 = np.where(decay, sum_wt2 * f * f, sum_wt2)
+        old_wt = np.where(decay, old_wt * f, old_wt)
+        upd = defined & obs
+        with np.errstate(invalid="ignore"):
+            nx = np.where(mean_x != cx, (old_wt * mean_x + cx) / (old_wt + 1.0), mean_x)
+            ny = np.where(mean_y != cy, (old_wt * mean_y + cy) / (old_wt + 1.0), mean_y)
+            ncov = (old_wt * (cov + (mean_x - nx) * (mean_y - ny)) + (cx - nx) * (cy - ny)) / (old_wt + 1.0)
+        cov = np.where(upd, ncov, cov)
+        mean_x = np.where(upd, nx, np.where(~defined & obs, cx, mean_x))
+        mean_y = np.where(upd, ny, np.where(~defined & obs, cy, mean_y))
+        sum_wt = np.where(upd, sum_wt + 1.0, sum_wt)
+        sum_wt2 = np.where(upd, sum_wt2 + 1.0, sum_wt2)
+        old_wt = np.where(upd, old_wt + 1.0, old_wt)
+    num = sum_wt * sum_wt
+    den = num - sum_wt2
+    with np.errstate(invalid="ignore", divide="ignore"):
+        out = np.where((nobs >= COV_SPAN_DAYS) & (den > 0), num / den * cov, np.nan)
+    return pd.DataFrame(out, index=cols, columns=cols)
 
 
 def trailing_corr(daily_logret: pd.DataFrame) -> pd.DataFrame:
