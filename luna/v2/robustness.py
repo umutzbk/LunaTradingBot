@@ -25,14 +25,26 @@ def trade_metrics(trades: pd.DataFrame) -> dict:
     """n, mean R, day-block bootstrap 90% CI (blocks = exit day), profit factor, net USD."""
     n = len(trades)
     if n == 0:
-        return {"n": 0, "mean_r": math.nan, "ci_lo": math.nan, "ci_hi": math.nan, "pf": math.nan,
-                "net_usd": 0.0}
+        return {
+            "n": 0,
+            "mean_r": math.nan,
+            "ci_lo": math.nan,
+            "ci_hi": math.nan,
+            "pf": math.nan,
+            "net_usd": 0.0,
+        }
     r = trades["r_multiple"].to_numpy(dtype=float)
     days = pd.DatetimeIndex(trades["exit_ts"]).floor("D").asi8
     mean, lo, hi = block_bootstrap_ci(r, days, BOOT_SAMPLES, CI)
     net = trades["pnl_net"].to_numpy(dtype=float)
-    return {"n": n, "mean_r": mean, "ci_lo": lo, "ci_hi": hi, "pf": profit_factor(net),
-            "net_usd": float(net.sum())}
+    return {
+        "n": n,
+        "mean_r": mean,
+        "ci_lo": lo,
+        "ci_hi": hi,
+        "pf": profit_factor(net),
+        "net_usd": float(net.sum()),
+    }
 
 
 def ex_top(trades: pd.DataFrame, *, k: int | None = None, frac: float | None = None) -> pd.DataFrame:
@@ -49,7 +61,7 @@ def ex_top(trades: pd.DataFrame, *, k: int | None = None, frac: float | None = N
 def trimmed_mean_r(r: np.ndarray, cut: float = TRIM) -> float:
     v = np.sort(np.asarray(r, dtype=float))
     k = int(math.floor(cut * v.size))
-    v = v[k: v.size - k] if k else v
+    v = v[k : v.size - k] if k else v
     return float(v.mean()) if v.size else math.nan
 
 
@@ -121,12 +133,16 @@ def robustness(
     full = trade_metrics(trades)
     top1 = trade_metrics(ex_top(trades, k=1))
     tl = time_loo(trades, per_window)
-    al = asset_loo(run_without, assets) if run_without is not None else pd.DataFrame(
-        columns=["asset", "n", "mean_r", "net_usd"])
+    al = (
+        asset_loo(run_without, assets)
+        if run_without is not None
+        else pd.DataFrame(columns=["asset", "n", "mean_r", "net_usd"])
+    )
     r = trades["r_multiple"].to_numpy(dtype=float) if len(trades) else np.array([])
     loo_negative = any(_negative(float(x)) for x in pd.concat([tl["mean_r"], al["mean_r"]]))
-    fragile = bool(math.isfinite(full["mean_r"]) and full["mean_r"] > 0
-                   and (_negative(top1["mean_r"]) or loo_negative))
+    fragile = bool(
+        math.isfinite(full["mean_r"]) and full["mean_r"] > 0 and (_negative(top1["mean_r"]) or loo_negative)
+    )
     return {
         "full": full,
         "ex_top1": top1,

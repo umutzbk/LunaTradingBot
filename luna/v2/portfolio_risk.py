@@ -199,9 +199,11 @@ def catastrophic_stop_hit(leg_pnl: float, equity: float) -> bool:
 def xsec_limits(limits: RiskLimits) -> RiskLimits:
     """SC-1 order-level profile for cross-sectional orders: R5/R6/R7/R9 non-binding (replaced by
     the projection's controls); every other limit keeps its V1 value."""
-    return limits.model_copy(update={
-        "max_risk_per_trade": 1.0,
-        "max_open_risk": 1e9,
-        "max_positions": 10_000,
-        "max_leg_notional_frac": 1.0,
-    })
+    return limits.model_copy(
+        update={
+            "max_risk_per_trade": 1.0,
+            "max_open_risk": 1e9,
+            "max_positions": 10_000,
+            "max_leg_notional_frac": 1.0,
+        }
+    )

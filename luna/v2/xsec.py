@@ -11,6 +11,7 @@ import math
 from dataclasses import dataclass
 from typing import Literal
 
+import numpy as np
 import pandas as pd
 
 from luna.types import AccountKind
@@ -59,11 +60,15 @@ def lookback_returns(daily_close: pd.DataFrame, t: pd.Timestamp, lookback_days: 
 
 
 def eligible(
-    daily_close: pd.DataFrame, real_at: dict[str, bool], universe: list[str], lookback_days: int,
+    daily_close: pd.DataFrame,
+    real_at: dict[str, bool],
+    universe: list[str],
+    lookback_days: int,
     t: pd.Timestamp,
 ) -> list[str]:
-    """Universe assets with a real 15m bar at ``t``, a finite L-day return at ``t`` and at least
-    max(lookback + 1, 31) daily closes up to ``t`` (lookback return and the 30-day covariance)."""
+    """Universe assets with a real 15m bar at ``t``, a finite L-day return at ``t``, at least
+    max(lookback + 1, 31) daily closes and at least 30 finite daily returns up to ``t`` (lookback
+    return and the 30-day covariance; a missing day removes two returns)."""
     hist = daily_close.loc[daily_close.index <= t]
     rets = lookback_returns(daily_close, t, lookback_days)
     need = max(lookback_days + 1, MIN_DAILY_HISTORY + 1)
@@ -73,12 +78,18 @@ def eligible(
             continue
         if int(hist[a].notna().sum()) < need or not math.isfinite(float(rets.get(a, math.nan))):
             continue
+        if int(np.log(hist[a]).diff().notna().sum()) < MIN_DAILY_HISTORY:  # covariance needs 30 returns
+            continue
         out.append(a)
     return out
 
 
 def raw_targets(
-    daily_close: pd.DataFrame, assets: list[str], params: XSecParams, kind: AccountKind, t: pd.Timestamp,
+    daily_close: pd.DataFrame,
+    assets: list[str],
+    params: XSecParams,
+    kind: AccountKind,
+    t: pd.Timestamp,
 ) -> pd.Series:
     """Raw weights (fraction of equity) before the risk projection.
 

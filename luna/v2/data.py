@@ -20,7 +20,8 @@ class HoldoutLeak(RuntimeError):
 
 
 def assert_before_cutoff(
-    panel: dict[str, pd.DataFrame], funding: dict[str, pd.DataFrame],
+    panel: dict[str, pd.DataFrame],
+    funding: dict[str, pd.DataFrame],
     cutoff: pd.Timestamp = V2_DATA_END,
 ) -> None:
     """Bars must close by ``cutoff`` (open <= cutoff - 15m); funding must be stamped before it."""
@@ -38,8 +39,12 @@ def v2_settings(settings: Settings) -> Settings:
 
 
 def load_v2_inputs(
-    settings: Settings, store: BarStore, account: AccountKind,
-    instruments: dict[str, Instrument], *, assets: list[str] | None = None,
+    settings: Settings,
+    store: BarStore,
+    account: AccountKind,
+    instruments: dict[str, Instrument],
+    *,
+    assets: list[str] | None = None,
 ) -> Inputs:
     inp = load_inputs(settings, store, account, instruments, data_end=V2_DATA_END, assets=assets)
     assert_before_cutoff(inp.panel, inp.funding)

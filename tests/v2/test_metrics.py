@@ -289,5 +289,44 @@ def test_exposure_over_time_and_ex_ante_es(settings):
     m = extended_metrics(res, {}, CostModel(settings.costs["perp"]), "perp", settings.accounts["perp"], None)
     assert len(m["exposure_daily"]) == 3
     es = m["ex_ante_es"]
-    assert es["forecast_es95_mean"] == pytest.approx(0.01 / 1.6448536269514722 * 2.0627128075074257)
-    assert "realized_es95" in es
+    assert es["forecast_es95_loss_mean"] == pytest.approx(0.01 / 1.6448536269514722 * 2.0627128075074257)
+    assert "realized_es95_loss" in es
+
+
+def test_turnover_and_cap_adjusted_r_with_mixed_engines(settings):
+    t = _trades(
+        [
+            {
+                "entry_ts": T0 + pd.Timedelta(days=1),
+                "exit_ts": T0 + pd.Timedelta(days=2),
+                "gross_notional": 100.0,
+                "traded_notional": np.nan,
+                "pnl_net": 1.0,
+                "risk_precap": np.nan,
+            },
+            {
+                "entry_ts": T0 + pd.Timedelta(days=3),
+                "exit_ts": T0 + pd.Timedelta(days=4),
+                "gross_notional": 100.0,
+                "traded_notional": 20.0,
+                "pnl_net": 1.0,
+                "risk_precap": 4.0,
+            },
+        ]
+    )
+    eq = pd.Series(200.0, index=pd.date_range(T0, periods=366, freq="D"))
+    assert annual_turnover(t, eq) == pytest.approx((200.0 + 20.0) / 1.0 / 200)
+    lim = settings.accounts["perp"]
+    car = cap_adjusted_r(t, eq, lim)
+    assert car.iloc[0] == pytest.approx(1.0 / (lim.risk_per_trade * 200.0)) and car.iloc[1] == pytest.approx(
+        0.25
+    )
+
+
+def test_ex_ante_es_signs_are_losses():
+    from luna.v2.metrics import ex_ante_es_comparison
+
+    idx = pd.date_range(T0, periods=40, freq="D")
+    daily = pd.Series(np.r_[np.full(38, 0.001), [-0.02, -0.03]], index=idx)
+    out = ex_ante_es_comparison(daily, pd.Series(0.01, index=idx))
+    assert out["forecast_es95_loss_mean"] > 0 and out["realized_es95_loss"] > 0

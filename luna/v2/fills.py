@@ -62,8 +62,14 @@ def missed_fills(
     rows = []
     for c in miss.itertuples(index=False):
         ts = pd.Timestamp(c.ts)
-        row = {"ts": ts, "strategy": c.strategy, "key": c.key, "direction": int(c.direction),
-               "r_net_taker": math.nan, "exit_reason": "no_model"}
+        row = {
+            "ts": ts,
+            "strategy": c.strategy,
+            "key": c.key,
+            "direction": int(c.direction),
+            "r_net_taker": math.nan,
+            "exit_reason": "no_model",
+        }
         m = _model_at(models, ts)
         strat = next((s for s in (m.strategies if m else []) if s.name == c.strategy), None)
         if strat is not None:
@@ -74,8 +80,17 @@ def missed_fills(
             entry = pd.Series(0, index=sf.entry.index, dtype="int8")
             if ts in entry.index:
                 entry.loc[ts] = int(c.direction)
-            tl = build_tradelist(dataclasses.replace(sf, entry=entry), panel, funding, costs, kind,
-                                 strategy=strat, band=band, market=market, order_model="taker")
+            tl = build_tradelist(
+                dataclasses.replace(sf, entry=entry),
+                panel,
+                funding,
+                costs,
+                kind,
+                strategy=strat,
+                band=band,
+                market=market,
+                order_model="taker",
+            )
             row["exit_reason"] = "no_trade"
             if len(tl):
                 row["r_net_taker"] = float(tl.iloc[0]["r_net"])

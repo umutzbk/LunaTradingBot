@@ -15,8 +15,11 @@ from luna.v2.timeframe import TF, Timeframe, bars_for
 _D = pd.Timedelta(days=1)
 
 MIN_BARS = 3
-TSMOM_SPANS: tuple[tuple[pd.Timedelta, pd.Timedelta], ...] = ((1 * _D, 5 * _D), (4 * _D, 20 * _D),
-                                                              (12 * _D, 60 * _D))
+TSMOM_SPANS: tuple[tuple[pd.Timedelta, pd.Timedelta], ...] = (
+    (1 * _D, 5 * _D),
+    (4 * _D, 20 * _D),
+    (12 * _D, 60 * _D),
+)
 STOP_ATR = (2.0, 3.0)
 BREAKOUT_N: tuple[pd.Timedelta, ...] = (2 * _D, 10 * _D, 30 * _D)
 XSEC_LOOKBACK_DAYS = (14, 30, 90)
@@ -48,9 +51,15 @@ def _too_short(length: pd.Timedelta, tf: Timeframe) -> bool:
 
 def tsmom_grid(tf: Timeframe) -> list[dict]:
     return [
-        {"fast": bars_for(f, tf), "slow": bars_for(s, tf), "atr_n": atr_bars(tf), "stop_atr": k,
-         "max_hold": max_hold_bars(s)}
-        for f, s in TSMOM_SPANS if not _too_short(f, tf)
+        {
+            "fast": bars_for(f, tf),
+            "slow": bars_for(s, tf),
+            "atr_n": atr_bars(tf),
+            "stop_atr": k,
+            "max_hold": max_hold_bars(s),
+        }
+        for f, s in TSMOM_SPANS
+        if not _too_short(f, tf)
         for k in STOP_ATR
     ]
 
@@ -58,7 +67,8 @@ def tsmom_grid(tf: Timeframe) -> list[dict]:
 def breakout_grid(tf: Timeframe) -> list[dict]:
     return [
         {"donchian": bars_for(n, tf), "atr_n": atr_bars(tf), "k_atr": k, "max_hold": max_hold_bars(n)}
-        for n in BREAKOUT_N if not _too_short(n, tf)
+        for n in BREAKOUT_N
+        if not _too_short(n, tf)
         for k in STOP_ATR
     ]
 

@@ -227,7 +227,18 @@ def build_v2_report(r: ResearchResults, inp: Inputs, settings: Settings) -> V2Re
         missed_rebalances=missed_reb,
         trials=r.trials,
         caveats=_caveats(r),
-        data={k: r.manifest.get(k) for k in ("data_end", "last_bar", "assets", "git_sha", "git_dirty")},
+        data={
+            k: r.manifest.get(k)
+            for k in (
+                "data_end",
+                "last_bar",
+                "last_funding",
+                "universe_panel_last_bar",
+                "assets",
+                "git_sha",
+                "git_dirty",
+            )
+        },
     )
 
 

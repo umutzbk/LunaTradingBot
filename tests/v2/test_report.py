@@ -151,3 +151,4 @@ def test_summary_records_data_end_and_last_bar(run):
     assert s["data"]["last_bar"] == last.isoformat()
     assert s["data"]["data_end"] == "2026-07-01T00:00:00+00:00"
     assert s["data"]["assets"] == sorted(inp.panel)
+    assert {"last_funding", "universe_panel_last_bar"} <= set(s["data"])

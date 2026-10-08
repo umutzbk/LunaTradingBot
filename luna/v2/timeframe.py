@@ -38,8 +38,13 @@ def resample_causal(bars: pd.DataFrame, tf: Timeframe) -> pd.DataFrame:
     bucket = bars.index.floor(TF[tf])
     g = bars.groupby(bucket)
     out = g.agg(
-        open=("open", "first"), high=("high", "max"), low=("low", "min"), close=("close", "last"),
-        volume=("volume", "sum"), trades=("trades", "sum"), filled=("filled", "all"),
+        open=("open", "first"),
+        high=("high", "max"),
+        low=("low", "min"),
+        close=("close", "last"),
+        volume=("volume", "sum"),
+        trades=("trades", "sum"),
+        filled=("filled", "all"),
     )
     out = out[g.size().reindex(out.index).to_numpy() == n]
     out.index = out.index + TF[tf] - BAR

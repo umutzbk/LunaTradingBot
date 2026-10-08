@@ -30,6 +30,9 @@ R_DEFINITIONS: dict[str, str] = {
     "cap-adjusted R": "net P&L / planned risk BEFORE caps (risk_precap if recorded, else "
     "risk_per_trade x equity at the signal bar); shows R inflated by caps",
     "gross R": "gross P&L (reference prices, before fees, spread, slippage and funding) / risk_amount",
+    "cross-sectional trade": "one rebalance period x asset leg (spec §4.2): holding periods are capped at "
+    "one rebalance interval by construction; carry-over between periods is an "
+    "equity-neutral re-reference, so turnover counts real fills only",
 }
 
 
@@ -38,13 +41,14 @@ def cap_adjusted_r(trades: pd.DataFrame, equity: pd.Series, limits: RiskLimits) 
     if trades.empty:
         return pd.Series(dtype=float)
     net = trades["pnl_net"].astype(float)
-    if "risk_precap" in trades:
-        return net / trades["risk_precap"].astype(float)
     sig = pd.DatetimeIndex(trades["entry_ts"]) - BAR
     eq = equity.sort_index()
     pos = eq.index.searchsorted(sig, side="right") - 1
-    at = np.where(pos >= 0, eq.to_numpy()[np.clip(pos, 0, None)], np.nan)
-    return pd.Series(net.to_numpy() / (limits.risk_per_trade * at), index=trades.index)
+    at = np.where(pos >= 0, eq.to_numpy()[np.clip(pos, 0, None)], np.nan) if len(eq) else np.nan
+    precap = pd.Series(limits.risk_per_trade * at, index=trades.index)
+    if "risk_precap" in trades:  # recorded per trade (cross-sectional); signal trades in a mixed run: NaN
+        precap = trades["risk_precap"].astype(float).fillna(precap)
+    return net / precap
 
 
 def split_spread_slippage(trades: pd.DataFrame, costs: CostModel, order_model: OrderModel) -> pd.DataFrame:
@@ -140,10 +144,11 @@ def annual_turnover(trades: pd.DataFrame, equity: pd.Series) -> float:
     mean_eq = float(equity.mean())
     if not (years > 0 and mean_eq > 0):
         return math.nan
-    if "traded_notional" in trades:
-        traded = float(trades["traded_notional"].astype(float).sum())
+    two_sided = 2.0 * trades["gross_notional"].astype(float)
+    if "traded_notional" in trades:  # signal trades in a mixed run have none: entry + exit
+        traded = float(trades["traded_notional"].astype(float).fillna(two_sided).sum())
     else:
-        traded = 2.0 * float(trades["gross_notional"].astype(float).sum())
+        traded = float(two_sided.sum())
     return traded / years / mean_eq
 
 
@@ -174,14 +179,14 @@ def exposure_daily(bar_stats: pd.DataFrame) -> list[dict]:
 
 def ex_ante_es_comparison(daily: pd.Series, ex_ante_var: pd.Series) -> dict:
     """Cross-sectional ex-ante 1-day ES95 (normal, from the projection's VaR95) vs the realized
-    ES95 of the daily returns on days that had a forecast."""
+    ES95 of the daily returns on days that had a forecast; both as positive loss fractions."""
     prev = ex_ante_var.reindex(daily.index).shift(1)
     ok = prev.notna() & (prev > 0) & daily.notna()
     if not ok.any():
-        return {"forecast_es95_mean": math.nan, "realized_es95": math.nan, "n_days": 0}
+        return {"forecast_es95_loss_mean": math.nan, "realized_es95_loss": math.nan, "n_days": 0}
     return {
-        "forecast_es95_mean": float((prev[ok] / Z95 * ES95_PER_SD).mean()),
-        "realized_es95": cvar(daily[ok].to_numpy(), 0.05),
+        "forecast_es95_loss_mean": float((prev[ok] / Z95 * ES95_PER_SD).mean()),
+        "realized_es95_loss": -cvar(daily[ok].to_numpy(), 0.05),
         "n_days": int(ok.sum()),
     }
 

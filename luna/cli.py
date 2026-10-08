@@ -142,8 +142,9 @@ def walkforward(
     store = BarStore(settings.var_dir)
     end = _utc(data_end)
     subset = [a.strip() for a in assets.split(",")] if assets else None
-    inp = load_inputs(settings, store, account, load_instruments(settings, account), data_end=end,
-                      assets=subset)
+    inp = load_inputs(
+        settings, store, account, load_instruments(settings, account), data_end=end, assets=subset
+    )
     t1 = time.perf_counter()
     tl = build_tradelists(inp, settings, account, use_regime=True, data_end=end)
     tl0 = build_tradelists(inp, settings, account, use_regime=False, data_end=end)
@@ -221,17 +222,31 @@ def research_v2(
     logging.getLogger("httpx").setLevel(logging.WARNING)
     settings = load_settings()
     subset = [a.strip() for a in assets.split(",")] if assets else None
-    inp = load_v2_inputs(settings, BarStore(settings.var_dir), account, load_instruments(settings, account),
-                         assets=subset)
+    inp = load_v2_inputs(
+        settings, BarStore(settings.var_dir), account, load_instruments(settings, account), assets=subset
+    )
     ts = pd.Timestamp.now(tz="UTC").strftime("%Y%m%dT%H%M%S")
     out_dir = resume or settings.var_dir / "reports" / f"research_v2_{account}_{ts}"
-    res = run_research(settings, account, inp, Path(out_dir), jobs=jobs, resume=resume is not None,
-                       tl_cache_dir=settings.var_dir / "research_v2")
+    res = run_research(
+        settings,
+        account,
+        inp,
+        Path(out_dir),
+        jobs=jobs,
+        resume=resume is not None,
+        tl_cache_dir=settings.var_dir / "research_v2",
+    )
     rep = build_v2_report(res, inp, settings)
     path = write_v2_report(rep, Path(out_dir))
-    typer.echo(f"research v2 {account}: {len(res.configs)} configurations, span {res.span[0]:%Y-%m-%d} .. "
-               f"{res.span[1]:%Y-%m-%d}")
+    typer.echo(
+        f"research v2 {account}: {len(res.configs)} configurations, span {res.span[0]:%Y-%m-%d} .. "
+        f"{res.span[1]:%Y-%m-%d}"
+    )
     typer.echo(f"verdict: {rep.gonogo.verdict} ({rep.gonogo.headline}); candidate: {rep.candidate}")
+    typer.echo(
+        f"data: end {rep.data.get('data_end')}, last bar read {rep.data.get('last_bar')}, last funding "
+        f"{rep.data.get('last_funding')}"
+    )
     typer.echo(f"report: {path}")
 
 
@@ -264,8 +279,11 @@ def paper(
     legacy = settings.var_dir / LEGACY_DB_NAME
     if db is None and legacy.is_file() and not db_path(settings.var_dir, account).exists():
         # never start from an empty per-account DB while the old shared one holds the state
-        typer.echo(f"paper {account}: legacy {legacy} found but no {db_path(settings.var_dir, account)}; "
-                   f"run `luna migrate-db --account <owner>` first (see docs/RUNBOOK.md)", err=True)
+        typer.echo(
+            f"paper {account}: legacy {legacy} found but no {db_path(settings.var_dir, account)}; "
+            f"run `luna migrate-db --account <owner>` first (see docs/RUNBOOK.md)",
+            err=True,
+        )
         raise typer.Exit(1)
     instruments = load_instruments(settings, account)
     store = BarStore(settings.var_dir)
@@ -275,11 +293,26 @@ def paper(
     feed_cls = KrakenFuturesLiveFeed if account == "perp" else KrakenSpotLiveFeed
     feed = feed_cls(assets, store, client, buffer_bars=LIVE_BUFFER_BARS)
     database = Db(f"sqlite:///{db.as_posix()}" if db is not None else default_url(settings.var_dir, account))
-    broker = PaperBroker(account, CostModel(settings.costs[account]), feed, database, account,
-                         band=settings.accounts[account].max_price_band)
-    engine = LiveEngine(account, settings, feed, broker, database, make_notifier(settings, client),
-                        lambda: pd.Timestamp.now(tz="UTC"), "paper", instruments=instruments,
-                        http_client=client)
+    broker = PaperBroker(
+        account,
+        CostModel(settings.costs[account]),
+        feed,
+        database,
+        account,
+        band=settings.accounts[account].max_price_band,
+    )
+    engine = LiveEngine(
+        account,
+        settings,
+        feed,
+        broker,
+        database,
+        make_notifier(settings, client),
+        lambda: pd.Timestamp.now(tz="UTC"),
+        "paper",
+        instruments=instruments,
+        http_client=client,
+    )
     try:
         engine.start()
     except EngineLocked as e:
@@ -367,17 +400,24 @@ def label(
     settings = load_settings()
     database = Db(f"sqlite:///{db.as_posix()}" if db is not None else default_url(settings.var_dir, account))
     try:
-        n = label_candidates(database, BarStore(settings.var_dir), CostModel(settings.costs[account]),
-                             account, pd.Timestamp.now(tz="UTC"),
-                             band=settings.accounts[account].max_price_band)
+        n = label_candidates(
+            database,
+            BarStore(settings.var_dir),
+            CostModel(settings.costs[account]),
+            account,
+            pd.Timestamp.now(tz="UTC"),
+            band=settings.accounts[account].max_price_band,
+        )
         o, c = m.candidate_outcomes, m.candidates
         with database.engine.connect() as conn:
             total, mean_r = conn.execute(
                 select(func.count(), func.avg(o.c.outcome_r))
                 .select_from(o.join(c, c.c.id == o.c.candidate_id))
-                .where(c.c.account == account)).one()
+                .where(c.c.account == account)
+            ).one()
             cands = conn.execute(
-                select(func.count()).select_from(c).where(c.c.account == account)).scalar_one()
+                select(func.count()).select_from(c).where(c.c.account == account)
+            ).scalar_one()
     finally:
         database.close()
     mean = "n/a" if mean_r is None else f"{mean_r:.3f}"

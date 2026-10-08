@@ -139,10 +139,18 @@ def _make(family: str, base: type, grid: list[dict], tf: Timeframe) -> type[Grid
     key = (family, tf)
     if key not in _CACHE:
         qual = f"{family.upper()}_{tf}"
-        _CACHE[key] = type(qual, (base,), {
-            "__qualname__": qual, "__module__": __name__, "name": f"{family}_{tf}", "TF": tf,
-            "GRID": grid, "_defaults": dict(grid[0]),
-        })
+        _CACHE[key] = type(
+            qual,
+            (base,),
+            {
+                "__qualname__": qual,
+                "__module__": __name__,
+                "name": f"{family}_{tf}",
+                "TF": tf,
+                "GRID": grid,
+                "_defaults": dict(grid[0]),
+            },
+        )
         globals()[qual] = _CACHE[key]
     return _CACHE[key]
 

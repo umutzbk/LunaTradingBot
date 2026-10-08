@@ -21,6 +21,11 @@ class _Rep:
         verdict, headline = "INSUFFICIENT DATA", "n=0"
 
     candidate = "aday yok"
+    data = {
+        "data_end": "2026-07-01T00:00:00+00:00",
+        "last_bar": "2026-06-30T23:45:00+00:00",
+        "last_funding": None,
+    }
 
 
 def _no_report(monkeypatch, seen):

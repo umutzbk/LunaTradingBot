@@ -165,6 +165,8 @@ def run_manifest(
 ) -> dict:
     """What a checkpoint directory belongs to; a resume must match it exactly."""
     last = max(df.index[-1] for df in inp.panel.values() if len(df))
+    fund = [f.index.max() for f in inp.funding.values() if f is not None and len(f)]
+    upanel = [df.index[-1] for df in (inp.universe_panel or {}).values() if len(df)]
     return {
         "git_sha": _git_sha(),
         "git_dirty": _git_dirty(),
@@ -172,6 +174,8 @@ def run_manifest(
         "assets": sorted(inp.panel),
         "data_end": V2_DATA_END.isoformat(),
         "last_bar": last.isoformat(),
+        "last_funding": max(fund).isoformat() if fund else None,
+        "universe_panel_last_bar": max(upanel).isoformat() if upanel else None,
         "windows": [w.test_start.isoformat() for w in windows],
         "configs": [c.id for c in configs],
         "loo": loo,

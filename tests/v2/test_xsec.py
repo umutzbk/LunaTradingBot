@@ -72,3 +72,13 @@ def test_daily_closes_ignore_fully_forward_filled_days(v2_panel):
     dc = daily_closes({"BTC": df})
     assert np.isnan(dc["BTC"].iloc[5])  # a day without a single traded bar is no history
     assert np.isfinite(dc["BTC"].iloc[4]) and np.isfinite(dc["BTC"].iloc[6])
+
+
+def test_eligible_requires_30_returns_not_just_31_closes():
+    n = 32
+    close = list(np.linspace(100, 120, n))
+    close[20] = np.nan  # one all-forward-filled day removes two daily returns
+    dc = _dc({"A": close})
+    assert eligible(dc, {"A": True}, ["A"], 14, dc.index[-1]) == []  # 29 returns < 30
+    dc2 = _dc({"A": list(np.linspace(100, 120, n))})
+    assert eligible(dc2, {"A": True}, ["A"], 14, dc2.index[-1]) == ["A"]
