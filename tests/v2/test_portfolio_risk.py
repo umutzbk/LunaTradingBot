@@ -26,7 +26,7 @@ def _case(rng, n):
     k = max(1, n // 2)
     raw = pd.Series(0.0, index=assets)
     raw.iloc[:k] = 1.0
-    raw.iloc[n - k:] = -1.0 if n >= 2 * k else raw.iloc[n - k:]
+    raw.iloc[n - k :] = -1.0 if n >= 2 * k else raw.iloc[n - k :]
     raw = raw / raw.abs().sum()
     return raw, cov, corr
 
@@ -91,7 +91,7 @@ def test_net_cap_shrinks_heavier_side():
 def test_corr_group_cap():
     assets = ["A", "B", "C"]
     cov = pd.DataFrame(np.eye(3) * 1e-10, index=assets, columns=assets)
-    corr = pd.DataFrame([[1, .9, 0], [.9, 1, 0], [0, 0, 1]], index=assets, columns=assets, dtype=float)
+    corr = pd.DataFrame([[1, 0.9, 0], [0.9, 1, 0], [0, 0, 1]], index=assets, columns=assets, dtype=float)
     raw = pd.Series({"A": 0.3, "B": 0.3, "C": -0.3})
     w = project_weights(raw, cov, corr, controls="perp", gross=0.9, vol_target=0.10).weights
     assert w[["A", "B"]].sum() <= 0.5 + 1e-12
@@ -108,12 +108,14 @@ def test_var_budget_binds():
 def test_spot_projection_long_only_cap_040():
     assets = ["A", "B"]
     cov = pd.DataFrame(np.eye(2) * 1e-4, index=assets, columns=assets)
-    p = project_weights(pd.Series({"A": .5, "B": .5}), cov, cov * 0, controls="spot", gross=1.0,
-                        vol_target=None)
-    assert p.weights.to_dict() == {"A": .4, "B": .4}
-    p = project_weights(pd.Series({"A": 1.0, "B": -1.0}), cov, cov * 0, controls="spot", gross=1.0,
-                        vol_target=None)
-    assert p.weights.to_dict() == {"A": .4, "B": 0.0}
+    p = project_weights(
+        pd.Series({"A": 0.5, "B": 0.5}), cov, cov * 0, controls="spot", gross=1.0, vol_target=None
+    )
+    assert p.weights.to_dict() == {"A": 0.4, "B": 0.4}
+    p = project_weights(
+        pd.Series({"A": 1.0, "B": -1.0}), cov, cov * 0, controls="spot", gross=1.0, vol_target=None
+    )
+    assert p.weights.to_dict() == {"A": 0.4, "B": 0.0}
 
 
 def test_projection_fails_closed_on_nan_cov_or_bad_equity():
@@ -124,8 +126,14 @@ def test_projection_fails_closed_on_nan_cov_or_bad_equity():
     assert (p.weights == 0).all() and p.reason == "cov_unavailable"
     p = project_weights(raw, cov.loc[["A"], ["A"]], cov * 0, controls="perp", gross=0.5, vol_target=0.10)
     assert (p.weights == 0).all() and p.reason == "cov_unavailable"
-    p = project_weights(pd.Series({"A": np.nan, "B": 0.1}), cov.fillna(0), cov * 0, controls="perp",
-                        gross=0.5, vol_target=0.10)
+    p = project_weights(
+        pd.Series({"A": np.nan, "B": 0.1}),
+        cov.fillna(0),
+        cov * 0,
+        controls="perp",
+        gross=0.5,
+        vol_target=0.10,
+    )
     assert (p.weights == 0).all() and p.reason == "cov_unavailable"
 
 

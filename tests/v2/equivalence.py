@@ -16,12 +16,22 @@ END = pd.Timestamp("2100-01-01", tz="UTC")
 
 
 def engine_settings(settings, kind):
-    lim = settings.accounts[kind].model_copy(update={
-        "capital_usd": 1e9, "risk_per_trade": 1e-5, "max_risk_per_trade": 1.0, "max_open_risk": 1e6,
-        "max_positions": 10_000, "max_gross_leverage": 1e6, "max_leg_notional_frac": 1e6,
-        "daily_loss_limit": 1e9, "max_drawdown": 1e9, "max_orders_per_day": 10**9,
-        "emergency_stop_frac": 1e9, "liq_distance_mult": 0.0,
-    })
+    lim = settings.accounts[kind].model_copy(
+        update={
+            "capital_usd": 1e9,
+            "risk_per_trade": 1e-5,
+            "max_risk_per_trade": 1.0,
+            "max_open_risk": 1e6,
+            "max_positions": 10_000,
+            "max_gross_leverage": 1e6,
+            "max_leg_notional_frac": 1e6,
+            "daily_loss_limit": 1e9,
+            "max_drawdown": 1e9,
+            "max_orders_per_day": 10**9,
+            "emergency_stop_frac": 1e9,
+            "liq_distance_mult": 0.0,
+        }
+    )
     return settings.model_copy(update={"accounts": {**settings.accounts, kind: lim}})
 
 
@@ -40,11 +50,23 @@ def assert_equivalent(strat, panel, key, kind, settings, *, min_trades, **order_
     costs = CostModel(s.costs[kind])
     funding = funding_for(panel, key) if kind == "perp" else {}
     sub = {key: panel[key]}
-    res = run_backtest(sub, funding, [strat], {strat.name: [key]}, AcceptAllRanker(), kind, s, START, END,
-                       instruments=default_instruments([key], kind, s), **order_kw)
+    res = run_backtest(
+        sub,
+        funding,
+        [strat],
+        {strat.name: [key]},
+        AcceptAllRanker(),
+        kind,
+        s,
+        START,
+        END,
+        instruments=default_instruments([key], kind, s),
+        **order_kw,
+    )
     sf = strat.signals(sub, [key])[key]
-    tl = build_tradelist(sf, sub, funding, costs, kind, strategy=strat,
-                         band=s.accounts[kind].max_price_band, **order_kw)
+    tl = build_tradelist(
+        sf, sub, funding, costs, kind, strategy=strat, band=s.accounts[kind].max_price_band, **order_kw
+    )
     eng = res.trades.sort_values("entry_ts").reset_index(drop=True)
     tl = tl.sort_values("entry_ts").reset_index(drop=True)
     assert len(eng) >= min_trades

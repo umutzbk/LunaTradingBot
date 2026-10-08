@@ -25,10 +25,10 @@ BAR = pd.Timedelta("15min")
 R_DEFINITIONS: dict[str, str] = {
     "r_net (research)": "trade-list net return / stop distance at the signal bar (per unit of notional)",
     "r_multiple (engine, planned R)": "net P&L / risk_amount, the planned risk at entry after caps "
-                                      "(stop distance x notional + round-trip cost; cross-sectional: "
-                                      "1.5% x equity + round-trip cost)",
+    "(stop distance x notional + round-trip cost; cross-sectional: "
+    "1.5% x equity + round-trip cost)",
     "cap-adjusted R": "net P&L / planned risk BEFORE caps (risk_precap if recorded, else "
-                      "risk_per_trade x equity at the signal bar); shows R inflated by caps",
+    "risk_per_trade x equity at the signal bar); shows R inflated by caps",
     "gross R": "gross P&L (reference prices, before fees, spread, slippage and funding) / risk_amount",
 }
 
@@ -109,9 +109,12 @@ def tail_risk(daily: pd.Series) -> dict:
         return {k: math.nan for k in ("var95", "var99", "es95", "es99", "worst_day", "worst_week")}
     week = (1.0 + r).rolling(7, min_periods=1).apply(np.prod, raw=True) - 1.0
     return {
-        "var95": float(np.quantile(r, 0.05)), "var99": float(np.quantile(r, 0.01)),
-        "es95": cvar(r.to_numpy(), 0.05), "es99": cvar(r.to_numpy(), 0.01),
-        "worst_day": float(r.min()), "worst_week": float(week.min()),
+        "var95": float(np.quantile(r, 0.05)),
+        "var99": float(np.quantile(r, 0.01)),
+        "es95": cvar(r.to_numpy(), 0.05),
+        "es99": cvar(r.to_numpy(), 0.01),
+        "worst_day": float(r.min()),
+        "worst_week": float(week.min()),
     }
 
 
@@ -120,19 +123,67 @@ def holding_hours(trades: pd.DataFrame) -> dict:
         return {"median": math.nan, "p10": math.nan, "p90": math.nan}
     h = (pd.DatetimeIndex(trades["exit_ts"]) - pd.DatetimeIndex(trades["entry_ts"])) / pd.Timedelta(hours=1)
     h = np.asarray(h, dtype=float)
-    return {"median": float(np.median(h)), "p10": float(np.quantile(h, 0.1)),
-            "p90": float(np.quantile(h, 0.9))}
+    return {
+        "median": float(np.median(h)),
+        "p10": float(np.quantile(h, 0.1)),
+        "p90": float(np.quantile(h, 0.9)),
+    }
 
 
 def annual_turnover(trades: pd.DataFrame, equity: pd.Series) -> float:
-    """Traded notional per year (entry + exit ~ 2 x entry gross) / mean equity."""
+    """Traded notional per year / mean equity. Traded notional = ``traded_notional`` when the engine
+    records it (cross-sectional: real fills only, carry-over re-referencing excluded), else
+    entry + exit ~ 2 x entry gross."""
     if trades.empty or len(equity) < 2:
         return math.nan
     years = (equity.index[-1] - equity.index[0]) / pd.Timedelta(days=365)
     mean_eq = float(equity.mean())
     if not (years > 0 and mean_eq > 0):
         return math.nan
-    return 2.0 * float(trades["gross_notional"].astype(float).sum()) / years / mean_eq
+    if "traded_notional" in trades:
+        traded = float(trades["traded_notional"].astype(float).sum())
+    else:
+        traded = 2.0 * float(trades["gross_notional"].astype(float).sum())
+    return traded / years / mean_eq
+
+
+Z95 = 1.6448536269514722
+ES95_PER_SD = 2.0627128075074257  # phi(z95) / 0.05: normal 1-day ES95 in units of the daily sd
+
+
+def exposure_daily(bar_stats: pd.DataFrame) -> list[dict]:
+    """Exposure over time (§6): per UTC day mean gross and net leverage, max single-asset share and
+    mean vol-targeting scale (None where not recorded)."""
+    if bar_stats is None or bar_stats.empty:
+        return []
+    cols = {
+        "gross": ("gross_leverage", "mean"),
+        "net": ("net_leverage", "mean"),
+        "max_asset_share": ("max_asset_share", "max"),
+        "vol_scale": ("vol_scale", "mean"),
+    }
+    out = []
+    for day, g in bar_stats.groupby(bar_stats.index.floor("D")):
+        row: dict = {"date": day.strftime("%Y-%m-%d")}
+        for k, (c, how) in cols.items():
+            v = getattr(g[c], how)() if c in g else math.nan
+            row[k] = float(v) if v is not None and math.isfinite(v) else None
+        out.append(row)
+    return out
+
+
+def ex_ante_es_comparison(daily: pd.Series, ex_ante_var: pd.Series) -> dict:
+    """Cross-sectional ex-ante 1-day ES95 (normal, from the projection's VaR95) vs the realized
+    ES95 of the daily returns on days that had a forecast."""
+    prev = ex_ante_var.reindex(daily.index).shift(1)
+    ok = prev.notna() & (prev > 0) & daily.notna()
+    if not ok.any():
+        return {"forecast_es95_mean": math.nan, "realized_es95": math.nan, "n_days": 0}
+    return {
+        "forecast_es95_mean": float((prev[ok] / Z95 * ES95_PER_SD).mean()),
+        "realized_es95": cvar(daily[ok].to_numpy(), 0.05),
+        "n_days": int(ok.sum()),
+    }
 
 
 def ex_ante_var_exceedance(daily: pd.Series, ex_ante: pd.Series) -> dict:
@@ -150,8 +201,13 @@ def _exposure(res: BacktestResult) -> dict:
     out = {"gross_mean": float(bs["gross_leverage"].mean()), "gross_max": float(bs["gross_leverage"].max())}
     if "net_leverage" in bs:
         net = bs["net_leverage"].abs()
-        out.update({"net_abs_mean": float(net.mean()), "net_abs_max": float(net.max()),
-                    "max_asset_share": float(bs["max_asset_share"].max())})
+        out.update(
+            {
+                "net_abs_mean": float(net.mean()),
+                "net_abs_max": float(net.max()),
+                "max_asset_share": float(bs["max_asset_share"].max()),
+            }
+        )
     if "vol_scale" in bs:
         out["vol_scale_mean"] = float(bs["vol_scale"].mean())
     return out
@@ -182,40 +238,57 @@ def extended_metrics(
     by_asset = net.groupby(tr["key"]).sum() if n else pd.Series(dtype=float)
     top = tr.assign(_n=net).nlargest(5, "_n") if n else tr
     ex = mfe_mae_r(tr, panel) if n else pd.DataFrame({"mfe_r": [], "mae_r": []})
-    ex_ante = None
+    ex_ante = ex_ante_es = None
+    funding_total = float(tr["funding"].sum()) if n else 0.0
     if res.bar_stats is not None and "ex_ante_var" in res.bar_stats:
         daily_var = res.bar_stats["ex_ante_var"].resample("1D").last()
         ex_ante = ex_ante_var_exceedance(dr, daily_var)
+        ex_ante_es = ex_ante_es_comparison(dr, daily_var)
     return {
         "planned_r": float((net / risk).mean()) if n else math.nan,
         "planned_risk_usd": float(risk.mean()) if n else math.nan,
         "cap_adjusted_r": float(cap_adjusted_r(tr, res.equity, limits).mean()) if n else math.nan,
         "gross_r": float((gross / risk).mean()) if n else math.nan,
         "net_r": float((net / risk).mean()) if n else math.nan,
-        "payoff_ratio": (float(wins.mean()) / abs(float(losses.mean()))
-                         if len(wins) and len(losses) else math.nan),
+        "payoff_ratio": (
+            float(wins.mean()) / abs(float(losses.mean())) if len(wins) and len(losses) else math.nan
+        ),
         "costs": {
-            "fees": fees, "spread": float(split["spread"].sum()), "slippage": float(split["slippage"].sum()),
+            "fees": fees,
+            "spread": float(split["spread"].sum()),
+            "slippage": float(split["slippage"].sum()),
             "funding_known": float(tr["funding"].sum()) if n else 0.0,
             "funding_unknown_hours": int(tr["funding_unknown_bars"].sum()) if n else 0,
         },
-        "cost_to_gross": ((fees + spread_slip) / gross_total if gross_total > 0
-                          else "n/a - no gross edge"),
+        # cost = fees + spread/slippage + funding paid (funding received lowers it)
+        "cost_to_gross": (
+            (fees + spread_slip - funding_total) / gross_total if gross_total > 0 else "n/a - no gross edge"
+        ),
         "equity_contribution": {
             "by_asset": {str(a): {"usd": float(v), "pct": float(v / init)} for a, v in by_asset.items()},
-            "top_trades": [{"key": str(r.key), "entry_ts": pd.Timestamp(r.entry_ts).isoformat(),
-                            "pnl_net": float(r.pnl_net)} for r in top.itertuples(index=False)],
+            "top_trades": [
+                {
+                    "key": str(r.key),
+                    "entry_ts": pd.Timestamp(r.entry_ts).isoformat(),
+                    "pnl_net": float(r.pnl_net),
+                }
+                for r in top.itertuples(index=False)
+            ],
         },
         "turnover_annual": annual_turnover(tr, res.equity),
         "holding_hours": holding_hours(tr),
         "maker_fill_rate": maker_fill_rate(res.candidates) if res.candidates is not None else math.nan,
-        "mfe_mae": {"mfe_mean": float(ex["mfe_r"].mean()) if n else math.nan,
-                    "mfe_median": float(ex["mfe_r"].median()) if n else math.nan,
-                    "mae_mean": float(ex["mae_r"].mean()) if n else math.nan,
-                    "mae_median": float(ex["mae_r"].median()) if n else math.nan},
+        "mfe_mae": {
+            "mfe_mean": float(ex["mfe_r"].mean()) if n else math.nan,
+            "mfe_median": float(ex["mfe_r"].median()) if n else math.nan,
+            "mae_mean": float(ex["mae_r"].mean()) if n else math.nan,
+            "mae_median": float(ex["mae_r"].median()) if n else math.nan,
+        },
         "winner_concentration": winner_concentration(net.to_numpy()),
         "tail": tail_risk(dr),
         "exposure": _exposure(res),
+        "exposure_daily": exposure_daily(res.bar_stats),
         "ex_ante_var": ex_ante,
+        "ex_ante_es": ex_ante_es,
         "r_definitions": R_DEFINITIONS,
     }

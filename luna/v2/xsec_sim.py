@@ -78,7 +78,8 @@ from luna.v2.xsec import XSecParams, daily_closes, eligible, raw_targets, rebala
 BAR = pd.Timedelta("15min")
 RETRY_BARS = 96
 COV_HISTORY_DAYS = 200
-XSEC_TRADE_EXTRA = ["risk_precap", "period"]
+# traded_notional: notional of real fills booked to the leg (both sides; carry-over transfers excluded)
+XSEC_TRADE_EXTRA = ["risk_precap", "period", "traded_notional"]
 XSEC_BAR_EXTRA = ["vol_scale", "ex_ante_var"]  # net / max share are V1 BAR_STAT_COLUMNS
 
 
@@ -103,6 +104,7 @@ class _State:
     blocked: set[str] = field(default_factory=set)
     exit_reason: dict[str, str] = field(default_factory=dict)  # pid -> reason when it goes flat
     entry_notional: dict[str, float] = field(default_factory=dict)
+    traded: dict[str, float] = field(default_factory=dict)  # pid -> real traded notional (no transfers)
     meta: dict[str, _Period] = field(default_factory=dict)  # pid -> period plan (risk, period ts)
     vol_scale: float = math.nan
     ex_ante_var: float = math.nan
@@ -132,8 +134,9 @@ def run_xsec(
     limits = xsec_limits(v1)
     costs = CostModel(settings.costs[kind])
     instruments = instruments or default_instruments(sorted(panel), kind, settings)
-    pf = (copy.deepcopy(initial_portfolio) if initial_portfolio is not None
-          else Portfolio(kind, v1.capital_usd))
+    pf = (
+        copy.deepcopy(initial_portfolio) if initial_portfolio is not None else Portfolio(kind, v1.capital_usd)
+    )
     if pf.kind != kind:
         raise ValueError(f"initial portfolio is {pf.kind}, run is {kind}")
     rs = dataclasses.replace(initial_state) if initial_state is not None else RiskState()
@@ -158,52 +161,97 @@ def run_xsec(
     events: list[dict] = []
     # positions carried in: keep their pid as the current period of their asset
     for pid, pos in pf.positions.items():
-        st.meta[pid] = _Period(pid, pos.entry_ts, pos.qty.get(pos.key, 0.0), pos.risk_amount,
-                               pos.risk_amount, pos.stop.distance_frac, pos.entry_ref)
-        st.entry_notional[pid] = sum(abs(q) * p for q, p in zip(pos.qty.values(),
-                                                                    pos.entry_price.values(), strict=True))
+        m = pos.meta
+        st.meta[pid] = _Period(
+            pid,
+            m.get("period", pos.entry_ts),
+            pos.qty.get(pos.key, 0.0),
+            pos.risk_amount,
+            float(m.get("risk_precap", pos.risk_amount)),
+            pos.stop.distance_frac,
+            pos.entry_ref,
+        )
+        st.entry_notional[pid] = float(
+            m.get(
+                "entry_notional",
+                sum(abs(q) * p for q, p in zip(pos.qty.values(), pos.entry_price.values(), strict=True)),
+            )
+        )
+        st.traded[pid] = float(m.get("traded_notional", 0.0))
 
     def event(t, kind_, asset="", detail="", pid=""):
         events.append({"ts": t, "kind": kind_, "position_id": pid, "asset": asset, "detail": detail})
 
     def pid_of(asset: str) -> str | None:
-        for pid, pos in pf.positions.items():
-            if pos.key == asset:
-                return pid
-        return None
+        found = [pid for pid, pos in pf.positions.items() if pos.key == asset]
+        if len(found) > 1:  # one period leg per asset at any time (transfers close the old one first)
+            raise RuntimeError(f"several open positions for {asset}: {found}")
+        return found[0] if found else None
 
     def finish(pid: str, t: pd.Timestamp, reason: str) -> None:
         pos = pf.close_position(pid, t, reason)
         p = pos.pnl
         net = pos.net_pnl()
         meta = st.meta.pop(pid)
-        trades.append({
-            "position_id": pid, "strategy": name, "key": pos.key, "direction": pos.direction,
-            "entry_ts": pos.entry_ts, "exit_ts": t, "exit_reason": reason,
-            "gross_notional": st.entry_notional.pop(pid, math.nan), "risk_amount": pos.risk_amount,
-            "pnl_gross": p["gross"], "fees": p["fees"], "spread_slip": p["spread_slip"],
-            "funding": p["funding"], "funding_unknown_bars": int(p["funding_unknown_bars"]),
-            "pnl_net": net, "r_multiple": net / pos.risk_amount if pos.risk_amount > 0 else math.nan,
-            "regime": pos.regime, "risk_precap": meta.risk_precap, "period": meta.period,
-        })
+        trades.append(
+            {
+                "position_id": pid,
+                "strategy": name,
+                "key": pos.key,
+                "direction": pos.direction,
+                "entry_ts": pos.entry_ts,
+                "exit_ts": t,
+                "exit_reason": reason,
+                "gross_notional": st.entry_notional.pop(pid, math.nan),
+                "risk_amount": pos.risk_amount,
+                "pnl_gross": p["gross"],
+                "fees": p["fees"],
+                "spread_slip": p["spread_slip"],
+                "funding": p["funding"],
+                "funding_unknown_bars": int(p["funding_unknown_bars"]),
+                "pnl_net": net,
+                "r_multiple": net / pos.risk_amount if pos.risk_amount > 0 else math.nan,
+                "regime": pos.regime,
+                "risk_precap": meta.risk_precap,
+                "period": meta.period,
+                "traded_notional": st.traded.pop(pid, 0.0),
+            }
+        )
         st.exit_reason.pop(pid, None)
 
     def open_position(plan: _Period, asset: str, t: pd.Timestamp) -> None:
         d = 1 if plan.target_qty > 0 else -1
-        pf.open_position(Position(
-            id=plan.pid, strategy=name, key=asset, legs=(Leg(asset, 1.0),), direction=d, qty={},
-            entry_price={}, entry_ts=t, entry_ref=plan.mid,
-            stop=StopSpec("price", plan.mid * (1.0 - d * plan.stop_dist), plan.stop_dist),
-            exit=ExitSpec(max_hold_bars=10**9), risk_amount=plan.risk_amount, regime="NONE",
-        ))
+        pf.open_position(
+            Position(
+                id=plan.pid,
+                strategy=name,
+                key=asset,
+                legs=(Leg(asset, 1.0),),
+                direction=d,
+                qty={},
+                entry_price={},
+                entry_ts=t,
+                entry_ref=plan.mid,
+                stop=StopSpec("price", plan.mid * (1.0 - d * plan.stop_dist), plan.stop_dist),
+                exit=ExitSpec(max_hold_bars=10**9),
+                risk_amount=plan.risk_amount,
+                regime="NONE",
+                meta={"risk_precap": plan.risk_precap, "period": plan.period},
+            )
+        )
         st.meta[plan.pid] = plan
 
-    def book(f: Fill, pid: str, ref: float) -> None:
+    def book(f: Fill, pid: str, ref: float, transfer: bool = False) -> None:
         pos = pf.positions[pid]
         before = abs(pos.qty.get(f.asset, 0.0))
         pf.apply_fill(f, pid, ref)
         if abs(pos.qty.get(f.asset, 0.0)) > before:
             st.entry_notional[pid] = st.entry_notional.get(pid, 0.0) + f.qty * f.price
+        if not transfer:
+            st.traded[pid] = st.traded.get(pid, 0.0) + f.qty * f.price
+        if pid in pf.positions:  # survives a window boundary with the position
+            pos.meta["entry_notional"] = st.entry_notional.get(pid, 0.0)
+            pos.meta["traded_notional"] = st.traded.get(pid, 0.0)
 
     def order(asset, side, qty, mid, t, intent, pid, tag, tif) -> OrderRequest | None:
         inst = instruments[asset]
@@ -212,17 +260,28 @@ def run_xsec(
             return None
         s = 1.0 if side == "buy" else -1.0
         limit = mid * (1.0 + s * band) if tif == "IOC" else mid * (1.0 - s * costs.half_spread(asset))
-        return OrderRequest(f"{pid}:{tag}:{asset}:{intent}:{t:%Y%m%d%H%M}", t, asset, side, q, limit,
-                            tif, intent, pid, tag)
+        return OrderRequest(
+            f"{pid}:{tag}:{asset}:{intent}:{t:%Y%m%d%H%M}", t, asset, side, q, limit, tif, intent, pid, tag
+        )
 
     def ctx(t, eq, liq) -> RiskContext:
         return RiskContext(
-            limits=limits, kind=kind, mode="backtest", state=rs, equity=float(eq),
-            open_positions=len(pf.positions), open_risk=pf.open_risk(),
-            gross_notional=pf.gross_notional(), holdings=dict(pf.holdings), last_bar_ts=t, now=t,
-            liq_distance=liq, min_qty={a: x.min_qty for a, x in instruments.items()},
+            limits=limits,
+            kind=kind,
+            mode="backtest",
+            state=rs,
+            equity=float(eq),
+            open_positions=len(pf.positions),
+            open_risk=pf.open_risk(),
+            gross_notional=pf.gross_notional(),
+            holdings=dict(pf.holdings),
+            last_bar_ts=t,
+            now=t,
+            liq_distance=liq,
+            min_qty={a: x.min_qty for a, x in instruments.items()},
             min_notional={a: x.min_notional for a, x in instruments.items()},
-            available_cash=pf.cash, open_position_ids=frozenset(pf.positions),
+            available_cash=pf.cash,
+            open_position_ids=frozenset(pf.positions),
         )
 
     def submit(checks: list[OrderCheck], t, eq, liq) -> None:
@@ -239,8 +298,9 @@ def run_xsec(
         for o, reason in res.vetoed:
             event(t, "veto", o.asset, reason, o.position_id)
 
-    def plan_orders(i: int, t: pd.Timestamp, eq: float, stop_assets: set[str],
-                    only: set[str] | None = None) -> None:
+    def plan_orders(
+        i: int, t: pd.Timestamp, eq: float, stop_assets: set[str], only: set[str] | None = None
+    ) -> None:
         """Orders toward the current targets (and IOC closes of stopped / killed legs); ``only``
         restricts them to those assets (stops outside the rebalance retry window)."""
         working = {o.asset for o, _ in pending.values()}
@@ -262,16 +322,26 @@ def run_xsec(
             tif = "IOC" if (stopping or liquidity == "taker") else "POST_ONLY"
             if cur != 0.0 and (tgt == 0.0 or np.sign(tgt) != np.sign(cur)):
                 pid = pid_of(a)
-                o = order(a, "sell" if cur > 0 else "buy", cur, mid, t, "close", pid,
-                          "stop" if a in stop_assets else "rebalance", tif)
+                o = order(
+                    a,
+                    "sell" if cur > 0 else "buy",
+                    cur,
+                    mid,
+                    t,
+                    "close",
+                    pid,
+                    "stop" if a in stop_assets else "rebalance",
+                    tif,
+                )
                 if o is not None:
                     closes.append(OrderCheck(o, o.qty * mid, 0.0, 0.0, None, True, False, mid))
                 elif pid is not None:  # untradeable residue (qty step / minimums): write it off
                     pf.mark({a: mid})
                     pf.write_off_dust(pid, a, mid, t)
                     if pf.positions[pid].is_flat():
-                        finish(pid, t, st.exit_reason.get(pid, "kill_switch" if rs.kill_switch
-                                                          else "rebalance"))
+                        finish(
+                            pid, t, st.exit_reason.get(pid, "kill_switch" if rs.kill_switch else "rebalance")
+                        )
                 cur = 0.0 if tgt != 0.0 else cur
                 if tgt == 0.0:
                     continue
@@ -289,8 +359,11 @@ def run_xsec(
                 continue
             risk = CAT_STOP * eq * min(1.0, o.qty / abs(tgt))
             post_gross += o.qty * mid
-            opens.append(OrderCheck(o, o.qty * mid, risk, risk / eq if eq > 0 else math.inf,
-                                    plan.stop_dist, True, False, mid))
+            opens.append(
+                OrderCheck(
+                    o, o.qty * mid, risk, risk / eq if eq > 0 else math.inf, plan.stop_dist, True, False, mid
+                )
+            )
         liq: dict[str, float] = {}
         if kind == "perp":
             for oc in opens:
@@ -302,6 +375,8 @@ def run_xsec(
         submit(opens, t, eq, liq)
 
     def decide(i: int, t: pd.Timestamp, eq: float) -> None:
+        if i <= st.retry_until:  # the previous decision's retry window is cut short (daily rebalance)
+            record_misses(i, t)
         real_at = {a: bool(mkt.real[i, mkt.col[a]]) for a in panel}
         hist = dc.loc[dc.index <= t]
         elig = eligible(dc, real_at, [a for a in universe if a in panel], params.lookback_days, t)
@@ -310,10 +385,14 @@ def run_xsec(
         st.vol_scale, st.ex_ante_var = 1.0, math.nan
         if len(elig) and (raw != 0).any():
             rets = np.log(hist[elig].iloc[-COV_HISTORY_DAYS:]).diff().iloc[1:]
-            proj = project_weights(raw, ewma_cov(rets), trailing_corr(rets),
-                                   controls="perp" if kind == "perp" else "spot",
-                                   gross=params.gross if kind == "perp" else 1.0,
-                                   vol_target=params.vol_target if kind == "perp" else None)
+            proj = project_weights(
+                raw,
+                ewma_cov(rets),
+                trailing_corr(rets),
+                controls="perp" if kind == "perp" else "spot",
+                gross=params.gross if kind == "perp" else 1.0,
+                vol_target=params.vol_target if kind == "perp" else None,
+            )
             if proj.reason:
                 event(t, proj.reason, detail=",".join(elig))
             w, st.vol_scale, st.ex_ante_var = proj.weights, proj.vol_scale, proj.var_95
@@ -325,10 +404,13 @@ def run_xsec(
             notional = abs(float(w[a])) * eq
             rt = costs.round_trip_frac(a, liquidity)
             st.targets[a] = _Period(
-                pid=f"{name}:{a}:{t:%Y%m%d%H%M}", period=t, target_qty=float(w[a]) * eq / mid,
+                pid=f"{name}:{a}:{t:%Y%m%d%H%M}",
+                period=t,
+                target_qty=float(w[a]) * eq / mid,
                 risk_amount=CAT_STOP * eq + rt * notional,
                 risk_precap=CAT_STOP * eq + rt * abs(float(raw[a])) * eq,
-                stop_dist=CAT_STOP * eq / notional, mid=mid,
+                stop_dist=CAT_STOP * eq / notional,
+                mid=mid,
             )
         st.retry_until = i + RETRY_BARS
         st.transfer_at = i + 1
@@ -345,10 +427,41 @@ def run_xsec(
             j = mkt.col[a]
             px = float(mkt.open[i, j]) if np.isfinite(mkt.open[i, j]) else float(mkt.last[i - 1, j])
             out_side, in_side = ("sell", "buy") if q > 0 else ("buy", "sell")
-            book(Fill(f"{old}:transfer:{a}", t, a, out_side, abs(q), px, 0.0, "maker"), old, px)
+            out_fill = Fill(f"{old}:transfer:{a}", t, a, out_side, abs(q), px, 0.0, "maker")
+            book(out_fill, old, px, transfer=True)
             finish(old, t, "rebalance")
             open_position(plan, a, t)
-            book(Fill(f"{plan.pid}:transfer:{a}", t, a, in_side, abs(q), px, 0.0, "maker"), plan.pid, px)
+            book(
+                Fill(f"{plan.pid}:transfer:{a}", t, a, in_side, abs(q), px, 0.0, "maker"),
+                plan.pid,
+                px,
+                transfer=True,
+            )
+
+    def bar_row() -> tuple[float, list[float]]:
+        eq = float(pf.equity())
+        net = sum(q * pf.marks.get(a, pf.avg_entry[a]) for a, q in pf.holdings.items())
+        biggest = max((pf.notional(a) for a in pf.holdings), default=0.0)
+        row = {
+            "equity": eq,
+            "gross_leverage": pf.gross_leverage(),
+            "n_positions": len(pf.positions),
+            "open_risk": pf.open_risk(),
+            "entry_gross_leverage": math.nan,
+            "net_leverage": net / eq if eq > 0 else math.nan,
+            "max_asset_share": biggest / eq if eq > 0 else math.nan,
+            "vol_scale": st.vol_scale,
+            "ex_ante_var": st.ex_ante_var,
+        }
+        return eq, [row[c] for c in cols]
+
+    def record_misses(i: int, t: pd.Timestamp) -> None:
+        """Targets still not reached when their retry window ends or a new decision replaces them."""
+        for a, plan in st.targets.items():
+            mid = float(mkt.last[i, mkt.col[a]])
+            gap = plan.target_qty - pf.holdings.get(a, 0.0)
+            if order(a, "buy" if gap > 0 else "sell", gap, mid, t, "open", plan.pid, "probe", "IOC"):
+                event(t, "missed_rebalance", a, f"notional {abs(gap) * mid:.4f}", plan.pid)
 
     n_out = max(i1 - i0, 0)
     cols = BAR_STAT_COLUMNS + XSEC_BAR_EXTRA
@@ -359,7 +472,7 @@ def run_xsec(
     # a rebalance stamp on the bar just before ``start`` (the previous window's last bar) is decided
     # here, from data up to that bar, so its orders fill on this window's first bar instead of being
     # dropped at the window boundary
-    if 0 < i0 < i1 and len(rebalance_stamps(idx[i0 - 1:i0], params.rebalance)) and not rs.kill_switch:
+    if 0 < i0 < i1 and len(rebalance_stamps(idx[i0 - 1 : i0], params.rebalance)) and not rs.kill_switch:
         tp = idx[i0 - 1]
         if pf.holdings:
             pf.mark({a: float(mkt.last[i0 - 1, mkt.col[a]]) for a in pf.holdings})
@@ -375,10 +488,17 @@ def run_xsec(
             transfer(i, t)
         # (1) fills
         if pending:
-            bars = {a: {"open": float(mkt.open[i, j]), "high": float(mkt.high[i, j]),
-                        "low": float(mkt.low[i, j]), "close": float(mkt.close[i, j]),
-                        "filled": not bool(mkt.real[i, j])}
-                    for a, j in mkt.col.items() if mkt.present[i, j]}
+            bars = {
+                a: {
+                    "open": float(mkt.open[i, j]),
+                    "high": float(mkt.high[i, j]),
+                    "low": float(mkt.low[i, j]),
+                    "close": float(mkt.close[i, j]),
+                    "filled": not bool(mkt.real[i, j]),
+                }
+                for a, j in mkt.col.items()
+                if mkt.present[i, j]
+            }
             for f in broker.on_bar(t, bars):
                 o, ref = pending[f.client_id]
                 pid = o.position_id
@@ -431,8 +551,11 @@ def run_xsec(
                 st.targets.pop(a, None)
                 st.exit_reason[pid] = "catastrophic_stop"
                 event(t, "catastrophic_stop", a, f"leg {leg:.4f} <= -{CAT_STOP} x {eq:.4f}", pid)
-        stop_assets |= {pos.key for pid, pos in pf.positions.items()
-                        if st.exit_reason.get(pid) == "catastrophic_stop" and pos.qty.get(pos.key)}
+        stop_assets |= {
+            pos.key
+            for pid, pos in pf.positions.items()
+            if st.exit_reason.get(pid) == "catastrophic_stop" and pos.qty.get(pos.key)
+        }
         # (5) rebalance decision
         if t in stamps and not rs.kill_switch:
             st.blocked.clear()
@@ -449,23 +572,10 @@ def run_xsec(
         elif stop_assets:
             plan_orders(i, t, eq, stop_assets, only=stop_assets)
         if i == st.retry_until + 1:
-            for a, plan in st.targets.items():
-                mid = float(last[mkt.col[a]])
-                gap = plan.target_qty - pf.holdings.get(a, 0.0)
-                if order(a, "buy" if gap > 0 else "sell", gap, mid, t, "open", plan.pid, "probe", "IOC"):
-                    event(t, "missed_rebalance", a, f"notional {abs(gap) * mid:.4f}", plan.pid)
+            record_misses(i, t)
         # (7) stats
         k = i - i0
-        eq = float(pf.equity())
-        equity[k] = eq
-        net = sum(q * pf.marks.get(a, pf.avg_entry[a]) for a, q in pf.holdings.items())
-        biggest = max((pf.notional(a) for a in pf.holdings), default=0.0)
-        row = {"equity": eq, "gross_leverage": pf.gross_leverage(), "n_positions": len(pf.positions),
-               "open_risk": pf.open_risk(), "entry_gross_leverage": math.nan,
-               "net_leverage": net / eq if eq > 0 else math.nan,
-               "max_asset_share": biggest / eq if eq > 0 else math.nan,
-               "vol_scale": st.vol_scale, "ex_ante_var": st.ex_ante_var}
-        stats[k] = [row[c] for c in cols]
+        equity[k], stats[k] = bar_row()
 
     # flatten at the end (engine switch, P10)
     if flatten_at_end and pf.positions and i1 > i0:
@@ -480,15 +590,21 @@ def run_xsec(
                 if mkt.real[i, j]:
                     f = broker.stop_fill(a, side, abs(q), float(mkt.close[i, j]), mkt.bar(i, a), pid)
                 else:
-                    fr = costs.half_spread(a) + costs.slippage
+                    fr = (costs.half_spread(a) + costs.slippage) * cost_mult
                     px = float(mkt.last[i, j]) * (1.0 - fr if side == "sell" else 1.0 + fr)
-                    f = Fill(f"{pid}:switch:{a}", t, a, side, abs(q), px,
-                             costs.fee(abs(q) * px, "taker") * cost_mult, "taker")
-                pf.apply_fill(f, pid, float(mkt.last[i, j]))
+                    f = Fill(
+                        f"{pid}:switch:{a}",
+                        t,
+                        a,
+                        side,
+                        abs(q),
+                        px,
+                        costs.fee(abs(q) * px, "taker") * cost_mult,
+                        "taker",
+                    )
+                book(f, pid, float(mkt.last[i, j]))
             finish(pid, t, "model_switch")
-        equity[-1] = float(pf.equity())
-        stats[-1, cols.index("equity")] = equity[-1]
-        stats[-1, cols.index("n_positions")] = 0
+        equity[-1], stats[-1] = bar_row()  # the flattened book, not the pre-flatten marks
 
     out_idx = idx[i0:i1]
     bar_stats = pd.DataFrame(stats, index=out_idx, columns=cols)

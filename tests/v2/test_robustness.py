@@ -14,8 +14,16 @@ def _t(pnls, keys=None, days=None):
     keys = keys or ["BTC"] * n
     days = days if days is not None else list(range(n))
     exit_ts = [T0 + pd.Timedelta(days=d) for d in days]
-    return pd.DataFrame({"key": keys, "pnl_net": np.asarray(pnls, float), "risk_amount": 1.0,
-                         "r_multiple": np.asarray(pnls, float), "entry_ts": exit_ts, "exit_ts": exit_ts})
+    return pd.DataFrame(
+        {
+            "key": keys,
+            "pnl_net": np.asarray(pnls, float),
+            "risk_amount": 1.0,
+            "r_multiple": np.asarray(pnls, float),
+            "entry_ts": exit_ts,
+            "exit_ts": exit_ts,
+        }
+    )
 
 
 def test_ex_top_removes_largest_winners():
@@ -51,9 +59,13 @@ def test_pnl_concentration_hhi():
 
 def test_time_loo_drops_one_window_each():
     t = _t([1, 2, 3, 4], days=[0, 1, 40, 41])
-    pw = pd.DataFrame({"test_start": [T0, T0 + pd.Timedelta(days=30)],
-                       "test_end": [T0 + pd.Timedelta(days=30), T0 + pd.Timedelta(days=60)],
-                       "status": ["ok", "ok"]})
+    pw = pd.DataFrame(
+        {
+            "test_start": [T0, T0 + pd.Timedelta(days=30)],
+            "test_end": [T0 + pd.Timedelta(days=30), T0 + pd.Timedelta(days=60)],
+            "status": ["ok", "ok"],
+        }
+    )
     out = rb.time_loo(t, pw)
     assert out["n"].tolist() == [2, 2] and out["net_usd"].tolist() == [7.0, 3.0]
 
@@ -61,7 +73,7 @@ def test_time_loo_drops_one_window_each():
 def test_best_month_and_quarter_removal():
     t = _t([1, 9, -2, 3], days=[0, 40, 100, 200])  # Jan, Feb, Apr, Jul 2024
     out = rb.best_period_removal(t)
-    assert out["ex_best_month"]["net_usd"] == pytest.approx(2.0)   # Feb removed
+    assert out["ex_best_month"]["net_usd"] == pytest.approx(2.0)  # Feb removed
     assert out["ex_best_quarter"]["net_usd"] == pytest.approx(1.0)  # Q1 (1 + 9) removed
 
 
@@ -82,8 +94,7 @@ def test_fragile_label_rules():
     assert good["fragile"] is False
     one = rb.robustness(_t([100.0] + [-1.0] * 39), pd.DataFrame(), run_without=None, assets=[])
     assert one["full"]["mean_r"] > 0 and one["ex_top1"]["mean_r"] < 0 and one["fragile"] is True
-    neg_loo = rb.robustness(_t([1.0] * 40), pd.DataFrame(),
-                            run_without=lambda a: _t([-1.0]), assets=["BTC"])
+    neg_loo = rb.robustness(_t([1.0] * 40), pd.DataFrame(), run_without=lambda a: _t([-1.0]), assets=["BTC"])
     assert neg_loo["fragile"] is True
     neg_full = rb.robustness(_t([-1.0] * 40), pd.DataFrame(), run_without=None, assets=[])
     assert neg_full["fragile"] is False  # the label only flags positive results
@@ -93,6 +104,17 @@ def test_robustness_has_no_verdict_inputs():
     out = rb.robustness(_t([1.0] * 5), pd.DataFrame(), run_without=None, assets=[])
     assert not {"verdict", "passed", "go"} & set(out)
     assert "gonogo" not in inspect.getsource(rb)
-    assert set(out) == {"full", "ex_top1", "ex_top3", "ex_top1pct", "trimmed_mean_r", "median_r",
-                        "concentration", "time_loo", "asset_loo", "ex_best_month", "ex_best_quarter",
-                        "fragile"}
+    assert set(out) == {
+        "full",
+        "ex_top1",
+        "ex_top3",
+        "ex_top1pct",
+        "trimmed_mean_r",
+        "median_r",
+        "concentration",
+        "time_loo",
+        "asset_loo",
+        "ex_best_month",
+        "ex_best_quarter",
+        "fragile",
+    }

@@ -35,9 +35,14 @@ def test_atr_and_hold_rules():
 def test_xsec_grid_sizes_and_risk_grid_is_frozen():
     assert len(xsec_grid("perp")) == 24 and len(xsec_grid("spot")) == 6
     assert {(g["gross"], g["vol_target"]) for g in xsec_grid("perp")} == {
-        (1.0, .10), (1.0, .15), (1.5, .10), (1.5, .15)}
+        (1.0, 0.10),
+        (1.0, 0.15),
+        (1.5, 0.10),
+        (1.5, 0.15),
+    }
     assert {(g["lookback_days"], g["k"]) for g in xsec_grid("spot")} == {
-        (L, k) for L in (14, 30, 90) for k in (1, 2)}
+        (L, k) for L in (14, 30, 90) for k in (1, 2)
+    }
     assert set(xsec_grid("spot")[0]) == {"lookback_days", "k"}
 
 

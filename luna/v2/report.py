@@ -86,6 +86,7 @@ class V2Report:
     missed_rebalances: dict
     trials: dict
     caveats: list[str] = field(default_factory=list)
+    data: dict = field(default_factory=dict)  # data end, last bar read, assets, code version
 
 
 def naive_momentum_expectancy(naive: dict[str, BacktestResult]) -> float:
@@ -226,6 +227,7 @@ def build_v2_report(r: ResearchResults, inp: Inputs, settings: Settings) -> V2Re
         missed_rebalances=missed_reb,
         trials=r.trials,
         caveats=_caveats(r),
+        data={k: r.manifest.get(k) for k in ("data_end", "last_bar", "assets", "git_sha", "git_dirty")},
     )
 
 
@@ -241,6 +243,7 @@ def summary_dict_v2(rep: V2Report) -> dict:
     out = {
         "account": rep.account,
         "evaluation_set": EVALUATION_SET,
+        "data": rep.data,
         "untouched_set_note": UNTOUCHED_NOTE,
         "verdict": g.verdict,
         "headline": g.headline,
@@ -290,6 +293,19 @@ def _json_block(obj) -> str:
     return f"<pre>{_e(json.dumps(_json_safe(obj), indent=1))}</pre>"
 
 
+def _exposure_chart(rep: V2Report) -> str:
+    """Exposure over time (§6) of the candidate's edge run: daily gross / net leverage."""
+    days = rep.extended.get("candidate:edge", {}).get("exposure_daily", [])
+    if not days:
+        return ""
+    fig = go.Figure()
+    x = [d["date"] for d in days]
+    for k in ("gross", "net", "max_asset_share"):
+        fig.add_trace(go.Scatter(x=x, y=[d[k] for d in days], mode="lines", name=k))
+    fig.update_layout(title="Candidate exposure over time (edge)", height=300)
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
 def _sections(rep: V2Report) -> dict[str, str]:
     g = rep.gonogo
     checks = [[_e(k), "pass" if ok else "FAIL", _e(CHECKS[k][0]), _e(d)] for k, (ok, d) in g.checks.items()]
@@ -318,11 +334,14 @@ def _sections(rep: V2Report) -> dict[str, str]:
             + _plain_table(["check", "result", "variant", "detail"], checks)
         ),
         "evaluation-set": f"<p>{_e(EVALUATION_SET)}: {rep.span[0]:%Y-%m-%d} .. {rep.span[1]:%Y-%m-%d}.</p>"
-        f"<p>{_e(UNTOUCHED_NOTE)}</p>",
+        f"<p>{_e(UNTOUCHED_NOTE)}</p>"
+        f"<p>Data end {_e(rep.data.get('data_end'))}; last bar read {_e(rep.data.get('last_bar'))}; "
+        f"code {_e(rep.data.get('git_sha'))}.</p>",
         "candidate": _plain_table(
             list(cw.columns), [[_e(x) for x in row] for row in cw.itertuples(index=False)]
         ),
         "variants": _metric_table(rep.metrics, "development walk-forward OOS")
+        + _exposure_chart(rep)
         + fig.to_html(full_html=False, include_plotlyjs=True),
         "naive": _metric_table(
             {"naive_momentum": rep.naive_metrics or {}},

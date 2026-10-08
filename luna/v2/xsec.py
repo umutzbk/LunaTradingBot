@@ -42,8 +42,12 @@ def rebalance_stamps(index: pd.DatetimeIndex, rebalance: Literal["weekly", "dail
 
 
 def daily_closes(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """Daily closes (complete UTC days only) per asset, indexed by the day's decision stamp."""
-    cols = {a: resample_causal(df, "1d")["close"] for a, df in panel.items()}
+    """Daily closes (complete UTC days only) per asset, indexed by the day's decision stamp. A day
+    made only of forward-filled bars (no trade at all) is NaN: it is neither history nor a return."""
+    cols = {}
+    for a, df in panel.items():
+        d = resample_causal(df, "1d")
+        cols[a] = d["close"].where(~d["filled"].astype(bool))
     return pd.DataFrame(cols).sort_index()
 
 

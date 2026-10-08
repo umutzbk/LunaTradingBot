@@ -419,10 +419,10 @@ def run_backtest(
             pipe.finish(pid, t, "model_switch")
         pipe.exiting.clear()
         pipe.submitted.clear()
-        eq = pf.equity()
+        eq = pf.equity()  # the flattened book: refresh the whole last stats row
         equity[-1] = eq
-        stats[-1, 0] = eq
-        stats[-1, 2] = 0
+        stats[-1] = (eq, pf.gross_leverage(), len(pf.positions), pf.open_risk(), stats[-1, 4],
+                     0.0 if eq > 0 else math.nan, 0.0 if eq > 0 else math.nan)
 
     out_idx = full_idx[i0:i1]
     benchmark = None

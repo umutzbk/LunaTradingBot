@@ -67,6 +67,7 @@ class ResearchResults:
     candidate_loo: dict[str, pd.DataFrame] = field(default_factory=dict)  # closed trades only
     loo_assets: dict[str, list[str]] = field(default_factory=dict)
     runtime: dict[str, float] = field(default_factory=dict)
+    manifest: dict = field(default_factory=dict)  # code, account, assets, data end, last bar read
 
 
 # --- units (run in the parent or in workers; inputs come from _CTX) -------------------------------
@@ -218,7 +219,8 @@ def run_research(
     primary = [c for c in configs if c.rebalance == "weekly"]
     ckpt = Path(out_dir) / "units"
     ckpt.mkdir(parents=True, exist_ok=True)
-    check_manifest(Path(out_dir), run_manifest(account, inp, windows, configs, loo), resume)
+    manifest = run_manifest(account, inp, windows, configs, loo)
+    check_manifest(Path(out_dir), manifest, resume)
     runtime: dict[str, float] = {}
 
     t0 = time.perf_counter()
@@ -308,6 +310,7 @@ def run_research(
         },
         loo_assets=loo_assets,
         runtime=runtime,
+        manifest=manifest,
     )
     with open(Path(out_dir) / "results.pkl", "wb") as fh:
         pickle.dump(res, fh)

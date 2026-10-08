@@ -265,3 +265,65 @@ def test_rebalance_on_window_boundary_is_not_dropped(trend, settings):
     )
     first = w2.trades.sort_values("entry_ts").iloc[0]
     assert first["period"] == stamp and first["entry_ts"] == boundary
+
+
+def test_flatten_on_filled_last_bar_scales_frictions_with_cost_mult(trend, settings):
+    panel = {a: df.copy() for a, df in trend.items()}
+    last = START + pd.Timedelta(days=75) - pd.Timedelta("15min")
+    for df in panel.values():
+        df.loc[last, "filled"] = True
+    out = {}
+    for mult in (1.0, 2.0):
+        r = _run(panel, settings, end_day=75, flatten_at_end=True, cost_mult=mult)
+        sw = r.trades[r.trades.exit_reason == "model_switch"]
+        out[mult] = (sw["spread_slip"].sum(), r)
+    assert out[2.0][0] > out[1.0][0] > 0
+    r = out[1.0][1]
+    assert r.bar_stats["gross_leverage"].iloc[-1] == 0 and r.bar_stats["n_positions"].iloc[-1] == 0
+    assert r.bar_stats["open_risk"].iloc[-1] == 0 and r.bar_stats["max_asset_share"].iloc[-1] == 0
+
+
+def test_traded_notional_excludes_carry_over(trend, settings):
+    t = _run(trend, settings).trades.sort_values("period")
+    a = t[t.key == "A"]
+    assert a["traded_notional"].iloc[0] == pytest.approx(a["gross_notional"].iloc[0])  # fresh entry
+    later = a.iloc[1:]  # carried legs: only resize deltas are traded
+    assert (later["traded_notional"] < 0.25 * later["gross_notional"]).all()
+
+
+def test_carried_legs_keep_risk_precap_across_windows(trend, settings):
+    inst = default_instruments(sorted(trend), "perp", settings)
+    mid = START + pd.Timedelta(days=60, hours=12)  # mid-week window boundary
+    w1 = run_xsec(
+        trend, {}, BIG, sorted(trend), "perp", settings, START + pd.Timedelta(days=40), mid, instruments=inst
+    )
+    held = {p.id: p.meta["risk_precap"] for p in w1.portfolio.positions.values()}
+    assert held and all(v > 0 for v in held.values())
+    w2 = run_xsec(
+        trend,
+        {},
+        BIG,
+        sorted(trend),
+        "perp",
+        settings,
+        mid,
+        START + pd.Timedelta(days=70),
+        instruments=inst,
+        initial_portfolio=w1.portfolio,
+        initial_state=w1.risk_state,
+    )
+    carried = w2.trades[w2.trades.position_id.isin(held)]
+    assert len(carried) == len(held)
+    for row in carried.itertuples():
+        assert row.risk_precap == pytest.approx(held[row.position_id])
+        assert row.risk_precap > row.risk_amount  # the 30% asset cap clipped the raw 50% weight
+
+
+def test_missed_rebalance_recorded_for_daily_rebalance(settings):
+    # spot maker on a steady wickless uptrend: post-only buys below the mid never trade through
+    panel = _panel({"A": [0.02], "B": [0.01], "C": [-0.01]}, days=80, sigma=0.0)
+    for df in panel.values():
+        df["high"] = df[["open", "close"]].max(axis=1)
+        df["low"] = df[["open", "close"]].min(axis=1)
+    res = _run(panel, settings, params=XSecParams(14, 1, rebalance="daily"), kind="spot", end_day=60)
+    assert (res.risk_events["kind"] == "missed_rebalance").sum() >= 5

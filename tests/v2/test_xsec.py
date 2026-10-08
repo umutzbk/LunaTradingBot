@@ -46,8 +46,13 @@ def test_spot_targets_long_only():
 
 def test_eligible_rules():
     n = 40
-    dc = _dc({"A": list(np.linspace(100, 120, n)), "B": [np.nan] * 15 + list(np.linspace(1, 2, n - 15)),
-              "C": list(np.linspace(50, 40, n))})
+    dc = _dc(
+        {
+            "A": list(np.linspace(100, 120, n)),
+            "B": [np.nan] * 15 + list(np.linspace(1, 2, n - 15)),
+            "C": list(np.linspace(50, 40, n)),
+        }
+    )
     t = dc.index[-1]
     real = {"A": True, "B": True, "C": False}
     assert eligible(dc, real, ["A", "B", "C", "Z"], 14, t) == ["A"]  # B: 25 closes < 31; C: no real bar
@@ -58,3 +63,12 @@ def test_daily_closes_use_complete_days(v2_panel):
     dc = daily_closes({"BTC": v2_panel["BTC"]})
     assert (dc.index.strftime("%H:%M") == "23:45").all()
     assert dc["BTC"].iloc[0] == v2_panel["BTC"]["close"].iloc[95]
+
+
+def test_daily_closes_ignore_fully_forward_filled_days(v2_panel):
+    df = v2_panel["BTC"].copy()
+    day = df.index[96 * 5 : 96 * 6]
+    df.loc[day, "filled"] = True
+    dc = daily_closes({"BTC": df})
+    assert np.isnan(dc["BTC"].iloc[5])  # a day without a single traded bar is no history
+    assert np.isfinite(dc["BTC"].iloc[4]) and np.isfinite(dc["BTC"].iloc[6])

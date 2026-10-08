@@ -21,9 +21,18 @@ def _bars(start, end):
     idx = pd.date_range(start, end, freq="15min", tz="UTC", inclusive="left")
     n = len(idx)
     px = 100.0 + np.arange(n) * 0.01
-    return pd.DataFrame({"open": px, "high": px + 1, "low": px - 1, "close": px,
-                         "volume": 1.0, "trades": np.ones(n, dtype="int64"),
-                         "filled": np.zeros(n, dtype=bool)}, index=idx)
+    return pd.DataFrame(
+        {
+            "open": px,
+            "high": px + 1,
+            "low": px - 1,
+            "close": px,
+            "volume": 1.0,
+            "trades": np.ones(n, dtype="int64"),
+            "filled": np.zeros(n, dtype=bool),
+        },
+        index=idx,
+    )
 
 
 def test_v2_windows_end_at_cutoff(settings):

@@ -11,8 +11,18 @@ from tests.v2.equivalence import assert_equivalent
 def _hand_bars(close):
     idx = pd.date_range("2024-01-01", periods=len(close), freq="15min", tz="UTC")
     c = np.asarray(close, float)
-    return pd.DataFrame({"open": c, "high": c + 0.1, "low": c - 0.1, "close": c, "volume": 1.0,
-                         "trades": np.ones(len(c), dtype="int64"), "filled": False}, index=idx)
+    return pd.DataFrame(
+        {
+            "open": c,
+            "high": c + 0.1,
+            "low": c - 0.1,
+            "close": c,
+            "volume": 1.0,
+            "trades": np.ones(len(c), dtype="int64"),
+            "filled": False,
+        },
+        index=idx,
+    )
 
 
 def test_breakout_entry_on_close_break_of_previous_n():
@@ -41,7 +51,8 @@ def test_breakout_tradelist_matches_backtest(v2_panel, settings, tf, kind):
 
 
 def test_v2_strategy_classes_per_account():
-    assert set(V2_STRATEGY_CLASSES("spot")) == {f"{f}_{t}" for f in ("tsmom", "breakout")
-                                                for t in ("1h", "4h", "1d")}
+    assert set(V2_STRATEGY_CLASSES("spot")) == {
+        f"{f}_{t}" for f in ("tsmom", "breakout") for t in ("1h", "4h", "1d")
+    }
     assert len(V2_STRATEGY_CLASSES("perp")) == 8
     assert all(cls.name == name for name, cls in V2_STRATEGY_CLASSES("perp").items())

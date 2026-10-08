@@ -60,6 +60,7 @@ class Position:
     bars_held: int = 0
     pnl: dict[str, float] = field(default_factory=_empty_pnl)
     entry_ref_price: dict[str, float] = field(default_factory=dict)  # avg entry at ref prices
+    meta: dict[str, object] = field(default_factory=dict)  # engine-specific bookkeeping (Research V2)
 
     def net_pnl(self) -> float:
         """Realized net P&L: gross - fees - spread_slip + funding."""

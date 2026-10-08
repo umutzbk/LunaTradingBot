@@ -22,9 +22,9 @@ def test_resample_aggregates_ohlcv(v2_panel):
 
 
 def test_resample_drops_incomplete_buckets(v2_panel):
-    df = v2_panel["BTC"].iloc[:4 * 24 + 2]  # exactly one day + 2 bars
+    df = v2_panel["BTC"].iloc[: 4 * 24 + 2]  # exactly one day + 2 bars
     assert len(resample_causal(df, "1h")) == 24 and len(resample_causal(df, "1d")) == 1
-    shifted = v2_panel["BTC"].iloc[2:4 * 24 + 2]  # 96 bars but misaligned: no complete day
+    shifted = v2_panel["BTC"].iloc[2 : 4 * 24 + 2]  # 96 bars but misaligned: no complete day
     assert len(resample_causal(shifted, "1h")) == 23 and len(resample_causal(shifted, "1d")) == 0
 
 

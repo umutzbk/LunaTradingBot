@@ -228,6 +228,9 @@ def test_flatten_at_end_closes_everything(setup):
         flatten_at_end=True,
     )
     assert not res.portfolio.positions and not res.pending_exits.orders
+    last = res.bar_stats.iloc[-1]
+    assert last["gross_leverage"] == 0 and last["n_positions"] == 0 and last["open_risk"] == 0
+    assert last["net_leverage"] == 0 and last["max_asset_share"] == 0
     assert res.equity.iloc[-1] - res.initial_equity == pytest.approx(res.trades["pnl_net"].sum(), abs=1e-6)
     plain = run_backtest(
         {"BTC": inp.panel["BTC"]},
@@ -242,3 +245,57 @@ def test_flatten_at_end_closes_everything(setup):
         instruments=inp.instruments,
     )
     assert "model_switch" not in set(plain.trades["exit_reason"])
+
+
+def test_v1_simulate_unchanged_by_extensions(setup, tl):
+    """Explicit V2 defaults (initial=None, flatten_last=False, order_model=None, owners=None) give V1's
+    result trade for trade."""
+    settings, inp, windows = setup
+    fitted = fit_config(V2Config("perp", "tsmom", "1h", "broad"), windows, tl, inp, settings)
+    for cw in fitted:
+        cw.signal.ranker = AcceptAllRanker()
+    models = [cw.signal for cw in fitted]
+    args = (models, inp.panel, inp.funding, settings, "perp", 1.0, "known_only", inp.instruments)
+    a = _simulate(*args)
+    b = _simulate(*args, initial=None, flatten_last=False, order_model=None, owners=None)
+    for x, y in zip(a, b, strict=True):
+        pd.testing.assert_frame_equal(x.trades, y.trades)
+        pd.testing.assert_series_equal(x.equity, y.equity)
+
+
+def test_flatten_at_end_default_false_keeps_v1(setup):
+    settings, inp, windows = setup
+    from luna.v2.strategies import make_tsmom
+
+    T = make_tsmom("1h")
+    s = T(T.GRID[0])
+    w = windows[0]
+    kw = dict(instruments=inp.instruments)
+    a = run_backtest(
+        {"BTC": inp.panel["BTC"]},
+        {},
+        [s],
+        {s.name: ["BTC"]},
+        AcceptAllRanker(),
+        "perp",
+        settings,
+        w.test_start,
+        w.test_end,
+        **kw,
+    )
+    b = run_backtest(
+        {"BTC": inp.panel["BTC"]},
+        {},
+        [s],
+        {s.name: ["BTC"]},
+        AcceptAllRanker(),
+        "perp",
+        settings,
+        w.test_start,
+        w.test_end,
+        flatten_at_end=False,
+        order_model=None,
+        **kw,
+    )
+    pd.testing.assert_frame_equal(a.trades, b.trades)
+    pd.testing.assert_frame_equal(a.bar_stats, b.bar_stats)

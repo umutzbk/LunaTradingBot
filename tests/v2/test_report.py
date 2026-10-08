@@ -142,3 +142,12 @@ def test_report_with_trades_and_missed_fills(run, monkeypatch):
         "r_net_taker",
         "exit_reason",
     ]
+
+
+def test_summary_records_data_end_and_last_bar(run):
+    res, inp, settings, _ = run
+    s = summary_dict_v2(build_v2_report(res, inp, settings))
+    last = max(df.index[-1] for df in inp.panel.values())
+    assert s["data"]["last_bar"] == last.isoformat()
+    assert s["data"]["data_end"] == "2026-07-01T00:00:00+00:00"
+    assert s["data"]["assets"] == sorted(inp.panel)

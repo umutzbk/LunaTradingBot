@@ -52,8 +52,9 @@ def test_tsmom_exit_rule_is_stop_price(v2_panel):
     assert _exit_rule(s, s.signals(v2_panel, ["BTC"])["BTC"])[0] == STOP_PRICE
 
 
-@pytest.mark.parametrize(("tf", "kind", "n"), [("1h", "perp", 5), ("4h", "perp", 5), ("1h", "spot", 5),
-                                               ("1d", "spot", 3)])
+@pytest.mark.parametrize(
+    ("tf", "kind", "n"), [("1h", "perp", 5), ("4h", "perp", 5), ("1h", "spot", 5), ("1d", "spot", 3)]
+)
 def test_tsmom_tradelist_matches_backtest(v2_panel, settings, tf, kind, n):
     T = make_tsmom(tf)
     strat = T(T.GRID[0])
