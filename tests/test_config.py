@@ -12,7 +12,7 @@ def test_default_settings_match_spec():
     assert s.accounts["perp"].live_enabled is False
     assert s.ranking.n_min == 30 and s.pairs.fdr_q == 0.05
     assert s.accounts["spot"].max_leg_notional_frac == 0.5 and s.accounts["spot"].max_orders_per_day == 20
-    assert s.costs["perp"].half_spread_bps["default"] == 3 and s.costs["spot"].taker_fee == 0.004
+    assert s.costs["perp"].half_spread_bps["default"] == 3 and s.costs["spot"].taker_fee == 0.008
     assert s.pairs.always_watch == ["ETH/BTC"] and s.universe.min_history_days == 548
     assert s.var_dir.as_posix() == "var"
 

@@ -1,5 +1,7 @@
 # P1.5: walk-forward sonuçları (spot)
 
+> **SUPERSEDED BY CORRECTED FEE SCHEDULE (SC-2, 2026-10-08).** Bu belgedeki spot sonuçları eski spot ücretleriyle (maker %0.25 / taker %0.40) üretildi. Kraken Pro'nun güncel Tier-1 ücretleri maker %0.40 / taker %0.80 (`docs/superpowers/specs/2026-10-08-research-v2-spec-change-2-fee-schedule.md`). Aşağıdaki metin audit trail için değiştirilmeden bırakıldı; güncel spot sonucu için `docs/results/research-v2.md`'ye bakın.
+
 - **Çalıştırma:** 2026-10-08, kod `b9bbf1e`, `luna walkforward --account spot`, süre 18,8 dakika
 - **Veri:** Kraken spot OHLCVT resmi arşivi (2026Q2'ye kadar, pinned SHA256) + Trades endpoint ile boşluk doldurma. 21 varlıklık panel: ADA, AVAX, BNB, BTC, DOGE, ENA, ETH, FET, HYPE, LINK, MUBARAK, NEAR, PEPE, PUMP, SOL, SUI, TAO, UNI, XLM, XRP, ZEC.
 - **Out-of-sample dönem:** 2024-09-01 → 2026-07-01 (development walk-forward OOS). 11 test penceresi; her pencere 6 ay eğitim + 2 ay test. Daha önceki 7 pencere `min_history_days` kuralı nedeniyle boş evrenle atlandı. **Holdout (2026-07 → 2026-10) dokunulmadan duruyor.**

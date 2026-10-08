@@ -32,9 +32,9 @@ costs:
     taker_fee: 0.0005
     half_spread_bps: {BTC: 1, ETH: 1, default: 3}
     slippage_bps: 2
-  spot:
-    maker_fee: 0.0025
-    taker_fee: 0.004
+  spot:  # Kraken Pro Tier 1, corrected 2026-10-08 (SC-2; was 0.0025 / 0.004)
+    maker_fee: 0.004
+    taker_fee: 0.008
     half_spread_bps: {BTC: 2, ETH: 3, default: 3}
     slippage_bps: 0
 universe:
