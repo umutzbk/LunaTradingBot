@@ -214,6 +214,7 @@ def research_v2(
     from luna.data.store import BarStore
     from luna.instruments import load_instruments
     from luna.v2.data import load_v2_inputs
+    from luna.v2.report import build_v2_report, write_v2_report
     from luna.v2.runner import run_research
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -226,8 +227,12 @@ def research_v2(
     out_dir = resume or settings.var_dir / "reports" / f"research_v2_{account}_{ts}"
     res = run_research(settings, account, inp, Path(out_dir), jobs=jobs, resume=resume is not None,
                        tl_cache_dir=settings.var_dir / "research_v2")
+    rep = build_v2_report(res, inp, settings)
+    path = write_v2_report(rep, Path(out_dir))
     typer.echo(f"research v2 {account}: {len(res.configs)} configurations, span {res.span[0]:%Y-%m-%d} .. "
-               f"{res.span[1]:%Y-%m-%d}; results in {out_dir}")
+               f"{res.span[1]:%Y-%m-%d}")
+    typer.echo(f"verdict: {rep.gonogo.verdict} ({rep.gonogo.headline}); candidate: {rep.candidate}")
+    typer.echo(f"report: {path}")
 
 
 @app.command()
