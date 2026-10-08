@@ -261,6 +261,8 @@ def _source_files(strategies: dict[str, type]) -> list[Path]:
             src = getattr(mod, "__file__", None)
             if src and Path(src).resolve().is_relative_to(_ROOT / "luna"):
                 files.add(Path(src).resolve())
+        for rel in getattr(cls, "SOURCE_MODULES", ()):  # extra modules shaping its signals
+            files.add((_ROOT / rel).resolve())
     return sorted(files)
 
 
