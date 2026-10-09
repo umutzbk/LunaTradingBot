@@ -321,7 +321,7 @@ Bir şart sağlanmazsa o bakışta sonuç **INSUFFICIENT DATA** olur. (Eski M5, 
 - Q8: işlemin bütün bacak varlıkları için geçerli olan ilk çift kullanılır.
 
 **Geçerli gün (config başına):** Gün d, config c için şu durumda DQ-geçerlidir:
-- c'nin d 00:00'daki uygun kümesindeki ve d boyunca tutulan her varlık için Q5, Q6 ve Q7 geçer;
+- c'nin d 00:00'daki uygun kümesindeki (H5 için H1 uygunluğu) ve d boyunca tutulan her varlık için Q5, Q6 ve Q7 geçer;
 - küme boşsa §2a evreninin tamamı için geçer.
 
 M2 config başına hesaplanır.

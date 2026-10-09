@@ -35,4 +35,28 @@ The T1–T5 arithmetic was verified independently.
 
 ## Round 2 (re-check of the fixes)
 
-The round-2 result is appended below.
+**Verdict: READY TO FREEZE.** Critical = 0, Major = 0. All 19 checklist items PASS:
+
+1. proxy produces no funding P&L
+2. no executable hypothesis beyond the 7 configs
+3. H3 is diagnostic only
+4. H5 canonical rule is fixed
+5. no price-return hypothesis
+6. asset eligibility is general and outcome-free
+7. DQ thresholds are outcome-free
+8. H1 accounting is correct
+9. H2 P&L decomposition is correct
+10. funding timestamp, sign and unit are correct
+11. basis accounting and sign are correct
+12. no look-ahead
+13. holdout is unread
+14. no forward outcome peeking
+15. Holm correction is frozen
+16. bootstrap rules are frozen
+17. evidence start is frozen
+18. Critical = 0
+19. Major = 0
+
+Both optional minors were applied before the tag:
+- H5 DQ validity uses H1 eligibility.
+- This round-2 record is now filled in.
