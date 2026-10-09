@@ -50,3 +50,17 @@ def test_compose_has_a_paper_only_carry_service() -> None:
     assert svc["command"] == ["carry"]
     assert svc["healthcheck"]["test"][-1] == "carry-health"
     assert svc["restart"] == "unless-stopped"
+
+
+def test_carry_resume_command_sets_the_request(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from luna.store.db import Db
+
+    now = pd.Timestamp.now(tz="UTC").floor("s")
+    _evaluate(tmp_path, now, now)
+    db = Db(f"sqlite:///{(tmp_path / 'luna_carry.db').as_posix()}")
+    db.set_flag("carry", "kill_switch", True)
+    monkeypatch.setenv("LUNA_VAR_DIR", str(tmp_path))
+    r = CliRunner().invoke(app, ["carry-resume"])
+    assert r.exit_code == 0, r.output
+    assert db.get_state("carry", "kill_switch") is False and db.get_state("carry", "carry_resume") is True
+    db.close()

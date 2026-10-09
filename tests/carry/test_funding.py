@@ -166,3 +166,10 @@ def test_ledger_round_trips_through_its_state_dict() -> None:
     a = led.settle(T0 + H, store, grace=3 * H)
     b = clone.settle(T0 + H, store, grace=3 * H)
     assert a == b and a[0].amounts["p"] == pytest.approx(-0.6 * 50 / 60)
+
+
+def test_ledger_long_in_negative_funding_is_paid() -> None:
+    led = FundingLedger()
+    led.on_fill("ETH", T0, qty=2.0, position_id="L")
+    out = led.settle(T0 + H, _store([(T0, -0.5, -5e-6)], asset="ETH"), grace=3 * H)
+    assert out[0].amounts == {"L": pytest.approx(1.0)}  # shorts pay longs when funding < 0

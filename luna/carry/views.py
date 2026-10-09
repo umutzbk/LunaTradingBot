@@ -92,6 +92,8 @@ def book_table(engine: Engine, account: str, ev: dict[str, Any] | None) -> pd.Da
         d = json.loads(p["data"])
         pnl = json.loads(p["pnl_breakdown"])
         a = p["key"]
+        if not d["qty"].get(a):
+            continue  # a leg registered for an order that never filled
         s = sig.get(a, {})
         rows.append(
             {

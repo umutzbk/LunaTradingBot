@@ -509,8 +509,10 @@ def carry(
     database = Db(default_url(settings.var_dir, cfg.account))
     costs = settings.costs["perp"]
     broker = PaperBroker("perp", CostModel(costs), feed, database, cfg.account, band=cfg.risk.max_price_band)
+    # every perp instrument, not only the universe: a held asset dropped from the universe must
+    # still be priced into its exit order
     engine = CarryEngine(cfg, CollectorSource(Path(settings.var_dir) / "forward"), broker, database,
-                         {a: instruments[a] for a in cfg.universe}, costs.taker_fee)
+                         instruments, costs.taker_fee)
     try:
         engine.start()
     except EngineLocked as e:
@@ -518,6 +520,11 @@ def carry(
         database.close()
         client.close()
         raise typer.Exit(1) from e
+    except BaseException:
+        engine.close()  # never keep the lock after a failed start
+        database.close()
+        client.close()
+        raise
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: engine.stop())
     try:
@@ -540,6 +547,29 @@ def carry(
     if engine.exit_code:
         typer.echo(f"carry: exiting with code {engine.exit_code} ({engine.exit_reason})", err=True)
         raise typer.Exit(engine.exit_code)
+
+
+@app.command("carry-resume")
+def carry_resume() -> None:
+    """Clear the carry account's kill switch and pause, and make the bot reset its drawdown peak and
+    day-start equity to the current equity at its next evaluation (otherwise an R4 drawdown kill
+    would fire again at once). Run it only after finding out why the bot stopped."""
+    from luna.carry.config import load_carry_config
+    from luna.carry.engine import request_resume
+    from luna.config import load_settings
+    from luna.store.db import Db, db_path, default_url
+
+    settings = load_settings()
+    account = load_carry_config(settings).account
+    if not db_path(settings.var_dir, account).is_file():
+        typer.echo(f"carry-resume: no database for {account!r}", err=True)
+        raise typer.Exit(1)
+    db = Db(default_url(settings.var_dir, account))
+    try:
+        request_resume(db, account)
+    finally:
+        db.close()
+    typer.echo(f"carry-resume: flags cleared for {account!r}; the bot resets its peak at its next evaluation")
 
 
 @app.command("carry-health")

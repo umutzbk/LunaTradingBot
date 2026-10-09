@@ -150,7 +150,7 @@ class _Ctx:
             a for a, x in self.s.items() if x.eligible and math.isfinite(x.fl) and math.isfinite(x.side_cost)
         ]
         self.desc = sorted(elig, key=lambda a: (-self.s[a].fl, a))
-        self.asc = sorted(elig, key=lambda a: (self.s[a].fl, a))
+        self.asc = list(reversed(self.desc))  # same tie order: the two sides never share an asset
         self.k = min(cfg.k, len(elig) // 2)
         self.ideal = {-1: self.desc[: self.k], 1: self.asc[: self.k]}
 
@@ -260,7 +260,7 @@ def decide(inp: DecisionInput, cfg: CarryConfig) -> Decision:
         r_value = -math.inf
         if cand is not None:
             r_value = x.N * x.c(cand, light) * x.H - x.mult * 2 * x.N * x.cost(cand) - x.buf
-        if cand is not None and r_value > u_value:
+        if cand is not None and r_value > 0 and r_value > u_value:  # an entry must pay for itself
             act(enter_one(cand, light, "neutrality_restore", r_value))
         else:
             act(exit_action(worst, "neutrality_unwind", forced=True, value=u_value))
@@ -268,8 +268,8 @@ def decide(inp: DecisionInput, cfg: CarryConfig) -> Decision:
     if cfg.decision_mode == "rebalance_to_target":
         if inp.allow_rebalance:
             _rebalance_to_target(x, book, used, inp, act, exit_action)
-    elif opens:
-        _cost_aware(x, book, used, inp, act, records)
+    elif inp.allow_rebalance:  # exits on funding-edge reversal also while entries are blocked
+        _cost_aware(x, book, used, inp, act, records, opens=inp.opens_allowed)
 
     _hold_records(x, book, used, inp, records)
     _trim(x, book, inp, act)
@@ -311,7 +311,7 @@ def _rebalance_to_target(x: _Ctx, book, used, inp, act, exit_action) -> None:
         )
 
 
-def _cost_aware(x: _Ctx, book, used, inp, act, records) -> None:
+def _cost_aware(x: _Ctx, book, used, inp, act, records, opens: bool = True) -> None:
     """Greedy, best value first. Only the final round's HOLD records are kept (earlier rounds are
     re-evaluated after each applied action); a round cut by ``max_actions_per_cycle`` keeps its
     unchosen positive alternatives as ``max_actions_reached:<reason>``."""
@@ -324,7 +324,7 @@ def _cost_aware(x: _Ctx, book, used, inp, act, records) -> None:
         # a) ENTER pair
         n_long = sum(1 for g in book.values() if g.side == 1)
         n_short = sum(1 for g in book.values() if g.side == -1)
-        if n_long < x.k and n_short < x.k:
+        if opens and n_long < x.k and n_short < x.k:
             xs = x.best(-1, excl)
             xl = x.best(1, excl | ({xs} if xs else set()))
             if xs is not None and xl is not None:
@@ -365,7 +365,7 @@ def _cost_aware(x: _Ctx, book, used, inp, act, records) -> None:
                         )
                     )
         # b) SWITCH
-        for side in (-1, 1):
+        for side in (-1, 1) if opens else ():
             cand = x.best(side, excl)
             if cand is None:
                 continue

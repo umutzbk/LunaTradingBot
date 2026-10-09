@@ -335,7 +335,12 @@ PaperBroker). Sürekli çalışan, olay güdümlü servis: collector'ın `var/fo
   boyunca), FL30 sıralı evren ve funding oranları, karar günlüğü, equity eğrisi.
 - **Kill / pause:** paylaşılan bayraklar: `luna_carry.db` `state` tablosunda `kill_switch` / `paused` (bot her
   değerlendirmede okur). Kill → bütün bacaklar kapatılır, yeni giriş yok. R4 drawdown ve R18 uyuşmazlığı bu
-  bayrakları botun kendisi de kaldırır.
+  bayrakları botun kendisi de kaldırır. **Devam ettirme:** nedeni anlaşıldıktan sonra
+  `docker compose exec bot-carry uv run luna carry-resume` (bayrakları siler; bot bir sonraki değerlendirmede
+  drawdown tepe değerini ve gün başı equity'sini mevcut equity'ye çeker, yoksa R4 hemen yeniden tetiklenirdi).
+- **Hata toleransı:** bir değerlendirme hata verirse bot kitabı DB'den yeniden kurar (kaydedilmiş state + işlenmemiş
+  fill'ler + uzlaştırma); 10 ardışık hata veya kurtarma hatası → exit 3 → Docker yeniden başlatır. Not: Docker
+  `unhealthy` konteyneri kendiliğinden yeniden başlatmaz; health düşerse logla bakın.
 - **Restart:** state her emirden önce ve her değerlendirmeden sonra kaydedilir. Yeniden başlatmada kayıtlı ama
   işlenmemiş fill'ler tam bir kez işlenir, açık kalan emirler iptal edilir, holdings = bacaklar = fill'lerin neti
   kontrol edilir (uyuşmazlık → `paused` + risk olayı). Mevcut bacaklar kapatılıp yeniden açılmaz.

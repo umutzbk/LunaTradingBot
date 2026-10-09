@@ -51,6 +51,7 @@ _MAX_PASSES = 3
 VETO_COOLDOWN = pd.Timedelta(minutes=10)
 RECENT_CLOSED = pd.Timedelta(hours=8)  # closed legs kept for late funding attribution
 DATA_REASONS = frozenset({"no_quote", "stale_quote", "funding_stale"})
+_DEPENDENT = ("neutrality_", "net_exposure_trim")  # forced changes that follow from other exits
 _STATE_RULES = ("R1_", "R2_", "R3_", "R4_", "R18_", "R19_")
 _QTY_TOL = 1e-9
 
@@ -186,6 +187,9 @@ class CarryCore:
         self.trigger = Trigger(cfg.evaluation)
         self.reconciliation_ok = True
         self.on_submit: Callable[[list[Submission]], None] | None = None  # paper: persist first
+        self.on_booked: Callable[[], None] | None = None  # paper: fills of the last send are booked
+        self.dropped: list[Position] = []  # legs registered for an open that never filled
+        self.pending_settlements: list[Settlement] = []  # settled, not yet written to the Db
 
     # --- helpers -----------------------------------------------------------------------------------
 
@@ -272,7 +276,7 @@ class CarryCore:
 
         groups: list[Group] = []
         decision: Decision | None = None
-        for _ in range(_MAX_PASSES):
+        for pass_no in range(_MAX_PASSES):
             inp = DecisionInput(
                 now,
                 equity,
@@ -285,37 +289,53 @@ class CarryCore:
             )
             decision = decide(inp, cfg)
             groups, vetoed = self._plan_groups(now, snap, decision, equity)
-            if not vetoed:
-                break
-            for g in groups:  # re-plan from scratch: unregister this pass's unfilled legs
-                for o, _ in g.opens:
-                    self._drop_empty(o.position_id)
-            for g in vetoed:
+            for g in vetoed:  # (their legs are already unregistered by _plan_groups)
                 for o, _ in g.opens:
                     blocked.add(o.asset)
                     self.cooldown[o.asset] = max(self.cooldown.get(o.asset, now), now + VETO_COOLDOWN)
                 if any(g.reason.startswith(r) for r in _STATE_RULES):
                     opens_allowed = False
                 records.append(_reject(g.action, g.reason))
+            if not vetoed or pass_no == _MAX_PASSES - 1:
+                break  # the last pass keeps its approved groups (and their registered legs)
+            for g in groups:  # re-plan from scratch: unregister this pass's other legs
+                for o, _ in g.opens:
+                    self._drop_empty(o.position_id, report=False)
         assert decision is not None
         res.decision = decision
         records.extend(r for r in decision.records)
+        for g in groups:
+            if g.status == "rejected" and g not in vetoed and g.reason:
+                records.append(_reject(g.action, g.reason))  # no quote / no instrument / below min
         groups = [g for g in groups if g.status == "planned"]
-        if allow_rebalance:
+        if allow_rebalance and opens_allowed:  # a blocked scheduled rebalance is not used up
             self.last_rebalance = now
 
-        # phase 1: closes / reduces
-        batch1 = [s for g in groups for s in g.closes]
+        # phase 1a: forced exits (stop, kill, ineligible, ...); phase 1b: every other close/reduce
+        # (neutrality unwinds, trims, switches, edge exits) only if all forced exits filled, since
+        # those decisions assumed the forced legs are gone
+        primary = [g for g in groups if g.action.forced and not g.action.reason.startswith(_DEPENDENT)]
+        batch1 = [s for g in primary for s in g.closes]
         fills1 = self._send(batch1, snap, executor, now)
         filled_close = self._fully_filled(batch1, fills1)
+        if all(filled_close.values()):
+            rest = [s for g in groups if g not in primary for s in g.closes]
+            fills1b = self._send(rest, snap, executor, now)
+            filled_close |= self._fully_filled(rest, fills1b)
+            batch1, fills1 = batch1 + rest, fills1 + fills1b
+        else:
+            for g in groups:
+                if g not in primary and g.closes:
+                    g.status, g.reason = "partial", "forced_exit_not_filled"
+                    records.append(_reject(g.action, "forced_exit_not_filled"))
         # phase 2: opens of groups whose closes all filled, re-checked on the new account state
         equity = self.portfolio.equity()
         # any close that did not fill completely (spread beyond the band, no book): no opens this
         # cycle at all, so a failed exit can never leave the book with an extra leg
         all_closed = all(filled_close.values())
-        ready = [g for g in groups if g.opens and all_closed]
+        ready = [g for g in groups if g.opens and all_closed and g.status == "planned"]
         for g in groups:
-            if g.opens and g not in ready:
+            if g.opens and g not in ready and g.status == "planned":
                 g.status, g.reason = "partial", "close_not_filled"
                 records.append(_reject(g.action, "close_not_filled"))
         batch2: list[Submission] = []
@@ -330,9 +350,14 @@ class CarryCore:
             batch2 += g.opens
             ctx = self._ctx_after(ctx, g.opens)
         fills2 = self._send(batch2, snap, executor, now)
+        for o, _ in batch2:  # an IOC open without any fill: retry the asset only after a pause
+            p = self.portfolio.positions.get(o.position_id)
+            if p is not None and p.qty.get(p.key, 0.0) == 0.0:
+                self.cooldown[o.asset] = max(self.cooldown.get(o.asset, now), now + VETO_COOLDOWN)
         for g in groups:  # every leg registered for an open that did not fill
             for o, _ in g.opens:
                 self._drop_empty(o.position_id)
+        self.exit_reason.clear()  # closes that did not fill completely are re-decided next cycle
         res.groups = groups
         res.orders = batch1 + batch2
         res.fills = fills1 + fills2
@@ -427,7 +452,8 @@ class CarryCore:
             else:
                 sub = self._close(now, lo, q.mid, a.reason)
             if sub is None:
-                g.status, g.reason = "rejected", f"below_min_qty:{lo.asset}"
+                why = "no_instrument" if lo.asset not in self.instruments else "below_min_qty"
+                g.status, g.reason = "rejected", f"{why}:{lo.asset}"
                 return g
             (g.opens if lo.intent == "open" else g.closes).append(sub)
         return g
@@ -437,7 +463,9 @@ class CarryCore:
         return mid * (1 + b) if side == "buy" else mid * (1 - b)
 
     def _open(self, now: pd.Timestamp, lo: LegOrder, mid: float) -> Submission | None:
-        inst = self.instruments[lo.asset]
+        inst = self.instruments.get(lo.asset)
+        if inst is None:
+            return None
         qty = round_qty(lo.notional / mid, inst.qty_step)
         if not qty >= inst.min_qty or qty <= 0:
             return None
@@ -481,7 +509,9 @@ class CarryCore:
         if p is None:
             return None
         held = p.qty.get(lo.asset, 0.0)
-        inst = self.instruments[lo.asset]
+        inst = self.instruments.get(lo.asset)
+        if inst is None:
+            return None
         if lo.intent == "close":
             qty = abs(held)
         else:
@@ -584,6 +614,8 @@ class CarryCore:
         notional = o.qty * mid
         is_open = o.intent == "open"
         risk = self.cfg.leg_stop_frac * notional if is_open else 0.0
+        held = self.portfolio.holdings.get(o.asset, 0.0)
+        grows = is_open and held != 0.0 and (held > 0) == (o.side == "buy")
         return OrderCheck(
             order=o,
             notional=notional,
@@ -591,7 +623,7 @@ class CarryCore:
             new_position_risk_frac=risk / equity if equity > 0 else math.inf,
             stop_distance_frac=self.cfg.leg_stop_frac if is_open else None,
             has_stop=is_open,
-            increases_abs_position=False,
+            increases_abs_position=grows,
             mid=mid,
         )
 
@@ -619,6 +651,8 @@ class CarryCore:
         refs = {o.client_id: ref for o, ref in send}
         for f, pid in fills:
             self.book_fill(f, pid, refs.get(f.client_id, f.price))
+        if self.on_booked is not None:
+            self.on_booked()
         return fills
 
     @staticmethod
@@ -646,11 +680,14 @@ class CarryCore:
             q = abs(p.qty[p.key])
             p.risk_amount = self.cfg.leg_stop_frac * q * p.entry_price.get(p.key, p.entry_ref)
 
-    def _drop_empty(self, position_id: str) -> None:
-        """Remove a pre-registered leg that never filled."""
+    def _drop_empty(self, position_id: str, report: bool = True) -> None:
+        """Remove a pre-registered leg that never filled (``report``: it may have been persisted as
+        open before its order was sent, so the Db must close it)."""
         p = self.portfolio.positions.get(position_id)
         if p is not None and p.qty.get(p.key, 0.0) == 0.0 and not p.pnl["fees"]:
             del self.portfolio.positions[position_id]
+            if report:
+                self.dropped.append(p)
 
     def _collect_closed(self, now: pd.Timestamp) -> list[tuple[Position, str]]:
         out = [(p, r) for p, t, r in self.portfolio.closed]
@@ -673,6 +710,7 @@ class CarryCore:
     def _settle(self, now: pd.Timestamp, store: FundingStore) -> tuple[list[Settlement], list[Position]]:
         grace = pd.Timedelta(hours=self.cfg.funding_unknown_grace_hours)
         out = self.ledger.settle(now, store, grace)
+        self.pending_settlements += out
         touched: dict[str, Position] = {}
         pf = self.portfolio
         for s in out:

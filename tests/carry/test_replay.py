@@ -84,11 +84,15 @@ def test_replay_and_paper_share_the_decision_function(monkeypatch: pytest.Monkey
     assert calls["n"] >= 3
 
 
-def test_replay_reports_pnl_components() -> None:
-    res = run(hours=24 * 3)
+def test_replay_pnl_components_match_a_hand_calculation() -> None:
+    """24 hourly snapshots before C's jump: the k=2 book (short A, B; long F, E), 0.6625 units each
+    at a constant 100 mid (1 bp half spread), settles the 23 periods that end by the last snapshot."""
+    res = run(hours=24)
     s = res.summary
-    for k in ("funding", "price", "fees", "spread_slip", "net", "turnover", "equity_end"):
-        assert k in s
-    assert s["funding"] > 0  # shorts in positive and longs in negative funding are paid
-    assert s["net"] == pytest.approx(s["price"] + s["funding"] - s["fees"] - s["spread_slip"], abs=1e-6)
-    assert s["equity_end"] == pytest.approx(265.0 + s["net"], abs=1e-6)
+    per_hour = 0.6625 * 100.0 * (5e-5 + 4e-5 + 3e-5 + 1e-5)  # shorts receive, longs in < 0 receive
+    assert s["funding"] == pytest.approx(23 * per_hour, rel=1e-9)
+    assert s["fees"] == pytest.approx(4 * 66.25 * 0.0005, rel=1e-9)
+    assert s["spread_slip"] == pytest.approx(4 * 66.25 * 1e-4, rel=1e-6)
+    assert s["price"] == pytest.approx(0.0, abs=1e-9)  # constant mid: no price P&L
+    assert s["equity_end"] == pytest.approx(265.0 + 23 * per_hour - 4 * 66.25 * 0.0006, rel=1e-9)
+    assert s["turnover"] == pytest.approx(4 * 66.25, rel=1e-3)

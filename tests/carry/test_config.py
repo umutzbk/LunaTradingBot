@@ -67,3 +67,21 @@ def test_env_overrides_reach_the_carry_section(monkeypatch: pytest.MonkeyPatch) 
     cfg = load_carry_config()
     assert cfg.switch_horizon_hours == 72.0 and cfg.evaluation.trigger == "weekly"
     assert cfg.k == 2  # untouched keys keep their YAML values
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "match"),
+    [
+        ("switch_horizon_hours", -1.0, "switch_horizon_hours"),
+        ("min_hold_hours", -1.0, "min_hold_hours"),
+        ("max_actions_per_cycle", 0, "max_actions_per_cycle"),
+        ("evaluation__at_hour", 24, "at_hour"),
+        ("evaluation__weekday", 7, "weekday"),
+        ("evaluation__poll_s", 0, "poll_s"),
+        ("gates__max_quote_age_s", 3600, "max_quote_age_s"),
+        ("capital_usd", 300.0, "capital_usd"),
+    ],
+)
+def test_nonsense_values_are_refused(key: str, value, match: str) -> None:
+    with pytest.raises(ValidationError, match=match):
+        carry_config(**{key: value})

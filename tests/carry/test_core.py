@@ -202,4 +202,91 @@ def test_failed_exit_blocks_every_open_in_the_cycle() -> None:
     res = core.run_cycle(T0 + 18 * MIN, s2, store, SimExecutor(), allow_rebalance=True)
     assert holdings(core) == {"A": -1, "B": -1, "E": 1, "F": 1}  # exit unfilled, no extra leg
     assert all(o.intent != "open" for o, _ in res.orders)
-    assert any(r.decision == "REJECT" and r.reason == "close_not_filled" for r in res.records)
+    # the neutrality unwind that assumed A was gone is held back too
+    assert any(r.decision == "REJECT" and r.reason == "forced_exit_not_filled" for r in res.records)
+
+
+def test_three_vetoed_passes_still_book_the_approved_group() -> None:
+    """Review C1: the last re-plan pass must not unregister the legs it is about to send."""
+    import dataclasses
+
+    fl = {f"S{i}": 1e-4 - i * 1e-6 for i in range(1, 7)} | {f"L{i}": -1e-4 + i * 1e-6 for i in range(1, 7)}
+    cfg = carry_config(universe=sorted(fl))
+    deep = {"S1", "S2", "S3", "S4", "S6"}  # maintenance margin 3: R12 liquidation distance veto
+    inst = {a: dataclasses.replace(instrument(a), maintenance_margin=3.0 if a in deep else 0.01) for a in fl}
+    core = CarryCore(cfg, inst, fee_rate=0.0005, mode="backtest")
+    store = FundingStore()
+    for a, r in fl.items():
+        store.merge_envelope(funding_envelope(a, flat_history(r, T0)))
+    snap0 = parse_tickers(tickers_envelope(T0, [ticker(a, 100.0, 2.0) for a in fl]))
+    res = core.run_cycle(T0, snap0, store, SimExecutor(), allow_rebalance=True)
+    assert holdings(core) == {"S5": -1, "L5": 1}
+    assert all(p.qty[p.key] != 0.0 for p in core.portfolio.positions.values())
+    rej = {r.asset_in for r in res.records if r.decision == "REJECT"}
+    assert {"L1+S1", "L3+S3", "L6+S6"} <= rej
+
+
+def test_asset_removed_from_the_universe_is_exited_without_crashing() -> None:
+    """Review M4."""
+    core, store = make()
+    cycle(core, store, T0)
+    smaller = carry_config(universe=[a for a in FL if a != "A"])
+    moved = CarryCore.from_state(core.to_state(), smaller, core.instruments, fee_rate=0.0005, mode="backtest")
+    res = cycle(moved, store, T0 + 2 * MIN)
+    assert "A" not in holdings(moved)
+    assert any(r.decision == "EXIT" and r.reason == "not_in_universe" for r in res.records)
+
+
+def test_held_asset_without_an_instrument_is_rejected_not_crashing() -> None:
+    core, store = make()
+    cycle(core, store, T0)
+    core.instruments = {a: i for a, i in core.instruments.items() if a != "A"}
+    core.risk_state.kill_switch = True
+    res = cycle(core, store, T0 + 2 * MIN)
+    assert "A" in holdings(core)  # cannot be priced into an order: kept, reported
+    assert any(r.decision == "REJECT" and "A" in r.reason for r in res.records)
+
+
+def test_open_that_does_not_fill_puts_the_asset_in_a_short_cooldown() -> None:
+    class NoFill(SimExecutor):
+        def execute(self, batch, snap):
+            return [f for f in super().execute(batch, snap) if f[0].asset != "F"]
+
+    core, store = make()
+    core.run_cycle(T0, snap(T0), store, NoFill(), allow_rebalance=True)
+    assert "F" in core.cooldown and core.cooldown["F"] > T0
+    assert [p.id for p in core.dropped if p.key == "F"]  # the empty leg is reported for the Db
+    assert all(p.qty[p.key] != 0.0 for p in core.portfolio.positions.values())
+
+
+def test_scheduled_rebalance_is_not_used_up_while_entries_are_blocked() -> None:
+    core, store = make(evaluation__trigger="weekly")
+    core.risk_state.entries_blocked_day = T0.date()
+    core.risk_state.day = T0.date()
+    core.risk_state.day_start_equity = 265.0
+    core.risk_state.peak_equity = 265.0
+    cycle(core, store, T0)
+    assert core.last_rebalance is None and core.portfolio.positions == {}
+
+
+def test_open_on_an_already_held_side_is_vetoed_by_r10() -> None:
+    from luna.risk.engine import check
+    from luna.types import OrderRequest
+
+    core, store = make(risk__max_positions=8)  # room for a fifth leg: only R10 can object
+    cycle(core, store, T0)
+    o = OrderRequest("x", T0, "E", "buy", 0.1, 100.2, "IOC", "open", "new-pos", "g")
+    ctx = core._ctx(T0, snap(T0), core.portfolio.equity(), core.portfolio.holdings)
+    r = check([core._order_check(o, 100.0, core.portfolio.equity())], ctx)
+    assert r.vetoed and r.vetoed[0][1].startswith("R10")
+
+
+def test_exit_reasons_do_not_leak_past_the_cycle() -> None:
+    core, store = make()
+    cycle(core, store, T0)
+    rows = [ticker(a, 100.0, 100.0 if a == "A" else 2.0) for a in FL]
+    for ts in (T0 + 2 * MIN, T0 + 18 * MIN):
+        core.run_cycle(
+            ts, parse_tickers(tickers_envelope(ts, rows)), store, SimExecutor(), allow_rebalance=True
+        )
+    assert "A" in holdings(core) and core.exit_reason == {}

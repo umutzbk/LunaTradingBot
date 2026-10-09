@@ -262,4 +262,27 @@ def test_every_held_leg_gets_a_record_with_economics() -> None:
 def test_decide_is_deterministic() -> None:
     s = sigs(A=5e-5, B=5e-5, C=5e-5, D=-5e-5, E=-5e-5, F=-5e-5)  # ties broken by name
     assert run(s) == run(s)
-    assert book(run(s)) == {"A": -1, "B": -1, "D": 1, "E": 1}
+    assert book(run(s)) == {"A": -1, "B": -1, "F": 1, "E": 1}
+
+
+def test_equal_funding_never_puts_one_asset_on_both_sides() -> None:
+    s = sigs(A=1e-5, B=1e-5, C=1e-5, D=1e-5)
+    d = run(s, cfg=carry_config(decision_mode="rebalance_to_target"))
+    assert not set(d.ideal_long) & set(d.ideal_short)
+    assert len(book(d)) == 4
+
+
+def test_neutrality_restore_needs_positive_value_else_unwinds() -> None:
+    # the only replacement short (C) earns too little to pay its round trip (value < 0, though
+    # better than unwinding): entries must pay for themselves -> unwind a long instead
+    s = sigs(A=5e-5, B=4e-5, C=0.5e-5, E=-1e-5, F=-3e-5)
+    d = run(s, HELD, forced={"A": "stop"})
+    assert [(a.decision, a.reason) for a in d.actions] == [("EXIT", "stop"), ("EXIT", "neutrality_unwind")]
+
+
+def test_funding_edge_reversal_exits_even_while_entries_are_blocked() -> None:
+    s = sigs(A=-4e-5, B=4e-5, E=-1e-5, F=5e-5)
+    legs = [leg("A", -1), leg("B", -1), leg("E", 1), leg("F", 1)]
+    d = run(s, legs, opens_allowed=False)
+    assert [(a.decision, a.reason) for a in d.actions] == [("EXIT", "funding_edge_reversed")]
+    assert all(o.intent == "close" for a in d.actions for o in a.legs)

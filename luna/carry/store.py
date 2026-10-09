@@ -12,7 +12,20 @@ import math
 from typing import Any
 
 import pandas as pd
-from sqlalchemy import Boolean, Column, Engine, Float, Index, Integer, MetaData, String, Table, Text, update
+from sqlalchemy import (
+    Boolean,
+    Column,
+    Engine,
+    Float,
+    Index,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    delete,
+    update,
+)
 
 from luna.store import models as m
 
@@ -121,9 +134,17 @@ def record_evaluation(engine: Engine, account: str, row: dict[str, Any], records
     return eid
 
 
-def prune_signals(engine: Engine, account: str, before: pd.Timestamp) -> None:
-    """Drop the bulky per-asset signal JSON of evaluations older than ``before`` (rows stay)."""
+def prune_old(engine: Engine, account: str, before: pd.Timestamp) -> None:
+    """Older than ``before``: drop the per-asset signal JSON of evaluations (rows stay) and the HOLD
+    alternatives (ENTER / EXIT / SWITCH / REJECT stay forever)."""
     with engine.begin() as c:
+        c.execute(
+            delete(decisions).where(
+                decisions.c.account == account,
+                decisions.c.ts < m.ts_to_str(before),
+                decisions.c.decision == "HOLD",
+            )
+        )
         c.execute(
             update(evaluations)
             .where(

@@ -101,6 +101,27 @@ class CarryConfig(BaseModel):
             raise ValueError(f"risk.max_gross_leverage {r.max_gross_leverage} < gross {self.gross}")
         if not 0 < self.leg_stop_frac < 1:
             raise ValueError("leg_stop_frac must be in (0, 1)")
+        ev, g = self.evaluation, self.gates
+        checks = {
+            "switch_horizon_hours > 0": self.switch_horizon_hours > 0,
+            "signal_hours > 0": self.signal_hours > 0 and self.short_signal_hours > 0,
+            "min_hold_hours >= 0": self.min_hold_hours >= 0,
+            "hold_rank_buffer >= 0": self.hold_rank_buffer >= 0,
+            "max_actions_per_cycle >= 1": self.max_actions_per_cycle >= 1,
+            "switch_cost_multiplier >= 0": self.switch_cost_multiplier >= 0,
+            "gross > 0": self.gross > 0,
+            "evaluation.poll_s > 0 and max_interval_s > 0": ev.poll_s > 0 and ev.max_interval_s > 0,
+            "evaluation.interval_hours > 0": ev.interval_hours > 0,
+            "evaluation.at_hour in 0..23": 0 <= ev.at_hour <= 23,
+            "evaluation.weekday in 0..6": 0 <= ev.weekday <= 6,
+            "gates.min_funding_coverage in (0, 1]": 0 < g.min_funding_coverage <= 1,
+            # R16 (stale data) allows 30 min; the carry gate must be stricter to mean anything
+            "gates.max_quote_age_s in (0, 1800]": 0 < g.max_quote_age_s <= 1800,
+            "capital_usd == risk.capital_usd": self.capital_usd == r.capital_usd,
+        }
+        bad = [k for k, ok in checks.items() if not ok]
+        if bad:
+            raise ValueError("invalid carry config: " + "; ".join(bad))
         return self
 
 

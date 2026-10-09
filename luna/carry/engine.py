@@ -36,6 +36,7 @@ from typing import Any
 
 import pandas as pd
 from sqlalchemy import select
+from sqlalchemy.dialects.sqlite import insert
 
 from luna.carry import store as cstore
 from luna.carry.config import CarryConfig
@@ -50,6 +51,8 @@ from luna.types import Fill, Instrument
 log = logging.getLogger("luna.carry")
 
 STATE_KEY = "carry_core"
+RESUME_KEY = "carry_resume"  # set by `luna carry-resume`, consumed by the engine
+EQUITY_EVERY = pd.Timedelta(minutes=5)  # equity rows: at most this often (and after any fill)
 LOCK_STALE_S = 300
 HEARTBEAT_S = 60
 FUNDING_REFRESH = pd.Timedelta(minutes=5)
@@ -77,7 +80,7 @@ class PaperExecutor:
         self.e.broker.poll(self.e.clock())  # IOC fills are already in the Db; drain the broker
         out = []
         for fid, fill, pid in self.e.db.fills_after(self.e.account, self.e.last_fill_id):
-            self.e.last_fill_id = fid
+            self.e.pending_fill_id = fid  # becomes last_fill_id only once the core booked them
             out.append((fill, pid or ""))
         return out
 
@@ -108,7 +111,9 @@ class CarryEngine:
         self.core = CarryCore(cfg, instruments, fee_rate, mode="paper")
         self.funding = FundingStore()
         self.last_fill_id = 0
+        self.pending_fill_id = 0
         self.inflight: dict[str, float] = {}  # client id -> reference mid
+        self.last_equity_ts: pd.Timestamp | None = None
         self.last_eval: pd.Timestamp | None = None
         self.last_snapshot_ts: pd.Timestamp | None = None
         self.last_funding_refresh: pd.Timestamp | None = None
@@ -132,29 +137,42 @@ class CarryEngine:
         self._started = True
         now = self.clock()
         self.db.start_run(self.owner, self.account, "paper", self.cfg.model_dump(), started_at=now)
-        st = self.db.get_state(self.account, STATE_KEY)
-        if st is not None:
-            self.core = CarryCore.from_state(st, self.cfg, self.instruments, self.fee_rate, mode="paper")
-            self.last_fill_id = int(st.get("last_fill_id", 0))
-            self.inflight = {k: float(v) for k, v in st.get("inflight", {}).items()}
-        self.core.on_submit = self._before_submit
-        self._load_flags()
-        booked = self._book_unbooked_fills()
-        for o in self.db.open_orders(self.account):  # IOC never rests: anything still open died with us
-            self.db.set_order_status(self.account, o.client_id, "CANCELED")
-        for pid in list(self.core.portfolio.positions):
-            self.core._drop_empty(pid)
-        self.inflight.clear()
-        self._reconcile(now)
+        booked = self._restore(now)
         self.source.bootstrap_funding(self.funding, now, keep_hours=self.cfg.signal_hours + 24 * 7)
         self.last_funding_refresh = now
-        self._save(now, closed=[])
         log.info(
             "carry engine started: %d legs, equity %.2f, %d fills booked on start",
             len(self.core.portfolio.positions),
             self.core.portfolio.equity(),
             booked,
         )
+
+    def _restore(self, now: pd.Timestamp) -> int:
+        """Rebuild the core from the Db (start, and after a failed evaluation): reload the state,
+        book the fills recorded after the last booked one (exactly once), cancel orders still open
+        (IOC never rests), close legs that never filled, reconcile, commit. Returns fills booked."""
+        st = self.db.get_state(self.account, STATE_KEY)
+        if st is not None:
+            self.core = CarryCore.from_state(st, self.cfg, self.instruments, self.fee_rate, mode="paper")
+            self.last_fill_id = int(st.get("last_fill_id", 0))
+            self.inflight = {k: float(v) for k, v in st.get("inflight", {}).items()}
+        else:
+            self.core = CarryCore(self.cfg, self.instruments, self.fee_rate, mode="paper")
+            self.last_fill_id, self.inflight = 0, {}
+        self.pending_fill_id = self.last_fill_id
+        self.core.on_submit = self._before_submit
+        self.core.on_booked = self._after_booked
+        self._load_flags()
+        booked = self._book_unbooked_fills()
+        for o in self.db.open_orders(self.account):
+            self.db.set_order_status(self.account, o.client_id, "CANCELED")
+        for pid in list(self.core.portfolio.positions):
+            self.core._drop_empty(pid)
+        self.core.exit_reason.clear()
+        self.inflight.clear()
+        self._reconcile(now)
+        self._save(now, closed=[])
+        return booked
 
     def stop(self) -> None:
         self._stopped = True
@@ -210,12 +228,20 @@ class CarryEngine:
                 self.exit_code, self.exit_reason = ERROR_EXIT_CODE, "cycle_errors"
                 self._stopped = True
             self.last_eval = now
+            if self._started and not self._stopped:
+                try:  # the in-memory book may be half-updated: rebuild it from the Db
+                    self._restore(now)
+                except Exception:  # noqa: BLE001 - cannot trust the book: let Docker restart us
+                    log.exception("carry recovery after a failed cycle failed; exiting")
+                    self.exit_code, self.exit_reason = ERROR_EXIT_CODE, "recovery_failed"
+                    self._stopped = True
             return None
         self.errors = 0
         return res
 
     def _cycle(self, now: pd.Timestamp) -> CycleResult:
         self._load_flags()
+        self._apply_resume(now)
         if (
             self.last_funding_refresh is None
             or now - self.last_funding_refresh >= FUNDING_REFRESH
@@ -248,6 +274,9 @@ class CarryEngine:
             self.inflight[o.client_id] = ref
         self._save(self.clock(), closed=[])
 
+    def _after_booked(self) -> None:
+        self.last_fill_id = max(self.last_fill_id, self.pending_fill_id)
+
     def _state(self) -> dict[str, Any]:
         st = self.core.to_state()
         st["last_fill_id"] = self.last_fill_id
@@ -259,7 +288,37 @@ class CarryEngine:
             (p, "open", None, None) for p in self.core.portfolio.positions.values()
         ]
         rows += [(p, "closed", reason, t) for p, reason, t in closed]
-        self.db.save_snapshot(self.account, {STATE_KEY: self._state()}, rows, run_id=self.owner)
+        rows += [(p, "closed", "unfilled", now) for p in self.core.dropped]
+        settled = list(self.core.pending_settlements)
+        with self.db._tx() as c:  # state, legs and funding rows commit together (or not at all)
+            self.db._set_state(c, self.account, STATE_KEY, self._state())
+            for pos, status, reason, closed_at in rows:
+                row = m.position_to_row(self.account, pos, status, reason, self.owner, closed_at)
+                stmt = insert(m.positions).values(row)
+                c.execute(
+                    stmt.on_conflict_do_update(
+                        index_elements=["account", "id"],
+                        set_={k: stmt.excluded[k] for k in row if k not in ("account", "id")},
+                    )
+                )
+            for s in settled:
+                for pid, amt in s.amounts.items():
+                    pos = (
+                        self.core.portfolio.positions.get(pid) or self.core.recent_closed.get(pid, (None,))[0]
+                    )
+                    c.execute(
+                        m.funding.insert().values(
+                            account=self.account,
+                            run_id=self.owner,
+                            ts=m.ts_to_str(s.period_start),
+                            symbol=s.asset,
+                            position=pos.qty.get(s.asset, 0.0) if pos is not None else None,
+                            rate=s.funding_rel if s.known else None,
+                            amount=amt,
+                        )
+                    )
+        del self.core.pending_settlements[: len(settled)]
+        self.core.dropped.clear()
 
     def _persist(self, now: pd.Timestamp, res: CycleResult, snap: MarketSnapshot | None) -> None:
         self.inflight.clear()
@@ -271,19 +330,6 @@ class CarryEngine:
             (p, rc[p.id][2], rc[p.id][1]) for p in res.touched_closed if p.id not in done and p.id in rc
         ]
         self._save(now, closed)
-        for s in res.settlements:
-            for pid, amt in s.amounts.items():
-                pos = self.core.portfolio.positions.get(pid) or self.core.recent_closed.get(pid, (None,))[0]
-                qty = pos.qty.get(s.asset, 0.0) if pos is not None else None
-                self.db.record_funding(
-                    self.account,
-                    s.period_start,
-                    s.asset,
-                    qty,
-                    s.funding_rel if s.known else None,
-                    amt,
-                    run_id=self.owner,
-                )
         for r in res.records:
             if r.decision == "REJECT" and r.reason and r.reason[:1] == "R" and "_" in r.reason[:4]:
                 self.db.record_risk_event(
@@ -330,12 +376,20 @@ class CarryEngine:
             },
             res.records,
         )
-        self.db.record_equity(
-            self.account, now, res.equity, pf.gross_leverage(), pf.open_risk(), holdings, run_id=self.owner
-        )
+        if res.fills or self.last_equity_ts is None or now - self.last_equity_ts >= EQUITY_EVERY:
+            self.db.record_equity(
+                self.account,
+                now,
+                res.equity,
+                pf.gross_leverage(),
+                pf.open_risk(),
+                holdings,
+                run_id=self.owner,
+            )
+            self.last_equity_ts = now
         day = now.strftime("%Y-%m-%d")
         if day != self.last_prune_day:
-            cstore.prune_signals(
+            cstore.prune_old(
                 self.db.engine, self.account, now - pd.Timedelta(days=self.cfg.eval_retention_days)
             )
             self.last_prune_day = day
@@ -350,6 +404,20 @@ class CarryEngine:
             if on and not self.db.get_state(self.account, key, False):
                 self.db.set_flag(self.account, key, True)
                 self.db.record_risk_event(self.account, now, key, "raised by the carry core", key)
+
+    def _apply_resume(self, now: pd.Timestamp) -> None:
+        """`luna carry-resume`: flags were cleared by the command; reset the drawdown peak (and the
+        day's loss reference) to the current equity so R4/R3 do not fire again at once."""
+        if not self.db.get_state(self.account, RESUME_KEY, False):
+            return
+        eq = self.core.portfolio.equity()
+        rs = self.core.risk_state
+        rs.peak_equity, rs.day_start_equity, rs.entries_blocked_day = eq, eq, None
+        rs.kill_switch = rs.paused = False
+        self.core.reconciliation_ok = True
+        self.db.save_snapshot(self.account, {RESUME_KEY: False}, [])
+        self.db.record_risk_event(self.account, now, "resume", f"peak reset to {eq:.2f}", "resume")
+        log.warning("carry resumed by operator: peak and day start reset to %.2f", eq)
 
     def _load_flags(self) -> None:
         rs = self.core.risk_state
@@ -411,3 +479,11 @@ class CarryEngine:
             detail = json.dumps({a: list(v) for a, v in bad.items()})[:500]
             self.db.record_risk_event(self.account, now, "R18_reconciliation", detail, "pause")
             log.error("carry reconciliation mismatch (holdings, positions, fills): %s", detail)
+
+
+def request_resume(db: Db, account: str) -> None:
+    """Clear the kill switch / pause flags and ask the engine (running or next start) to reset its
+    drawdown peak to the current equity (the carry equivalent of the live engine's /resume)."""
+    db.set_flag(account, "kill_switch", False)
+    db.set_flag(account, "paused", False)
+    db.save_snapshot(account, {RESUME_KEY: True}, [])

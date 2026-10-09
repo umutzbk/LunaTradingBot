@@ -88,11 +88,15 @@ SWITCH gates (hysteresis): `o` held >= `min_hold_hours`; `o` ranks outside `k + 
 its side; `x` is in the ideal book; `(c_x - c_o) H >= min_carry_improvement_bps`. The switch cost is
 exit of `o` (fee + half spread + slippage) plus entry of `x`; the eventual exit of `x` replaces that
 of `o` and is not charged. Entries charge a full round trip. Greedy: best value first, at most
-`max_actions_per_cycle`; an asset is touched once per evaluation. Ties break by name.
+`max_actions_per_cycle`; an asset is touched once per evaluation. Ties break by name (the long
+side is the short ranking reversed, so equal funding never puts one asset on both sides). While
+entries are blocked (R3 day loss, pause, outage) EXIT-pair on funding-edge reversal still runs;
+ENTER and SWITCH do not. A scheduled (daily/weekly/interval) rebalance is only used up when entries
+were allowed.
 
 Mandatory changes (no value test): forced exits; leg-count neutrality (enter the best light-side
-leg or exit the worst heavy-side leg, whichever is worth more; entry only when opens and rebalancing
-are allowed); net notional above `max_net_frac x equity` -> reduce the heavier side's largest leg by
+leg if that entry's own value is > 0 and beats exiting the worst heavy-side leg, else exit that leg;
+entry only when opens and rebalancing are allowed); net notional above `max_net_frac x equity` -> reduce the heavier side's largest leg by
 the excess (reduce-only: the risk engine forbids growing a leg, R10).
 
 `decision_mode: rebalance_to_target` reproduces the V4 weekly semantics with `trigger: weekly`:
@@ -117,7 +121,10 @@ legs, R8 1.25 x equity headroom over the 1.0 target). Each action group is pre-c
 the account state after its own closes; any veto rejects the whole group (a pair never opens one
 leg), the asset gets a 10-minute veto cooldown and the decision is re-run (max 3 passes); state
 vetoes (R1-R4, R18, R19) turn entries off for the cycle. Opens are re-checked after the closes
-filled; if any close did not fill completely, no open is sent that cycle. IOC limits are
+filled. Closes go in two steps: forced exits first; only if all of them filled completely are the
+other closes (neutrality unwinds, trims, switches, edge exits) sent, and only if every close filled
+are opens sent. An open that gets no fill puts its asset in the 10-minute cooldown. An open on an
+asset already held on the same side is vetoed by R10 (``increases_abs_position``). IOC limits are
 `mid x (1 +/- order_band)` inside the R15 band; `exit_spread_bps < 2 x order_band` is enforced so a
 held leg's exit can cross the spread it is exited for. Config validation refuses a profile that
 cannot hold the target book, and refuses `live_enabled: true`.
@@ -131,6 +138,11 @@ evaluation. On start: lock; reload; book fills recorded after the last booked id
 orders still open (IOC never rests); drop legs that never filled; reconcile holdings = sum of legs =
 net of all recorded fills (mismatch -> pause + risk event). Legs keep their entry time, so a restart
 never closes and reopens them; order client ids are unique and the broker ignores a known one.
+`last_fill_id` advances only after the core booked the fills. Legs registered for an order that never
+filled are written as closed (`unfilled`). Funding rows are written in the same transaction as the
+state whose ledger produced them. The same restore runs after any failed evaluation.
+`luna carry-resume` clears the kill/pause flags and makes the engine reset its drawdown peak and
+day-start equity to the current equity (else R4 would fire again).
 
 ## 9. Observability
 
@@ -159,5 +171,12 @@ the decision log and the equity curve. Docker healthcheck `luna carry-health`.
 - No top-up of shrunken legs (R10); net drift is handled by reduce-only trims.
 - An exit whose spread exceeds 2 x `order_band` cannot fill inside the R15 band; it is retried every
   evaluation (REJECT `close_not_filled`) and blocks all opens meanwhile.
+- A funding period whose rate is not in the collector's data `funding_unknown_grace_hours` (3 h) after
+  it ended is settled at 0 for good and counted as unknown (V4 known_only convention); a late rate is
+  not re-settled.
+- A forced exit that does not fill completely holds back every other order of that evaluation
+  (dependent unwinds, switches, entries); it is retried next evaluation.
+- After a failed evaluation the engine rebuilds its book from the Db (state committed before every
+  order + fills recorded after the last booked one); 10 failures in a row exit with code 3.
 - The historical backtest (snapshot construction from bars/analytics, protocol, comparisons of
   weekly / daily / interval / event-driven) is designed separately.

@@ -275,3 +275,109 @@ def test_evaluation_rows_carry_the_dashboard_fields(tmp_path: Path) -> None:
     assert json.loads(ev["ideal"]) == {"long": ["F", "E"], "short": ["A", "B"]}
     assert ev["summary"] == "HOLD" and ev["book_carry_h"] > 0
     e.close()
+
+
+def _book(e: CarryEngine) -> dict[str, float]:
+    return {p.key: p.qty[p.key] for p in e.core.portfolio.positions.values()}
+
+
+def _fills_net(e: CarryEngine) -> dict[str, float]:
+    with e.db.engine.connect() as c:
+        rows = c.execute(select(m.fills.c.symbol, m.fills.c.side, m.fills.c.qty)).all()
+    out: dict[str, float] = {}
+    for sym, side, q in rows:
+        out[sym] = out.get(sym, 0.0) + (q if side == "buy" else -q)
+    return {a: q for a, q in out.items() if abs(q) > 1e-12}
+
+
+def test_failure_mid_execution_is_recovered_from_the_db_without_doubling(tmp_path: Path) -> None:
+    """Review M1: an exception after the broker recorded a fill must not leave a stale book."""
+    src, clock = FakeSource(), Clock(T0)
+    e = make_engine(tmp_path, src, clock)
+    e.start()
+    real_submit = e.broker.submit
+    calls = {"n": 0}
+
+    def flaky(order, ref_mid=None):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("sqlite hiccup")
+        real_submit(order, ref_mid=ref_mid)
+
+    e.broker.submit = flaky
+    assert e.cycle(T0) is None  # failed, recovered from the Db
+    assert _book(e) == pytest.approx(_fills_net(e))  # the recorded fill is booked, exactly once
+    e.broker.submit = real_submit
+    src.set(T0 + MIN)
+    e.cycle(T0 + MIN)
+    book = _book(e)
+    assert book == pytest.approx(_fills_net(e))
+    assert sum(1 for q in book.values() if q > 0) == sum(1 for q in book.values() if q < 0)  # balanced
+    assert len(book) == len({p.key for p in e.core.portfolio.positions.values()})  # one leg per asset
+    assert not e.core.risk_state.paused
+    e.close()
+
+
+def test_leg_that_never_fills_is_closed_in_the_db(tmp_path: Path) -> None:
+    """Review M2: no phantom open rows."""
+
+    class NoAsk(FakeBook):
+        def book(self, asset: str):
+            bids, asks = super().book(asset)
+            return (bids, []) if asset == "F" else (bids, asks)
+
+    src, clock = FakeSource(), Clock(T0)
+    e = make_engine(tmp_path, src, clock)
+    e.broker.feed = NoAsk(src)
+    e.start()
+    e.cycle(T0)
+    open_rows = {p.id: p.qty[p.key] for p in e.db.open_positions("carry")}
+    assert all(q != 0.0 for q in open_rows.values())
+    with e.db.engine.connect() as c:
+        reasons = dict(
+            c.execute(
+                select(m.positions.c.id, m.positions.c.exit_reason).where(m.positions.c.status == "closed")
+            ).all()
+        )
+    assert any(pid.startswith("carry:F:L") and r == "unfilled" for pid, r in reasons.items())
+    e.close()
+
+
+def test_resume_clears_a_drawdown_kill_and_resets_the_peak(tmp_path: Path) -> None:
+    """Review M3."""
+    from luna.carry.engine import request_resume
+
+    src, clock = FakeSource(), Clock(T0)
+    e = make_engine(tmp_path, src, clock)
+    e.start()
+    e.cycle(T0)
+    e.core.risk_state.peak_equity = 400.0  # equity ~265: 34% below the peak -> R4 kill
+    src.set(T0 + MIN)
+    e.cycle(T0 + MIN)
+    assert e.core.portfolio.positions == {} and e.db.get_state("carry", "kill_switch") is True
+    src.set(T0 + 2 * MIN)
+    e.cycle(T0 + 2 * MIN)  # clearing only the flag is not enough: R4 fires again
+    assert e.db.get_state("carry", "kill_switch") is True
+    request_resume(e.db, "carry")
+    src.set(T0 + 3 * MIN)
+    e.cycle(T0 + 3 * MIN)
+    assert e.db.get_state("carry", "kill_switch") is False
+    assert e.core.risk_state.peak_equity < 300 and len(e.core.portfolio.positions) == 4
+    e.close()
+
+
+def test_funding_rows_are_written_with_the_state(tmp_path: Path) -> None:
+    src, clock = FakeSource(), Clock(T0)
+    e = make_engine(tmp_path, src, clock)
+    e.start()
+    e.cycle(T0)
+    clock.t = T0 + pd.Timedelta(hours=1, minutes=1)
+    src.set(clock.t)
+    res = e.cycle(clock.t)
+    n = sum(len(s.amounts) for s in res.settlements)
+    assert n == 4 and count(e.db, m.funding) == 4 and e.core.pending_settlements == []
+    with e.db.engine.connect() as c:
+        total = c.execute(select(func.sum(m.funding.c.amount))).scalar()
+    assert total == pytest.approx(sum(sum(s.amounts.values()) for s in res.settlements))
+    assert total > 0  # shorts in positive and longs in negative funding are paid
+    e.close()
