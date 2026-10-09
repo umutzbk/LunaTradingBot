@@ -29,6 +29,7 @@ from luna.forward.envelope import NS, ns_from_iso
 from luna.forward.meta import Meta
 from luna.instruments import asset_from_perp, asset_from_spot, perp_symbol
 from luna.v2.data import HoldoutLeak
+from luna.v4 import dq
 from luna.v4.constants import BAR, DAY, V4_DATA_END, V4_EVIDENCE_START_TS, V4_UNIVERSE
 
 # --- guards --------------------------------------------------------------------------------------
@@ -129,8 +130,7 @@ def load_historical(var_dir: Path, assets: list[str] | tuple[str, ...] = V4_UNIV
 # --- forward -------------------------------------------------------------------------------------
 
 FUNDING_SOURCES = ("fut_funding", "fut_funding_full")
-SKEW_MAX_MS = 2000.0  # §7.2 proposed per-snapshot paired-skew threshold (fixed at freeze)
-EXEC_WINDOW = pd.Timedelta(minutes=15)  # §3: no valid snapshot within 15 min -> decisions skipped
+EXEC_WINDOW = dq.EXEC_WINDOW  # §3 / Q8: no valid pair within 15 min -> decisions skipped
 
 
 def collector_start(root: Path) -> pd.Timestamp:
@@ -206,10 +206,6 @@ def _f(x: Any) -> float | None:
     return v if math.isfinite(v) else None
 
 
-def _quote_ok(bid: float | None, ask: float | None) -> bool:
-    return bid is not None and ask is not None and 0 < bid <= ask
-
-
 @dataclass
 class ForwardDaily:
     """Per-(UTC day, asset) aggregates of the paired ticker snapshots.
@@ -223,6 +219,8 @@ class ForwardDaily:
     daily: pd.DataFrame
     quality: pd.DataFrame
     listing: dict[str, pd.Timestamp] = field(default_factory=dict)
+    asset_quality: pd.DataFrame = field(default_factory=pd.DataFrame)  # Q5 / Q6 per (day, asset)
+    exec_pairs: dict = field(default_factory=dict)  # day -> [(ts, {asset: quote row})] first 15 min (Q8)
 
 
 def _spot_quotes(payload: dict) -> dict[str, dict[str, float | None]]:
@@ -241,21 +239,33 @@ def _spot_quotes(payload: dict) -> dict[str, dict[str, float | None]]:
 def load_forward_daily(
     root: Path, assets: list[str] | tuple[str, ...], since: pd.Timestamp, until: pd.Timestamp
 ) -> ForwardDaily:
-    """Stream ``fut_tickers`` / ``spot_ticker`` (paired by ``pair_seq``) one day at a time."""
+    """Stream ``fut_tickers`` / ``spot_ticker`` (paired by ``pair_seq``) one day at a time and apply
+    the frozen DQ rules (``luna.v4.dq``): a pair is used for asset i only when Q1–Q3 hold for the pair
+    and Q4 for i. Q5 / Q6 per (day, asset) go to ``asset_quality``; the first 15 minutes of pairs of
+    every day are kept in ``exec_pairs`` for multi-leg actions (Q8)."""
     wanted = set(assets)
     exec_rows: dict[tuple, dict] = {}
+    exec_pairs: dict[pd.Timestamp, list] = {}
     day_acc: dict[tuple, dict] = {}
+    aq: dict[tuple, dict] = {}
     quality = []
     day = pd.Timestamp(since).floor("D")
+    pad = pd.Timedelta(seconds=10)
     while day < until:
         hi = min(day + DAY, pd.Timestamp(until))
-        spot: dict[Any, tuple[int, dict]] = {}
-        pad = pd.Timedelta(seconds=10)
+        checks = []
+        for env in iter_forward(root, "spot_time", day - dq.SPOT_CLOCK_WINDOW, hi):
+            unix = ((env.get("payload") or {}).get("result") or {}).get("unixtime") if env.get("ok") else None
+            if unix is not None:
+                checks.append((env["_recv_ns"], int(unix) * NS))
+        bad = dq.spot_clock_bad_windows(checks)
+        spot: dict[Any, tuple[dict, dict]] = {}
         for env in iter_forward(root, "spot_ticker", day - pad, hi + pad):
             if env.get("ok") and env.get("pair_seq") is not None:
-                spot[env["pair_seq"]] = (env["_recv_ns"], _spot_quotes(env.get("payload")))
+                head = {"ok": True, "_recv_ns": env["_recv_ns"], "req_ts": env.get("req_ts")}
+                spot[env["pair_seq"]] = (head, _spot_quotes(env.get("payload")))
+        valid_min: dict[str, set[int]] = {a: set() for a in wanted}
         times: list[int] = []
-        server_skew: list[float] = []
         pairs = pairs_valid = 0
         for env in iter_forward(root, "fut_tickers", day, hi):
             if not env.get("ok"):
@@ -263,18 +273,16 @@ def load_forward_daily(
             recv = env["_recv_ns"]
             times.append(recv)
             payload = env.get("payload") or {}
-            if payload.get("serverTime"):
-                try:
-                    server_skew.append((recv - ns_from_iso(payload["serverTime"])) / 1e6)
-                except ValueError:
-                    pass
             sp = spot.get(env.get("pair_seq"))
             if sp is None:
                 continue
             pairs += 1
-            valid = abs(recv - sp[0]) / 1e6 <= SKEW_MAX_MS
-            pairs_valid += valid
+            pair_valid = dq.pair_ok(env, sp[0], bad)  # marks are kept from every snapshot (liquidation)
+            pairs_valid += pair_valid
             ts = pd.Timestamp(recv, unit="ns", tz="UTC")
+            minute = int((recv - day.value) // (60 * NS))
+            in_exec = ts < day + EXEC_WINDOW
+            group: dict[str, dict] = {}
             for t in payload.get("tickers") or []:
                 sym = t.get("symbol") or ""
                 if not sym.startswith("PF_"):
@@ -289,24 +297,30 @@ def load_forward_daily(
                     acc["mark"].append(mark)
                     if recv >= acc.get("mark_last", (-1, None))[0]:
                         acc["mark_last"] = (recv, mark)
-                if not (valid and s is not None and _quote_ok(pb, pa) and _quote_ok(s["bid"], s["ask"])):
+                if not (pair_valid and dq.asset_ok(t, s)):
                     continue
+                valid_min[asset].add(minute)
                 pm, sm = (pb + pa) / 2, (s["bid"] + s["ask"]) / 2
                 acc["basis"].append(pm / sm - 1.0)
                 acc["perp"].append(pm)
                 acc["spot"].append(sm)
-                if ts < day + EXEC_WINDOW and (day, asset) not in exec_rows:
-                    exec_rows[(day, asset)] = {
-                        "ts": ts, "perp_mid": pm, "perp_half_spread": (pa - pb) / 2 / pm,
-                        "spot_mid": sm, "spot_half_spread": (s["ask"] - s["bid"]) / 2 / sm,
-                        "mark": mark, "perp_vol_quote": _f(t.get("volumeQuote")),
-                        "spot_vol_usd": s["vol_usd"], "suspended": bool(t.get("suspended")),
-                    }
+                row = {
+                    "ts": ts, "perp_mid": pm, "perp_half_spread": (pa - pb) / 2 / pm,
+                    "spot_mid": sm, "spot_half_spread": (s["ask"] - s["bid"]) / 2 / sm,
+                    "mark": mark, "perp_vol_quote": _f(t.get("volumeQuote")),
+                    "spot_vol_usd": s["vol_usd"], "suspended": bool(t.get("suspended")),
+                }
+                if in_exec:
+                    group[asset] = row
+                    exec_rows.setdefault((day, asset), row)
+            if in_exec and group:
+                exec_pairs.setdefault(day, []).append((ts, group))
+        for a in wanted:
+            aq[(day, a)] = dq.day_asset_checks(valid_min[a])
         times.sort()
         gap = max((b - a for a, b in zip(times, times[1:], strict=False)), default=None)
         quality.append({"day": day, "fut_ok": len(times), "pairs": pairs, "pairs_valid": pairs_valid,
-                        "max_gap_s": gap / NS if gap is not None else None,
-                        "clock_skew_median_ms": median(server_skew) if server_skew else None})
+                        "max_gap_s": gap / NS if gap is not None else None})
         day += DAY
     daily = {
         k: {"basis_median": median(v["basis"]) if v["basis"] else float("nan"), "basis_n": len(v["basis"]),
@@ -322,7 +336,28 @@ def load_forward_daily(
         exec=_frame(exec_rows), daily=_frame(daily),
         quality=pd.DataFrame(quality).set_index("day") if quality else pd.DataFrame(),
         listing=load_forward_listing(root, assets, until),
+        asset_quality=_frame(aq), exec_pairs=exec_pairs,
     )
+
+
+def funding_first_seen(root: Path, assets: list[str] | tuple[str, ...], until: pd.Timestamp) -> dict:
+    """Q7 input: for every funding period (start T >= collector_start) the first receipt of an hourly
+    ``fut_funding`` response containing it: {asset: {period_start_ns: recv_ns}}."""
+    start = collector_start(root)
+    syms = {perp_symbol(a): a for a in assets}
+    out: dict[str, dict[int, int]] = {a: {} for a in assets}
+    for env in iter_forward(root, "fut_funding", start, until):
+        asset = syms.get((env.get("params") or {}).get("symbol"))
+        if not env.get("ok") or asset is None:
+            continue
+        for r in (env.get("payload") or {}).get("rates") or []:
+            try:
+                t = ns_from_iso(r["timestamp"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if t >= start.value and (t not in out[asset] or env["_recv_ns"] < out[asset][t]):
+                out[asset][t] = env["_recv_ns"]
+    return out
 
 
 def _frame(rows: dict[tuple, dict]) -> pd.DataFrame:

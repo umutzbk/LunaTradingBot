@@ -15,7 +15,12 @@ MS = 1_000_000
 def _env(recv_ns, req_ns=None, server_ns=None, ok=True):
     payload = {} if server_ns is None else {"serverTime": pd.Timestamp(server_ns, tz="UTC").isoformat()}
     req = recv_ns if req_ns is None else req_ns
-    return {"ok": ok, "_recv_ns": recv_ns, "req_ts": pd.Timestamp(req, tz="UTC").isoformat(), "payload": payload}
+    return {
+        "ok": ok,
+        "_recv_ns": recv_ns,
+        "req_ts": pd.Timestamp(req, tz="UTC").isoformat(),
+        "payload": payload,
+    }
 
 
 T = DAY.value + 60 * NS

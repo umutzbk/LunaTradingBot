@@ -53,8 +53,9 @@ def test_history_v4_funding_loader_raises_on_a_leaked_row(tmp_path: Path):
 def test_history_v4_loaders_return_clean_frames(tmp_path: Path):
     _write_hist(tmp_path, "funding", "ETH", hourly_funding("2026-06-30T20:00Z", 4))
     _write_hist(tmp_path, "mark", "ETH", bars("2026-06-30T23:00Z", 4)[["open", "high", "low", "close"]])
-    sp = pd.DataFrame({"spread_full": [0.001, 0.002]},
-                      index=pd.date_range("2026-06-30T22:00Z", periods=2, freq="1h"))
+    sp = pd.DataFrame(
+        {"spread_full": [0.001, 0.002]}, index=pd.date_range("2026-06-30T22:00Z", periods=2, freq="1h")
+    )
     _write_hist(tmp_path, "spreads", "ETH", sp)
     assert list(d.load_hist_funding(tmp_path, "ETH").columns) == ["funding_abs", "funding_rel"]
     assert len(d.load_hist_mark(tmp_path, "ETH")) == 4
@@ -76,20 +77,36 @@ def test_load_historical_bundles_the_universe(tmp_path: Path):
 
 
 def _funding_payload(stamps, abs_rate=1.0):
-    return {"result": "success", "rates": [
-        {"timestamp": t, "fundingRate": abs_rate, "relativeFundingRate": abs_rate / 1e5} for t in stamps]}
+    return {
+        "result": "success",
+        "rates": [
+            {"timestamp": t, "fundingRate": abs_rate, "relativeFundingRate": abs_rate / 1e5} for t in stamps
+        ],
+    }
 
 
 def test_forward_funding_drops_periods_before_collector_start(tmp_path: Path):
     write_meta(tmp_path)
-    stamps = ["2026-07-15T00:00:00.000Z",  # sealed holdout: must never be returned
-              "2026-10-09T11:00:00.000Z",  # period started before collector_start
-              "2026-10-09T12:00:00.000Z", "2026-10-09T13:00:00.000Z"]
-    write_env(tmp_path, "fut_funding_full", "2026-10-09T14:20:00Z", _funding_payload(stamps),
-              params={"symbol": "PF_XBTUSD"})
-    write_env(tmp_path, "fut_funding", "2026-10-09T15:05:00Z",
-              _funding_payload(["2026-10-09T13:00:00.000Z", "2026-10-09T14:00:00.000Z"]),
-              params={"symbol": "PF_XBTUSD"})
+    stamps = [
+        "2026-07-15T00:00:00.000Z",  # sealed holdout: must never be returned
+        "2026-10-09T11:00:00.000Z",  # period started before collector_start
+        "2026-10-09T12:00:00.000Z",
+        "2026-10-09T13:00:00.000Z",
+    ]
+    write_env(
+        tmp_path,
+        "fut_funding_full",
+        "2026-10-09T14:20:00Z",
+        _funding_payload(stamps),
+        params={"symbol": "PF_XBTUSD"},
+    )
+    write_env(
+        tmp_path,
+        "fut_funding",
+        "2026-10-09T15:05:00Z",
+        _funding_payload(["2026-10-09T13:00:00.000Z", "2026-10-09T14:00:00.000Z"]),
+        params={"symbol": "PF_XBTUSD"},
+    )
     out = d.load_forward_funding(tmp_path, ["BTC"], until=pd.Timestamp("2026-10-10T00:00Z"))
     idx = out["BTC"].index
     assert idx.min() == pd.Timestamp("2026-10-09T12:00Z")
@@ -99,8 +116,13 @@ def test_forward_funding_drops_periods_before_collector_start(tmp_path: Path):
 
 def test_forward_reader_ignores_envelopes_received_before_collector_start(tmp_path: Path):
     write_meta(tmp_path)
-    write_env(tmp_path, "fut_funding", "2026-10-09T11:00:00Z",
-              _funding_payload(["2026-10-09T13:00:00.000Z"]), params={"symbol": "PF_XBTUSD"})
+    write_env(
+        tmp_path,
+        "fut_funding",
+        "2026-10-09T11:00:00Z",
+        _funding_payload(["2026-10-09T13:00:00.000Z"]),
+        params={"symbol": "PF_XBTUSD"},
+    )
     out = d.load_forward_funding(tmp_path, ["BTC"], until=pd.Timestamp("2026-10-10T00:00Z"))
     assert out["BTC"].empty
 
@@ -121,18 +143,39 @@ def test_evidence_split_at_evidence_start():
 
 
 def _fut(bid, ask, mark, vq=2e6, suspended=False, sym="PF_XBTUSD"):
-    return {"result": "success", "serverTime": "x", "tickers": [
-        {"symbol": sym, "bid": bid, "ask": ask, "markPrice": mark, "volumeQuote": vq,
-         "suspended": suspended}]}
+    return {
+        "result": "success",
+        "serverTime": "x",
+        "tickers": [
+            {
+                "symbol": sym,
+                "bid": bid,
+                "ask": ask,
+                "markPrice": mark,
+                "volumeQuote": vq,
+                "suspended": suspended,
+            }
+        ],
+    }
 
 
 def _spot(bid, ask, v24=10.0, p24=100.0, key="XXBTZUSD"):
-    return {"error": [], "result": {key: {"a": [str(ask), "1", "1.0"], "b": [str(bid), "1", "1.0"],
-                                          "v": ["1", str(v24)], "p": ["1", str(p24)]}}}
+    return {
+        "error": [],
+        "result": {
+            key: {
+                "a": [str(ask), "1", "1.0"],
+                "b": [str(bid), "1", "1.0"],
+                "v": ["1", str(v24)],
+                "p": ["1", str(p24)],
+            }
+        },
+    }
 
 
-def _pair(root, t, seq, fut, spot, skew_ms=100):
+def _pair(root, t, seq, fut, spot, skew_ms=100, server_lag_s=0.0):
     t = pd.Timestamp(t)
+    fut = {**fut, "serverTime": (t - pd.Timedelta(seconds=server_lag_s)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")}
     write_env(root, "fut_tickers", t, fut, pair_seq=seq)
     write_env(root, "spot_ticker", t + pd.Timedelta(milliseconds=skew_ms), spot, pair_seq=seq)
 
@@ -144,8 +187,9 @@ def test_forward_daily_exec_snapshot_is_first_skew_valid_after_midnight(tmp_path
     _pair(tmp_path, day + pd.Timedelta("1min"), 2, _fut(100, 102, 101), _spot(99, 101), skew_ms=2500)
     _pair(tmp_path, day + pd.Timedelta("2min"), 3, _fut(101, 103, 102), _spot(100, 102))  # first valid
     _pair(tmp_path, day + pd.Timedelta("3min"), 4, _fut(500, 502, 501), _spot(400, 402))
-    fd = d.load_forward_daily(tmp_path, ["BTC"], since=day - pd.Timedelta("1D"),
-                              until=day + pd.Timedelta("1D"))
+    fd = d.load_forward_daily(
+        tmp_path, ["BTC"], since=day - pd.Timedelta("1D"), until=day + pd.Timedelta("1D")
+    )
     row = fd.exec.loc[(day, "BTC")]
     assert row["perp_mid"] == 102 and row["spot_mid"] == 101
     assert row["perp_half_spread"] == pytest.approx(1 / 102)
@@ -180,9 +224,97 @@ def test_collector_start_constant_matches_fixture():
 
 def test_forward_listing_from_instruments_opening_date(tmp_path: Path):
     write_meta(tmp_path)
-    write_env(tmp_path, "fut_instruments", "2026-10-09T12:00:00Z", {"instruments": [
-        {"symbol": "PF_XBTUSD", "openingDate": "2022-03-21T00:00:00.000Z"}, {"symbol": "PF_ETHUSD"}]})
+    write_env(
+        tmp_path,
+        "fut_instruments",
+        "2026-10-09T12:00:00Z",
+        {
+            "instruments": [
+                {"symbol": "PF_XBTUSD", "openingDate": "2022-03-21T00:00:00.000Z"},
+                {"symbol": "PF_ETHUSD"},
+            ]
+        },
+    )
     lst = d.load_forward_listing(tmp_path, ["BTC", "ETH", "SOL"], until=pd.Timestamp("2026-10-10T00:00Z"))
     assert lst["BTC"] == pd.Timestamp("2022-03-21T00:00Z")
     assert lst["ETH"] == pd.Timestamp("2026-10-09T12:00Z")  # no openingDate: first seen
     assert "SOL" not in lst
+
+
+def test_forward_daily_applies_q2_q3_q4_and_reports_asset_quality(tmp_path: Path):
+    write_meta(tmp_path)
+    day = pd.Timestamp("2026-10-12T00:00Z")
+    _pair(tmp_path, day + pd.Timedelta("1min"), 1, _fut(100, 102, 101), _spot(99, 101), server_lag_s=6)  # Q3
+    _pair(tmp_path, day + pd.Timedelta("2min"), 2, _fut(102, 102, 102), _spot(99, 101))  # Q4: bid == ask
+    _pair(tmp_path, day + pd.Timedelta("3min"), 3, _fut(100, 102, 101, suspended=True), _spot(99, 101))  # Q4
+    _pair(tmp_path, day + pd.Timedelta("4min"), 4, _fut(103, 105, 104), _spot(102, 104))  # valid
+    write_env(
+        tmp_path,
+        "spot_time",
+        day + pd.Timedelta("4min 30s"),
+        {"error": [], "result": {"unixtime": int((day + pd.Timedelta("4min")).timestamp())}},
+    )  # 30 s off
+    _pair(tmp_path, day + pd.Timedelta("5min"), 5, _fut(200, 202, 201), _spot(199, 201))  # spot clock bad
+    fd = d.load_forward_daily(tmp_path, ["BTC", "ETH"], since=day, until=day + pd.Timedelta("1D"))
+    assert fd.exec.loc[(day, "BTC"), "perp_mid"] == 104
+    assert fd.daily.loc[(day, "BTC"), "basis_n"] == 1
+    q = fd.asset_quality
+    assert q.loc[(day, "BTC"), "valid_pairs"] == 1 and not q.loc[(day, "BTC"), "Q5"]
+    assert q.loc[(day, "ETH"), "valid_pairs"] == 0 and q.loc[(day, "ETH"), "longest_invalid"] == 1440
+
+
+def test_forward_daily_keeps_the_first_15_minutes_of_pairs_for_multi_leg_actions(tmp_path: Path):
+    write_meta(tmp_path)
+    day = pd.Timestamp("2026-10-12T00:00Z")
+    two = {
+        "result": "success",
+        "tickers": [
+            {"symbol": "PF_XBTUSD", "bid": 100, "ask": 102, "markPrice": 101},
+            {"symbol": "PF_ETHUSD", "bid": 10, "ask": 10, "markPrice": 10},
+        ],
+    }  # ETH invalid in pair 1
+    spot2 = {
+        "error": [],
+        "result": {
+            "XXBTZUSD": {"a": ["101", "1", "1"], "b": ["99", "1", "1"]},
+            "XETHZUSD": {"a": ["11", "1", "1"], "b": ["9", "1", "1"]},
+        },
+    }
+    _pair(tmp_path, day + pd.Timedelta("1min"), 1, two, spot2)
+    ok = {
+        **two,
+        "tickers": [two["tickers"][0], {"symbol": "PF_ETHUSD", "bid": 9, "ask": 11, "markPrice": 10}],
+    }
+    _pair(tmp_path, day + pd.Timedelta("2min"), 2, ok, spot2)
+    fd = d.load_forward_daily(tmp_path, ["BTC", "ETH"], since=day, until=day + pd.Timedelta("1D"))
+    pairs = fd.exec_pairs[day]
+    assert [sorted(p[1]) for p in pairs] == [["BTC"], ["BTC", "ETH"]]
+
+
+def test_funding_first_seen_from_hourly_fut_funding_only(tmp_path: Path):
+    write_meta(tmp_path)
+    t = pd.Timestamp("2026-10-12T05:00Z")
+    stamp = t.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    write_env(
+        tmp_path,
+        "fut_funding",
+        t + pd.Timedelta("2h5min"),
+        _funding_payload([stamp]),
+        params={"symbol": "PF_XBTUSD"},
+    )
+    write_env(
+        tmp_path,
+        "fut_funding",
+        t + pd.Timedelta("1h5min"),
+        _funding_payload([stamp]),
+        params={"symbol": "PF_XBTUSD"},
+    )
+    write_env(
+        tmp_path,
+        "fut_funding_full",
+        t + pd.Timedelta("1h1min"),
+        _funding_payload([stamp]),
+        params={"symbol": "PF_XBTUSD"},
+    )
+    seen = d.funding_first_seen(tmp_path, ["BTC"], until=t + pd.Timedelta("1D"))
+    assert seen["BTC"] == {t.value: (t + pd.Timedelta("1h5min")).value}
