@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from luna.http import get_json
+from luna.http import RETRY_STATUS, get_json
 
 NS = 1_000_000_000
 
@@ -20,7 +20,9 @@ class Request:
     source: str
     url: str
     params: dict[str, Any] | None
-    transform: Callable[[Any], Any] | None = None  # only the fut_tickers universe filter
+    transform: Callable[[Any], Any] | None = None  # row selection only (never edits rows)
+    universe_filtered: bool = False  # envelope filtered_to_universe
+    extra: dict[str, Any] | None = None  # extra envelope fields (filtered_since_ts, at_start)
 
 
 def iso_ns(ns: int) -> str:
@@ -57,13 +59,27 @@ def fetch(
     clock_ns: Callable[[], int] = time.time_ns,
     retries: int = 3,
     backoff: float = 1.0,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
-    """GET ``req`` via ``luna.http.get_json`` and wrap the raw JSON in an envelope."""
+    """GET ``req`` (one ``luna.http.get_json`` call per attempt; 429/5xx/transport errors are
+    retried ``retries`` times with ``backoff * 2**i`` sleeps) and wrap the raw JSON in an envelope."""
     req_ns = clock_ns()
     payload: Any = None
     error: str | None = None
+    attempts = 0
     try:
-        payload = get_json(client, req.url, req.params, retries=retries, backoff=backoff)
+        for i in range(retries + 1):
+            attempts += 1
+            try:
+                payload = get_json(client, req.url, req.params, retries=0)
+                break
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code not in RETRY_STATUS or i == retries:
+                    raise
+            except (httpx.TimeoutException, httpx.TransportError):
+                if i == retries:
+                    raise
+            sleep(backoff * 2**i)
         error = _api_error(payload)
         if error is None and req.transform is not None:
             payload = req.transform(payload)
@@ -79,11 +95,13 @@ def fetch(
         req_ts=iso_ns(req_ns),
         recv_ts=iso_ns(recv_ns),
         latency_ms=round((recv_ns - req_ns) / 1e6, 3),
+        attempts=attempts,
         ok=error is None,
         error=error,
         url=req.url,
         params=req.params,
-        filtered_to_universe=req.transform is not None,
-        payload=payload,
+        filtered_to_universe=req.universe_filtered,
     )
+    env.update(req.extra or {})
+    env["payload"] = payload
     return env

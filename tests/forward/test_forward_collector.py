@@ -263,3 +263,31 @@ def test_status_lists_days_that_failed_to_close(tmp_path, fake_kraken, monkeypat
     c.close()
     st = json.loads((root / "status.json").read_text(encoding="utf-8"))
     assert st["unclosed_days"] == ["2026-10-06"]
+
+
+def test_start_round_rows_are_flagged_at_start(tmp_path, fake_kraken):
+    start = T0 + 12 * 3600 * S - 60 * S  # 23:59
+    clock, kraken = fake_kraken(start)
+    root = tmp_path / "forward"
+    c = _collector(root, clock, kraken)
+    c.start()
+    c.run_forever(until_ns=start + 14 * 60 * S)
+    c.close()
+    rows = _rows(root, "fut_instruments")
+    assert [r.get("at_start", False) for r in rows] == [True, False]
+    assert "at_start" not in _rows(root, "fut_tickers")[0]
+
+
+def test_funding_hourly_filtered_and_daily_full_at_00_20(tmp_path, fake_kraken):
+    start = T0 + 12 * 3600 * S - 60 * S  # 23:59
+    clock, kraken = fake_kraken(start)
+    root = tmp_path / "forward"
+    c = _collector(root, clock, kraken)
+    c.start()
+    c.run_forever(until_ns=start + 22 * 60 * S)  # to 00:21
+    c.close()
+    hourly, full = _rows(root, "fut_funding"), _rows(root, "fut_funding_full")
+    assert len(hourly) == 21 and hourly[0]["filtered_since_ts"] == "2026-10-08T00:05:00.000000000Z"
+    assert len(full) == 21 and all(r["filtered_since_ts"] is None for r in full)
+    assert full[0]["recv_ts"].startswith("2026-10-10T00:20:")
+    assert all(r["attempts"] == 1 for r in hourly)

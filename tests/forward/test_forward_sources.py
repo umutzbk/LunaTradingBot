@@ -10,6 +10,7 @@ def test_fut_book_one_call_per_perp():
     assert [r.params for r in reqs] == [{"symbol": s} for s in config.PERP_SYMBOLS]
     assert {r.url for r in reqs} == {"https://futures.kraken.com/derivatives/api/v3/orderbook"}
     assert {r.source for r in reqs} == {"fut_book"} and all(r.transform is None for r in reqs)
+    assert all(r.extra is None and not r.universe_filtered for r in reqs)
 
 
 def test_spot_depth_one_call_per_pair_count_10():
@@ -18,10 +19,30 @@ def test_spot_depth_one_call_per_pair_count_10():
     assert {r.url for r in reqs} == {"https://api.kraken.com/0/public/Depth"}
 
 
-def test_fut_funding_one_call_per_perp():
-    reqs = sources.fut_funding()
+FUNDING_URL = "https://futures.kraken.com/derivatives/api/v4/historicalfundingrates"
+
+
+def test_fut_funding_hourly_keeps_only_the_last_48h():
+    slot = 1_791_547_200 + 300  # 12:05
+    reqs = sources.fut_funding(slot)
     assert [r.params for r in reqs] == [{"symbol": s} for s in config.PERP_SYMBOLS]
-    assert {r.url for r in reqs} == {"https://futures.kraken.com/derivatives/api/v4/historicalfundingrates"}
+    assert {r.url for r in reqs} == {FUNDING_URL} and {r.source for r in reqs} == {"fut_funding"}
+    since = "2026-10-07T12:05:00.000000000Z"
+    assert reqs[0].extra == {"filtered_since_ts": since} and not reqs[0].universe_filtered
+    rates = [{"timestamp": "2026-10-07T12:00:00.000Z", "fundingRate": 1, "relativeFundingRate": 2},
+             {"timestamp": "2026-10-07T13:00:00.000Z", "fundingRate": 3, "relativeFundingRate": 4.5},
+             {"timestamp": "2026-10-09T12:00:00.000Z", "fundingRate": -1e-9, "relativeFundingRate": 0}]
+    out = reqs[0].transform({"result": "success", "rates": rates, "serverTime": "t"})
+    assert out == {"result": "success", "rates": rates[1:], "serverTime": "t"}  # rows unmodified
+
+
+def test_fut_funding_full_daily_audit_call():
+    reqs = sources.fut_funding_full()
+    assert [r.params for r in reqs] == [{"symbol": s} for s in config.PERP_SYMBOLS]
+    assert {r.url for r in reqs} == {FUNDING_URL} and {r.source for r in reqs} == {"fut_funding_full"}
+    assert reqs[0].transform is None and reqs[0].extra == {"filtered_since_ts": None}
+    cad = config.SOURCES["fut_funding_full"]
+    assert (cad.period_s, cad.offset_s, cad.calls) == (86400, 1200, 21)  # 00:20 UTC
 
 
 def test_fut_analytics_last_3h_at_300s_for_every_type():
@@ -44,7 +65,7 @@ def test_spot_time():
 def test_every_source_id_has_a_function():
     assert set(config.SOURCES) == {
         "fut_tickers", "spot_ticker", "fut_book", "spot_depth", "fut_funding", "fut_analytics", "spot_time",
-        "fut_instruments", "spot_assetpairs",
+        "fut_instruments", "spot_assetpairs", "fut_funding_full",
     }
     for name in config.SOURCES:
         assert callable(getattr(sources, name))

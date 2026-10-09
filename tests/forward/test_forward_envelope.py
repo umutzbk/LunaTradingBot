@@ -59,7 +59,7 @@ def test_raw_payload_is_preserved_exactly():
 def test_envelope_fields_and_timestamps():
     client = _client(lambda r: httpx.Response(200, json={"result": {"unixtime": 1}, "error": []}))
     env = fetch(client, Request("spot_time", "https://x/Time", {"a": 1}), seq=3, clock_ns=Clock(T0))
-    assert list(env) == ["source", "seq", "req_ts", "recv_ts", "latency_ms", "ok", "error", "url",
+    assert list(env) == ["source", "seq", "req_ts", "recv_ts", "latency_ms", "attempts", "ok", "error", "url",
                          "params", "filtered_to_universe", "payload"]
     assert env["source"] == "spot_time" and env["seq"] == 3 and env["ok"] is True and env["error"] is None
     assert env["req_ts"] == iso_ns(T0 + 1_500_000) and env["recv_ts"] == iso_ns(T0 + 3_000_000)
@@ -120,3 +120,34 @@ def test_invalid_json_gives_an_error_envelope():
     env = fetch(_client(lambda r: httpx.Response(200, text="<html>")), spot_ticker()[0], seq=1,
                 clock_ns=Clock(T0))
     assert env["ok"] is False and env["payload"] is None
+
+
+def test_attempts_recorded_with_retry_backoff():
+    n = {"calls": 0}
+
+    def handler(r):
+        n["calls"] += 1
+        ok = httpx.Response(200, json={"error": [], "result": {}})
+        return httpx.Response(500) if n["calls"] < 3 else ok
+
+    sleeps = []
+    env = fetch(_client(handler), spot_ticker()[0], seq=1, clock_ns=Clock(T0), retries=2, backoff=0.5,
+                sleep=sleeps.append)
+    assert env["ok"] is True and env["attempts"] == 3 and sleeps == [0.5, 1.0]
+    assert list(env).index("attempts") == list(env).index("latency_ms") + 1
+
+
+def test_attempts_on_final_failure_and_no_retry_on_404():
+    env = fetch(_client(lambda r: httpx.Response(503)), spot_ticker()[0], seq=1, clock_ns=Clock(T0),
+                retries=1, backoff=0, sleep=lambda s: None)
+    assert env["ok"] is False and env["attempts"] == 2
+    env = fetch(_client(lambda r: httpx.Response(404)), spot_ticker()[0], seq=1, clock_ns=Clock(T0),
+                retries=3, backoff=0, sleep=lambda s: None)
+    assert env["attempts"] == 1
+
+
+def test_extra_envelope_fields():
+    req = Request("fut_instruments", "https://x/i", None, extra={"at_start": True})
+    env = fetch(_client(lambda r: httpx.Response(200, json={"instruments": []})), req, seq=1,
+                clock_ns=Clock(T0))
+    assert env["at_start"] is True and list(env)[-1] == "payload"

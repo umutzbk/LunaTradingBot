@@ -16,7 +16,7 @@ import logging
 import math
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import httpx
@@ -39,9 +39,12 @@ MAX_SLEEP_S = 1.0  # keep the loop responsive to stop()
 _NEVER = math.inf
 
 
+SLOT_ARG_SOURCES = ("fut_analytics", "fut_funding")
+
+
 def build_requests(source: str, slot_s: int) -> list[Request]:
     fn = getattr(sources, source)
-    return fn(slot_s) if source == "fut_analytics" else fn()
+    return fn(slot_s) if source in SLOT_ARG_SOURCES else fn()
 
 
 @dataclass
@@ -166,6 +169,8 @@ class Collector:
             for src in r.sources:
                 spacing = SOURCES[src].spacing_s
                 reqs = build_requests(src, slot_s)
+                if r.period_s is None:  # the start fetch: flagged, excluded from coverage ratios
+                    reqs = [replace(q, extra={**(q.extra or {}), "at_start": True}) for q in reqs]
                 first = self.meta.reserve(src, len(reqs))
                 self.meta.save()
                 for i, req in enumerate(reqs):
@@ -208,7 +213,7 @@ class Collector:
             self._reschedule(minute, slot)
 
     def _fetch_write(self, req: Request, seq: int, pair_seq: int | None = None) -> None:
-        env = fetch(self.client, req, seq, pair_seq, self.clock_ns, self.retries, self.backoff)
+        env = fetch(self.client, req, seq, pair_seq, self.clock_ns, self.retries, self.backoff, self.sleep)
         try:
             self.writer.append(env)
         except (ClosedDayError, OSError) as e:

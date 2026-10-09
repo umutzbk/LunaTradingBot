@@ -87,7 +87,7 @@ class StatusTracker:
 
 
 HEALTH_MAX_AGE_S = {"fut_tickers": 180, "spot_ticker": 180, "fut_funding": 2 * 3600}
-REFERENCE_MAX_AGE_S = {"fut_instruments": 26 * 3600, "spot_assetpairs": 26 * 3600}
+REFERENCE_MAX_AGE_S = {s: 26 * 3600 for s in ("fut_instruments", "spot_assetpairs", "fut_funding_full")}
 
 
 def _age_s(ts: str | None, now_ns: int) -> float | None:

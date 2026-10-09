@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Any
 
 from luna.forward.config import (
@@ -9,14 +10,16 @@ from luna.forward.config import (
     ANALYTICS_LOOKBACK_S,
     ANALYTICS_TYPES,
     DEPTH_COUNT,
+    FUNDING_KEEP_S,
     FUTURES_BASE,
     PERP_SYMBOLS,
     SPOT_BASE,
     SPOT_PAIRS,
 )
-from luna.forward.envelope import Request
+from luna.forward.envelope import NS, Request, iso_ns, ns_from_iso
 
 _PERPS = frozenset(PERP_SYMBOLS)
+FUNDING_URL = f"{FUTURES_BASE}/derivatives/api/v4/historicalfundingrates"
 
 
 def filter_tickers(payload: dict[str, Any]) -> dict[str, Any]:
@@ -34,7 +37,7 @@ def filter_instruments(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def fut_tickers() -> list[Request]:
-    return [Request("fut_tickers", f"{FUTURES_BASE}/derivatives/api/v3/tickers", None, filter_tickers)]
+    return [Request("fut_tickers", f"{FUTURES_BASE}/derivatives/api/v3/tickers", None, filter_tickers, True)]
 
 
 def spot_ticker() -> list[Request]:
@@ -51,9 +54,26 @@ def spot_depth() -> list[Request]:
     return [Request("spot_depth", url, {"pair": p, "count": DEPTH_COUNT}) for p in SPOT_PAIRS]
 
 
-def fut_funding() -> list[Request]:
-    url = f"{FUTURES_BASE}/derivatives/api/v4/historicalfundingrates"
-    return [Request("fut_funding", url, {"symbol": s}) for s in PERP_SYMBOLS]
+def filter_rates_since(since_ns: int, payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep only funding rows with ``timestamp >= since`` (rows unmodified; selection only)."""
+    out = dict(payload)
+    out["rates"] = [r for r in payload.get("rates") or []
+                    if r.get("timestamp") and ns_from_iso(r["timestamp"]) >= since_ns]
+    return out
+
+
+def fut_funding(slot_s: int) -> list[Request]:
+    """Hourly: the endpoint returns the whole history; only rows of the last 48 h are stored."""
+    since_ns = (slot_s - FUNDING_KEEP_S) * NS
+    extra = {"filtered_since_ts": iso_ns(since_ns)}
+    flt = partial(filter_rates_since, since_ns)
+    return [Request("fut_funding", FUNDING_URL, {"symbol": s}, flt, extra=extra) for s in PERP_SYMBOLS]
+
+
+def fut_funding_full() -> list[Request]:
+    """Daily audit trail: the full, unfiltered funding history of every perp."""
+    extra = {"filtered_since_ts": None}
+    return [Request("fut_funding_full", FUNDING_URL, {"symbol": s}, extra=extra) for s in PERP_SYMBOLS]
 
 
 def fut_analytics(now_s: int) -> list[Request]:
@@ -72,7 +92,7 @@ def spot_time() -> list[Request]:
 
 def fut_instruments() -> list[Request]:
     url = f"{FUTURES_BASE}/derivatives/api/v3/instruments"
-    return [Request("fut_instruments", url, None, filter_instruments)]
+    return [Request("fut_instruments", url, None, filter_instruments, True)]
 
 
 def spot_assetpairs() -> list[Request]:

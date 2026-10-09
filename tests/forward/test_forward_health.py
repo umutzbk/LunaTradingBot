@@ -14,7 +14,8 @@ NOW = 1_791_547_200 * S
 def _status(**ages_s):
     """ages_s: source -> seconds since last ok (None: never)."""
     src = {}
-    for name in ("fut_tickers", "spot_ticker", "fut_funding", "fut_instruments", "spot_assetpairs"):
+    for name in ("fut_tickers", "spot_ticker", "fut_funding", "fut_instruments", "spot_assetpairs",
+                 "fut_funding_full"):
         age = ages_s.get(name, 60)
         src[name] = {"last_ok_recv_ts": None if age is None else iso_ns(NOW - age * S)}
     return {"started_ts": iso_ns(NOW - ages_s.get("uptime", 10 * 3600) * S), "sources": src,
@@ -97,3 +98,10 @@ def test_unclosed_days_warn_and_fail_strict():
     code, lines = check_health(st, NOW)
     assert code == 0 and any(x.startswith("WARNING") and "2026-10-07" in x for x in lines)
     assert check_health(st, NOW, strict=True)[0] == 2
+
+
+def test_daily_full_funding_staleness_warns_only():
+    st = _status()
+    st["sources"]["fut_funding_full"] = {"last_ok_recv_ts": iso_ns(NOW - 27 * 3600 * S)}
+    code, lines = check_health(st, NOW)
+    assert code == 0 and any(x.startswith("WARNING fut_funding_full") for x in lines)

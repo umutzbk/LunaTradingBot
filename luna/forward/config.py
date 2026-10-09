@@ -23,6 +23,7 @@ ANALYTICS_TYPES: tuple[str, ...] = (
 ANALYTICS_LOOKBACK_S = 3 * 3600
 ANALYTICS_INTERVAL_S = 300
 DEPTH_COUNT = 10
+FUNDING_KEEP_S = 48 * 3600  # hourly fut_funding stores only rates of the last 48 h
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,8 @@ SOURCES: dict[str, Cadence] = {
     # daily reference data, also fetched once at every collector start
     "fut_instruments": Cadence(86400, 600, 1),
     "spot_assetpairs": Cadence(86400, 720, 1),
+    # daily full (unfiltered) funding history as an audit trail, 00:20 UTC
+    "fut_funding_full": Cadence(86400, 1200, len(UNIVERSE), 0.5),
 }
 AT_START = ("fut_instruments", "spot_assetpairs")
 
