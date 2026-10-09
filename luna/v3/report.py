@@ -5,6 +5,7 @@ set is never read."""
 
 from __future__ import annotations
 
+import html
 import json
 import math
 from pathlib import Path
@@ -74,10 +75,13 @@ def write_v3_report(res: ResearchResults, null: dict, inp: Inputs, settings: Set
         else "GO: the nested train-only selection (candidate per window below) passes every V3 check"
     )
     rep.caveats = V3_CAVEATS + list(rep.caveats)
+    cumulative = {**PRIOR_TRIALS, "v3": count_trials(res.configs)}
+    rep.trials = {**rep.trials, "cumulative_trials": cumulative}
     path = write_v2_report(rep, out_dir)
-    path.write_text(
-        path.read_text(encoding="utf-8").replace("Luna Research V2", "Luna Research V3"), encoding="utf-8"
-    )
+    page = path.read_text(encoding="utf-8").replace("Luna Research V2", "Luna Research V3")
+    # spec E2: the dataset-reuse caveat is the report's first paragraph
+    page = page.replace("</h1>", f"</h1><p><b>{html.escape(V3_CAVEATS[0])}</b></p>", 1)
+    path.write_text(page, encoding="utf-8")
 
     sp = out_dir / "summary.json"
     s = json.loads(sp.read_text(encoding="utf-8"))
@@ -92,7 +96,7 @@ def write_v3_report(res: ResearchResults, null: dict, inp: Inputs, settings: Set
         "null_seeds": list(NULL_SEEDS),
         "null_seeds_traded": null.get("null_seeds_traded"),
         "naive_momentum_expectancy_r": (s.get("naive_momentum") or {}).get("expectancy_r"),
-        "cumulative_trials": {**PRIOR_TRIALS, "v3": count_trials(res.configs)},
+        "cumulative_trials": cumulative,
     }
     sp.write_text(json.dumps(s, indent=1), encoding="utf-8")
     return path

@@ -27,11 +27,11 @@ def summary(v2_panel, v2_settings_small, tmp_path_factory):
     res, null = run_v3(v2_settings_small, "spot", inp, out, windows=windows[-3:], configs=CFGS, loo=False)
     write_v3_report(res, null, inp, v2_settings_small, out)
     text = (out / "summary.json").read_text(encoding="utf-8")
-    return json.loads(text), text
+    return json.loads(text), text, (out / "report.html").read_text(encoding="utf-8")
 
 
 def test_summary_has_the_v3_block(summary):
-    s, _ = summary
+    s, _, _ = summary
     v3 = s["v3"]
     assert v3["families"] == ["lowvol"] and v3["null_seeds"] == [1, 2, 3, 4, 5]
     assert v3["cumulative_trials"]["v1"] == 208
@@ -40,13 +40,13 @@ def test_summary_has_the_v3_block(summary):
 
 
 def test_criterion_8_compares_daily_sharpe_with_the_null(summary):
-    s, _ = summary
+    s, _, _ = summary
     d = s["checks"]["complexity_adds_value"]["detail"]
     assert d.startswith("[V3 null baseline] daily Sharpe")
 
 
 def test_verdict_is_consistent_with_the_checks(summary):
-    s, _ = summary
+    s, _, _ = summary
     n_ok = s["checks"]["min_trades"]["passed"]
     all_ok = all(c["passed"] for c in s["checks"].values())
     expected = "INSUFFICIENT DATA" if not n_ok else ("GO" if all_ok else "NO-GO")
@@ -54,15 +54,26 @@ def test_verdict_is_consistent_with_the_checks(summary):
 
 
 def test_html_names_the_null_baseline(summary, tmp_path_factory):
-    s, _ = summary
+    s, _, _ = summary
     assert s["v3"]["criterion_8"] == "daily Sharpe (edge) > mean null daily Sharpe"
 
 
 def test_dataset_reuse_caveat_comes_first(summary):
-    s, _ = summary
+    s, _, _ = summary
     assert "reused development set" in s["caveats"][0] and "not generalization evidence" in s["caveats"][0]
 
 
 def test_summary_never_names_the_untouched_set_by_that_word(summary):
-    _, text = summary
+    _, text, _ = summary
     assert "holdout" not in text.lower()
+
+
+def test_html_opens_with_the_dataset_reuse_caveat(summary):
+    _, _, html = summary
+    after_title = html.split("</h1>", 1)[1]
+    assert after_title.lstrip().startswith("<p") and "reused development set" in after_title[:600]
+
+
+def test_html_shows_cumulative_trials(summary):
+    _, _, html = summary
+    assert "cumulative_trials" in html and "208" in html
