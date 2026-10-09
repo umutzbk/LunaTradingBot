@@ -127,3 +127,44 @@ def check_health(status: dict[str, Any] | None, now_ns: int, strict: bool = Fals
     if strict and backup_warnings:
         return 2, ["collector-health: ok, but backup warning (--strict)", *lines]
     return 0, ["collector-health: ok", *lines]
+
+
+def forward_view(root: Path, now_ns: int) -> dict[str, Any]:
+    """Health/coverage view for the dashboard "Forward data" page: status.json + day manifests
+    only (no prices, no account database)."""
+    root = Path(root)
+    st = read_status(root)
+    sources = []
+    for name, e in ((st or {}).get("sources") or {}).items():
+        today = e.get("today") or {}
+        sources.append({
+            "source": name,
+            "last_ok_age_s": None if _age_s(e.get("last_ok_recv_ts"), now_ns) is None
+            else round(_age_s(e.get("last_ok_recv_ts"), now_ns), 1),
+            "ok_today": today.get("ok", 0),
+            "errors_today": today.get("error", 0),
+            "last_error": e.get("last_error"),
+        })
+    days = []
+    for mpath in sorted((root / "manifest").glob("date=*.json"), reverse=True):
+        try:
+            m = json.loads(mpath.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        backed = (root / "backup" / mpath.name).exists()
+        for name, c in (m.get("sources") or {}).items():
+            days.append({"date": m["date"], "source": name, "expected": c.get("expected", 0),
+                         "received": c.get("received", 0),
+                         "missing": max(0, c.get("expected", 0) - c.get("received", 0)),
+                         "errors": c.get("errors", 0), "backed_up": backed})
+    return {
+        "status_found": st is not None,
+        "updated_ts": (st or {}).get("updated_ts"),
+        "collector_start_ts": (st or {}).get("collector_start_ts"),
+        "open_hours": (st or {}).get("open_hours"),
+        "backup_ok": bool((st or {}).get("backup_ok")),
+        "backup_reason": (st or {}).get("backup_reason"),
+        "backup_warnings": list((st or {}).get("backup_warnings") or []),
+        "sources": sources,
+        "days": days,
+    }
