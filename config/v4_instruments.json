@@ -1,0 +1,317 @@
+{
+ "assets": {
+  "ADA": {
+   "perp": {
+    "min_cost": 0.0,
+    "min_qty": 1.0,
+    "step": 1.0,
+    "tick": 1e-05
+   },
+   "spot": {
+    "min_cost": 0.5,
+    "min_qty": 20.0,
+    "step": 1e-08,
+    "tick": 1e-06
+   }
+  },
+  "AVAX": {
+   "perp": {
+    "min_cost": 0.0,
+    "min_qty": 0.01,
+    "step": 0.01,
+    "tick": 0.001
+   },
+   "spot": {
+    "min_cost": 0.5,
+    "min_qty": 0.5,
+    "step": 1e-08,
+    "tick": 0.001
+   }
+  },
+  "BNB": {
+   "perp": {
+    "min_cost": 0.0,
+    "min_qty": 0.01,
+    "step": 0.01,
+    "tick": 0.01
+   },
+   "spot": {
+    "min_cost": 0.5,
+    "min_qty": 0.007,
+    "step": 1e-05,
+    "tick": 0.01
+   }
+  },
+  "BTC": {
+   "perp": {
+    "min_cost": 0.0,
+    "min_qty": 0.0001,
+    "step": 0.0001,
+    "tick": 1.0
+   },
+   "spot": {
+    "min_cost": 0.5,
+    "min_qty": 5e-05,
+    "step": 1e-08,
+    "tick": 0.1
+   }
+  },
+  "DOGE": {
+   "perp": {
+    "min_cost": 0.0,
+    "min_qty": 1.0,
+    "step": 1.0,
+    "tick": 1e-05
+   },
+   "spot": {
+    "min_cost": 0.5,
+    "min_qty": 50.0,
+    "step": 1e-08,
+    "tick": 1e-07
+   }
+  },
+  "ENA": {
+   "perp": {
+    "min_cost": 0.0,
+    "min_qty": 1.0,
+    "step": 1.0,
+    "tick": 1e-05
+   },
+   "spot": {
+    "min_cost": 0.5,
+    "min_qty": 20.0,
+    "step": 1e-05,
+    "tick": 0.0001
+   }
+  },
+  "ETH": {
+   "perp": {
+    "min_cost": 0.0,
+    "min_qty": 0.001,
+    "step": 0.001,
+    "tick": 0.1
+   },
+   "spot": {
+    "min_cost": 0.5,
+    "min_qty": 0.001,
+    "step": 1e-08,
+    "tick": 0.01
+   }
+  },
+  "FET": {
+   "perp": {
+    "min_cost": 0.0,
+    "min_qty": 1.0,
+    "step": 1.0,
+    "tick": 1e-05
+   },
+   "spot": {
+    "min_cost": 0.5,
+    "min_qty": 18.0,
+    "step": 1e-08,
+    "tick": 0.0001
+   }
+  },
+  "HYPE": {
+   "perp": {
+    "min_cost": 0.0,
+    "min_qty": 0.1,
+    "step": 0.1,
+    "tick": 0.001
+   },
+   "spot": {
+    "min_cost": 0.5,
+    "min_qty": 0.1,
+    "step": 1e-08,
+    "tick": 0.01
+   }
+  },
+  "LINK": {
+   "perp": {
+    "min_cost": 0.0,
+    "min_qty": 0.1,
+    "step": 0.1,
+    "tick": 0.001
+   },
+   "spot": {
+    "min_cost": 0.5,
+    "min_qty": 0.55,
+    "step": 1e-08,
+    "tick": 1e-05
+   }
+  },
+  "NEAR": {
+   "perp": {
+    "min_cost": 0.0,
+    "min_qty": 1.0,
+    "step": 1.0,
+    "tick": 0.0001
+   },
+   "spot": {
+    "min_cost": 0.5,
+    "min_qty": 4.0,
+    "step": 1e-08,
+    "tick": 0.0001
+   }
+  },
+  "PEPE": {
+   "perp": {
+    "min_cost": 0.0,
+    "min_qty": 1000.0,
+    "step": 1000.0,
+    "tick": 1e-10
+   },
+   "spot": {
+    "min_cost": 0.5,
+    "min_qty": 1500000.0,
+    "step": 1e-05,
+    "tick": 1e-09
+   }
+  },
+  "PUMP": {
+   "perp": {
+    "min_cost": 0.0,
+    "min_qty": 100.0,
+    "step": 100.0,
+    "tick": 1e-06
+   },
+   "spot": {
+    "min_cost": 0.5,
+    "min_qty": 900.0,
+    "step": 1e-05,
+    "tick": 1e-06
+   }
+  },
+  "SOL": {
+   "perp": {
+    "min_cost": 0.0,
+    "min_qty": 0.01,
+    "step": 0.01,
+    "tick": 0.01
+   },
+   "spot": {
+    "min_cost": 0.5,
+    "min_qty": 0.06,
+    "step": 1e-08,
+    "tick": 0.01
+   }
+  },
+  "SUI": {
+   "perp": {
+    "min_cost": 0.0,
+    "min_qty": 1.0,
+    "step": 1.0,
+    "tick": 0.0001
+   },
+   "spot": {
+    "min_cost": 0.5,
+    "min_qty": 5.0,
+    "step": 1e-05,
+    "tick": 0.0001
+   }
+  },
+  "TAO": {
+   "perp": {
+    "min_cost": 0.0,
+    "min_qty": 0.01,
+    "step": 0.01,
+    "tick": 0.01
+   },
+   "spot": {
+    "min_cost": 0.5,
+    "min_qty": 0.015,
+    "step": 1e-05,
+    "tick": 0.0001
+   }
+  },
+  "UNI": {
+   "perp": {
+    "min_cost": 0.0,
+    "min_qty": 0.1,
+    "step": 0.1,
+    "tick": 0.001
+   },
+   "spot": {
+    "min_cost": 0.5,
+    "min_qty": 1.5,
+    "step": 1e-08,
+    "tick": 0.0001
+   }
+  },
+  "XLM": {
+   "perp": {
+    "min_cost": 0.0,
+    "min_qty": 1.0,
+    "step": 1.0,
+    "tick": 1e-05
+   },
+   "spot": {
+    "min_cost": 0.5,
+    "min_qty": 30.0,
+    "step": 1e-08,
+    "tick": 1e-06
+   }
+  },
+  "XRP": {
+   "perp": {
+    "min_cost": 0.0,
+    "min_qty": 1.0,
+    "step": 1.0,
+    "tick": 0.0001
+   },
+   "spot": {
+    "min_cost": 0.5,
+    "min_qty": 1.65,
+    "step": 1e-08,
+    "tick": 1e-05
+   }
+  },
+  "ZEC": {
+   "perp": {
+    "min_cost": 0.0,
+    "min_qty": 0.01,
+    "step": 0.01,
+    "tick": 0.01
+   },
+   "spot": {
+    "min_cost": 0.5,
+    "min_qty": 0.01,
+    "step": 1e-08,
+    "tick": 0.01
+   }
+  }
+ },
+ "source": {
+  "fut_instruments": {
+   "recv_ts": "2026-10-09T11:52:49.008400628Z",
+   "seq": 1
+  },
+  "spot_assetpairs": {
+   "recv_ts": "2026-10-09T11:52:49.105570927Z",
+   "seq": 1
+  }
+ },
+ "spec": "luna-research-v4-design.md \u00a73 / \u00a77.1 (freeze-time instrument metadata)",
+ "universe": [
+  "ADA",
+  "AVAX",
+  "BNB",
+  "BTC",
+  "DOGE",
+  "ENA",
+  "ETH",
+  "FET",
+  "HYPE",
+  "LINK",
+  "NEAR",
+  "PEPE",
+  "PUMP",
+  "SOL",
+  "SUI",
+  "TAO",
+  "UNI",
+  "XLM",
+  "XRP",
+  "ZEC"
+ ]
+}
