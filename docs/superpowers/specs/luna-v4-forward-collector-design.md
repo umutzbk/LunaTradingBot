@@ -46,7 +46,8 @@ Tek dönüşüm, V4 evrenine süzmedir. Yalnızca `fut_tickers` ve `fut_instrume
 | `spot_ticker` | `GET api.kraken.com/0/public/Ticker?pair=<21 çift>` | 60 sn, `fut_tickers`'tan **hemen sonra** | Eşzamanlılık ölçümü için ikili snapshot; `pair_seq` aynı |
 | `fut_book` | `GET .../derivatives/api/v3/orderbook?symbol=X` | 5 dk, :02:30 ofsetli | 21 çağrı, aralarında ≥0,5 sn; yanıt tam saklanır |
 | `spot_depth` | `GET .../0/public/Depth?pair=X&count=10` | 5 dk, :02:30 ofsetli | 21 çağrı, ≥1 sn aralıkla |
-| `fut_funding` | `GET .../derivatives/api/v4/historicalfundingrates?symbol=X` | saatte bir, :05:00'da | Yanıt tam saklanır (tekrarlar research tarafında ayıklanır) |
+| `fut_funding` | `GET .../derivatives/api/v4/historicalfundingrates?symbol=X` | saatte bir, :05:00'da | Disk büyümesini sınırlamak için yalnızca `timestamp ≥ now − 48 sa` olan satırlar tutulur. Satırlar değiştirilmez; zarfta `filtered_since_ts` işaretlenir. |
+| `fut_funding` (tam) | aynı | günlük 00:20 | Süzülmemiş tam yanıt (`filtered_since_ts=null`). API geçmişinin kesilmesine karşı denetim izi. |
 | `fut_analytics` | `GET futures.kraken.com/api/charts/v1/analytics/<sym>/<type>?since&to&interval=300` | saatte bir, :07:00'da; son 3 saat | Tipler: open-interest, spreads, liquidity, future-basis, funding, long-short-info |
 | `spot_time` | `GET api.kraken.com/0/public/Time` | 5 dk | Spot saat kayması ölçümü için |
 | `fut_instruments` | `GET .../derivatives/api/v3/instruments` | günlük 00:10 + açılışta | Evrene süzülür. Listeleme yaşı, kontrat boyutu ve tick için. |
@@ -88,8 +89,17 @@ var/forward/
   backup/date=YYYY-MM-DD.json                  # backup makbuzu (§6)
 ```
 
-- **Saat kapanışı:** UTC saat bitip 2 dakika geçince o saatin `.jsonl` dosyası gzip'lenir. Yazım tmp dosyaya yapılır, sonra `os.replace` ile yerine konur ve doğrulanır. `.jsonl` ancak bundan sonra silinir. Kapanış başlangıçta da çalışır, böylece önceki çalışmadan kalan açık saatler de kapatılır.
-- **Gün kapanışı:** UTC gün bitip 3 saat geçince, ve `fut_funding`/`fut_analytics`'in o güne ait son çağrıları da yazıldıktan sonra, manifest yazılır. Sonra o günün dosyaları salt okunur yapılır.
+- **Saat kapanışı:** UTC saat bitip 2 dakika geçince o saatin `.jsonl` dosyası gzip'lenir.
+  - Sıra: tmp dosyaya yazılır → `os.replace` → doğrulanır → `.jsonl` silinir. Silme de `PermissionError` backoff'u ile yeniden denenir.
+  - Kapanış açılışta da çalışır, böylece önceki çalışmadan kalan açık saatler de kapatılır.
+- **Doğrulanmış bir `.gz` asla yeniden yazılmaz.**
+  - Zaten kapanmış bir saate gelen geç satırlar `HH.late.jsonl` dosyasına yazılır, bu da `HH.late.N.jsonl.gz` olarak kapanır.
+  - `.gz` mevcutsa ve içeriği açık dosyanın baytlarıyla bitiyorsa (çökme replace ile silme arasında olmuştur) açık dosya yalnızca silinir; satırlar ikinci kez eklenmez.
+- **Yarım yazma:** Yazma, flush ya da fsync başarısız olursa dosya, yazımdan önceki boyutuna geri kesilir.
+- **Bozuk satır:** Gün kapanışını durdurmaz. Manifest'te `bad_lines` olarak sayılır; baytlar olduğu gibi saklanır.
+- **Gün izolasyonu:** Her günün kapanışı ayrı ayrı denenir; bir gündeki hata diğerlerini bloke etmez.
+- **Uyarı:** Bitiminden 4 saat geçmiş, ham verisi olan ama manifest'i olmayan her gün için status/health uyarısı ve dashboard'da kırmızı banner gösterilir.
+- **Gün kapanışı:** UTC gün bitip 3 saat geçince, ve `fut_funding`/`fut_analytics`'in o güne ait son çağrıları da yazıldıktan sonra, manifest yazılır. Manifest `collector_start_ts`'i de içerir. Sonra o günün dosyaları salt okunur yapılır.
   - Manifest'i yazılmış bir güne yeni satır yazılmaya çalışılırsa hata verilir. Gece yarısını geçen geç bir yanıt da yeni günün dosyasına gider; dosya `recv_ts`'e göre seçilir.
 - **Atomik yazma:** `os.replace` `PermissionError` verirse 0,2 / 0,4 / 0,8 / 1,6 / 3,2 sn backoff ile 5 kez yeniden denenir. Bu Windows sorunu spot gap-fill'de görülmüştü.
 - **Normalize parquet:** Collector'ın işi değil. Research tarafı ham `.jsonl.gz`'den okur. Ham veri tek doğruluk kaynağıdır.
@@ -97,6 +107,9 @@ var/forward/
 ## 6. Backup (zorunlu davranış, hedef konfigürasyonla)
 
 - **Hedef:** `LUNA_FORWARD_BACKUP_DIR` (bir dizin). OneDrive veya Google Drive senkron klasörü, harici disk ya da rclone mount olabilir.
+  - Dizinde `.luna-backup-target` adlı bir işaret dosyası olmalı. Yoksa hedef "başlatılmamış" sayılır ve uyarı verilir.
+  - Her backup'ta `meta.json` da kopyalanır.
+  - Backup ayrı bir arka plan thread'inde çalışır; collection'ı hiçbir zaman bekletmez.
 - **Docker:** Host'taki `LUNA_FORWARD_BACKUP_HOST_DIR` konteynerde `/backup`'a mount edilir. Env değişkeni yalnızca o ayarlıysa set edilir.
 - **Kopyalama:** Manifest'i yazılmış her gün için:
   1. dosyalar `<hedef>/forward/raw/...` ve `<hedef>/forward/manifest/...` altına kopyalanır (tmp → replace);
@@ -140,7 +153,11 @@ var/forward/
 - `luna/forward/` paketi şunları **import etmez**: `luna.engine`, `luna.execution`, `luna.store`, `luna.strategy`, `luna.portfolio`, `luna.risk`, `luna.v2`, `luna.v3`, `luna.data.backfill`. Statik bir test bunu doğrular.
 - `var/forward/` dışına yazmaz. Tek istisna backup hedefidir. Bunu bir test doğrular: collector bir tmp `var` ile çalıştırılır ve `var/forward` dışında hiçbir dosya oluşmadığı kontrol edilir.
 - Docker'da ayrı servis: `collector`, `command: ["collect"]`, `restart: unless-stopped`, healthcheck `luna collector-health`, bind mount `./var:/app/var`.
-- Ayrı lock: `var/forward/collector.lock` (pid + heartbeat). İkinci bir collector exit 1 ile reddedilir. Bayat lock (heartbeat > 5 dk) devralınır.
+- **Ayrı lock:** `var/forward/collector.lock` (pid, host, heartbeat).
+  - İkinci bir collector exit 1 ile reddedilir.
+  - Bayat lock (heartbeat > 5 dk) devralınır. Aynı host'ta pid'i ölmüş bir lock da devralınır.
+  - Compose `hostname: luna-collector` sabittir.
+  - Status, heartbeat ve dead-feed kontrolü her dakika turundan sonra çalışır. Uzun turlar, sonraki slot geldiğinde kesilir.
 
 ## 10. Testler (TDD; ağ çağrısı yok, `httpx.MockTransport`)
 
@@ -149,7 +166,7 @@ var/forward/
 3. **Hata zarfı:** Endpoint 500 veya timeout verirse süreç çökmez ve `ok=false` satırı yazılır. Sonraki tick normal devam eder.
 4. **Dead-feed:** 30 dk boyunca hiç ticker başarısı yoksa çıkış kodu 3 (sahte saat ile).
 5. **Saat kapanışı:** `.jsonl` → `.jsonl.gz`; içerik birebir aynı, açık dosya silinmiş. Kesintiden sonra açılışta kalan açık saatler kapatılır.
-6. **Gün kapanışı:** Manifest SHA256 ve satır sayıları doğru; dosyalar salt okunur. Kapanmış güne yazma hata verir.
+6. **Gün kapanışı:** Manifest SHA256 ve satır sayıları doğru; dosyalar salt okunur. Kapanmış güne yazma hata verir. Bozuk satır `bad_lines` olarak sayılır, kapanışı durdurmaz. Silme bir kez başarısız olursa satırlar tekrarlanmaz.
 7. **`os.replace` `PermissionError`:** 2 kez hata verip sonra başarılı olursa veri kaybı yoktur; 6 kez hata verirse istisna yükselir.
 8. **Backup:** Kopyalar ve makbuz yazılır. Bozuk kopyada (hash uyuşmazlığı) makbuz yazılmaz. Hedef yoksa `backup_ok=false` olur ve collection devam eder.
 9. **`collector_start_ts`:** İkinci başlangıçta değişmez. `seq` restart sonrası devam eder.
