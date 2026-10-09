@@ -232,3 +232,14 @@ def test_unreachable_backup_does_not_stop_collection(tmp_path, fake_kraken):
     assert st["backup_ok"] is False and "unreachable" in st["backup_reason"]
     assert c.exit_code == 0
     assert st["sources"]["fut_tickers"]["last_ok_recv_ts"].startswith("2026-10-10T03:09")
+
+
+def test_failed_start_releases_the_lock(tmp_path, fake_kraken):
+    clock, kraken = fake_kraken(T0)
+    root = tmp_path / "forward"
+    root.mkdir()
+    (root / "meta.json").write_text("{corrupt", encoding="utf-8")  # never silently reset start ts
+    c = _collector(root, clock, kraken)
+    with pytest.raises(ValueError):
+        c.start()
+    assert not (root / "collector.lock").exists()

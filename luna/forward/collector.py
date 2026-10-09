@@ -106,9 +106,13 @@ class Collector:
         """Lock (raises CollectorLocked), meta/start ts, close leftovers, first backup + status."""
         self.root.mkdir(parents=True, exist_ok=True)
         self.lock.acquire()
-        self._started = True
         now = self.clock_ns()
-        self.meta = Meta.load(self.root)
+        try:
+            self.meta = Meta.load(self.root)  # a corrupt meta.json fails loudly, never resets
+        except BaseException:
+            self.lock.release()
+            raise
+        self._started = True
         self.meta.start(now)
         self.meta.save()
         self.status = StatusTracker(self.root, now)
