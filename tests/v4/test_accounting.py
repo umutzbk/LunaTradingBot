@@ -410,3 +410,10 @@ def test_multi_leg_actions_pin_one_pair_for_all_assets():
     plan = {MONDAY: acc.H2Decision.rebalance({"AAA": 1, "BBB": -1})}
     acc.run_h2(m, H2Scripted(plan), _days(1), PRIMARY, {})
     assert (frozenset({"AAA", "BBB"}), MONDAY) in pins and pins[-1] == "unpin"
+
+
+def test_daily_rows_list_every_asset_held_during_the_day():
+    m = FakeMarket(spot={"AAA": 100.0, "BBB": 100.0}, perp={"AAA": 100.0, "BBB": 100.0})
+    res = _carry(m, Scripted(entries={T0: ["AAA"], T0 + pd.Timedelta("1D"): ["BBB"]},
+                             exits={T0 + pd.Timedelta("1D"): ["AAA"]}), _days(3))
+    assert res.daily["held"].tolist() == ["AAA", "AAA,BBB", "BBB"]

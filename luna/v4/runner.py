@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 
 from luna.v4 import diagnostics as dg
-from luna.v4 import stats
+from luna.v4 import dq, stats
 from luna.v4.accounting import LegMeta, SimResult, run_carry, run_h2
 from luna.v4.constants import (
     COLLECTOR_START_TS,
@@ -55,13 +55,16 @@ SPEC_PATH = Path("docs") / "superpowers" / "specs" / "luna-research-v4-design.md
 INSTRUMENTS_SNAPSHOT = Path("config") / "v4_instruments.json"
 STAGE1_CAVEAT = "EXPLORATORY — reused development period; not generalization evidence."
 
-# §7.2 proposed DQ thresholds; the freeze commit fixes the exact numbers (recorded in the manifest)
+# §7.2 frozen DQ thresholds (luna.v4.dq), recorded in the manifest
 DQ_THRESHOLDS = {
-    "skew_valid_share": 0.95,
-    "clock_skew_median_ms": 2000.0,
-    "ticker_coverage": 0.95,
-    "max_gap_s": 900.0,
-    "funding_hours": 24,
+    "Q1_pair_skew_ms": dq.PAIR_SKEW_MS,
+    "Q2_fresh_ms": dq.FRESH_MS,
+    "Q3_clock_s": dq.CLOCK_S,
+    "Q5_min_valid_pairs": dq.DAY_MIN_PAIRS,
+    "Q6_max_consecutive_invalid": dq.MAX_CONSECUTIVE_INVALID,
+    "Q7_funding_seen_within_h": 3,
+    "Q8_exec_window_min": 15,
+    "Q9_depth_max_age_min": 10,
 }
 STAGE1_COVERAGE = 0.90
 
@@ -141,6 +144,30 @@ class StageInputs:
     look: int | None = None
     instruments_sha256: str | None = None
     notes: list[str] = field(default_factory=list)
+    dq_asset_ok: dict[tuple[pd.Timestamp, str], bool] | None = None  # Stage 2: Q5 & Q6 & Q7 per (day, asset)
+    universe: tuple[str, ...] = V4_UNIVERSE
+
+
+def _eligible_column(cid: str) -> str:
+    cfg = CONFIGS[cid]
+    return "elig_h1" if cfg.account == "carry" else f"elig_h2_{cfg.lookback}"  # H5 uses H1 eligibility
+
+
+def config_dq_days(cid: str, inp: StageInputs, daily: pd.DataFrame) -> int:
+    """M2 numerator per config. Stage 1: universe-level coverage days. Stage 2 (§7.2): day d is valid for
+    config c when every asset of c's eligible set at d 00:00 and every asset held during d passes
+    Q5 / Q6 / Q7 (the whole §2a universe when that set is empty)."""
+    if inp.stage == 1 or inp.dq_asset_ok is None:
+        return sum(1 for d in inp.days if inp.dq_valid.get(d))
+    col = _eligible_column(cid)
+    n = 0
+    for d in inp.days:
+        rows = inp.table.xs(d, level="day") if d in inp.table.index.get_level_values("day") else None
+        elig = {a for a, ok in rows[col].items() if ok} if rows is not None else set()
+        h = daily["held"].get(d, "") if "held" in daily else ""
+        held = set(h.split(",")) - {""} if isinstance(h, str) else set()
+        n += dq.config_day_valid(d, elig, held, inp.dq_asset_ok, inp.universe)
+    return n
 
 
 def stage1_day_validity(hist, days: list[pd.Timestamp]) -> dict[pd.Timestamp, bool]:
@@ -198,30 +225,15 @@ def stage1_inputs(
     )
 
 
-def stage2_day_validity(fd, funding: dict[str, pd.DataFrame], days, assets) -> dict[pd.Timestamp, bool]:
-    from luna.v4.data import funding_hours_by_day
-
-    hours = funding_hours_by_day(funding)
-    q = fd.quality
+def stage2_asset_ok(fd, first_seen: dict, days, assets) -> dict[tuple[pd.Timestamp, str], bool]:
+    """Q5 & Q6 (``fd.asset_quality``) and Q7 (funding first seen within 3 h) per (day, asset)."""
+    q = fd.asset_quality
     out = {}
     for d in days:
-        if not len(q) or d not in q.index:
-            out[d] = False
-            continue
-        r = q.loc[d]
-        ok = (
-            r["pairs"] > 0
-            and r["pairs_valid"] / r["pairs"] >= DQ_THRESHOLDS["skew_valid_share"]
-            and r["clock_skew_median_ms"] is not None
-            and abs(r["clock_skew_median_ms"]) <= DQ_THRESHOLDS["clock_skew_median_ms"]
-            and r["fut_ok"] / 1440 >= DQ_THRESHOLDS["ticker_coverage"]
-            and r["max_gap_s"] is not None
-            and r["max_gap_s"] <= DQ_THRESHOLDS["max_gap_s"]
-        )
         for a in assets:
-            h = hours["hours"].get((d, a), 0) if len(hours) else 0
-            ok = ok and h >= DQ_THRESHOLDS["funding_hours"]
-        out[d] = bool(ok)
+            key = (d, a)
+            q56 = bool(len(q) and key in q.index and q.at[key, "Q5"] and q.at[key, "Q6"])
+            out[key] = q56 and dq.funding_day_ok(first_seen.get(a, {}), d)
     return out
 
 
@@ -230,7 +242,7 @@ def stage2_inputs(
 ) -> StageInputs:
     from functools import partial
 
-    from luna.v4.data import collector_start, load_forward_daily, load_forward_funding
+    from luna.v4.data import collector_start, funding_first_seen, load_forward_daily, load_forward_funding
     from luna.v4.market import ForwardMarket, nearest_book
     from luna.v4.signals import forward_signal_table
 
@@ -242,6 +254,10 @@ def stage2_inputs(
     fd = load_forward_daily(root, V4_UNIVERSE, since=start, until=look_ts + EXEC_WINDOW)
     funding = load_forward_funding(root, V4_UNIVERSE, until=look_ts + HOUR, periods_before=look_ts)
     days = list(pd.date_range(D0, look_ts - DAY, freq="D"))
+    # Q7 needs receipts up to 3 h after the last period; only periods before the look are kept
+    seen = funding_first_seen(root, V4_UNIVERSE, until=look_ts + dq.FUNDING_SEEN_WITHIN)
+    seen = {a: {t: r for t, r in v.items() if t < look_ts.value} for a, v in seen.items()}
+    asset_ok = stage2_asset_ok(fd, seen, days, V4_UNIVERSE)
     return StageInputs(
         stage=2,
         market=ForwardMarket(fd, funding, book_loader=partial(nearest_book, root)),
@@ -249,7 +265,8 @@ def stage2_inputs(
         funding=funding,
         days=days,
         d0=D0,
-        dq_valid=stage2_day_validity(fd, funding, days, V4_UNIVERSE),
+        dq_valid={d: all(asset_ok[(d, a)] for a in V4_UNIVERSE) for d in days},
+        dq_asset_ok=asset_ok,
         meta=meta,
         window={
             "d0": D0.isoformat(),
@@ -408,7 +425,7 @@ def run_stage(
             res.daily.to_csv(out_dir / "daily" / "nulls" / f"{nid.replace(':', '_')}.csv")
 
     window_days = len(inp.days)
-    dq_days = sum(1 for d in inp.days if inp.dq_valid.get(d))
+    dq_days = sum(1 for d in inp.days if inp.dq_valid.get(d))  # universe-level, information only
     evidences = {}
     for cid in run_ids:
         cfg = CONFIGS[cid]
@@ -417,7 +434,7 @@ def run_stage(
         m = stats.evidence_checks(
             cfg.account,
             window_days,
-            dq_days,
+            config_dq_days(cid, inp, d),
             int(d["active"].sum()),
             [t["asset"] for t in p.trades],
             int(p.counters["decisions"]),
@@ -492,6 +509,7 @@ def run_stage(
         "universe": list(V4_UNIVERSE),
         "window": inp.window,
         "dq_thresholds": DQ_THRESHOLDS if inp.stage == 2 else {"stage1_coverage": STAGE1_COVERAGE},
+        "dq_note": "M2 is computed per config (eligible + held assets; universe when empty), spec §7.2",
         "instruments_sha256": inp.instruments_sha256,
         "prior_go": list(prior_go),
         "killed": list(killed),

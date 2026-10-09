@@ -213,6 +213,7 @@ class _Sim:
         self.split = spot_cash > 0  # carry account: basis / residual split of each slot's price P&L
         self.seg: dict[str, tuple[float, float]] = {}
         self.day_split = [0.0, 0.0]
+        self.held_today: set[str] = set()  # assets held at any time during the day (DQ validity unit)
 
     def mark_segment(self, asset: str, spot_px: float | None, perp_px: float | None) -> None:
         """Close the asset's price segment at (spot_px, perp_px) with the quantities held over it."""
@@ -249,6 +250,7 @@ class _Sim:
 
     def fill(self, asset: str, leg: str, dq: float, px: float, ts: pd.Timestamp, obs: float | None,
              penalty: float = 0.0, other_px: float | None = None) -> None:
+        self.held_today.add(asset)
         other_leg = "perp" if leg == "spot" else "spot"
         other = other_px if other_px is not None else self.last_px.get((asset, other_leg))
         self.mark_segment(asset, px if leg == "spot" else other, px if leg == "perp" else other)
@@ -373,11 +375,13 @@ class _Sim:
             "gross": gross, "net": net, "hedge_error": net / gross if gross > EPS else 0.0,
             "net_price_pnl": comp["spot_price_pnl"] + comp["perp_price_pnl"],
             "active": active, "n_positions": len(set(self.book.spot_q) | set(self.book.perp_q)),
+            "held": ",".join(sorted(self.held_today | set(self.book.spot_q) | set(self.book.perp_q))),
             **(extra or {}),
         })
         self.prev_equity = reported
 
     def snapshot(self, t: pd.Timestamp) -> dict:
+        self.held_today = set(self.book.spot_q) | set(self.book.perp_q)
         spot_px = {a: self.last_px.get((a, "spot"), 0.0) for a in self.book.spot_q}
         return {"spot_eq": self.book.spot_equity(spot_px), "perp_eq": self.book.perp_equity({}),
                 "costs": self.book.cost_totals()}

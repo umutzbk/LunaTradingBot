@@ -208,7 +208,12 @@ def test_stage2_inputs_read_nothing_after_the_look_except_the_valuation_snapshot
             root,
             "fut_tickers",
             t,
-            {"tickers": [{"symbol": "PF_XBTUSD", "bid": px, "ask": px, "markPrice": px, "volumeQuote": 1e7}]},
+            {
+                "serverTime": t.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                "tickers": [
+                    {"symbol": "PF_XBTUSD", "bid": px - 1, "ask": px + 1, "markPrice": px, "volumeQuote": 1e7}
+                ],
+            },
             pair_seq=seq,
         )
         write_env(
@@ -218,8 +223,8 @@ def test_stage2_inputs_read_nothing_after_the_look_except_the_valuation_snapshot
             {
                 "result": {
                     "XXBTZUSD": {
-                        "a": [str(px), "1", "1"],
-                        "b": [str(px), "1", "1"],
+                        "a": [str(px + 1), "1", "1"],
+                        "b": [str(px - 1), "1", "1"],
                         "v": ["1", "1"],
                         "p": ["1", "1"],
                     }
@@ -291,3 +296,45 @@ def test_stage2_simulates_only_advanced_configs_and_keeps_killed_in_holm_with_p_
     assert not (tmp_path / "s2" / "daily" / "H1-Y20__PRIMARY.csv").exists()
     man = json.loads((tmp_path / "s2" / "manifest.json").read_text(encoding="utf-8"))
     assert man["killed"] == list(killed) and "S-SPREAD10" not in man["cost_rows"]
+
+
+def test_m2_is_counted_per_config_from_eligible_and_held_assets():
+    days = list(pd.date_range("2026-11-10T00:00Z", periods=2, freq="D"))
+    idx = pd.MultiIndex.from_product([days, ["A", "B"]], names=["day", "asset"])
+    table = pd.DataFrame(
+        {
+            "elig_h1": [True, False, True, False],
+            "elig_h2_7": [False, False, False, True],
+            "elig_h2_30": False,
+        },
+        index=idx,
+    )
+    ok = {(days[0], "A"): True, (days[0], "B"): False, (days[1], "A"): True, (days[1], "B"): True}
+    held = pd.DataFrame({"held": ["", "B"]}, index=days)
+    inp = rn.StageInputs(
+        stage=2,
+        market=None,
+        table=table,
+        funding={},
+        days=days,
+        d0=days[0],
+        dq_valid={},
+        meta={},
+        window={},
+        dq_asset_ok=ok,
+        universe=("A", "B"),
+    )
+    assert rn.config_dq_days("H1-Y10", inp, held) == 2  # eligible {A}, held {} / {B}
+    assert rn.config_dq_days("H2-L7-k1", inp, held) == 1  # day 0: empty set -> universe (B fails)
+    stage1 = rn.StageInputs(
+        stage=1,
+        market=None,
+        table=table,
+        funding={},
+        days=days,
+        d0=days[0],
+        dq_valid={days[0]: True, days[1]: False},
+        meta={},
+        window={},
+    )
+    assert rn.config_dq_days("H1-Y10", stage1, held) == 1
