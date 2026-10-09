@@ -104,10 +104,14 @@ def test_reserve_allocates_a_block_of_seqs(tmp_path):
 # ---- M5 (same host, dead pid) and M2 (heartbeat refuses a lost lock)
 
 
-def test_same_host_dead_pid_is_taken_over(tmp_path):
+def test_same_host_dead_pid_is_taken_over_after_180s(tmp_path):
     clock = Clock()
     CollectorLock(tmp_path / "collector.lock", clock, pid=11, host="luna-collector").acquire()
-    clock.ns += 10 * S
+    clock.ns += 180 * S
+    with pytest.raises(CollectorLocked):  # pid namespaces differ across containers: wait 180 s
+        CollectorLock(tmp_path / "collector.lock", clock, pid=12, host="luna-collector",
+                      pid_alive=lambda pid: False).acquire()
+    clock.ns += S
     CollectorLock(tmp_path / "collector.lock", clock, pid=12, host="luna-collector",
                   pid_alive=lambda pid: False).acquire()
     assert json.loads((tmp_path / "collector.lock").read_text(encoding="utf-8"))["pid"] == 12

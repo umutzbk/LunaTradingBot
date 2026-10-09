@@ -3,8 +3,9 @@
 A fresh lock (heartbeat <= 5 min) held by another process refuses a second collector. A stale lock
 is taken over. Same host *and* pid means a restart of the same container (pid 1, same hostname):
 the previous holder cannot be alive, so the lock is taken over at once. Same host with another pid
-is taken over only if that pid is not alive (compose gives the collector the fixed hostname
-``luna-collector``, so a recreated container is "the same host"). Another host with a fresh
+is taken over only if that pid is not alive and its heartbeat is older than 180 s (compose gives
+the collector the fixed hostname ``luna-collector``, so a recreated container is "the same host";
+pid namespaces may differ, hence the wait). Another host with a fresh
 heartbeat is always refused. ``heartbeat()`` raises if the lock is no longer ours.
 """
 
@@ -22,6 +23,7 @@ from luna.forward.envelope import NS, iso_ns
 from luna.forward.writer import atomic_write_text
 
 STALE_AFTER_S = 300
+DEAD_PID_TAKEOVER_S = 180  # same host + dead pid: still wait this long (pid namespaces may differ)
 
 
 class CollectorLocked(RuntimeError):
@@ -89,7 +91,8 @@ class CollectorLock:
         data = self._read()
         if data is not None and not self._mine(data):
             age_s = (self.clock_ns() - int(data.get("heartbeat_ns", 0))) / NS
-            same_host_dead = data.get("host") == self.host and not self.pid_alive(int(data.get("pid", -1)))
+            same_host_dead = (age_s > DEAD_PID_TAKEOVER_S and data.get("host") == self.host
+                              and not self.pid_alive(int(data.get("pid", -1))))
             if age_s <= STALE_AFTER_S and not same_host_dead:
                 raise CollectorLocked(
                     f"collector lock {self.path} held by pid {data.get('pid')} on {data.get('host')} "
