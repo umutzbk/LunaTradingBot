@@ -96,6 +96,30 @@ def data_report() -> None:
     typer.echo(f"data report: {path}")
 
 
+@app.command("spot-integrity")
+def spot_integrity(
+    since: Annotated[datetime, typer.Option(help="Every asset needs a bar at or before this UTC time")],
+    min_last: Annotated[datetime, typer.Option(help="Every asset's last bar must be at/after this UTC time")],
+    max_gap_h: Annotated[float, typer.Option(help="Max hours between consecutive bars from --since")] = 24.0,
+) -> None:
+    """Check kraken_spot bars of every perp-store asset: unique monotonic index; from --since:
+    no NaN OHLC, low<=min(open,close)<=max(open,close)<=high, prices > 0, 15-minute grid, no filled
+    bars, no gap > --max-gap-h; coverage from --since to --min-last. One PASS/FAIL line per asset
+    with gaps > 1h and the largest gap (informational); exit 0 only if all pass (non-empty universe)."""
+    from luna.config import load_settings
+    from luna.data.integrity import check_spot_integrity
+    from luna.data.store import BarStore
+
+    results = check_spot_integrity(BarStore(load_settings().var_dir), _utc(since), _utc(min_last), max_gap_h)
+    for r in results:
+        gaps = "" if r.max_gap_h is None else f" (gaps>1h={r.gaps_over_1h}, max_gap={r.max_gap_h:g}h)"
+        typer.echo(f"{r.asset} {'PASS' if r.ok else 'FAIL'} {r.reason}{gaps}")
+    failed = sum(not r.ok for r in results)
+    typer.echo(f"spot-integrity: {len(results) - failed}/{len(results)} PASS")
+    if failed or not results:
+        raise typer.Exit(1)
+
+
 def _utc(ts: datetime | None) -> pd.Timestamp | None:
     import pandas as pd
 
@@ -585,7 +609,8 @@ def forward_dq_cmd(
     until: Annotated[datetime | None, typer.Option(help="UTC end, exclusive (default now)")] = None,
 ) -> None:
     """Data-quality report of the forward data as JSON: paired/clock skew, coverage, gaps, asset
-    completeness, quote-sanity counts. Never prints prices, basis, spreads or returns."""
+    completeness, quote-sanity counts, per-day gap stats, stale-quote durations. Never prints
+    prices, basis, spreads or returns."""
     import json
 
     from luna.config import load_settings

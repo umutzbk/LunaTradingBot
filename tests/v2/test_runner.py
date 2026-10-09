@@ -1,4 +1,5 @@
 import pickle
+from concurrent.futures import Future
 
 import pandas as pd
 import pytest
@@ -121,11 +122,111 @@ def _boom(x):
     return x
 
 
+def _boom_synced(x, failing):
+    """u1 signals that it is failing, then raises; u0 only finishes after that signal, so u0 is
+    still running (not cancellable) when the failure starts and completes around the time the parent
+    observes it -- the order that used to lose u0's checkpoint."""
+    if x == 1:
+        failing.set()
+        raise RuntimeError("unit failed")
+    if x == 0:
+        assert failing.wait(60), "u1 never ran"
+    return x
+
+
 def test_pool_checkpoints_finished_units_and_cancels_on_failure(tmp_path):
+    import multiprocessing
     from concurrent.futures import ProcessPoolExecutor
 
-    units = [(f"u{i}", _boom, (i,)) for i in (0, 1, 2, 3)]
-    with ProcessPoolExecutor(2) as pool, pytest.raises(RuntimeError, match="unit failed"):
-        runner_mod._execute(units, tmp_path, 2, False, pool)
-    assert (tmp_path / "u0.pkl").exists()  # finished before the failure: kept
+    with multiprocessing.Manager() as mgr:
+        failing = mgr.Event()
+        units = [(f"u{i}", _boom_synced, (i, failing)) for i in (0, 1, 2, 3)]
+        with ProcessPoolExecutor(2) as pool, pytest.raises(RuntimeError, match="unit failed"):
+            runner_mod._execute(units, tmp_path, 2, False, pool)
+    assert (tmp_path / "u0.pkl").exists()  # running when the failure hit: drained and kept
     assert not (tmp_path / "u1.pkl").exists()
+
+
+class _RunningFuture(Future):
+    """A unit still executing when another one failed: cancel() fails, then it completes."""
+
+    def __init__(self, value):
+        super().__init__()
+        self.value = value
+        self.set_running_or_notify_cancel()
+
+    def cancel(self):
+        ok = super().cancel()  # False: already running
+        if not self.done():
+            self.set_result(self.value)  # it finishes only after the failure was observed
+        return ok
+
+
+class _InterruptedFuture(_RunningFuture):
+    """Ctrl-C arrives while the runner waits on this still-running unit during the drain."""
+
+    def result(self, timeout=None):
+        raise KeyboardInterrupt
+
+
+class _ScriptedExecutor:
+    """Completion order is scripted, no processes or timing: 'fail' is done (raised) at submit,
+    'running' completes only after the runner tried to cancel it, 'interrupted' raises
+    KeyboardInterrupt when awaited, 'pending' is cancellable (never started)."""
+
+    def __init__(self, script):
+        self.script = script
+        self.futures = {}
+
+    def submit(self, fn, *args):
+        kind = self.script[args[0]]
+        if kind == "running":
+            fut = _RunningFuture(fn(*args))
+        elif kind == "interrupted":
+            fut = _InterruptedFuture(None)
+        else:
+            fut = Future()
+            if kind == "fail":
+                fut.set_running_or_notify_cancel()
+                try:
+                    fut.set_result(fn(*args))
+                except RuntimeError as e:
+                    fut.set_exception(e)
+        self.futures[args[0]] = fut
+        return fut
+
+
+def test_execute_drains_running_units_before_raising(tmp_path):
+    pool = _ScriptedExecutor({0: "running", 1: "fail", 2: "running", 3: "pending"})
+    units = [(f"u{i}", _boom, (i,)) for i in (0, 1, 2, 3)]
+    with pytest.raises(RuntimeError, match="unit failed"):
+        runner_mod._execute(units, tmp_path, 2, False, pool)
+    assert (tmp_path / "u0.pkl").exists()
+    assert (tmp_path / "u2.pkl").exists()
+    assert pickle.loads((tmp_path / "u0.pkl").read_bytes()) == 0
+    assert not (tmp_path / "u1.pkl").exists()
+    assert pool.futures[3].cancelled()
+    assert not (tmp_path / "u3.pkl").exists()
+
+
+def test_execute_drain_lets_keyboard_interrupt_through(tmp_path):
+    pool = _ScriptedExecutor({0: "interrupted", 1: "fail", 2: "running"})
+    units = [(f"u{i}", _boom, (i,)) for i in (0, 1, 2)]
+    with pytest.raises(KeyboardInterrupt):
+        runner_mod._execute(units, tmp_path, 2, False, pool)
+
+
+def _unpicklable(x):
+    if x == 1:
+        raise RuntimeError("unit failed")
+    return (lambda: None) if x == 0 else x
+
+
+def test_execute_drain_checkpoint_error_keeps_original_failure(tmp_path, caplog):
+    pool = _ScriptedExecutor({0: "running", 1: "fail", 2: "running"})
+    units = [(f"u{i}", _unpicklable, (i,)) for i in (0, 1, 2)]
+    with caplog.at_level("WARNING"), pytest.raises(RuntimeError, match="unit failed"):
+        runner_mod._execute(units, tmp_path, 2, False, pool)
+    assert not (tmp_path / "u0.pkl").exists()
+    assert (tmp_path / "u2.pkl").exists()  # later units are still drained
+    assert any("u0" in r.getMessage() for r in caplog.records if r.levelname == "WARNING")

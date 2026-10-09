@@ -27,6 +27,7 @@ import pandas as pd
 from luna.config import Settings
 from luna.engine.backtest import BacktestResult
 from luna.engine.walkforward import WalkForwardResult, Window, _git_dirty, _git_sha
+from luna.fsutil import replace_with_retry
 from luna.report.walkforward import Inputs, run_naive
 from luna.types import AccountKind
 from luna.v2.configs import V2Config, primary_configs, sensitivity_configs
@@ -133,7 +134,7 @@ def _execute(
         tmp = path.with_suffix(".tmp")
         with open(tmp, "wb") as fh:
             pickle.dump(value, fh)
-        tmp.replace(path)
+        replace_with_retry(tmp, path)  # Windows: retried while AV/indexer briefly holds the target
         out[name] = value
         log.info("unit done: %s", name)
 
@@ -148,7 +149,21 @@ def _execute(
             keep(name, path, fut.result())
     except BaseException:
         for f in futs:
-            f.cancel()  # queued units are dropped; finished ones are already checkpointed
+            f.cancel()  # queued units are dropped
+        # Units already finished (as_completed may not have yielded them yet) or still running
+        # cannot be cancelled; the pool's shutdown waits for them anyway, so drain them here and
+        # checkpoint every success before re-raising.
+        for f, (name, path) in futs.items():
+            if f.cancelled() or name in out:
+                continue
+            try:
+                value = f.result()
+            except Exception:
+                continue  # another failed unit; KeyboardInterrupt/SystemExit propagate
+            try:
+                keep(name, path, value)
+            except Exception as e:  # never mask the original failure with a checkpoint error
+                log.warning("checkpoint of %s failed while draining: %r", name, e)
         raise
     return out
 

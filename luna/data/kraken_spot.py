@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -13,6 +12,7 @@ import pandas as pd
 
 from luna.config import CostConfig
 from luna.data.store import BAR_COLUMNS, _empty_bars, _normalize
+from luna.fsutil import write_text_atomic
 from luna.http import get_json
 from luna.instruments import asset_from_spot
 from luna.types import Instrument
@@ -64,11 +64,10 @@ def aggregate_trades(trades: pd.DataFrame) -> pd.DataFrame:
     return _normalize(out)
 
 
-def _write_checkpoint(path: Path, data: dict) -> None:
+def _write_checkpoint(path: Path, data: dict, sleep: Callable[[float], None] | None = None) -> None:
+    """Atomic tmp+replace, retried on Windows PermissionError (file briefly held by AV/indexer)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data))
-    os.replace(tmp, path)
+    write_text_atomic(path, json.dumps(data), sleep=sleep)
 
 
 def _empty_trades() -> pd.DataFrame:
