@@ -80,6 +80,16 @@ class HistoricalMarket:
             self._values[key] = float(df["close"].iloc[i - 1]) if i > 0 else None
         return self._values[key]
 
+    def mark(self, asset: str, t: pd.Timestamp) -> float | None:
+        """Mark at t for the margin ratio: close of the mark bar with open_ts = t - 15m, else the trade
+        bar's close (counted)."""
+        for src, counted in ((self.inp.mark.get(asset), False), (self._bars(asset, "perp"), True)):
+            if src is not None and len(src) and (t - BAR) in src.index:
+                if counted:
+                    self.counters["mark_fallbacks"] += 1
+                return float(src.at[t - BAR, "close"])
+        return None
+
     def extremes(self, asset: str, day: pd.Timestamp) -> dict[str, float | None]:
         key = (asset, day)
         if key not in self._extremes:
@@ -190,6 +200,14 @@ class ForwardMarket:
             "spot_low": f(r["spot_min"]),
             "spot_high": None,
         }
+
+    def mark(self, asset: str, t: pd.Timestamp) -> float | None:
+        """Last snapshot markPrice at or before t (the previous UTC day's last mark for a 00:00 t)."""
+        key = (t.floor("D") - DAY, asset)
+        if not len(self.fd.daily) or key not in self.fd.daily.index or "mark_last" not in self.fd.daily:
+            return None
+        v = self.fd.daily.at[key, "mark_last"]
+        return float(v) if v is not None and np.isfinite(v) else None
 
     def funding(self, asset: str) -> pd.DataFrame:
         f = self._funding.get(asset)

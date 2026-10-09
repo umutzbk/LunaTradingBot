@@ -71,6 +71,21 @@ def test_hist_value_is_close_of_the_2345_bar():
     assert m.value("A", "spot", D) == closes[D + pd.Timedelta("23h45min")]
 
 
+def test_hist_mark_is_the_close_of_the_mark_bar_opening_at_t_minus_15m():
+    mark = bars(
+        D - pd.Timedelta("1h"),
+        8,
+        close=pd.Series(
+            [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+            index=pd.date_range(D - pd.Timedelta("1h"), periods=8, freq="15min"),
+        ),
+    )
+    m = mk.HistoricalMarket(_hist(mark=mark))
+    assert m.mark("A", D) == 4.0  # bar opening 23:45 closes at 00:00
+    nomark = mk.HistoricalMarket(_hist())
+    assert nomark.mark("A", D) == 101.0 and nomark.counters["mark_fallbacks"] == 1
+
+
 def test_hist_extremes_use_mark_bars_after_execution():
     mark = bars(D, 96, close=101.0)
     mark.loc[D + pd.Timedelta("5h"), "high"] = 150.0
@@ -110,6 +125,14 @@ def _fd():
         index=idx,
     )
     return ForwardDaily(exec=ex, daily=daily, quality=pd.DataFrame())
+
+
+def test_forward_mark_is_the_last_mark_before_t():
+    fd = _fd()
+    fd.daily["mark_last"] = [111.0, 112.0]
+    m = mk.ForwardMarket(fd, {})
+    assert m.mark("A", D + pd.Timedelta("1D")) == 111.0
+    assert m.mark("A", D) is None
 
 
 def test_forward_quote_value_extremes_suspension_outage():

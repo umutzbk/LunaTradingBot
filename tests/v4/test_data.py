@@ -152,6 +152,7 @@ def test_forward_daily_exec_snapshot_is_first_skew_valid_after_midnight(tmp_path
     assert row["perp_vol_quote"] == 2e6 and row["spot_vol_usd"] == 1000.0
     assert fd.daily.loc[(day, "BTC"), "mark_max"] == 501
     assert fd.daily.loc[(day, "BTC"), "mark_min"] == 101
+    assert fd.daily.loc[(day, "BTC"), "mark_last"] == 501
     # basis of day d: skew-valid pairs only (seq 2 excluded)
     assert fd.daily.loc[(day, "BTC"), "basis_n"] == 2
     assert fd.daily.loc[(day, "BTC"), "basis_median"] == pytest.approx((102 / 101 - 1 + 501 / 401 - 1) / 2)

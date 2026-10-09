@@ -162,6 +162,7 @@ class Market(Protocol):
     def funding(self, asset: str) -> pd.DataFrame: ...
     def suspended(self, asset: str, t: pd.Timestamp) -> bool: ...
     def outage(self, day: pd.Timestamp) -> bool: ...
+    def mark(self, asset: str, t: pd.Timestamp) -> float | None: ...
 
 
 # --- shared simulation machinery -------------------------------------------------------------------
@@ -336,9 +337,9 @@ class _Sim:
     def margin_check(self, t: pd.Timestamp, params, spot_legs: bool) -> None:
         if not self.book.perp_q:
             return
-        px = {}
+        px = {}  # margin ratio at the mark (§5.1), never the execution price
         for a in self.book.perp_q:
-            p = self.px_now(a, "perp", t)
+            p = self.m.mark(a, t)
             if p is None:
                 self.c["margin_check_skipped"] += 1
                 return

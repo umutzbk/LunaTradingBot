@@ -287,6 +287,8 @@ def load_forward_daily(
                 acc = day_acc.setdefault((day, asset), {"basis": [], "mark": [], "perp": [], "spot": []})
                 if mark is not None:
                     acc["mark"].append(mark)
+                    if recv >= acc.get("mark_last", (-1, None))[0]:
+                        acc["mark_last"] = (recv, mark)
                 if not (valid and s is not None and _quote_ok(pb, pa) and _quote_ok(s["bid"], s["ask"])):
                     continue
                 pm, sm = (pb + pa) / 2, (s["bid"] + s["ask"]) / 2
@@ -310,6 +312,7 @@ def load_forward_daily(
         k: {"basis_median": median(v["basis"]) if v["basis"] else float("nan"), "basis_n": len(v["basis"]),
             "mark_max": max(v["mark"]) if v["mark"] else float("nan"),
             "mark_min": min(v["mark"]) if v["mark"] else float("nan"),
+            "mark_last": v["mark_last"][1] if "mark_last" in v else float("nan"),
             "perp_max": max(v["perp"]) if v["perp"] else float("nan"),
             "perp_min": min(v["perp"]) if v["perp"] else float("nan"),
             "spot_min": min(v["spot"]) if v["spot"] else float("nan")}

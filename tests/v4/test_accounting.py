@@ -114,6 +114,7 @@ class FakeMarket:
     perp_high: dict = field(default_factory=dict)  # (asset, day) -> high
     perp_low: dict = field(default_factory=dict)
     outages: set = field(default_factory=set)
+    marks: dict = field(default_factory=dict)  # asset -> {day: mark}; default = perp price
     forward: bool = False
 
     def _px(self, table, asset, day):
@@ -138,12 +139,22 @@ class FakeMarket:
     def extremes(self, asset, day):
         p = self._px(self.perp, asset, day)
         s = self._px(self.spot, asset, day)
-        return {"perp_high": self.perp_high.get((asset, day), p),
-                "perp_low": self.perp_low.get((asset, day), p), "spot_low": s, "spot_high": s}
+        return {
+            "perp_high": self.perp_high.get((asset, day), p),
+            "perp_low": self.perp_low.get((asset, day), p),
+            "spot_low": s,
+            "spot_high": s,
+        }
 
     def funding(self, asset):
-        return self.funding_rates.get(asset, pd.DataFrame({"funding_abs": [], "funding_rel": []},
-                                                          index=pd.DatetimeIndex([], tz="UTC")))
+        return self.funding_rates.get(
+            asset, pd.DataFrame({"funding_abs": [], "funding_rel": []}, index=pd.DatetimeIndex([], tz="UTC"))
+        )
+
+    def mark(self, asset, t):
+        if asset in self.marks:
+            return self._px(self.marks, asset, t)
+        return self._px(self.perp, asset, t)
 
     def suspended(self, asset, t):
         return False
@@ -192,13 +203,21 @@ def test_carry_entry_sizes_slot_at_30pct_of_spot_sleeve_usd_hedged():
 
 
 def test_carry_daily_decomposition_adds_up_to_equity_change():
-    m = FakeMarket(spot={"AAA": {T0: 100.0, T0 + pd.Timedelta("2D"): 120.0}},
-                   perp={"AAA": {T0: 101.0, T0 + pd.Timedelta("2D"): 120.5}},
-                   funding_rates={"AAA": _rates(2e-5)})
+    m = FakeMarket(
+        spot={"AAA": {T0: 100.0, T0 + pd.Timedelta("2D"): 120.0}},
+        perp={"AAA": {T0: 101.0, T0 + pd.Timedelta("2D"): 120.5}},
+        funding_rates={"AAA": _rates(2e-5)},
+    )
     res = _carry(m, Scripted(entries={T0: ["AAA"]}, exits={T0 + pd.Timedelta("3D"): ["AAA"]}), _days(5))
     d = res.daily
-    comp = (d["spot_price_pnl"] + d["perp_price_pnl"] + d["funding_cf"] - d["fees"] - d["spread_slippage"]
-            - d["liquidation_penalty"])
+    comp = (
+        d["spot_price_pnl"]
+        + d["perp_price_pnl"]
+        + d["funding_cf"]
+        - d["fees"]
+        - d["spread_slippage"]
+        - d["liquidation_penalty"]
+    )
     prev = d["equity"].shift(1).fillna(530.0)
     np.testing.assert_allclose(comp, d["equity"] - prev, atol=1e-9)
     np.testing.assert_allclose(d["ret"], d["equity"] / prev - 1, atol=1e-12)
@@ -237,8 +256,10 @@ def test_carry_at_most_three_slots():
 
 
 def test_carry_hedge_drift_over_5pct_rebalances_the_perp_leg():
-    m = FakeMarket(spot={"AAA": {T0: 100.0, T0 + pd.Timedelta("1D"): 110.0}},
-                   perp={"AAA": {T0: 100.0, T0 + pd.Timedelta("1D"): 100.0}})
+    m = FakeMarket(
+        spot={"AAA": {T0: 100.0, T0 + pd.Timedelta("1D"): 110.0}},
+        perp={"AAA": {T0: 100.0, T0 + pd.Timedelta("1D"): 100.0}},
+    )
     res = _carry(m, Scripted(entries={T0: ["AAA"]}), _days(3))
     assert res.counters["hedge_rebalances"] == 1
     d2 = res.daily.iloc[1]
@@ -247,12 +268,29 @@ def test_carry_hedge_drift_over_5pct_rebalances_the_perp_leg():
 
 def test_carry_margin_buffer_reduces_both_legs_to_ratio_one():
     # perp leg rallies: perp_equity / perp_notional falls below 0.50
-    m = FakeMarket(spot={"AAA": {T0: 100.0, T0 + pd.Timedelta("1D"): 180.0}},
-                   perp={"AAA": {T0: 100.0, T0 + pd.Timedelta("1D"): 180.0}})
+    m = FakeMarket(
+        spot={"AAA": {T0: 100.0, T0 + pd.Timedelta("1D"): 180.0}},
+        perp={"AAA": {T0: 100.0, T0 + pd.Timedelta("1D"): 180.0}},
+    )
     p = acc.CarryParams(e0=200.0, spot_share=0.5, slot_frac=0.9, max_spot_util=0.9)  # perp lev ~0.9
     res = acc.run_carry(m, Scripted(entries={T0: ["AAA"]}), _days(3), PRIMARY, {}, params=p)
     assert res.counters["margin_reductions"] == 1
     assert res.margin_ratio_after[T0 + pd.Timedelta("1D")] == pytest.approx(1.0, rel=1e-6)
+
+
+def test_carry_margin_ratio_uses_the_mark_not_the_execution_price():
+    d1 = T0 + pd.Timedelta("1D")
+    p = acc.CarryParams(e0=200.0, spot_share=0.5, slot_frac=0.9, max_spot_util=0.9)
+    calm = FakeMarket(spot={"AAA": 100.0}, perp={"AAA": 100.0})
+    marked = FakeMarket(spot={"AAA": 100.0}, perp={"AAA": 100.0}, marks={"AAA": {T0: 100.0, d1: 180.0}})
+    assert (
+        acc.run_carry(calm, Scripted(entries={T0: ["AAA"]}), _days(3), PRIMARY, {}, params=p).counters[
+            "margin_reductions"
+        ]
+        == 0
+    )
+    res = acc.run_carry(marked, Scripted(entries={T0: ["AAA"]}), _days(3), PRIMARY, {}, params=p)
+    assert res.counters["margin_reductions"] == 1
 
 
 def test_carry_liquidation_at_5pct_closes_both_legs_with_penalty():
@@ -267,8 +305,12 @@ def test_carry_liquidation_at_5pct_closes_both_legs_with_penalty():
 
 
 def test_outage_day_has_zero_return_and_the_change_lands_next_day():
-    m = FakeMarket(spot={"AAA": 100.0}, perp={"AAA": 100.0}, funding_rates={"AAA": _rates(5e-5)},
-                   outages={T0 + pd.Timedelta("1D")})
+    m = FakeMarket(
+        spot={"AAA": 100.0},
+        perp={"AAA": 100.0},
+        funding_rates={"AAA": _rates(5e-5)},
+        outages={T0 + pd.Timedelta("1D")},
+    )
     res = _carry(m, Scripted(entries={T0: ["AAA"]}), _days(3))
     d = res.daily
     assert d["ret"].iloc[1] == 0.0 and d["equity"].iloc[1] == d["equity"].iloc[0]
