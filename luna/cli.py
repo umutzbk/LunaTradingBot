@@ -44,6 +44,26 @@ def backfill(
     typer.echo(f"backfill {venue}: {len(done)} assets ({', '.join(done)})")
 
 
+@app.command("backfill-v4")
+def backfill_v4_cmd(
+    assets: Annotated[str | None, typer.Option(help="Comma-separated assets (default: V4 universe)")] = None,
+) -> None:
+    """V4 Stage 0 inputs into var/history_v4/: real funding (abs + rel), mark and index 15m candles,
+    perp analytics spreads. Everything is hard-cut before 2026-07-01 (sealed holdout); one provenance
+    json per file. Computes no signal, return or P&L."""
+    from luna.config import load_settings
+    from luna.http import make_client
+    from luna.v4.backfill import backfill_v4
+    from luna.v4.constants import V4_UNIVERSE
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    wanted = [a.strip().upper() for a in assets.split(",")] if assets else list(V4_UNIVERSE)
+    with make_client() as client:
+        done = backfill_v4(client, load_settings().var_dir, wanted)
+    typer.echo(f"backfill-v4: {len(done)} assets ({', '.join(done)})")
+
+
 @app.command("data-report")
 def data_report() -> None:
     """Report data coverage and quality."""
