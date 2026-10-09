@@ -41,7 +41,11 @@ SOURCES: dict[str, Cadence] = {
     "spot_depth": Cadence(300, 150, len(UNIVERSE), 1.0),
     "fut_funding": Cadence(3600, 300, len(UNIVERSE), 0.5),
     "fut_analytics": Cadence(3600, 420, len(UNIVERSE) * len(ANALYTICS_TYPES), 0.5),
+    # daily reference data, also fetched once at every collector start
+    "fut_instruments": Cadence(86400, 600, 1),
+    "spot_assetpairs": Cadence(86400, 720, 1),
 }
+AT_START = ("fut_instruments", "spot_assetpairs")
 
 
 def rounds_between(cad: Cadence, start_s: float, end_s: float) -> int:

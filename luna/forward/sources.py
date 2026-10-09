@@ -26,6 +26,13 @@ def filter_tickers(payload: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def filter_instruments(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep only universe perps in ``instruments`` (rows untouched)."""
+    out = dict(payload)
+    out["instruments"] = [i for i in payload.get("instruments") or [] if i.get("symbol") in _PERPS]
+    return out
+
+
 def fut_tickers() -> list[Request]:
     return [Request("fut_tickers", f"{FUTURES_BASE}/derivatives/api/v3/tickers", None, filter_tickers)]
 
@@ -61,3 +68,12 @@ def fut_analytics(now_s: int) -> list[Request]:
 
 def spot_time() -> list[Request]:
     return [Request("spot_time", f"{SPOT_BASE}/Time", None)]
+
+
+def fut_instruments() -> list[Request]:
+    url = f"{FUTURES_BASE}/derivatives/api/v3/instruments"
+    return [Request("fut_instruments", url, None, filter_instruments)]
+
+
+def spot_assetpairs() -> list[Request]:
+    return [Request("spot_assetpairs", f"{SPOT_BASE}/AssetPairs", {"pair": ",".join(SPOT_PAIRS)})]

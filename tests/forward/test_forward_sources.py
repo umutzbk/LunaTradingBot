@@ -43,5 +43,32 @@ def test_spot_time():
 
 def test_every_source_id_has_a_function():
     assert set(config.SOURCES) == {
-        "fut_tickers", "spot_ticker", "fut_book", "spot_depth", "fut_funding", "fut_analytics", "spot_time"
+        "fut_tickers", "spot_ticker", "fut_book", "spot_depth", "fut_funding", "fut_analytics", "spot_time",
+        "fut_instruments", "spot_assetpairs",
     }
+    for name in config.SOURCES:
+        assert callable(getattr(sources, name))
+
+
+def test_daily_reference_sources_cadence():
+    fi, sa = config.SOURCES["fut_instruments"], config.SOURCES["spot_assetpairs"]
+    assert (fi.period_s, fi.offset_s) == (86400, 600)  # 00:10 UTC
+    assert (sa.period_s, sa.offset_s) == (86400, 720)  # 00:12 UTC
+    assert config.AT_START == ("fut_instruments", "spot_assetpairs")
+
+
+def test_fut_instruments_filtered_to_universe():
+    (req,) = sources.fut_instruments()
+    assert req.url == "https://futures.kraken.com/derivatives/api/v3/instruments" and req.params is None
+    raw = {"result": "success", "serverTime": "t", "instruments": [
+        {"symbol": "PF_XBTUSD", "tickSize": 1}, {"symbol": "PF_FOOUSD"}, {"symbol": "FI_XBTUSD_261225"},
+        {"symbol": "PF_ZECUSD", "contractValueTradePrecision": 2}]}
+    out = req.transform(raw)
+    assert out["instruments"] == [raw["instruments"][0], raw["instruments"][3]]
+    assert out["serverTime"] == "t"
+
+
+def test_spot_assetpairs_all_21_pairs_raw():
+    (req,) = sources.spot_assetpairs()
+    assert req.url == "https://api.kraken.com/0/public/AssetPairs"
+    assert req.params == {"pair": ",".join(config.SPOT_PAIRS)} and req.transform is None
