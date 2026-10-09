@@ -73,4 +73,4 @@ En iyi parametre setleri:
   - **Daha geniş evren:** 2025'ten itibaren likit perp sayısı 5'e çıkıyor.
   - **Maker emirlerle maliyeti düşürmek:** perp maker fee %0.02.
   - **Funding / basis carry** gibi farklı edge kaynakları.
-- Spot alternatifi: spot verisi hâlâ indiriliyor. Spot'ta maliyet daha yüksek (maker %0.25), bu yüzden 15 dakikalık stratejiler için daha da zor.
+- Spot alternatifi: spot verisi hâlâ indiriliyor. Spot'ta maliyet daha yüksek (maker %0.25), bu yüzden 15 dakikalık stratejiler için daha da zor. *(Superseded by corrected fee schedule, SC-2 2026-10-08: güncel Kraken Pro Tier-1 spot ücreti maker %0.40 / taker %0.80.)*

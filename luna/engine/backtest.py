@@ -63,7 +63,7 @@ from luna.portfolio.portfolio import Portfolio
 from luna.ranking.ranker import Ranker
 from luna.risk.state import RiskState
 from luna.strategy.base import SignalFrame, Strategy
-from luna.types import AccountKind, Instrument, OrderRequest
+from luna.types import AccountKind, Fill, Instrument, OrderModel, OrderRequest
 
 FundingMode = Literal["known_only", "zero", "estimated", "estimated_x2"]
 
@@ -82,7 +82,9 @@ EVENT_COLUMNS = ["ts", "kind", "position_id", "asset", "detail"]
 # entry_gross_leverage: (gross at decision marks + entries submitted this bar) / equity, the quantity
 # R8 bounds; NaN on bars without new entries. gross_leverage at the close may drift above the limit
 # with prices (R8 applies at order time; there is no forced deleveraging).
-BAR_STAT_COLUMNS = ["equity", "gross_leverage", "n_positions", "open_risk", "entry_gross_leverage"]
+# net_leverage: signed net notional / equity; max_asset_share: largest single-asset |notional| / equity
+BAR_STAT_COLUMNS = ["equity", "gross_leverage", "n_positions", "open_risk", "entry_gross_leverage",
+                    "net_leverage", "max_asset_share"]
 
 
 @dataclass
@@ -242,6 +244,8 @@ def run_backtest(
     instruments: dict[str, Instrument] | None = None,
     initial_state: RiskState | None = None,
     initial_exiting: PendingExits | None = None,
+    order_model: OrderModel | None = None,
+    flatten_at_end: bool = False,
 ) -> BacktestResult:
     """Simulate [start, end) on the union of the panel's bar indexes (see module docstring).
 
@@ -250,6 +254,11 @@ def run_backtest(
     `initial_state` / `initial_exiting` continue a previous window's ``risk_state`` /
     ``pending_exits`` (see "Window continuity").
     `instruments` defaults to `default_instruments` (synthetic, permissive).
+    `order_model` (None = account default: perp IOC taker, spot post-only maker) sets the entry and
+    exit order type and the constructor's round-trip fee side.
+    `flatten_at_end` (Research V2 engine switch): after the last bar every open position is closed at
+    that bar, each leg at the worse of its open and close with taker frictions and fee (a forward-filled
+    bar: its last close with frictions), exit reason ``model_switch``; nothing is left pending.
     """
     if funding_mode not in ("known_only", "zero", "estimated", "estimated_x2"):
         raise ValueError(f"unknown funding_mode {funding_mode!r}")
@@ -293,7 +302,8 @@ def run_backtest(
 
     broker = SimBroker(kind, costs, instruments, cost_mult)
     state = dataclasses.replace(initial_state) if initial_state is not None else RiskState()
-    pipe = Pipeline(pf, state, kind, limits, costs, instruments, broker, "backtest")
+    pipe = Pipeline(pf, state, kind, limits, costs, instruments, broker, "backtest",
+                    order_model=order_model)
     if initial_exiting is not None:
         stray = (set(initial_exiting.reasons) | {o.position_id for o, _ in initial_exiting.orders}) - set(
             pf.positions
@@ -382,7 +392,37 @@ def run_backtest(
         k = i - i0
         eq = pf.equity()
         equity[k] = eq
-        stats[k] = (eq, pf.gross_leverage(), len(pf.positions), pf.open_risk(), entry_lev)
+        notional = {a: pf.notional(a) for a in pf.holdings}
+        net = sum(math.copysign(v, pf.holdings[a]) for a, v in notional.items())
+        big = max(notional.values(), default=0.0)
+        stats[k] = (eq, pf.gross_leverage(), len(pf.positions), pf.open_risk(), entry_lev,
+                    net / eq if eq > 0 else math.nan, big / eq if eq > 0 else math.nan)
+
+    if flatten_at_end and i1 > i0 and pf.positions:
+        i = i1 - 1
+        t = full_idx[i]
+        for pid, pos in list(pf.positions.items()):
+            for a, q in list(pos.qty.items()):
+                if q == 0.0:
+                    continue
+                j = mkt.col[a]
+                side = "sell" if q > 0 else "buy"
+                mark = float(mkt.last[i, j])
+                if mkt.real[i, j]:
+                    f = broker.stop_fill(a, side, abs(q), float(mkt.close[i, j]), mkt.bar(i, a), pid)
+                else:
+                    fr = (costs.half_spread(a) + costs.slippage) * cost_mult
+                    px = mark * (1.0 - fr if side == "sell" else 1.0 + fr)
+                    f = Fill(f"{pid}:switch:{a}", t, a, side, abs(q), px,
+                             costs.fee(abs(q) * px, "taker") * cost_mult, "taker")
+                pf.apply_fill(f, pid, mark)
+            pipe.finish(pid, t, "model_switch")
+        pipe.exiting.clear()
+        pipe.submitted.clear()
+        eq = pf.equity()  # the flattened book: refresh the whole last stats row
+        equity[-1] = eq
+        stats[-1] = (eq, pf.gross_leverage(), len(pf.positions), pf.open_risk(), stats[-1, 4],
+                     0.0 if eq > 0 else math.nan, 0.0 if eq > 0 else math.nan)
 
     out_idx = full_idx[i0:i1]
     benchmark = None
