@@ -9,6 +9,29 @@ def _f(x, fmt="{:.4g}") -> str:
     return "n/a" if x is None else fmt.format(x)
 
 
+def _count(cid: str, n) -> str:
+    """Carry results count position entries; H2 results count order fills (one per leg change)."""
+    return f"{n} fills" if cid.startswith("H2") else f"{n} entries"
+
+
+def _kill_inputs(s: dict) -> list[str]:
+    out = [
+        "| config | decision | mean daily net | UB95 b=28 | LB95 b=28 | LB95 b=14 | "
+        "carry value (H1/H5) | mean carry_net (H2) |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for cid, c in s["configs"].items():
+        d = c.get("stage1") or {}
+        why = f" ({', '.join(d['reasons'])})" if d.get("reasons") else ""
+        out.append(
+            f"| {cid} | {d.get('decision')}{why} | {_f(d.get('mean_daily'), '{:.6f}')} | "
+            f"{_f(d.get('ub95_b28'), '{:.6f}')} | {_f(d.get('lb95_b28'), '{:.6f}')} | "
+            f"{_f(d.get('lb95_b14'), '{:.6f}')} | {_f(d.get('carry_value'), '{:.2f}')} | "
+            f"{_f(d.get('carry_net_mean'), '{:.6f}')} |"
+        )
+    return out
+
+
 def render_report(s: dict) -> str:
     lines: list[str] = []
     stage = s["stage"]
@@ -38,6 +61,8 @@ def render_report(s: dict) -> str:
             "KILL reasons: (a) mean < 0 and b=28 one-sided 95% upper bound < 0; (b) carry component does "
             "not cover costs; (c) no position ever open. C1-C7 / M1-M4 are information only.\n"
         )
+        lines.extend(_kill_inputs(s))
+        lines.append("\n### C1-C7 / M1-M4 (information only)\n")
     else:
         lines.append("\n## RESEARCH EDGE (headline b=28; b=14 mandatory robustness)\n")
         if s.get("killed"):
@@ -69,7 +94,7 @@ def render_report(s: dict) -> str:
     lines.append("\n## Sensitivity rows and P&L decomposition\n")
     lines.append(
         "| config | row | mean daily | Sharpe | max DD | spot price | perp price | funding | fees | "
-        "spread | liq. penalty | entries |"
+        "spread | liq. penalty | entries (carry) / fills (H2) |"
     )
     lines.append("|---" * 12 + "|")
     for cid, c in s["configs"].items():
@@ -80,7 +105,7 @@ def render_report(s: dict) -> str:
                 f"{_f(r['max_drawdown'], '{:.3f}')} | {_f(p['spot_price_pnl'], '{:.2f}')} | "
                 f"{_f(p['perp_price_pnl'], '{:.2f}')} | {_f(p['funding_cf'], '{:.2f}')} | "
                 f"{_f(p['fees'], '{:.2f}')} | {_f(p['spread_slippage'], '{:.2f}')} | "
-                f"{_f(p['liquidation_penalty'], '{:.2f}')} | {r['entries']} |"
+                f"{_f(p['liquidation_penalty'], '{:.2f}')} | {_count(cid, r['entries'])} |"
             )
     lines.append("\n## Counters (PRIMARY)\n")
     keys = [
@@ -109,13 +134,13 @@ def render_report(s: dict) -> str:
             + " |"
         )
     lines.append("\n## Nulls (PRIMARY; never GO, never promoted)\n")
-    lines.append("| config | null | Sharpe | mean daily | entries |")
+    lines.append("| config | null | Sharpe | mean daily | entries (carry) / fills (H2) |")
     lines.append("|---|---|---|---|---|")
     for cid, ns in s["nulls"].items():
         for nid, r in ns.items():
             lines.append(
                 f"| {cid} | {nid} | {_f(r['sharpe'], '{:.3f}')} | {_f(r['mean_daily'], '{:.6f}')} | "
-                f"{r['entries']} |"
+                f"{_count(cid, r['entries'])} |"
             )
     lines.append("\n## Diagnostics (not configs; never part of GO / NO-GO)\n")
     d = s["diagnostics"]
@@ -126,4 +151,7 @@ def render_report(s: dict) -> str:
     lines.append(f"- H5 vs H1-Y10 (information): {d['H5_vs_H1-Y10_sharpe']}")
     if "venue_basis" in d:
         lines.append(f"- Venue basis: {d['venue_basis']}")
+    mc = {"valuation_stale": 0, **(s.get("market_counters") or {})}
+    lines.append("\n## Market data counters (all runs)\n")
+    lines.append(", ".join(f"{k}: {v}" for k, v in sorted(mc.items())))
     return "\n".join(lines) + "\n"

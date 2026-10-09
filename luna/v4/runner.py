@@ -487,7 +487,7 @@ def run_stage(
         "nulls": {cid: {nid: _row_summary(r) for nid, r in nulls[cid].items()} for cid in run_ids},
         "null_draws": null_info,
         "diagnostics": diagnostics,
-        "market_counters": dict(getattr(inp.market, "counters", {}) or {}),
+        "market_counters": {"valuation_stale": 0, **dict(getattr(inp.market, "counters", {}) or {})},
         "deployable_now": stats.deployable_now(),
         "notes": inp.notes,
     }

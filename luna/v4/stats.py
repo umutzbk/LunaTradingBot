@@ -176,6 +176,7 @@ def stage1_decision(kind: str, primary: pd.Series, carry_value: float | None, ca
     upper bound < 0, (b) the carry component does not cover costs (H2: mean carry_net <= 0; H1/H5:
     sum funding - fees - spread <= 0), or (c) no position was ever open; else ADVANCE TO FORWARD."""
     r = mbb_pvalue(primary.to_numpy(), 28, B, seed)
+    r14 = mbb_pvalue(primary.to_numpy(), 14, B, seed)
     ub = r.upper_bound(STAGE1_LCB_ALPHA)
     reasons = []
     if len(primary) and float(primary.mean()) < 0 and ub < 0:
@@ -187,8 +188,11 @@ def stage1_decision(kind: str, primary: pd.Series, carry_value: float | None, ca
         reasons.append("b")
     if active_days is not None and active_days == 0:
         reasons.append("c")
-    return {"decision": "KILL" if reasons else "ADVANCE TO FORWARD", "reasons": reasons, "ub95_b28": ub,
-            "mean_daily": float(primary.mean()) if len(primary) else math.nan}
+    net_mean = float(carry_net.mean()) if kind == "h2" and carry_net is not None and len(carry_net) else None
+    return {"decision": "KILL" if reasons else "ADVANCE TO FORWARD", "reasons": reasons,
+            "mean_daily": float(primary.mean()) if len(primary) else math.nan, "ub95_b28": ub,
+            "lb95_b28": r.lower_bound(STAGE1_LCB_ALPHA), "lb95_b14": r14.lower_bound(STAGE1_LCB_ALPHA),
+            "carry_value": carry_value if kind != "h2" else None, "carry_net_mean": net_mean}
 
 
 def hypothesis_summary(results: dict[str, dict]) -> dict[str, bool]:
@@ -257,6 +261,7 @@ def evaluate(evidences: dict[str, ConfigEvidence], stage: int, B: int = B, seed:
             "m": dict(e.m),
             "pvalues": {f"b{b}": boots[c][b].p for b in BLOCKS},
             "lcb95_b28": boots[c][28].lower_bound(STAGE1_LCB_ALPHA),
+            "lcb95_b14": boots[c][14].lower_bound(STAGE1_LCB_ALPHA),
             "holm": {k: dict(v) for k, v in holms.items()},
             "c6_holm": {k: dict(v) for k, v in c6_holm.items()} if e.kind == "h2" else None,
             "metrics": {"mean_daily": float(r.mean()) if len(r) else math.nan, "sharpe": sh,

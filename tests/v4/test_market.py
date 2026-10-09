@@ -223,3 +223,19 @@ def test_depth_snapshot_age_limit_is_q9():
     from luna.v4.dq import DEPTH_MAX_AGE
 
     assert mk.BOOK_LOOKBACK == DEPTH_MAX_AGE
+
+
+def test_hist_valuation_fallback_is_counted_as_stale():
+    s = bars(D - pd.Timedelta("1D"), 3 * 96, close=100.0)
+    m = mk.HistoricalMarket(_hist(spot=s))
+    m.value("A", "spot", D)
+    assert m.counters["valuation_stale"] == 0
+    missing = s.drop(D + pd.Timedelta("23h45min"))
+    m2 = mk.HistoricalMarket(_hist(spot=missing))
+    assert m2.value("A", "spot", D) == 100.0 and m2.counters["valuation_stale"] == 1
+    filled = s.copy()
+    filled.loc[D + pd.Timedelta("23h45min"), "filled"] = True
+    m3 = mk.HistoricalMarket(_hist(spot=filled))
+    m3.value("A", "spot", D)
+    m3.value("A", "spot", D)  # memoised: counted once per (asset, leg, day)
+    assert m3.counters["valuation_stale"] == 1

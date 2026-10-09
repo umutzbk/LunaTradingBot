@@ -79,6 +79,8 @@ class HistoricalMarket:
             df = self._bars(asset, leg)
             i = df.index.searchsorted(day + DAY - BAR, "right") if df is not None else 0
             self._values[key] = float(df["close"].iloc[i - 1]) if i > 0 else None
+            if i > 0 and (df.index[i - 1] != day + DAY - BAR or bool(df["filled"].iloc[i - 1])):
+                self.counters["valuation_stale"] += 1  # the 23:45 bar is missing or filled (F7)
         return self._values[key]
 
     def mark(self, asset: str, t: pd.Timestamp) -> float | None:

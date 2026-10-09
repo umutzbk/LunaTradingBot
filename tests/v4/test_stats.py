@@ -244,3 +244,12 @@ def test_forward_holm_family_keeps_killed_configs_with_p_one():
     out2 = s.evaluate({k: v for k, v in fam.items() if k != "H1-Y10"}, stage=2, B=500, killed=killed,
                       prior_go=["H1-Y10"])
     assert len(out2["H5-HFWB"]["holm"]["b28"]) == 6
+
+
+def test_stage1_decision_reports_its_inputs():
+    d = s.stage1_decision("h2", _series(0.001, sd=0.002), None, _series(2e-4), 100, B=300)
+    assert set(d) >= {"mean_daily", "ub95_b28", "lb95_b28", "lb95_b14", "carry_value", "carry_net_mean"}
+    assert d["carry_net_mean"] == pytest.approx(2e-4) and d["carry_value"] is None
+    c = s.stage1_decision("carry", _series(0.001, sd=0.002), 1.5, None, 100, B=300)
+    assert c["carry_value"] == 1.5 and c["carry_net_mean"] is None
+    assert c["lb95_b28"] < c["mean_daily"] < c["ub95_b28"]

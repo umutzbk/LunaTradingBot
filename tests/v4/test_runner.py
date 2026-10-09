@@ -183,6 +183,9 @@ def test_full_synthetic_stage1_run_writes_manifest_summary_and_report(tmp_path: 
     first = [ln for ln in report.splitlines() if ln.strip()][1]
     assert "EXPLORATORY" in first and "not generalization evidence" in first
     assert "DEPLOYABLE NOW: NO" in report
+    assert "valuation_stale" in report and "valuation_stale" in s["market_counters"]
+    assert "UB95 b=28" in report and "LB95 b=14" in report and "mean carry_net (H2)" in report
+    assert " fills |" in report and " entries |" in report
     assert "## Stage 1 decision (ADVANCE TO FORWARD / KILL)" in report and "Hypotheses" in report
     assert summary["stage"] == 1
     daily = pd.read_csv(out / "daily" / "H2-L7-k1__PRIMARY.csv")
