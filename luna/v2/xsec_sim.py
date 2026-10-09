@@ -151,6 +151,12 @@ def run_xsec(
     fund = _Funding(funding, mkt, funding_mode) if kind == "perp" else None
     broker = SimBroker(kind, costs, instruments, cost_mult)
     dc = daily_closes(panel)
+    aux = None
+    if params.signal != "momentum":  # Research V3: daily perp-spot premium read at decision stamps
+        from luna.v3.signals import base_signal, premium_daily
+
+        if base_signal(params.signal) == "premium":
+            aux = premium_daily(panel)
     stamps = set(rebalance_stamps(idx[i0:i1], params.rebalance))
     liquidity = order_model or default_order_model(kind)
     band = v1.max_price_band
@@ -379,8 +385,10 @@ def run_xsec(
             record_misses(i, t)
         real_at = {a: bool(mkt.real[i, mkt.col[a]]) for a in panel}
         hist = dc.loc[dc.index <= t]
-        elig = eligible(dc, real_at, [a for a in universe if a in panel], params.lookback_days, t)
-        raw = raw_targets(dc, elig, params, kind, t)
+        elig = eligible(
+            dc, real_at, [a for a in universe if a in panel], params.lookback_days, t, params=params, aux=aux
+        )
+        raw = raw_targets(dc, elig, params, kind, t, aux)
         w = raw
         st.vol_scale, st.ex_ante_var = 1.0, math.nan
         if len(elig) and (raw != 0).any():
@@ -391,7 +399,7 @@ def run_xsec(
                 trailing_corr(rets),
                 controls="perp" if kind == "perp" else "spot",
                 gross=params.gross if kind == "perp" else 1.0,
-                vol_target=params.vol_target if kind == "perp" else None,
+                vol_target=params.vol_target,  # V2 spot grids never set one (spot: V3 vol-managed only)
             )
             if proj.reason:
                 event(t, proj.reason, detail=",".join(elig))

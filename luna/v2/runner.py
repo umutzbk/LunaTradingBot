@@ -228,7 +228,10 @@ def run_research(
     runtime: dict[str, float] = {}
 
     t0 = time.perf_counter()
-    tl = build_v2_tradelists(inp, s2, account, windows, cache_dir=tl_cache_dir)
+    if any(c.engine == "signal" for c in configs):
+        tl = build_v2_tradelists(inp, s2, account, windows, cache_dir=tl_cache_dir)
+    else:  # cross-sectional-only runs (Research V3) need no signal trade lists
+        tl = pd.DataFrame(columns=["strategy", "params_id", "key"])
     runtime["trade lists"] = time.perf_counter() - t0
     _init(inp, tl, s2, windows)
     pool = ProcessPoolExecutor(jobs, initializer=_init, initargs=(inp, tl, s2, windows)) if jobs > 1 else None

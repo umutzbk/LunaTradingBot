@@ -138,7 +138,11 @@ def _caveats(r: ResearchResults) -> list[str]:
     return out
 
 
-def build_v2_report(r: ResearchResults, inp: Inputs, settings: Settings) -> V2Report:
+def build_v2_report(
+    r: ResearchResults, inp: Inputs, settings: Settings, baseline_expectancy: float | None = None
+) -> V2Report:
+    """``baseline_expectancy``: the §3.5 criterion-8 bar; V2 uses the naive momentum baseline (None),
+    Research V3 passes its family null baseline."""
     kind = r.account
     s2 = v2_settings(settings)
     costs = CostModel(s2.costs[kind])
@@ -151,7 +155,7 @@ def build_v2_report(r: ResearchResults, inp: Inputs, settings: Settings) -> V2Re
         variants["realistic"].oos,
         variants["cost_2x_edge"].oos,
         variants["edge"].per_window,
-        naive_momentum_expectancy(r.naive),
+        naive_momentum_expectancy(r.naive) if baseline_expectancy is None else baseline_expectancy,
         known_from,
         metrics={
             "edge": metrics["edge"],

@@ -152,7 +152,20 @@ def project_weights(
         if w.sum() > 0:
             w = w * (gross / w.sum())
         w = w.clip(upper=ASSET_CAP["spot"])
-        return Projection(w, 1.0, math.nan, "")
+        if vol_target is None:
+            return Projection(w, 1.0, math.nan, "")
+        # Research V3 vol-managed exposure: scale down (never up) to the target annual vol; like the
+        # perp book it fails closed when the covariance cannot measure the risk
+        held = [a for a in w.index if w[a] != 0]
+        if any(a not in cov.index or a not in cov.columns for a in held):
+            return _closed(raw)
+        sub = cov.loc[held, held].to_numpy(dtype=float)
+        if not np.isfinite(sub).all():
+            return _closed(raw)
+        v = w[held].to_numpy(dtype=float)
+        sd = math.sqrt(max(float(v @ sub @ v), 0.0))
+        scale = min(1.0, (vol_target / math.sqrt(DAYS_PER_YEAR)) / sd) if sd > 0 else 1.0
+        return Projection(w * scale, scale, math.nan, "")
 
     traded = [a for a in raw.index if raw[a] != 0]
     if any(a not in cov.index or a not in cov.columns for a in traded):

@@ -216,7 +216,14 @@ def fit_xsec_config(
     rates = _known_rates(inp.funding, w.train_end) if kind == "perp" else {}
     best: tuple[float, str, XSecParams, pd.DataFrame] | None = None
     for g in cfg.grid():
-        p = XSecParams(g["lookback_days"], g["k"], g.get("gross", 1.0), g.get("vol_target"), cfg.rebalance)
+        p = XSecParams(
+            g["lookback_days"],
+            g["k"],
+            g.get("gross", 1.0),
+            g.get("vol_target"),
+            cfg.rebalance,
+            g.get("signal", "momentum"),  # V2 grids carry no signal; Research V3 grids do
+        )
         panel, funding = _subset(inp, set(universe))
         res = run_xsec(
             panel,

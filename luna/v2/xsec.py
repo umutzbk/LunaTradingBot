@@ -27,11 +27,13 @@ class XSecParams:
     gross: float = 1.0
     vol_target: float | None = None
     rebalance: Literal["weekly", "daily"] = "weekly"
+    signal: str = "momentum"  # ranking score; anything else is a Research V3 signal (luna.v3.signals)
 
     @property
     def params_id(self) -> str:
         pid = f"L{self.lookback_days}_k{self.k}_g{self.gross:g}_v{self.vol_target or 0:g}"
-        return pid + ("_daily" if self.rebalance == "daily" else "")
+        pid += "_daily" if self.rebalance == "daily" else ""
+        return pid + (f"_{self.signal}" if self.signal != "momentum" else "")
 
 
 def rebalance_stamps(index: pd.DatetimeIndex, rebalance: Literal["weekly", "daily"]) -> pd.DatetimeIndex:
@@ -59,18 +61,36 @@ def lookback_returns(daily_close: pd.DataFrame, t: pd.Timestamp, lookback_days: 
     return daily_close.loc[t] / daily_close.loc[past] - 1.0
 
 
+def scores(
+    daily_close: pd.DataFrame, t: pd.Timestamp, params: XSecParams, aux: pd.DataFrame | None = None
+) -> pd.Series:
+    """Ranking score per asset at ``t`` (higher = long). V2 momentum is the L-day return; other
+    signals are Research V3's (imported lazily so worker processes need no extra setup)."""
+    if params.signal == "momentum":
+        return lookback_returns(daily_close, t, params.lookback_days)
+    from luna.v3.signals import score
+
+    return score(daily_close, t, params, aux)
+
+
 def eligible(
     daily_close: pd.DataFrame,
     real_at: dict[str, bool],
     universe: list[str],
     lookback_days: int,
     t: pd.Timestamp,
+    *,
+    params: XSecParams | None = None,
+    aux: pd.DataFrame | None = None,
 ) -> list[str]:
-    """Universe assets with a real 15m bar at ``t``, a finite L-day return at ``t``, at least
-    max(lookback + 1, 31) daily closes and at least 30 finite daily returns up to ``t`` (lookback
-    return and the 30-day covariance; a missing day removes two returns)."""
+    """Universe assets with a real 15m bar at ``t``, a finite L-day return (finite score when
+    ``params`` is given) at ``t``, at least max(lookback + 1, 31) daily closes and at least 30
+    finite daily returns up to ``t`` (lookback return and the 30-day covariance; a missing day
+    removes two returns)."""
     hist = daily_close.loc[daily_close.index <= t]
     rets = lookback_returns(daily_close, t, lookback_days)
+    if params is not None and params.signal != "momentum":
+        rets = rets.where(np.isfinite(scores(daily_close, t, params, aux).reindex(rets.index)))
     need = max(lookback_days + 1, MIN_DAILY_HISTORY + 1)
     out = []
     for a in universe:
@@ -90,6 +110,7 @@ def raw_targets(
     params: XSecParams,
     kind: AccountKind,
     t: pd.Timestamp,
+    aux: pd.DataFrame | None = None,
 ) -> pd.Series:
     """Raw weights (fraction of equity) before the risk projection.
 
@@ -99,7 +120,7 @@ def raw_targets(
     out = pd.Series(0.0, index=list(assets), dtype=float)
     if not assets:
         return out
-    rets = lookback_returns(daily_close, t, params.lookback_days)[list(assets)]
+    rets = scores(daily_close, t, params, aux)[list(assets)]
     n = len(assets)
     desc = sorted(assets, key=lambda a: (-float(rets[a]), a))
     if kind == "spot":
