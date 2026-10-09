@@ -276,19 +276,20 @@ Host'ta uv komutları için: `UV_SYSTEM_CERTS=1 uv run ...`.
 Spec: `docs/superpowers/specs/luna-v4-forward-collector-design.md`. Kraken public perp + spot verisini **ham** ve
 append-only olarak `var/forward/` altına yazar; sinyal, getiri, basis veya fiyat hesabı yapmaz. Botlardan bağımsızdır
 (ayrı süreç, ayrı lock `var/forward/collector.lock`; ikinci bir collector exit 1 ile reddedilir). Compose servisi sabit
-`hostname: luna-collector` kullanır: yeniden yaratılan konteyner aynı host sayılır, eski pid yaşamıyorsa lock hemen
-devralınır. Farklı host + taze heartbeat (≤ 5 dk) her zaman reddedilir.
+`hostname: luna-collector` kullanır: yeniden yaratılan konteyner aynı host sayılır; eski pid yaşamıyorsa ve heartbeat
+180 sn'den eskiyse lock devralınır (aynı pid ise hemen). Farklı host + taze heartbeat (≤ 5 dk) her zaman reddedilir.
 
 - **Başlatma:** `docker compose up -d --build collector` (Docker'sız: `uv run luna collect`). Loglar:
   `docker compose logs -f collector`. 30 dakika boyunca hiçbir ticker çağrısı başarılı olmazsa exit 3 ile çıkar,
   `restart: unless-stopped` yeniden başlatır. Lock başka bir sürece geçerse exit 1.
 - **`meta.json` kaybı:** `var/forward/raw/` doluyken `meta.json` yoksa collector **başlamaz** (exit 1), çünkü
   `collector_start_ts` sıfırlanırdı. `meta.json`'u backup hedefinden (`<hedef>/forward/meta.json`) geri koyun.
-- **Kaynaklar:** her dakika `fut_tickers` + `spot_ticker` (aynı `pair_seq`); :02:30'da 5 dakikalık `spot_time`,
-  `fut_book`, `spot_depth`; :05'te `fut_funding` (yalnızca son 48 saatin satırları, `filtered_since_ts`), :07'de
-  `fut_analytics`; günlük 00:10 `fut_instruments`, 00:12 `spot_assetpairs` (ikisi başlangıçta da, `at_start=true`),
-  00:20 `fut_funding_full` (tam, süzülmemiş funding geçmişi; denetim izi, `filtered_since_ts=null`). Bir sonraki
-  slotu gelen uzun tur yarıda bırakılır; atlanan çağrılar `status.json`'da `skipped_calls` olarak sayılır.
+- **Kaynaklar:** her dakika `fut_tickers` + `spot_ticker` (aynı `pair_seq`); :02:30'da iki ayrı 5 dakikalık tur,
+  önce spot (`spot_time`, `spot_depth`), sonra futures (`fut_book`), her birinin kendi süresi var; :05'te `fut_funding` (yalnızca son 48 saatin satırları, `filtered_since_ts`), :07'de
+  `fut_analytics`; günlük 00:10 `fut_instruments`, 00:12 `spot_assetpairs`, 00:20 `fut_funding_full` (tam,
+  süzülmemiş funding geçmişi; denetim izi, `filtered_since_ts=null`); bu üçü başlangıçta da çalışır (`at_start=true`).
+  Bir sonraki slotu gelen uzun tur yarıda bırakılır (atlanan çağrılar `skipped_calls`) ve gelen slot hemen çalışır;
+  hiç başlatılamayan slotlar `skipped_slots` olarak `status.json`'da sayılır.
 - **Dosyalar:** `var/forward/raw/<source>/date=YYYY-MM-DD/HH.jsonl` (açık saat) → saat bitip 2 dk geçince
   `HH.jsonl.gz`. Kapanmış saate geç gelen satırlar `HH.late.jsonl` → `HH.late.N.jsonl.gz` olur (doğrulanmış gz
   asla yeniden yazılmaz). Gün bitip 3 saat geçince `var/forward/manifest/date=….json` (sha256, satır, ok/hata,
