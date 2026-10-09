@@ -1,0 +1,4006 @@
+{
+ "stage": 1,
+ "label": "EXPLORATORY \u2014 reused development period; not generalization evidence.",
+ "look": null,
+ "window": {
+  "eval_start": "2025-11-05T00:00:00+00:00",
+  "end": "2026-07-01T00:00:00+00:00"
+ },
+ "window_days": 238,
+ "dq_valid_days": 238,
+ "configs": {
+  "H1-Y10": {
+   "verdict": "KILL",
+   "stage1": {
+    "decision": "KILL",
+    "reasons": [
+     "a",
+     "b"
+    ],
+    "mean_daily": -0.0001361220521952397,
+    "ub95_b28": -9.73415065039315e-05,
+    "lb95_b28": -0.0001952767904553238,
+    "lb95_b14": -0.0002048200745438348,
+    "carry_value": -16.14384248784331,
+    "carry_net_mean": null
+   },
+   "headline_block": 28,
+   "criteria": {
+    "C1": true,
+    "C2": false,
+    "C3": false,
+    "C4": false,
+    "C5": true,
+    "C6": false,
+    "C7": false
+   },
+   "criteria_pass": false,
+   "m": {
+    "M1": true,
+    "M2": true,
+    "M3": true,
+    "M4": true
+   },
+   "pvalues": {
+    "b28": 1.0,
+    "b14": 0.9998000199980002
+   },
+   "lcb95_b28": -0.0001952767904553238,
+   "lcb95_b14": -0.0002048200745438348,
+   "holm": {
+    "b28": {
+     "H2-L7-k2": {
+      "p": 0.35496450354964504,
+      "alpha": 0.0071428571428571435,
+      "reject": false
+     },
+     "H2-L30-k2": {
+      "p": 0.42425757424257576,
+      "alpha": 0.008333333333333333,
+      "reject": false
+     },
+     "H2-L7-k1": {
+      "p": 0.5138486151384861,
+      "alpha": 0.01,
+      "reject": false
+     },
+     "H2-L30-k1": {
+      "p": 0.6528347165283471,
+      "alpha": 0.0125,
+      "reject": false
+     },
+     "H1-Y20": {
+      "p": 0.9998000199980002,
+      "alpha": 0.016666666666666666,
+      "reject": false
+     },
+     "H1-Y10": {
+      "p": 1.0,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H5-HFWB": {
+      "p": 1.0,
+      "alpha": 0.05,
+      "reject": false
+     }
+    },
+    "b14": {
+     "H2-L7-k2": {
+      "p": 0.42845715428457154,
+      "alpha": 0.0071428571428571435,
+      "reject": false
+     },
+     "H2-L30-k2": {
+      "p": 0.4443555644435556,
+      "alpha": 0.008333333333333333,
+      "reject": false
+     },
+     "H2-L7-k1": {
+      "p": 0.5125487451254874,
+      "alpha": 0.01,
+      "reject": false
+     },
+     "H2-L30-k1": {
+      "p": 0.6716328367163283,
+      "alpha": 0.0125,
+      "reject": false
+     },
+     "H1-Y20": {
+      "p": 0.999000099990001,
+      "alpha": 0.016666666666666666,
+      "reject": false
+     },
+     "H1-Y10": {
+      "p": 0.9998000199980002,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H5-HFWB": {
+      "p": 1.0,
+      "alpha": 0.05,
+      "reject": false
+     }
+    }
+   },
+   "c6_holm": null,
+   "metrics": {
+    "mean_daily": -0.0001361220521952397,
+    "sharpe": -4.180749668171599,
+    "null_sharpe_mean": -6.25542872143255,
+    "always_sharpe": -3.752394549642923,
+    "max_drawdown": 0.03320854108702631,
+    "worst_day": -0.004582575929838684,
+    "es975": -0.002613921452543392,
+    "cost2x_mean_daily": -0.0002627786229763982,
+    "carry_value": -16.14384248784331,
+    "c7": {
+     "months": 7,
+     "positive": 0,
+     "pass": false
+    },
+    "days": 238
+   },
+   "research_edge": "KILL",
+   "rows": {
+    "PRIMARY": {
+     "funding_unknown_share": 0.0007388252678241596,
+     "funding_unknown_flag": false,
+     "mean_daily": -0.0001361220521952397,
+     "sharpe": -4.180749668171599,
+     "max_drawdown": 0.03320854108702631,
+     "final_equity": 513.0800298648528,
+     "pnl": {
+      "spot_price_pnl": -32.812958047303624,
+      "perp_price_pnl": 32.03683039999973,
+      "funding_cf": 2.02097936364339,
+      "fees": 15.872119669117955,
+      "spread_slippage": 2.2927021823687452,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 57,
+      "funding_unknown_hours": 5.0,
+      "funding_held_hours": 6767.5,
+      "hedge_rebalances": 1,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 0,
+      "entries": 15,
+      "exits": 13
+     },
+     "entries": 15
+    },
+    "S-SPREAD10": {
+     "funding_unknown_share": 0.0007388252678241596,
+     "funding_unknown_flag": false,
+     "mean_daily": -0.00012843770360889003,
+     "sharpe": -4.046140727014808,
+     "max_drawdown": 0.03148913621732907,
+     "final_equity": 514.0205432920925,
+     "pnl": {
+      "spot_price_pnl": -32.80158424908067,
+      "perp_price_pnl": 32.06385599999996,
+      "funding_cf": 2.0199752387078824,
+      "fees": 15.901827649013697,
+      "spread_slippage": 1.359876048521052,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 57,
+      "funding_unknown_hours": 5.0,
+      "funding_held_hours": 6767.5,
+      "hedge_rebalances": 1,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 0,
+      "entries": 15,
+      "exits": 13
+     },
+     "entries": 15
+    },
+    "S-COST2X": {
+     "funding_unknown_share": 0.0007388252678241596,
+     "funding_unknown_flag": false,
+     "mean_daily": -0.0002627786229763982,
+     "sharpe": -4.70970905707577,
+     "max_drawdown": 0.06151241734093582,
+     "final_equity": 497.79698827578477,
+     "pnl": {
+      "spot_price_pnl": -33.005803171048136,
+      "perp_price_pnl": 33.946671199999514,
+      "funding_cf": 1.9762167622785929,
+      "fees": 30.68146397346162,
+      "spread_slippage": 4.438632541983575,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 36,
+      "funding_unknown_hours": 5.0,
+      "funding_held_hours": 6767.5,
+      "hedge_rebalances": 1,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 0,
+      "entries": 15,
+      "exits": 13
+     },
+     "entries": 15
+    },
+    "S-MAKER": {
+     "funding_unknown_share": 0.0007388252678241596,
+     "funding_unknown_flag": false,
+     "mean_daily": -4.244074646761301e-05,
+     "sharpe": -2.1105955550266495,
+     "max_drawdown": 0.01086598591144039,
+     "final_equity": 524.6641774612976,
+     "pnl": {
+      "spot_price_pnl": -32.7225109154684,
+      "perp_price_pnl": 35.58280799999992,
+      "funding_cf": 2.1084413564390907,
+      "fees": 7.968595386447095,
+      "spread_slippage": 2.335965593225814,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 28,
+      "funding_unknown_hours": 5.0,
+      "funding_held_hours": 6767.5,
+      "hedge_rebalances": 1,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 0,
+      "entries": 15,
+      "exits": 13
+     },
+     "entries": 15
+    }
+   }
+  },
+  "H1-Y20": {
+   "verdict": "KILL",
+   "stage1": {
+    "decision": "KILL",
+    "reasons": [
+     "a",
+     "b"
+    ],
+    "mean_daily": -4.5751662902569476e-05,
+    "ub95_b28": -4.222976917760413e-05,
+    "lb95_b28": -9.150332580513895e-05,
+    "lb95_b14": -9.089446012767197e-05,
+    "carry_value": -5.912974704837329,
+    "carry_net_mean": null
+   },
+   "headline_block": 28,
+   "criteria": {
+    "C1": false,
+    "C2": false,
+    "C3": false,
+    "C4": true,
+    "C5": true,
+    "C6": false,
+    "C7": false
+   },
+   "criteria_pass": false,
+   "m": {
+    "M1": true,
+    "M2": true,
+    "M3": false,
+    "M4": true
+   },
+   "pvalues": {
+    "b28": 0.9998000199980002,
+    "b14": 0.999000099990001
+   },
+   "lcb95_b28": -9.150332580513895e-05,
+   "lcb95_b14": -9.089446012767197e-05,
+   "holm": {
+    "b28": {
+     "H2-L7-k2": {
+      "p": 0.35496450354964504,
+      "alpha": 0.0071428571428571435,
+      "reject": false
+     },
+     "H2-L30-k2": {
+      "p": 0.42425757424257576,
+      "alpha": 0.008333333333333333,
+      "reject": false
+     },
+     "H2-L7-k1": {
+      "p": 0.5138486151384861,
+      "alpha": 0.01,
+      "reject": false
+     },
+     "H2-L30-k1": {
+      "p": 0.6528347165283471,
+      "alpha": 0.0125,
+      "reject": false
+     },
+     "H1-Y20": {
+      "p": 0.9998000199980002,
+      "alpha": 0.016666666666666666,
+      "reject": false
+     },
+     "H1-Y10": {
+      "p": 1.0,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H5-HFWB": {
+      "p": 1.0,
+      "alpha": 0.05,
+      "reject": false
+     }
+    },
+    "b14": {
+     "H2-L7-k2": {
+      "p": 0.42845715428457154,
+      "alpha": 0.0071428571428571435,
+      "reject": false
+     },
+     "H2-L30-k2": {
+      "p": 0.4443555644435556,
+      "alpha": 0.008333333333333333,
+      "reject": false
+     },
+     "H2-L7-k1": {
+      "p": 0.5125487451254874,
+      "alpha": 0.01,
+      "reject": false
+     },
+     "H2-L30-k1": {
+      "p": 0.6716328367163283,
+      "alpha": 0.0125,
+      "reject": false
+     },
+     "H1-Y20": {
+      "p": 0.999000099990001,
+      "alpha": 0.016666666666666666,
+      "reject": false
+     },
+     "H1-Y10": {
+      "p": 0.9998000199980002,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H5-HFWB": {
+      "p": 1.0,
+      "alpha": 0.05,
+      "reject": false
+     }
+    }
+   },
+   "c6_holm": null,
+   "metrics": {
+    "mean_daily": -4.5751662902569476e-05,
+    "sharpe": -2.2958127529988532,
+    "null_sharpe_mean": -4.331842700957971,
+    "always_sharpe": -3.752394549642923,
+    "max_drawdown": 0.012010955066134144,
+    "worst_day": -0.0031931554259704287,
+    "es975": -0.0019801254666325465,
+    "cost2x_mean_daily": -0.0001001476344748191,
+    "carry_value": -5.912974704837329,
+    "c7": {
+     "months": 7,
+     "positive": 0,
+     "pass": false
+    },
+    "days": 238
+   },
+   "research_edge": "KILL",
+   "rows": {
+    "PRIMARY": {
+     "funding_unknown_share": 0.0011684518013631937,
+     "funding_unknown_flag": false,
+     "mean_daily": -4.5751662902569476e-05,
+     "sharpe": -2.2958127529988532,
+     "max_drawdown": 0.012010955066134144,
+     "final_equity": 524.251045062975,
+     "pnl": {
+      "spot_price_pnl": -35.723470632187464,
+      "perp_price_pnl": 35.88749039999979,
+      "funding_cf": 0.9545499210276793,
+      "fees": 5.988134630072087,
+      "spread_slippage": 0.8793899957929219,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 0,
+      "funding_unknown_hours": 3.0,
+      "funding_held_hours": 2567.5,
+      "hedge_rebalances": 0,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 0,
+      "entries": 6,
+      "exits": 4
+     },
+     "entries": 6
+    },
+    "S-SPREAD10": {
+     "funding_unknown_share": 0.0011684518013631937,
+     "funding_unknown_flag": false,
+     "mean_daily": -4.2853928169222644e-05,
+     "sharpe": -2.227440923092767,
+     "max_drawdown": 0.011345045527164754,
+     "final_equity": 524.6133552910287,
+     "pnl": {
+      "spot_price_pnl": -35.72910194082983,
+      "perp_price_pnl": 35.907166,
+      "funding_cf": 0.9543896372499596,
+      "fees": 5.9918121647590965,
+      "spread_slippage": 0.5272862406322889,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 1,
+      "funding_unknown_hours": 3.0,
+      "funding_held_hours": 2567.5,
+      "hedge_rebalances": 0,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 0,
+      "entries": 6,
+      "exits": 4
+     },
+     "entries": 6
+    },
+    "S-COST2X": {
+     "funding_unknown_share": 0.0011684518013631937,
+     "funding_unknown_flag": false,
+     "mean_daily": -0.0001001476344748191,
+     "sharpe": -2.8944090328300085,
+     "max_drawdown": 0.024453523565539426,
+     "final_equity": 517.4892465083901,
+     "pnl": {
+      "spot_price_pnl": -35.61971377817391,
+      "perp_price_pnl": 35.742631199999785,
+      "funding_cf": 0.9551414512174361,
+      "fees": 11.848334968867,
+      "spread_slippage": 1.7404773957861548,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 0,
+      "funding_unknown_hours": 3.0,
+      "funding_held_hours": 2567.5,
+      "hedge_rebalances": 0,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 0,
+      "entries": 6,
+      "exits": 4
+     },
+     "entries": 6
+    },
+    "S-MAKER": {
+     "funding_unknown_share": 0.0011684518013631937,
+     "funding_unknown_flag": false,
+     "mean_daily": -2.1409090655728734e-05,
+     "sharpe": -1.4869921746137644,
+     "max_drawdown": 0.006397140881457375,
+     "final_equity": 527.3015671444541,
+     "pnl": {
+      "spot_price_pnl": -35.770119486086934,
+      "perp_price_pnl": 35.97512799999974,
+      "funding_cf": 0.954032176742321,
+      "fees": 2.9737102396334776,
+      "spread_slippage": 0.8837633065674895,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 20,
+      "funding_unknown_hours": 3.0,
+      "funding_held_hours": 2567.5,
+      "hedge_rebalances": 0,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 0,
+      "entries": 6,
+      "exits": 4
+     },
+     "entries": 6
+    }
+   }
+  },
+  "H2-L7-k1": {
+   "verdict": "KILL",
+   "stage1": {
+    "decision": "KILL",
+    "reasons": [
+     "b"
+    ],
+    "mean_daily": 0.00014134437895829688,
+    "ub95_b28": 0.0028287628199341027,
+    "lb95_b28": -0.003212852176731908,
+    "lb95_b14": -0.0036792605244140857,
+    "carry_value": null,
+    "carry_net_mean": -1.4943112823429107e-05
+   },
+   "headline_block": 28,
+   "criteria": {
+    "C1": true,
+    "C2": false,
+    "C3": false,
+    "C4": true,
+    "C5": false,
+    "C6": false,
+    "C7": false
+   },
+   "criteria_pass": false,
+   "m": {
+    "M1": true,
+    "M2": true,
+    "M3": true,
+    "M4": true
+   },
+   "pvalues": {
+    "b28": 0.5138486151384861,
+    "b14": 0.5125487451254874
+   },
+   "lcb95_b28": -0.003212852176731908,
+   "lcb95_b14": -0.0036792605244140857,
+   "holm": {
+    "b28": {
+     "H2-L7-k2": {
+      "p": 0.35496450354964504,
+      "alpha": 0.0071428571428571435,
+      "reject": false
+     },
+     "H2-L30-k2": {
+      "p": 0.42425757424257576,
+      "alpha": 0.008333333333333333,
+      "reject": false
+     },
+     "H2-L7-k1": {
+      "p": 0.5138486151384861,
+      "alpha": 0.01,
+      "reject": false
+     },
+     "H2-L30-k1": {
+      "p": 0.6528347165283471,
+      "alpha": 0.0125,
+      "reject": false
+     },
+     "H1-Y20": {
+      "p": 0.9998000199980002,
+      "alpha": 0.016666666666666666,
+      "reject": false
+     },
+     "H1-Y10": {
+      "p": 1.0,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H5-HFWB": {
+      "p": 1.0,
+      "alpha": 0.05,
+      "reject": false
+     }
+    },
+    "b14": {
+     "H2-L7-k2": {
+      "p": 0.42845715428457154,
+      "alpha": 0.0071428571428571435,
+      "reject": false
+     },
+     "H2-L30-k2": {
+      "p": 0.4443555644435556,
+      "alpha": 0.008333333333333333,
+      "reject": false
+     },
+     "H2-L7-k1": {
+      "p": 0.5125487451254874,
+      "alpha": 0.01,
+      "reject": false
+     },
+     "H2-L30-k1": {
+      "p": 0.6716328367163283,
+      "alpha": 0.0125,
+      "reject": false
+     },
+     "H1-Y20": {
+      "p": 0.999000099990001,
+      "alpha": 0.016666666666666666,
+      "reject": false
+     },
+     "H1-Y10": {
+      "p": 0.9998000199980002,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H5-HFWB": {
+      "p": 1.0,
+      "alpha": 0.05,
+      "reject": false
+     }
+    }
+   },
+   "c6_holm": {
+    "b28": {
+     "H2-L30-k2": {
+      "p": 9.999000099990002e-05,
+      "alpha": 0.0125,
+      "reject": true
+     },
+     "H2-L30-k1": {
+      "p": 0.010698930106989302,
+      "alpha": 0.016666666666666666,
+      "reject": true
+     },
+     "H2-L7-k1": {
+      "p": 0.6445355464453555,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H2-L7-k2": {
+      "p": 0.6802319768023197,
+      "alpha": 0.05,
+      "reject": false
+     }
+    },
+    "b14": {
+     "H2-L30-k2": {
+      "p": 0.00019998000199980003,
+      "alpha": 0.0125,
+      "reject": true
+     },
+     "H2-L30-k1": {
+      "p": 0.025397460253974602,
+      "alpha": 0.016666666666666666,
+      "reject": false
+     },
+     "H2-L7-k2": {
+      "p": 0.6591340865913409,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H2-L7-k1": {
+      "p": 0.6821317868213179,
+      "alpha": 0.05,
+      "reject": false
+     }
+    }
+   },
+   "metrics": {
+    "mean_daily": 0.00014134437895829688,
+    "sharpe": 0.09740725082875608,
+    "null_sharpe_mean": -0.22765372599084327,
+    "always_sharpe": null,
+    "max_drawdown": 0.300813131712628,
+    "worst_day": -0.09560106701539428,
+    "es975": -0.07046704369251361,
+    "cost2x_mean_daily": -6.190239459771608e-05,
+    "carry_value": null,
+    "c7": {
+     "months": 7,
+     "positive": 3,
+     "pass": false
+    },
+    "days": 238
+   },
+   "research_edge": "KILL",
+   "rows": {
+    "PRIMARY": {
+     "funding_unknown_share": 0.0007153395627486923,
+     "funding_unknown_flag": false,
+     "mean_daily": 0.00014134437895829688,
+     "sharpe": 0.09740725082875608,
+     "max_drawdown": 0.300813131712628,
+     "final_equity": 250.30106110928355,
+     "pnl": {
+      "spot_price_pnl": 0.0,
+      "perp_price_pnl": -13.564303299999704,
+      "funding_cf": 9.346323856091978,
+      "fees": 6.52148046515,
+      "spread_slippage": 3.959478981658722,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 6,
+      "funding_unknown_hours": 8.0,
+      "funding_held_hours": 11183.5,
+      "hedge_rebalances": 0,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 34,
+      "entries": 0,
+      "exits": 0
+     },
+     "entries": 104
+    },
+    "S-SPREAD10": {
+     "funding_unknown_share": 0.0007153395627486923,
+     "funding_unknown_flag": false,
+     "mean_daily": 0.00014134437895829688,
+     "sharpe": 0.09740725082875608,
+     "max_drawdown": 0.300813131712628,
+     "final_equity": 250.30106110928355,
+     "pnl": {
+      "spot_price_pnl": 0.0,
+      "perp_price_pnl": -13.564303299999704,
+      "funding_cf": 9.346323856091978,
+      "fees": 6.52148046515,
+      "spread_slippage": 3.959478981658722,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 6,
+      "funding_unknown_hours": 8.0,
+      "funding_held_hours": 11183.5,
+      "hedge_rebalances": 0,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 34,
+      "entries": 0,
+      "exits": 0
+     },
+     "entries": 104
+    },
+    "S-COST2X": {
+     "funding_unknown_share": 0.0007153395627486923,
+     "funding_unknown_flag": false,
+     "mean_daily": -6.190239459771608e-05,
+     "sharpe": -0.04245095593889641,
+     "max_drawdown": 0.3085722746174884,
+     "final_equity": 238.2590858307605,
+     "pnl": {
+      "spot_price_pnl": 0.0,
+      "perp_price_pnl": -15.30333360000034,
+      "funding_cf": 9.080136462484173,
+      "fees": 12.7463425114,
+      "spread_slippage": 7.771374520323312,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 6,
+      "funding_unknown_hours": 8.0,
+      "funding_held_hours": 11183.5,
+      "hedge_rebalances": 0,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 34,
+      "entries": 0,
+      "exits": 0
+     },
+     "entries": 104
+    },
+    "S-MAKER": {
+     "funding_unknown_share": 0.0007153395627486923,
+     "funding_unknown_flag": false,
+     "mean_daily": 0.00015695147122049907,
+     "sharpe": 0.10826417821912152,
+     "max_drawdown": 0.2998049040581433,
+     "final_equity": 251.27374065902157,
+     "pnl": {
+      "spot_price_pnl": 0.0,
+      "perp_price_pnl": -16.539719899999753,
+      "funding_cf": 9.401445480207691,
+      "fees": 2.61668718442,
+      "spread_slippage": 3.971297736766386,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 6,
+      "funding_unknown_hours": 8.0,
+      "funding_held_hours": 11183.5,
+      "hedge_rebalances": 0,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 34,
+      "entries": 0,
+      "exits": 0
+     },
+     "entries": 104
+    }
+   }
+  },
+  "H2-L7-k2": {
+   "verdict": "KILL",
+   "stage1": {
+    "decision": "KILL",
+    "reasons": [
+     "b"
+    ],
+    "mean_daily": 0.00028263017966415597,
+    "ub95_b28": 0.0022203140061756335,
+    "lb95_b28": -0.0014187022202519965,
+    "lb95_b14": -0.0017570210645201868,
+    "carry_value": null,
+    "carry_net_mean": -4.2436212909421305e-06
+   },
+   "headline_block": 28,
+   "criteria": {
+    "C1": true,
+    "C2": false,
+    "C3": true,
+    "C4": false,
+    "C5": false,
+    "C6": false,
+    "C7": false
+   },
+   "criteria_pass": false,
+   "m": {
+    "M1": true,
+    "M2": true,
+    "M3": true,
+    "M4": true
+   },
+   "pvalues": {
+    "b28": 0.35496450354964504,
+    "b14": 0.42845715428457154
+   },
+   "lcb95_b28": -0.0014187022202519965,
+   "lcb95_b14": -0.0017570210645201868,
+   "holm": {
+    "b28": {
+     "H2-L7-k2": {
+      "p": 0.35496450354964504,
+      "alpha": 0.0071428571428571435,
+      "reject": false
+     },
+     "H2-L30-k2": {
+      "p": 0.42425757424257576,
+      "alpha": 0.008333333333333333,
+      "reject": false
+     },
+     "H2-L7-k1": {
+      "p": 0.5138486151384861,
+      "alpha": 0.01,
+      "reject": false
+     },
+     "H2-L30-k1": {
+      "p": 0.6528347165283471,
+      "alpha": 0.0125,
+      "reject": false
+     },
+     "H1-Y20": {
+      "p": 0.9998000199980002,
+      "alpha": 0.016666666666666666,
+      "reject": false
+     },
+     "H1-Y10": {
+      "p": 1.0,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H5-HFWB": {
+      "p": 1.0,
+      "alpha": 0.05,
+      "reject": false
+     }
+    },
+    "b14": {
+     "H2-L7-k2": {
+      "p": 0.42845715428457154,
+      "alpha": 0.0071428571428571435,
+      "reject": false
+     },
+     "H2-L30-k2": {
+      "p": 0.4443555644435556,
+      "alpha": 0.008333333333333333,
+      "reject": false
+     },
+     "H2-L7-k1": {
+      "p": 0.5125487451254874,
+      "alpha": 0.01,
+      "reject": false
+     },
+     "H2-L30-k1": {
+      "p": 0.6716328367163283,
+      "alpha": 0.0125,
+      "reject": false
+     },
+     "H1-Y20": {
+      "p": 0.999000099990001,
+      "alpha": 0.016666666666666666,
+      "reject": false
+     },
+     "H1-Y10": {
+      "p": 0.9998000199980002,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H5-HFWB": {
+      "p": 1.0,
+      "alpha": 0.05,
+      "reject": false
+     }
+    }
+   },
+   "c6_holm": {
+    "b28": {
+     "H2-L30-k2": {
+      "p": 9.999000099990002e-05,
+      "alpha": 0.0125,
+      "reject": true
+     },
+     "H2-L30-k1": {
+      "p": 0.010698930106989302,
+      "alpha": 0.016666666666666666,
+      "reject": true
+     },
+     "H2-L7-k1": {
+      "p": 0.6445355464453555,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H2-L7-k2": {
+      "p": 0.6802319768023197,
+      "alpha": 0.05,
+      "reject": false
+     }
+    },
+    "b14": {
+     "H2-L30-k2": {
+      "p": 0.00019998000199980003,
+      "alpha": 0.0125,
+      "reject": true
+     },
+     "H2-L30-k1": {
+      "p": 0.025397460253974602,
+      "alpha": 0.016666666666666666,
+      "reject": false
+     },
+     "H2-L7-k2": {
+      "p": 0.6591340865913409,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H2-L7-k1": {
+      "p": 0.6821317868213179,
+      "alpha": 0.05,
+      "reject": false
+     }
+    }
+   },
+   "metrics": {
+    "mean_daily": 0.00028263017966415597,
+    "sharpe": 0.33838279609569605,
+    "null_sharpe_mean": 0.5124620769472884,
+    "always_sharpe": null,
+    "max_drawdown": 0.22300198873435417,
+    "worst_day": -0.04502476688957402,
+    "es975": -0.03579239002029503,
+    "cost2x_mean_daily": 0.00014399459567118907,
+    "carry_value": null,
+    "c7": {
+     "months": 7,
+     "positive": 4,
+     "pass": false
+    },
+    "days": 238
+   },
+   "research_edge": "KILL",
+   "rows": {
+    "PRIMARY": {
+     "funding_unknown_share": 0.0007153395627486923,
+     "funding_unknown_flag": false,
+     "mean_daily": 0.00028263017966415597,
+     "sharpe": 0.33838279609569605,
+     "max_drawdown": 0.22300198873435417,
+     "final_equity": 275.02257211491803,
+     "pnl": {
+      "spot_price_pnl": 0.0,
+      "perp_price_pnl": 10.520024699998999,
+      "funding_cf": 7.76331810838256,
+      "fees": 5.264010546750003,
+      "spread_slippage": 2.9967601467135343,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 20,
+      "funding_unknown_hours": 16.0,
+      "funding_held_hours": 22367.0,
+      "hedge_rebalances": 0,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 34,
+      "entries": 0,
+      "exits": 0
+     },
+     "entries": 185
+    },
+    "S-SPREAD10": {
+     "funding_unknown_share": 0.0007153395627486923,
+     "funding_unknown_flag": false,
+     "mean_daily": 0.00028263017966415597,
+     "sharpe": 0.33838279609569605,
+     "max_drawdown": 0.22300198873435417,
+     "final_equity": 275.02257211491803,
+     "pnl": {
+      "spot_price_pnl": 0.0,
+      "perp_price_pnl": 10.520024699998999,
+      "funding_cf": 7.76331810838256,
+      "fees": 5.264010546750003,
+      "spread_slippage": 2.9967601467135343,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 20,
+      "funding_unknown_hours": 16.0,
+      "funding_held_hours": 22367.0,
+      "hedge_rebalances": 0,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 34,
+      "entries": 0,
+      "exits": 0
+     },
+     "entries": 185
+    },
+    "S-COST2X": {
+     "funding_unknown_share": 0.0007153395627486923,
+     "funding_unknown_flag": false,
+     "mean_daily": 0.00014399459567118907,
+     "sharpe": 0.17283764594344064,
+     "max_drawdown": 0.23051988505886978,
+     "final_equity": 266.13812448748996,
+     "pnl": {
+      "spot_price_pnl": 0.0,
+      "perp_price_pnl": 9.697023299999252,
+      "funding_cf": 7.734285142734768,
+      "fees": 10.3767324973,
+      "spread_slippage": 5.916451457944056,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 20,
+      "funding_unknown_hours": 16.0,
+      "funding_held_hours": 22367.0,
+      "hedge_rebalances": 0,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 34,
+      "entries": 0,
+      "exits": 0
+     },
+     "entries": 185
+    },
+    "S-MAKER": {
+     "funding_unknown_share": 0.0007153395627486923,
+     "funding_unknown_flag": false,
+     "mean_daily": 0.00033716518129918915,
+     "sharpe": 0.40573032519637126,
+     "max_drawdown": 0.21966233007445235,
+     "final_equity": 278.7004531109265,
+     "pnl": {
+      "spot_price_pnl": 0.0,
+      "perp_price_pnl": 11.026633299998906,
+      "funding_cf": 7.799967016335796,
+      "fees": 2.1179279955399983,
+      "spread_slippage": 3.00821920986819,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 19,
+      "funding_unknown_hours": 16.0,
+      "funding_held_hours": 22367.0,
+      "hedge_rebalances": 0,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 34,
+      "entries": 0,
+      "exits": 0
+     },
+     "entries": 186
+    }
+   }
+  },
+  "H2-L30-k1": {
+   "verdict": "ADVANCE TO FORWARD",
+   "stage1": {
+    "decision": "ADVANCE TO FORWARD",
+    "reasons": [],
+    "mean_daily": -0.001120364664819088,
+    "ub95_b28": 0.0029537258542347315,
+    "lb95_b28": -0.004772843766286637,
+    "lb95_b14": -0.005363723028743209,
+    "carry_value": null,
+    "carry_net_mean": 0.00012669109808993132
+   },
+   "headline_block": 28,
+   "criteria": {
+    "C1": true,
+    "C2": false,
+    "C3": false,
+    "C4": false,
+    "C5": false,
+    "C6": false,
+    "C7": false
+   },
+   "criteria_pass": false,
+   "m": {
+    "M1": true,
+    "M2": true,
+    "M3": true,
+    "M4": true
+   },
+   "pvalues": {
+    "b28": 0.6528347165283471,
+    "b14": 0.6716328367163283
+   },
+   "lcb95_b28": -0.004772843766286637,
+   "lcb95_b14": -0.005363723028743209,
+   "holm": {
+    "b28": {
+     "H2-L7-k2": {
+      "p": 0.35496450354964504,
+      "alpha": 0.0071428571428571435,
+      "reject": false
+     },
+     "H2-L30-k2": {
+      "p": 0.42425757424257576,
+      "alpha": 0.008333333333333333,
+      "reject": false
+     },
+     "H2-L7-k1": {
+      "p": 0.5138486151384861,
+      "alpha": 0.01,
+      "reject": false
+     },
+     "H2-L30-k1": {
+      "p": 0.6528347165283471,
+      "alpha": 0.0125,
+      "reject": false
+     },
+     "H1-Y20": {
+      "p": 0.9998000199980002,
+      "alpha": 0.016666666666666666,
+      "reject": false
+     },
+     "H1-Y10": {
+      "p": 1.0,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H5-HFWB": {
+      "p": 1.0,
+      "alpha": 0.05,
+      "reject": false
+     }
+    },
+    "b14": {
+     "H2-L7-k2": {
+      "p": 0.42845715428457154,
+      "alpha": 0.0071428571428571435,
+      "reject": false
+     },
+     "H2-L30-k2": {
+      "p": 0.4443555644435556,
+      "alpha": 0.008333333333333333,
+      "reject": false
+     },
+     "H2-L7-k1": {
+      "p": 0.5125487451254874,
+      "alpha": 0.01,
+      "reject": false
+     },
+     "H2-L30-k1": {
+      "p": 0.6716328367163283,
+      "alpha": 0.0125,
+      "reject": false
+     },
+     "H1-Y20": {
+      "p": 0.999000099990001,
+      "alpha": 0.016666666666666666,
+      "reject": false
+     },
+     "H1-Y10": {
+      "p": 0.9998000199980002,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H5-HFWB": {
+      "p": 1.0,
+      "alpha": 0.05,
+      "reject": false
+     }
+    }
+   },
+   "c6_holm": {
+    "b28": {
+     "H2-L30-k2": {
+      "p": 9.999000099990002e-05,
+      "alpha": 0.0125,
+      "reject": true
+     },
+     "H2-L30-k1": {
+      "p": 0.010698930106989302,
+      "alpha": 0.016666666666666666,
+      "reject": true
+     },
+     "H2-L7-k1": {
+      "p": 0.6445355464453555,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H2-L7-k2": {
+      "p": 0.6802319768023197,
+      "alpha": 0.05,
+      "reject": false
+     }
+    },
+    "b14": {
+     "H2-L30-k2": {
+      "p": 0.00019998000199980003,
+      "alpha": 0.0125,
+      "reject": true
+     },
+     "H2-L30-k1": {
+      "p": 0.025397460253974602,
+      "alpha": 0.016666666666666666,
+      "reject": false
+     },
+     "H2-L7-k2": {
+      "p": 0.6591340865913409,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H2-L7-k1": {
+      "p": 0.6821317868213179,
+      "alpha": 0.05,
+      "reject": false
+     }
+    }
+   },
+   "metrics": {
+    "mean_daily": -0.001120364664819088,
+    "sharpe": -0.6813026414304809,
+    "null_sharpe_mean": 0.3460171401714763,
+    "always_sharpe": null,
+    "max_drawdown": 0.435875857335258,
+    "worst_day": -0.14387383132791165,
+    "es975": -0.10315487983575176,
+    "cost2x_mean_daily": -0.0011694443391215257,
+    "carry_value": null,
+    "c7": {
+     "months": 7,
+     "positive": 2,
+     "pass": false
+    },
+    "days": 238
+   },
+   "research_edge": "ADVANCE TO FORWARD",
+   "rows": {
+    "PRIMARY": {
+     "funding_unknown_share": 0.0007153395627486923,
+     "funding_unknown_flag": false,
+     "mean_daily": -0.001120364664819088,
+     "sharpe": -0.6813026414304809,
+     "max_drawdown": 0.435875857335258,
+     "final_equity": 180.23789298885825,
+     "pnl": {
+      "spot_price_pnl": 0.0,
+      "perp_price_pnl": -91.81732999999957,
+      "funding_cf": 10.860773915013743,
+      "fees": 2.563621535,
+      "spread_slippage": 1.2419293911559437,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 13,
+      "funding_unknown_hours": 8.0,
+      "funding_held_hours": 11183.5,
+      "hedge_rebalances": 0,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 34,
+      "entries": 0,
+      "exits": 0
+     },
+     "entries": 73
+    },
+    "S-SPREAD10": {
+     "funding_unknown_share": 0.0007153395627486923,
+     "funding_unknown_flag": false,
+     "mean_daily": -0.001120364664819088,
+     "sharpe": -0.6813026414304809,
+     "max_drawdown": 0.435875857335258,
+     "final_equity": 180.23789298885825,
+     "pnl": {
+      "spot_price_pnl": 0.0,
+      "perp_price_pnl": -91.81732999999957,
+      "funding_cf": 10.860773915013743,
+      "fees": 2.563621535,
+      "spread_slippage": 1.2419293911559437,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 13,
+      "funding_unknown_hours": 8.0,
+      "funding_held_hours": 11183.5,
+      "hedge_rebalances": 0,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 34,
+      "entries": 0,
+      "exits": 0
+     },
+     "entries": 73
+    },
+    "S-COST2X": {
+     "funding_unknown_share": 0.0007153395627486923,
+     "funding_unknown_flag": false,
+     "mean_daily": -0.0011694443391215257,
+     "sharpe": -0.7094072481442326,
+     "max_drawdown": 0.4419145696897703,
+     "final_equity": 178.04460783499493,
+     "pnl": {
+      "spot_price_pnl": 0.0,
+      "perp_price_pnl": -90.18704,
+      "funding_cf": 10.793703607493837,
+      "fees": 5.091777519999997,
+      "spread_slippage": 2.470278252498953,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 14,
+      "funding_unknown_hours": 8.0,
+      "funding_held_hours": 11183.5,
+      "hedge_rebalances": 0,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 34,
+      "entries": 0,
+      "exits": 0
+     },
+     "entries": 72
+    },
+    "S-MAKER": {
+     "funding_unknown_share": 0.0007153395627486923,
+     "funding_unknown_flag": false,
+     "mean_daily": -0.001139264502433416,
+     "sharpe": -0.6863550937097339,
+     "max_drawdown": 0.4426546923252782,
+     "final_equity": 179.02225271847718,
+     "pnl": {
+      "spot_price_pnl": 0.0,
+      "perp_price_pnl": -94.62666999999938,
+      "funding_cf": 10.919312605959835,
+      "fees": 1.029360086,
+      "spread_slippage": 1.2410298014833072,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 12,
+      "funding_unknown_hours": 8.0,
+      "funding_held_hours": 11183.5,
+      "hedge_rebalances": 0,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 34,
+      "entries": 0,
+      "exits": 0
+     },
+     "entries": 74
+    }
+   }
+  },
+  "H2-L30-k2": {
+   "verdict": "ADVANCE TO FORWARD",
+   "stage1": {
+    "decision": "ADVANCE TO FORWARD",
+    "reasons": [],
+    "mean_daily": 0.00046886094466686804,
+    "ub95_b28": 0.002064800624491405,
+    "lb95_b28": -0.001705350020400035,
+    "lb95_b14": -0.001884065214404729,
+    "carry_value": null,
+    "carry_net_mean": 0.00011347087469804468
+   },
+   "headline_block": 28,
+   "criteria": {
+    "C1": true,
+    "C2": false,
+    "C3": true,
+    "C4": true,
+    "C5": false,
+    "C6": true,
+    "C7": false
+   },
+   "criteria_pass": false,
+   "m": {
+    "M1": true,
+    "M2": true,
+    "M3": true,
+    "M4": true
+   },
+   "pvalues": {
+    "b28": 0.42425757424257576,
+    "b14": 0.4443555644435556
+   },
+   "lcb95_b28": -0.001705350020400035,
+   "lcb95_b14": -0.001884065214404729,
+   "holm": {
+    "b28": {
+     "H2-L7-k2": {
+      "p": 0.35496450354964504,
+      "alpha": 0.0071428571428571435,
+      "reject": false
+     },
+     "H2-L30-k2": {
+      "p": 0.42425757424257576,
+      "alpha": 0.008333333333333333,
+      "reject": false
+     },
+     "H2-L7-k1": {
+      "p": 0.5138486151384861,
+      "alpha": 0.01,
+      "reject": false
+     },
+     "H2-L30-k1": {
+      "p": 0.6528347165283471,
+      "alpha": 0.0125,
+      "reject": false
+     },
+     "H1-Y20": {
+      "p": 0.9998000199980002,
+      "alpha": 0.016666666666666666,
+      "reject": false
+     },
+     "H1-Y10": {
+      "p": 1.0,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H5-HFWB": {
+      "p": 1.0,
+      "alpha": 0.05,
+      "reject": false
+     }
+    },
+    "b14": {
+     "H2-L7-k2": {
+      "p": 0.42845715428457154,
+      "alpha": 0.0071428571428571435,
+      "reject": false
+     },
+     "H2-L30-k2": {
+      "p": 0.4443555644435556,
+      "alpha": 0.008333333333333333,
+      "reject": false
+     },
+     "H2-L7-k1": {
+      "p": 0.5125487451254874,
+      "alpha": 0.01,
+      "reject": false
+     },
+     "H2-L30-k1": {
+      "p": 0.6716328367163283,
+      "alpha": 0.0125,
+      "reject": false
+     },
+     "H1-Y20": {
+      "p": 0.999000099990001,
+      "alpha": 0.016666666666666666,
+      "reject": false
+     },
+     "H1-Y10": {
+      "p": 0.9998000199980002,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H5-HFWB": {
+      "p": 1.0,
+      "alpha": 0.05,
+      "reject": false
+     }
+    }
+   },
+   "c6_holm": {
+    "b28": {
+     "H2-L30-k2": {
+      "p": 9.999000099990002e-05,
+      "alpha": 0.0125,
+      "reject": true
+     },
+     "H2-L30-k1": {
+      "p": 0.010698930106989302,
+      "alpha": 0.016666666666666666,
+      "reject": true
+     },
+     "H2-L7-k1": {
+      "p": 0.6445355464453555,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H2-L7-k2": {
+      "p": 0.6802319768023197,
+      "alpha": 0.05,
+      "reject": false
+     }
+    },
+    "b14": {
+     "H2-L30-k2": {
+      "p": 0.00019998000199980003,
+      "alpha": 0.0125,
+      "reject": true
+     },
+     "H2-L30-k1": {
+      "p": 0.025397460253974602,
+      "alpha": 0.016666666666666666,
+      "reject": false
+     },
+     "H2-L7-k2": {
+      "p": 0.6591340865913409,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H2-L7-k1": {
+      "p": 0.6821317868213179,
+      "alpha": 0.05,
+      "reject": false
+     }
+    }
+   },
+   "metrics": {
+    "mean_daily": 0.00046886094466686804,
+    "sharpe": 0.44662506531571056,
+    "null_sharpe_mean": 0.15934517452914557,
+    "always_sharpe": null,
+    "max_drawdown": 0.17423431895676544,
+    "worst_day": -0.12978884098587595,
+    "es975": -0.06607309935975031,
+    "cost2x_mean_daily": 0.0004162516550656927,
+    "carry_value": null,
+    "c7": {
+     "months": 7,
+     "positive": 4,
+     "pass": false
+    },
+    "days": 238
+   },
+   "research_edge": "ADVANCE TO FORWARD",
+   "rows": {
+    "PRIMARY": {
+     "funding_unknown_share": 0.0007153395627486923,
+     "funding_unknown_flag": false,
+     "mean_daily": 0.00046886094466686804,
+     "sharpe": 0.44662506531571056,
+     "max_drawdown": 0.17423431895676544,
+     "final_equity": 282.2914029791608,
+     "pnl": {
+      "spot_price_pnl": 0.0,
+      "perp_price_pnl": 9.949241599999354,
+      "funding_cf": 10.692830738482716,
+      "fees": 2.2688621313,
+      "spread_slippage": 1.0818072280212687,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 41,
+      "funding_unknown_hours": 16.0,
+      "funding_held_hours": 22367.0,
+      "hedge_rebalances": 0,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 34,
+      "entries": 0,
+      "exits": 0
+     },
+     "entries": 124
+    },
+    "S-SPREAD10": {
+     "funding_unknown_share": 0.0007153395627486923,
+     "funding_unknown_flag": false,
+     "mean_daily": 0.00046886094466686804,
+     "sharpe": 0.44662506531571056,
+     "max_drawdown": 0.17423431895676544,
+     "final_equity": 282.2914029791608,
+     "pnl": {
+      "spot_price_pnl": 0.0,
+      "perp_price_pnl": 9.949241599999354,
+      "funding_cf": 10.692830738482716,
+      "fees": 2.2688621313,
+      "spread_slippage": 1.0818072280212687,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 41,
+      "funding_unknown_hours": 16.0,
+      "funding_held_hours": 22367.0,
+      "hedge_rebalances": 0,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 34,
+      "entries": 0,
+      "exits": 0
+     },
+     "entries": 124
+    },
+    "S-COST2X": {
+     "funding_unknown_share": 0.0007153395627486923,
+     "funding_unknown_flag": false,
+     "mean_daily": 0.0004162516550656927,
+     "sharpe": 0.39585276269994557,
+     "max_drawdown": 0.1730968483816837,
+     "final_equity": 278.7293085267046,
+     "pnl": {
+      "spot_price_pnl": 0.0,
+      "perp_price_pnl": 9.748323999999545,
+      "funding_cf": 10.62044574126557,
+      "fees": 4.4931256718000006,
+      "spread_slippage": 2.146335542760546,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 40,
+      "funding_unknown_hours": 16.0,
+      "funding_held_hours": 22367.0,
+      "hedge_rebalances": 0,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 34,
+      "entries": 0,
+      "exits": 0
+     },
+     "entries": 125
+    },
+    "S-MAKER": {
+     "funding_unknown_share": 0.0007153395627486923,
+     "funding_unknown_flag": false,
+     "mean_daily": 0.00048612552394577306,
+     "sharpe": 0.46454299542272187,
+     "max_drawdown": 0.17282098537762303,
+     "final_equity": 283.5398683024956,
+     "pnl": {
+      "spot_price_pnl": 0.0,
+      "perp_price_pnl": 9.80562070000018,
+      "funding_cf": 10.735143655053626,
+      "fees": 0.9130507974599998,
+      "spread_slippage": 1.0878452550982067,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 40,
+      "funding_unknown_hours": 16.0,
+      "funding_held_hours": 22367.0,
+      "hedge_rebalances": 0,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 34,
+      "entries": 0,
+      "exits": 0
+     },
+     "entries": 125
+    }
+   }
+  },
+  "H5-HFWB": {
+   "verdict": "KILL",
+   "stage1": {
+    "decision": "KILL",
+    "reasons": [
+     "a",
+     "b"
+    ],
+    "mean_daily": -0.00016867383818116514,
+    "ub95_b28": -0.0001394206384997359,
+    "lb95_b28": -0.00024369936941490071,
+    "lb95_b14": -0.00024260484075001903,
+    "carry_value": -21.18896372110714,
+    "carry_net_mean": null
+   },
+   "headline_block": 28,
+   "criteria": {
+    "C1": true,
+    "C2": false,
+    "C3": false,
+    "C4": false,
+    "C5": true,
+    "C6": false,
+    "C7": false
+   },
+   "criteria_pass": false,
+   "m": {
+    "M1": true,
+    "M2": true,
+    "M3": true,
+    "M4": true
+   },
+   "pvalues": {
+    "b28": 1.0,
+    "b14": 1.0
+   },
+   "lcb95_b28": -0.00024369936941490071,
+   "lcb95_b14": -0.00024260484075001903,
+   "holm": {
+    "b28": {
+     "H2-L7-k2": {
+      "p": 0.35496450354964504,
+      "alpha": 0.0071428571428571435,
+      "reject": false
+     },
+     "H2-L30-k2": {
+      "p": 0.42425757424257576,
+      "alpha": 0.008333333333333333,
+      "reject": false
+     },
+     "H2-L7-k1": {
+      "p": 0.5138486151384861,
+      "alpha": 0.01,
+      "reject": false
+     },
+     "H2-L30-k1": {
+      "p": 0.6528347165283471,
+      "alpha": 0.0125,
+      "reject": false
+     },
+     "H1-Y20": {
+      "p": 0.9998000199980002,
+      "alpha": 0.016666666666666666,
+      "reject": false
+     },
+     "H1-Y10": {
+      "p": 1.0,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H5-HFWB": {
+      "p": 1.0,
+      "alpha": 0.05,
+      "reject": false
+     }
+    },
+    "b14": {
+     "H2-L7-k2": {
+      "p": 0.42845715428457154,
+      "alpha": 0.0071428571428571435,
+      "reject": false
+     },
+     "H2-L30-k2": {
+      "p": 0.4443555644435556,
+      "alpha": 0.008333333333333333,
+      "reject": false
+     },
+     "H2-L7-k1": {
+      "p": 0.5125487451254874,
+      "alpha": 0.01,
+      "reject": false
+     },
+     "H2-L30-k1": {
+      "p": 0.6716328367163283,
+      "alpha": 0.0125,
+      "reject": false
+     },
+     "H1-Y20": {
+      "p": 0.999000099990001,
+      "alpha": 0.016666666666666666,
+      "reject": false
+     },
+     "H1-Y10": {
+      "p": 0.9998000199980002,
+      "alpha": 0.025,
+      "reject": false
+     },
+     "H5-HFWB": {
+      "p": 1.0,
+      "alpha": 0.05,
+      "reject": false
+     }
+    }
+   },
+   "c6_holm": null,
+   "metrics": {
+    "mean_daily": -0.00016867383818116514,
+    "sharpe": -5.219495567157518,
+    "null_sharpe_mean": -6.527445441529887,
+    "always_sharpe": -3.752394549642923,
+    "max_drawdown": 0.04016247308026577,
+    "worst_day": -0.0037705854533489624,
+    "es975": -0.0025224618950603164,
+    "cost2x_mean_daily": -0.0003478190066145604,
+    "carry_value": -21.18896372110714,
+    "c7": {
+     "months": 7,
+     "positive": 0,
+     "pass": false
+    },
+    "days": 238
+   },
+   "research_edge": "KILL",
+   "rows": {
+    "PRIMARY": {
+     "funding_unknown_share": 0.000621938894503615,
+     "funding_unknown_flag": false,
+     "mean_daily": -0.00016867383818116514,
+     "sharpe": -5.219495567157518,
+     "max_drawdown": 0.04016247308026577,
+     "final_equity": 509.1201413142781,
+     "pnl": {
+      "spot_price_pnl": -5.126224564615349,
+      "perp_price_pnl": 5.4353296000005855,
+      "funding_cf": 1.899948512115379,
+      "fees": 20.055395349142437,
+      "spread_slippage": 3.0335168840800817,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 66,
+      "funding_unknown_hours": 4.0,
+      "funding_held_hours": 6431.5,
+      "hedge_rebalances": 1,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 0,
+      "entries": 17,
+      "exits": 15
+     },
+     "entries": 17
+    },
+    "S-SPREAD10": {
+     "funding_unknown_share": 0.000621938894503615,
+     "funding_unknown_flag": false,
+     "mean_daily": -0.00015424339793842378,
+     "sharpe": -5.089808854504961,
+     "max_drawdown": 0.0368909584812831,
+     "final_equity": 510.8747644733394,
+     "pnl": {
+      "spot_price_pnl": -5.09864765096637,
+      "perp_price_pnl": 6.044309600000389,
+      "funding_cf": 1.8979396427289275,
+      "fees": 20.10510878619617,
+      "spread_slippage": 1.8637283322273657,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 63,
+      "funding_unknown_hours": 4.0,
+      "funding_held_hours": 6431.5,
+      "hedge_rebalances": 1,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 0,
+      "entries": 17,
+      "exits": 15
+     },
+     "entries": 17
+    },
+    "S-COST2X": {
+     "funding_unknown_share": 0.000621938894503615,
+     "funding_unknown_flag": false,
+     "mean_daily": -0.0003478190066145604,
+     "sharpe": -6.090263975580028,
+     "max_drawdown": 0.0805290415943748,
+     "final_equity": 487.8169236666123,
+     "pnl": {
+      "spot_price_pnl": -5.601068781474034,
+      "perp_price_pnl": 6.0232895999997424,
+      "funding_cf": 1.812312809457687,
+      "fees": 38.571370211657936,
+      "spread_slippage": 5.846239749713216,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 65,
+      "funding_unknown_hours": 4.0,
+      "funding_held_hours": 6431.5,
+      "hedge_rebalances": 1,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 0,
+      "entries": 17,
+      "exits": 15
+     },
+     "entries": 17
+    },
+    "S-MAKER": {
+     "funding_unknown_share": 0.000621938894503615,
+     "funding_unknown_flag": false,
+     "mean_daily": -8.841623858678351e-05,
+     "sharpe": -3.867557319279734,
+     "max_drawdown": 0.02208162554641535,
+     "final_equity": 518.9514829748758,
+     "pnl": {
+      "spot_price_pnl": -4.906080140545285,
+      "perp_price_pnl": 5.1407296000002844,
+      "funding_cf": 1.8942487371380161,
+      "fees": 10.089598728409745,
+      "spread_slippage": 3.087816493307424,
+      "liquidation_penalty": 0.0
+     },
+     "counters": {
+      "skipped_actions": 0,
+      "min_order_skips": 63,
+      "funding_unknown_hours": 4.0,
+      "funding_held_hours": 6431.5,
+      "hedge_rebalances": 1,
+      "margin_reductions": 0,
+      "liquidations": 0,
+      "outage_days": 0,
+      "perp_spread_fallbacks": 0,
+      "valuation_fallbacks": 0,
+      "forced_closes": 0,
+      "checks_skipped_outage": 0,
+      "insufficient_cash": 0,
+      "margin_check_skipped": 0,
+      "flat_weeks": 0,
+      "decisions": 0,
+      "entries": 17,
+      "exits": 15
+     },
+     "entries": 17
+    }
+   }
+  }
+ },
+ "prior_go": [],
+ "killed": [],
+ "hypotheses": {
+  "H1": false,
+  "H2": true,
+  "H5": false
+ },
+ "stage1_candidate": null,
+ "nulls": {
+  "H1-Y10": {
+   "N-RANDENTRY:1:H1-Y10": {
+    "funding_unknown_share": 0.0008865248226950354,
+    "funding_unknown_flag": false,
+    "mean_daily": -0.0001923168782426122,
+    "sharpe": -6.617972027082635,
+    "max_drawdown": 0.04477883978658792,
+    "final_equity": 506.26721491310826,
+    "pnl": {
+     "spot_price_pnl": -39.60094087500116,
+     "perp_price_pnl": 37.477285999999566,
+     "funding_cf": -0.8689749550078869,
+     "fees": 18.230065751665137,
+     "spread_slippage": 2.5100895052171133,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 0,
+     "funding_unknown_hours": 6.0,
+     "funding_held_hours": 6768.0,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 0,
+     "entries": 15,
+     "exits": 15
+    },
+    "entries": 15
+   },
+   "N-RANDENTRY:2:H1-Y10": {
+    "funding_unknown_share": 0.0010594155557517436,
+    "funding_unknown_flag": false,
+    "mean_daily": -0.00015496048321497782,
+    "sharpe": -6.029574100743688,
+    "max_drawdown": 0.03678264022359312,
+    "final_equity": 510.793273518971,
+    "pnl": {
+     "spot_price_pnl": -38.172425260218205,
+     "perp_price_pnl": 38.79915250000047,
+     "funding_cf": -1.078296362212945,
+     "fees": 16.547892095796104,
+     "spread_slippage": 2.2072652628022755,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 3,
+     "funding_unknown_hours": 6.0,
+     "funding_held_hours": 5663.5,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 0,
+     "entries": 15,
+     "exits": 13
+    },
+    "entries": 15
+   },
+   "N-RANDENTRY:3:H1-Y10": {
+    "funding_unknown_share": 0.000595260240336322,
+    "funding_unknown_flag": false,
+    "mean_daily": -0.00015707396851273884,
+    "sharpe": -6.709168542806901,
+    "max_drawdown": 0.03696027911856503,
+    "final_equity": 510.5388499652235,
+    "pnl": {
+     "spot_price_pnl": -62.45653876195828,
+     "perp_price_pnl": 62.15639999999913,
+     "funding_cf": -1.3199486598039067,
+     "fees": 15.67091428336565,
+     "spread_slippage": 2.170148329647789,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 0,
+     "funding_unknown_hours": 4.0,
+     "funding_held_hours": 6719.75,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 0,
+     "entries": 15,
+     "exits": 14
+    },
+    "entries": 15
+   },
+   "N-RANDENTRY:4:H1-Y10": {
+    "funding_unknown_share": 0.0005187170398547593,
+    "funding_unknown_flag": false,
+    "mean_daily": -0.00017313788310831677,
+    "sharpe": -6.180026693894089,
+    "max_drawdown": 0.0404053875140683,
+    "final_equity": 508.58514461754385,
+    "pnl": {
+     "spot_price_pnl": 19.580331570299915,
+     "perp_price_pnl": -18.633173999999844,
+     "funding_cf": -0.9393728608171721,
+     "fees": 18.890222925764018,
+     "spread_slippage": 2.5324171661750423,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 0,
+     "funding_unknown_hours": 3.0,
+     "funding_held_hours": 5783.5,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 0,
+     "entries": 15,
+     "exits": 13
+    },
+    "entries": 15
+   },
+   "N-RANDENTRY:5:H1-Y10": {
+    "funding_unknown_share": 0.0009506079930288747,
+    "funding_unknown_flag": false,
+    "mean_daily": -0.00015062951871473192,
+    "sharpe": -5.740402242635441,
+    "max_drawdown": 0.03524620025276248,
+    "final_equity": 511.31951386603635,
+    "pnl": {
+     "spot_price_pnl": -38.229923810860576,
+     "perp_price_pnl": 38.73102199999944,
+     "funding_cf": -1.4103947167272584,
+     "fees": 15.63955188777926,
+     "spread_slippage": 2.1316377185960365,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 34,
+     "funding_unknown_hours": 6.0,
+     "funding_held_hours": 6311.75,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 0,
+     "entries": 15,
+     "exits": 14
+    },
+    "entries": 15
+   },
+   "N-ALWAYS:H1-Y10": {
+    "funding_unknown_share": 0.0007586699931427905,
+    "funding_unknown_flag": false,
+    "mean_daily": -8.529359110333743e-05,
+    "sharpe": -3.752394549642923,
+    "max_drawdown": 0.020118006673691013,
+    "final_equity": 519.3374564629439,
+    "pnl": {
+     "spot_price_pnl": -129.7114454220344,
+     "perp_price_pnl": 128.13869600000163,
+     "funding_cf": -1.6079202554124155,
+     "fees": 6.602546584468033,
+     "spread_slippage": 0.8793272751428125,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 121,
+     "funding_unknown_hours": 13.0,
+     "funding_held_hours": 17135.25,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 0,
+     "entries": 8,
+     "exits": 5
+    },
+    "entries": 8
+   }
+  },
+  "H1-Y20": {
+   "N-RANDENTRY:1:H1-Y20": {
+    "funding_unknown_share": 0.0011682242990654205,
+    "funding_unknown_flag": false,
+    "mean_daily": -6.779523888029445e-05,
+    "sharpe": -4.524989645800592,
+    "max_drawdown": 0.016015891743272004,
+    "final_equity": 521.5115773760654,
+    "pnl": {
+     "spot_price_pnl": -74.5422004492738,
+     "perp_price_pnl": 73.96713039999975,
+     "funding_cf": -0.2837505563975557,
+     "fees": 6.710002153961865,
+     "spread_slippage": 0.9195998643011467,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 0,
+     "funding_unknown_hours": 3.0,
+     "funding_held_hours": 2568.0,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 0,
+     "entries": 6,
+     "exits": 6
+    },
+    "entries": 6
+   },
+   "N-RANDENTRY:2:H1-Y20": {
+    "funding_unknown_share": 0.0004480788618796908,
+    "funding_unknown_flag": false,
+    "mean_daily": -7.092632329543254e-05,
+    "sharpe": -3.805920458074463,
+    "max_drawdown": 0.01685784771722343,
+    "final_equity": 521.1202926085734,
+    "pnl": {
+     "spot_price_pnl": 14.89343950287877,
+     "perp_price_pnl": -15.31833880000019,
+     "funding_cf": 0.40689856771921024,
+     "fees": 7.818368930695998,
+     "spread_slippage": 1.043337731328403,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 4,
+     "funding_unknown_hours": 1.0,
+     "funding_held_hours": 2231.75,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 0,
+     "entries": 6,
+     "exits": 5
+    },
+    "entries": 6
+   },
+   "N-RANDENTRY:3:H1-Y20": {
+    "funding_unknown_share": 0.000778816199376947,
+    "funding_unknown_flag": false,
+    "mean_daily": -7.486061505450278e-05,
+    "sharpe": -4.659913113318411,
+    "max_drawdown": 0.017704577195225002,
+    "final_equity": 520.6345425756464,
+    "pnl": {
+     "spot_price_pnl": -62.08669837865293,
+     "perp_price_pnl": 61.82506249999989,
+     "funding_cf": -1.1488932790622435,
+     "fees": 6.960884460176116,
+     "spread_slippage": 0.9940438064622096,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 1,
+     "funding_unknown_hours": 2.0,
+     "funding_held_hours": 2568.0,
+     "hedge_rebalances": 1,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 0,
+     "entries": 6,
+     "exits": 6
+    },
+    "entries": 6
+   },
+   "N-RANDENTRY:4:H1-Y20": {
+    "funding_unknown_share": 0.0011682242990654205,
+    "funding_unknown_flag": false,
+    "mean_daily": -9.195012829310334e-05,
+    "sharpe": -4.947975932430561,
+    "max_drawdown": 0.021662023369438677,
+    "final_equity": 518.5191276141974,
+    "pnl": {
+     "spot_price_pnl": 25.515219531520263,
+     "perp_price_pnl": -25.41455000000003,
+     "funding_cf": -2.5844744938198048,
+     "fees": 7.922776997437504,
+     "spread_slippage": 1.0742904260655202,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 0,
+     "funding_unknown_hours": 3.0,
+     "funding_held_hours": 2568.0,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 0,
+     "entries": 6,
+     "exits": 6
+    },
+    "entries": 6
+   },
+   "N-RANDENTRY:5:H1-Y20": {
+    "funding_unknown_share": 0.0003894080996884735,
+    "funding_unknown_flag": false,
+    "mean_daily": -7.12338387388171e-05,
+    "sharpe": -3.7204143551658295,
+    "max_drawdown": 0.01682694812634422,
+    "final_equity": 521.0817174930376,
+    "pnl": {
+     "spot_price_pnl": 11.045819858762822,
+     "perp_price_pnl": -11.30739900000027,
+     "funding_cf": 0.4356511775545869,
+     "fees": 8.024915317779644,
+     "spread_slippage": 1.0674392254999638,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 0,
+     "funding_unknown_hours": 1.0,
+     "funding_held_hours": 2568.0,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 0,
+     "entries": 6,
+     "exits": 6
+    },
+    "entries": 6
+   },
+   "N-ALWAYS:H1-Y20": {
+    "funding_unknown_share": 0.0007586699931427905,
+    "funding_unknown_flag": false,
+    "mean_daily": -8.529359110333743e-05,
+    "sharpe": -3.752394549642923,
+    "max_drawdown": 0.020118006673691013,
+    "final_equity": 519.3374564629439,
+    "pnl": {
+     "spot_price_pnl": -129.7114454220344,
+     "perp_price_pnl": 128.13869600000163,
+     "funding_cf": -1.6079202554124155,
+     "fees": 6.602546584468033,
+     "spread_slippage": 0.8793272751428125,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 121,
+     "funding_unknown_hours": 13.0,
+     "funding_held_hours": 17135.25,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 0,
+     "entries": 8,
+     "exits": 5
+    },
+    "entries": 8
+   }
+  },
+  "H2-L7-k1": {
+   "N-SHUFFLE:1:H2-L7-k1": {
+    "funding_unknown_share": 0.0007153395627486923,
+    "funding_unknown_flag": false,
+    "mean_daily": 0.00020453556935891398,
+    "sharpe": 0.19135588243197954,
+    "max_drawdown": 0.3115055343243701,
+    "final_equity": 264.9192893044151,
+    "pnl": {
+     "spot_price_pnl": 0.0,
+     "perp_price_pnl": 12.759194799999847,
+     "funding_cf": -1.2664079800098131,
+     "fees": 7.871260325899999,
+     "spread_slippage": 3.7022371896749604,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 1,
+     "funding_unknown_hours": 8.0,
+     "funding_held_hours": 11183.5,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 34,
+     "entries": 0,
+     "exits": 0
+    },
+    "entries": 123
+   },
+   "N-SHUFFLE:2:H2-L7-k1": {
+    "funding_unknown_share": 0.0008047570080922788,
+    "funding_unknown_flag": false,
+    "mean_daily": -0.0010189846665974603,
+    "sharpe": -1.0969863164022924,
+    "max_drawdown": 0.3644670529862625,
+    "final_equity": 200.23453024276378,
+    "pnl": {
+     "spot_price_pnl": 0.0,
+     "perp_price_pnl": -53.21796250000026,
+     "funding_cf": -0.39594490025676915,
+     "fees": 8.24209218405,
+     "spread_slippage": 2.9094701729291925,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 2,
+     "funding_unknown_hours": 9.0,
+     "funding_held_hours": 11183.5,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 34,
+     "entries": 0,
+     "exits": 0
+    },
+    "entries": 123
+   },
+   "N-SHUFFLE:3:H2-L7-k1": {
+    "funding_unknown_share": 0.0008047570080922788,
+    "funding_unknown_flag": false,
+    "mean_daily": 0.0007499229305470988,
+    "sharpe": 0.7858035886806706,
+    "max_drawdown": 0.2276149242394081,
+    "final_equity": 304.5821431070277,
+    "pnl": {
+     "spot_price_pnl": 0.0,
+     "perp_price_pnl": 48.494966000000105,
+     "funding_cf": 2.0215895989786103,
+     "fees": 7.7341382027,
+     "spread_slippage": 3.200274289250996,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 0,
+     "funding_unknown_hours": 9.0,
+     "funding_held_hours": 11183.5,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 34,
+     "entries": 0,
+     "exits": 0
+    },
+    "entries": 124
+   },
+   "N-SHUFFLE:4:H2-L7-k1": {
+    "funding_unknown_share": 0.0007153395627486923,
+    "funding_unknown_flag": false,
+    "mean_daily": 0.0003551172173185096,
+    "sharpe": 0.3303332295788901,
+    "max_drawdown": 0.269557510230258,
+    "final_equity": 274.2101943328979,
+    "pnl": {
+     "spot_price_pnl": 0.0,
+     "perp_price_pnl": 20.413260399999324,
+     "funding_cf": -0.020376550831159912,
+     "fees": 7.940559902800002,
+     "spread_slippage": 3.2421296134702624,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 0,
+     "funding_unknown_hours": 8.0,
+     "funding_held_hours": 11183.5,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 34,
+     "entries": 0,
+     "exits": 0
+    },
+    "entries": 128
+   },
+   "N-SHUFFLE:5:H2-L7-k1": {
+    "funding_unknown_share": 0.0007153395627486923,
+    "funding_unknown_flag": false,
+    "mean_daily": -0.0014812518316460806,
+    "sharpe": -1.3487750142434642,
+    "max_drawdown": 0.46018997639349735,
+    "final_equity": 176.87202207533608,
+    "pnl": {
+     "spot_price_pnl": 0.0,
+     "perp_price_pnl": -76.61590649999874,
+     "funding_cf": -1.046417702890206,
+     "fees": 7.257796289650002,
+     "spread_slippage": 3.2078574321249507,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 0,
+     "funding_unknown_hours": 8.0,
+     "funding_held_hours": 11183.5,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 34,
+     "entries": 0,
+     "exits": 0
+    },
+    "entries": 125
+   }
+  },
+  "H2-L7-k2": {
+   "N-SHUFFLE:1:H2-L7-k2": {
+    "funding_unknown_share": 0.0007600482854204856,
+    "funding_unknown_flag": false,
+    "mean_daily": -0.0008411765613178423,
+    "sharpe": -1.162556637813937,
+    "max_drawdown": 0.23343955536344374,
+    "final_equity": 212.03762748364235,
+    "pnl": {
+     "spot_price_pnl": 0.0,
+     "perp_price_pnl": -42.60828929999891,
+     "funding_cf": -0.7255592631181359,
+     "fees": 6.90530832525,
+     "spread_slippage": 2.7232156279906072,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 1,
+     "funding_unknown_hours": 17.0,
+     "funding_held_hours": 22367.0,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 34,
+     "entries": 0,
+     "exits": 0
+    },
+    "entries": 239
+   },
+   "N-SHUFFLE:2:H2-L7-k2": {
+    "funding_unknown_share": 0.0007600482854204856,
+    "funding_unknown_flag": false,
+    "mean_daily": 0.0008320507609511361,
+    "sharpe": 1.0139610537829389,
+    "max_drawdown": 0.17708448658722142,
+    "final_equity": 313.87004166945127,
+    "pnl": {
+     "spot_price_pnl": 0.0,
+     "perp_price_pnl": 59.4452217999992,
+     "funding_cf": 1.992946050868016,
+     "fees": 8.861378822499997,
+     "spread_slippage": 3.706747358915984,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 5,
+     "funding_unknown_hours": 17.0,
+     "funding_held_hours": 22367.0,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 34,
+     "entries": 0,
+     "exits": 0
+    },
+    "entries": 223
+   },
+   "N-SHUFFLE:3:H2-L7-k2": {
+    "funding_unknown_share": 0.0007600482854204856,
+    "funding_unknown_flag": false,
+    "mean_daily": 0.0020985449269178584,
+    "sharpe": 3.3717625447525323,
+    "max_drawdown": 0.08612140181430339,
+    "final_equity": 429.2258724896755,
+    "pnl": {
+     "spot_price_pnl": 0.0,
+     "perp_price_pnl": 177.78911859999843,
+     "funding_cf": 0.6631586882870291,
+     "fees": 10.126399147800006,
+     "spread_slippage": 4.100005650809956,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 1,
+     "funding_unknown_hours": 17.0,
+     "funding_held_hours": 22367.0,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 34,
+     "entries": 0,
+     "exits": 0
+    },
+    "entries": 241
+   },
+   "N-SHUFFLE:4:H2-L7-k2": {
+    "funding_unknown_share": 0.0007153395627486923,
+    "funding_unknown_flag": false,
+    "mean_daily": 0.0002228663051751479,
+    "sharpe": 0.30600826737786624,
+    "max_drawdown": 0.3164126220306921,
+    "final_equity": 273.1121653785921,
+    "pnl": {
+     "spot_price_pnl": 0.0,
+     "perp_price_pnl": 18.282678999999185,
+     "funding_cf": -0.03635568524066424,
+     "fees": 7.116944078500004,
+     "spread_slippage": 3.017213857666392,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 3,
+     "funding_unknown_hours": 16.0,
+     "funding_held_hours": 22367.0,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 34,
+     "entries": 0,
+     "exits": 0
+    },
+    "entries": 234
+   },
+   "N-SHUFFLE:5:H2-L7-k2": {
+    "funding_unknown_share": 0.0007600482854204856,
+    "funding_unknown_flag": false,
+    "mean_daily": -0.0008478501651593896,
+    "sharpe": -0.966864843362959,
+    "max_drawdown": 0.3225819169878251,
+    "final_equity": 209.5844712204006,
+    "pnl": {
+     "spot_price_pnl": 0.0,
+     "perp_price_pnl": -44.287008299999734,
+     "funding_cf": -1.2510084455760198,
+     "fees": 6.947631434049998,
+     "spread_slippage": 2.929880599973665,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 6,
+     "funding_unknown_hours": 17.0,
+     "funding_held_hours": 22367.0,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 34,
+     "entries": 0,
+     "exits": 0
+    },
+    "entries": 231
+   }
+  },
+  "H2-L30-k1": {
+   "N-SHUFFLE:1:H2-L30-k1": {
+    "funding_unknown_share": 0.0008047570080922788,
+    "funding_unknown_flag": false,
+    "mean_daily": -5.502136859149403e-05,
+    "sharpe": -0.047020704047377904,
+    "max_drawdown": 0.27775078430503497,
+    "final_equity": 246.2900969178867,
+    "pnl": {
+     "spot_price_pnl": 0.0,
+     "perp_price_pnl": -4.668028999999962,
+     "funding_cf": -3.1430949889689423,
+     "fees": 7.743588760399998,
+     "spread_slippage": 3.1551903327444033,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 2,
+     "funding_unknown_hours": 9.0,
+     "funding_held_hours": 11183.5,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 34,
+     "entries": 0,
+     "exits": 0
+    },
+    "entries": 124
+   },
+   "N-SHUFFLE:2:H2-L30-k1": {
+    "funding_unknown_share": 0.0007153395627486923,
+    "funding_unknown_flag": false,
+    "mean_daily": -7.143360474504285e-05,
+    "sharpe": -0.08916869792138304,
+    "max_drawdown": 0.2109597921410532,
+    "final_equity": 253.40174658937812,
+    "pnl": {
+     "spot_price_pnl": 0.0,
+     "perp_price_pnl": -2.380259799999237,
+     "funding_cf": 2.3139171082289227,
+     "fees": 8.573018819300003,
+     "spread_slippage": 2.958891899551561,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 0,
+     "funding_unknown_hours": 8.0,
+     "funding_held_hours": 11183.5,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 34,
+     "entries": 0,
+     "exits": 0
+    },
+    "entries": 127
+   },
+   "N-SHUFFLE:3:H2-L30-k1": {
+    "funding_unknown_share": 0.0007153395627486923,
+    "funding_unknown_flag": false,
+    "mean_daily": -0.00018432844611079508,
+    "sharpe": -0.23244285260701125,
+    "max_drawdown": 0.3149727662425711,
+    "final_equity": 246.90353038795908,
+    "pnl": {
+     "spot_price_pnl": 0.0,
+     "perp_price_pnl": -8.101071999999817,
+     "funding_cf": 3.4647335181000343,
+     "fees": 9.6643813176,
+     "spread_slippage": 3.795749812541144,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 0,
+     "funding_unknown_hours": 8.0,
+     "funding_held_hours": 11183.5,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 34,
+     "entries": 0,
+     "exits": 0
+    },
+    "entries": 130
+   },
+   "N-SHUFFLE:4:H2-L30-k1": {
+    "funding_unknown_share": 0.0007153395627486923,
+    "funding_unknown_flag": false,
+    "mean_daily": 0.0006523164599802912,
+    "sharpe": 0.6510942080889418,
+    "max_drawdown": 0.14779123914458647,
+    "final_equity": 297.029733070978,
+    "pnl": {
+     "spot_price_pnl": 0.0,
+     "perp_price_pnl": 43.96982920000053,
+     "funding_cf": 1.5360256850905762,
+     "fees": 9.816040140200002,
+     "spread_slippage": 3.6600816739130786,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 0,
+     "funding_unknown_hours": 8.0,
+     "funding_held_hours": 11183.5,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 34,
+     "entries": 0,
+     "exits": 0
+    },
+    "entries": 125
+   },
+   "N-SHUFFLE:5:H2-L30-k1": {
+    "funding_unknown_share": 0.0007153395627486923,
+    "funding_unknown_flag": false,
+    "mean_daily": 0.0011197633735124755,
+    "sharpe": 1.4476237473442117,
+    "max_drawdown": 0.10743732472034839,
+    "final_equity": 337.13955256273687,
+    "pnl": {
+     "spot_price_pnl": 0.0,
+     "perp_price_pnl": 82.20027800000011,
+     "funding_cf": 1.8438849702468825,
+     "fees": 8.818052012200003,
+     "spread_slippage": 3.0865583953101234,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 0,
+     "funding_unknown_hours": 8.0,
+     "funding_held_hours": 11183.5,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 34,
+     "entries": 0,
+     "exits": 0
+    },
+    "entries": 124
+   }
+  },
+  "H2-L30-k2": {
+   "N-SHUFFLE:1:H2-L30-k2": {
+    "funding_unknown_share": 0.0007600482854204856,
+    "funding_unknown_flag": false,
+    "mean_daily": -0.0007949282382661748,
+    "sharpe": -1.2111023522802051,
+    "max_drawdown": 0.2790026976133235,
+    "final_equity": 215.26828753254105,
+    "pnl": {
+     "spot_price_pnl": 0.0,
+     "perp_price_pnl": -40.198113700000036,
+     "funding_cf": -0.5943933990402839,
+     "fees": 6.576910715550001,
+     "spread_slippage": 2.362294652868625,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 6,
+     "funding_unknown_hours": 17.0,
+     "funding_held_hours": 22367.0,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 34,
+     "entries": 0,
+     "exits": 0
+    },
+    "entries": 224
+   },
+   "N-SHUFFLE:2:H2-L30-k2": {
+    "funding_unknown_share": 0.0007153395627486923,
+    "funding_unknown_flag": false,
+    "mean_daily": -0.0011773811985531764,
+    "sharpe": -1.682847925520146,
+    "max_drawdown": 0.3189593455093126,
+    "final_equity": 195.9911380937143,
+    "pnl": {
+     "spot_price_pnl": 0.0,
+     "perp_price_pnl": -58.65172110000058,
+     "funding_cf": -0.34382591781010396,
+     "fees": 6.982469438650003,
+     "spread_slippage": 3.03084544982499,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 5,
+     "funding_unknown_hours": 16.0,
+     "funding_held_hours": 22367.0,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 34,
+     "entries": 0,
+     "exits": 0
+    },
+    "entries": 229
+   },
+   "N-SHUFFLE:3:H2-L30-k2": {
+    "funding_unknown_share": 0.0007600482854204856,
+    "funding_unknown_flag": false,
+    "mean_daily": 0.0002001702275112512,
+    "sharpe": 0.2814650519218707,
+    "max_drawdown": 0.1877797574118769,
+    "final_equity": 271.92613568081725,
+    "pnl": {
+     "spot_price_pnl": 0.0,
+     "perp_price_pnl": 15.107086000000002,
+     "funding_cf": 1.362707634082219,
+     "fees": 6.904889175300004,
+     "spread_slippage": 2.6387687779649505,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 3,
+     "funding_unknown_hours": 17.0,
+     "funding_held_hours": 22367.0,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 34,
+     "entries": 0,
+     "exits": 0
+    },
+    "entries": 223
+   },
+   "N-SHUFFLE:4:H2-L30-k2": {
+    "funding_unknown_share": 0.0007153395627486923,
+    "funding_unknown_flag": false,
+    "mean_daily": 0.0006661643329055877,
+    "sharpe": 1.0711999039887459,
+    "max_drawdown": 0.11963078751647593,
+    "final_equity": 305.3886968605319,
+    "pnl": {
+     "spot_price_pnl": 0.0,
+     "perp_price_pnl": 52.62605229999884,
+     "funding_cf": -0.48086067686486955,
+     "fees": 8.394616019750002,
+     "spread_slippage": 3.361878742852056,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 0,
+     "funding_unknown_hours": 16.0,
+     "funding_held_hours": 22367.0,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 34,
+     "entries": 0,
+     "exits": 0
+    },
+    "entries": 232
+   },
+   "N-SHUFFLE:5:H2-L30-k2": {
+    "funding_unknown_share": 0.0007600482854204856,
+    "funding_unknown_flag": false,
+    "mean_daily": 0.0017523817847340632,
+    "sharpe": 2.3380111945354622,
+    "max_drawdown": 0.12173488846195768,
+    "final_equity": 392.49556913179447,
+    "pnl": {
+     "spot_price_pnl": 0.0,
+     "perp_price_pnl": 141.1070886000003,
+     "funding_cf": -1.859179010130318,
+     "fees": 8.097535085299999,
+     "spread_slippage": 3.6548053727755265,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 4,
+     "funding_unknown_hours": 17.0,
+     "funding_held_hours": 22367.0,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 34,
+     "entries": 0,
+     "exits": 0
+    },
+    "entries": 230
+   }
+  },
+  "H5-HFWB": {
+   "N-RANDENTRY:1:H5-HFWB": {
+    "funding_unknown_share": 0.0006265909535931075,
+    "funding_unknown_flag": false,
+    "mean_daily": -0.00017438905751280292,
+    "sharpe": -6.5256477809044275,
+    "max_drawdown": 0.04077573068936291,
+    "final_equity": 508.4352491320989,
+    "pnl": {
+     "spot_price_pnl": -63.03311173867591,
+     "perp_price_pnl": 61.698226400000095,
+     "funding_cf": -0.003995377394623467,
+     "fees": 17.589337259303097,
+     "spread_slippage": 2.6365328925276064,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 0,
+     "funding_unknown_hours": 4.0,
+     "funding_held_hours": 6383.75,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 0,
+     "entries": 17,
+     "exits": 16
+    },
+    "entries": 17
+   },
+   "N-RANDENTRY:2:H5-HFWB": {
+    "funding_unknown_share": 0.0004902161035990032,
+    "funding_unknown_flag": false,
+    "mean_daily": -0.00019807819363320774,
+    "sharpe": -6.765450042252452,
+    "max_drawdown": 0.04689684369621583,
+    "final_equity": 505.57308731304306,
+    "pnl": {
+     "spot_price_pnl": -34.49046547359496,
+     "perp_price_pnl": 34.05365599999966,
+     "funding_cf": -2.5163710346251102,
+     "fees": 18.89418905437486,
+     "spread_slippage": 2.5795431243616846,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 29,
+     "funding_unknown_hours": 3.0,
+     "funding_held_hours": 6119.75,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 0,
+     "entries": 17,
+     "exits": 16
+    },
+    "entries": 17
+   },
+   "N-RANDENTRY:3:H5-HFWB": {
+    "funding_unknown_share": 0.00017731282415000665,
+    "funding_unknown_flag": false,
+    "mean_daily": -0.00018735437492407124,
+    "sharpe": -7.001311039882892,
+    "max_drawdown": 0.04364445454905408,
+    "final_equity": 506.86843908900164,
+    "pnl": {
+     "spot_price_pnl": -44.67955552519817,
+     "perp_price_pnl": 44.141768999999606,
+     "funding_cf": -0.6228661146324854,
+     "fees": 19.274392030089256,
+     "spread_slippage": 2.6965162410780454,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 0,
+     "funding_unknown_hours": 1.0,
+     "funding_held_hours": 5639.75,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 0,
+     "entries": 17,
+     "exits": 16
+    },
+    "entries": 17
+   },
+   "N-RANDENTRY:4:H5-HFWB": {
+    "funding_unknown_share": 0.0010883084577114428,
+    "funding_unknown_flag": false,
+    "mean_daily": -0.00019292487318358007,
+    "sharpe": -6.375320738247988,
+    "max_drawdown": 0.04492003261332589,
+    "final_equity": 506.192382714937,
+    "pnl": {
+     "spot_price_pnl": -59.6241766426336,
+     "perp_price_pnl": 58.344100000000054,
+     "funding_cf": -1.0684866015563612,
+     "fees": 18.977485443660452,
+     "spread_slippage": 2.4815685972126365,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 26,
+     "funding_unknown_hours": 7.0,
+     "funding_held_hours": 6432.0,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 0,
+     "entries": 17,
+     "exits": 17
+    },
+    "entries": 17
+   },
+   "N-RANDENTRY:5:H5-HFWB": {
+    "funding_unknown_share": 0.0004664179104477612,
+    "funding_unknown_flag": false,
+    "mean_daily": -0.000201153247713099,
+    "sharpe": -5.9694976063616725,
+    "max_drawdown": 0.046798019578056516,
+    "final_equity": 505.19704962363005,
+    "pnl": {
+     "spot_price_pnl": 46.46737391231565,
+     "perp_price_pnl": -45.80033159999955,
+     "funding_cf": 0.12155548159039697,
+     "fees": 22.554899093270862,
+     "spread_slippage": 3.0366490770055927,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 33,
+     "funding_unknown_hours": 3.0,
+     "funding_held_hours": 6432.0,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 0,
+     "entries": 17,
+     "exits": 17
+    },
+    "entries": 17
+   },
+   "N-ALWAYS:H5-HFWB": {
+    "funding_unknown_share": 0.0007586699931427905,
+    "funding_unknown_flag": false,
+    "mean_daily": -8.529359110333743e-05,
+    "sharpe": -3.752394549642923,
+    "max_drawdown": 0.020118006673691013,
+    "final_equity": 519.3374564629439,
+    "pnl": {
+     "spot_price_pnl": -129.7114454220344,
+     "perp_price_pnl": 128.13869600000163,
+     "funding_cf": -1.6079202554124155,
+     "fees": 6.602546584468033,
+     "spread_slippage": 0.8793272751428125,
+     "liquidation_penalty": 0.0
+    },
+    "counters": {
+     "skipped_actions": 0,
+     "min_order_skips": 121,
+     "funding_unknown_hours": 13.0,
+     "funding_held_hours": 17135.25,
+     "hedge_rebalances": 0,
+     "margin_reductions": 0,
+     "liquidations": 0,
+     "outage_days": 0,
+     "perp_spread_fallbacks": 0,
+     "valuation_fallbacks": 0,
+     "forced_closes": 0,
+     "checks_skipped_outage": 0,
+     "insufficient_cash": 0,
+     "margin_check_skipped": 0,
+     "flat_weeks": 0,
+     "decisions": 0,
+     "entries": 8,
+     "exits": 5
+    },
+    "entries": 8
+   }
+  }
+ },
+ "null_draws": {
+  "H1-Y10": {
+   "N-RANDENTRY:1:H1-Y10": {
+    "scheduled": 15,
+    "dropped": 0
+   },
+   "N-RANDENTRY:2:H1-Y10": {
+    "scheduled": 15,
+    "dropped": 0
+   },
+   "N-RANDENTRY:3:H1-Y10": {
+    "scheduled": 15,
+    "dropped": 0
+   },
+   "N-RANDENTRY:4:H1-Y10": {
+    "scheduled": 15,
+    "dropped": 0
+   },
+   "N-RANDENTRY:5:H1-Y10": {
+    "scheduled": 15,
+    "dropped": 0
+   }
+  },
+  "H1-Y20": {
+   "N-RANDENTRY:1:H1-Y20": {
+    "scheduled": 6,
+    "dropped": 0
+   },
+   "N-RANDENTRY:2:H1-Y20": {
+    "scheduled": 6,
+    "dropped": 0
+   },
+   "N-RANDENTRY:3:H1-Y20": {
+    "scheduled": 6,
+    "dropped": 0
+   },
+   "N-RANDENTRY:4:H1-Y20": {
+    "scheduled": 6,
+    "dropped": 0
+   },
+   "N-RANDENTRY:5:H1-Y20": {
+    "scheduled": 6,
+    "dropped": 0
+   }
+  },
+  "H2-L7-k1": {},
+  "H2-L7-k2": {},
+  "H2-L30-k1": {},
+  "H2-L30-k2": {},
+  "H5-HFWB": {
+   "N-RANDENTRY:1:H5-HFWB": {
+    "scheduled": 17,
+    "dropped": 0
+   },
+   "N-RANDENTRY:2:H5-HFWB": {
+    "scheduled": 17,
+    "dropped": 0
+   },
+   "N-RANDENTRY:3:H5-HFWB": {
+    "scheduled": 17,
+    "dropped": 0
+   },
+   "N-RANDENTRY:4:H5-HFWB": {
+    "scheduled": 17,
+    "dropped": 0
+   },
+   "N-RANDENTRY:5:H5-HFWB": {
+    "scheduled": 17,
+    "dropped": 0
+   }
+  }
+ },
+ "diagnostics": {
+  "note": "Diagnostics only: not configs, not trials, never part of GO / NO-GO or config selection.",
+  "D-PERSIST": {
+   "weeks": 33,
+   "mean_spearman": 0.45108225108225103,
+   "ar1_daily": 0.28951481597040896,
+   "half_life_days": 0.5591931334136562,
+   "warning": false
+  },
+  "D-H5CELLS": {
+   "HF-WB": {
+    "n": 64,
+    "next7d_funding_ann": 0.000985616710260702
+   },
+   "HF-NB": {
+    "n": 29,
+    "next7d_funding_ann": -0.02118987442962534
+   },
+   "LF-WB": {
+    "n": 1587,
+    "next7d_funding_ann": -0.005709703555518778
+   },
+   "LF-NB": {
+    "n": 1482,
+    "next7d_funding_ann": -0.030097823976430106
+   }
+  },
+  "D-DISP": {
+   "H2-L7-k1": {
+    "above": {
+     "n": 102,
+     "mean": 0.005475857308232493
+    },
+    "below_or_equal": {
+     "n": 136,
+     "mean": -0.00385954031799735
+    }
+   },
+   "H2-L7-k2": {
+    "above": {
+     "n": 102,
+     "mean": 0.0031011756666338586
+    },
+    "below_or_equal": {
+     "n": 136,
+     "mean": -0.001831278935563121
+    }
+   },
+   "H2-L30-k1": {
+    "above": {
+     "n": 102,
+     "mean": 0.0013064820874906856
+    },
+    "below_or_equal": {
+     "n": 136,
+     "mean": -0.0029404997290514183
+    }
+   },
+   "H2-L30-k2": {
+    "above": {
+     "n": 102,
+     "mean": 0.0018997846758991386
+    },
+    "below_or_equal": {
+     "n": 136,
+     "mean": -0.0006043318537573348
+    }
+   }
+  },
+  "H2": {
+   "H2-L7-k1": {
+    "residual_btc_beta": -0.02542502918983047,
+    "mean_net_exposure": -0.000866134310255453,
+    "long_pnl": -54.15206170555561,
+    "short_pnl": 39.45312281483889,
+    "mean_max_share": 0.5129750534312798,
+    "mean_herfindahl": 0.491488911671929,
+    "asset_pnl": {
+     "HYPE": -50.58678864197896,
+     "ZEC": -96.22932305407598,
+     "ENA": -20.438292130927437,
+     "SUI": 39.20347440029153,
+     "BNB": -3.5234598859016795,
+     "AVAX": -16.354663843315905,
+     "NEAR": 10.063106177219185,
+     "XLM": -16.207628804505486,
+     "PEPE": -15.892463825963198,
+     "TAO": 130.64312718691372,
+     "BTC": 13.233117738484678,
+     "SOL": -1.317799083562592,
+     "ETH": 18.701218217954434,
+     "ADA": -5.992563341349014
+    }
+   },
+   "H2-L7-k2": {
+    "residual_btc_beta": 0.044387171501613705,
+    "mean_net_exposure": 0.008406934900963586,
+    "long_pnl": -50.62513700058321,
+    "short_pnl": 60.64770911550217,
+    "mean_max_share": 0.26348009294112845,
+    "mean_herfindahl": 0.2458401002680411,
+    "asset_pnl": {
+     "HYPE": -9.031288154679716,
+     "PUMP": -11.141652197801065,
+     "XLM": 6.163446988799682,
+     "ZEC": -61.17533709662007,
+     "AVAX": -7.856708099985511,
+     "ENA": -9.62478672582136,
+     "SUI": 18.921838993831404,
+     "BNB": -0.3239190471174413,
+     "NEAR": -22.699540460508832,
+     "BTC": 10.98231753699985,
+     "TAO": 83.07763919173576,
+     "PEPE": -11.731636386014223,
+     "DOGE": 8.01318424877977,
+     "SOL": -4.917611252376902,
+     "UNI": -0.13295890784577408,
+     "ETH": 12.312630199448499,
+     "ADA": -7.0438287009121545,
+     "XRP": 1.1585540135527532,
+     "FET": 10.340059202699905,
+     "LINK": 4.732168768754403
+    }
+   },
+   "H2-L30-k1": {
+    "residual_btc_beta": 0.024485560382051148,
+    "mean_net_exposure": -0.00997048277602738,
+    "long_pnl": -55.758253784520264,
+    "short_pnl": -29.00385322662204,
+    "mean_max_share": 0.5143846925772634,
+    "mean_herfindahl": 0.4919870782107881,
+    "asset_pnl": {
+     "SUI": 35.745067858181656,
+     "ZEC": -85.66250306837216,
+     "AVAX": 11.097212677844285,
+     "HYPE": -79.74403309347919,
+     "NEAR": -59.695148436106116,
+     "BTC": 21.96370325399563,
+     "BNB": -11.114735499597405,
+     "TAO": 56.731433891389294,
+     "ETH": 25.91689540500175
+    }
+   },
+   "H2-L30-k2": {
+    "residual_btc_beta": 0.08383662800018717,
+    "mean_net_exposure": 0.006418949186470073,
+    "long_pnl": -16.58308432584718,
+    "short_pnl": 33.87448730500868,
+    "mean_max_share": 0.26377266861227594,
+    "mean_herfindahl": 0.24607065528015468,
+    "asset_pnl": {
+     "ENA": -33.00074050061986,
+     "SUI": 16.511467544779062,
+     "UNI": 10.295244398901652,
+     "ZEC": -8.839709260456269,
+     "AVAX": 4.035940457547761,
+     "BTC": 11.501377720870538,
+     "HYPE": -52.71763683654588,
+     "XLM": 5.018369558904011,
+     "NEAR": -16.369437960035498,
+     "DOGE": 4.097753121760215,
+     "BNB": -1.9190109702797857,
+     "TAO": 41.9426187637679,
+     "PEPE": -5.984851847448885,
+     "ETH": 27.073057258167122,
+     "SOL": 15.646961529849442
+    }
+   }
+  },
+  "H5_vs_H1-Y10_sharpe": {
+   "H5-HFWB": -5.219495567157518,
+   "H1-Y10": -4.180749668171599
+  },
+  "venue_basis": {
+   "ADA": {
+    "p05": -0.0009257916066258143,
+    "p50": 8.596338176170004e-05,
+    "p95": 0.0010662486084416778,
+    "acf1_daily": 0.4389514027771345,
+    "n_days": 268
+   },
+   "AVAX": {
+    "p05": -0.0014846235418874976,
+    "p50": 0.0,
+    "p95": 0.0014743744105311179,
+    "acf1_daily": 0.5458098648199742,
+    "n_days": 268
+   },
+   "BNB": {
+    "p05": -0.0012222894347689306,
+    "p50": 2.9388426837417825e-05,
+    "p95": 0.0011889956033604987,
+    "acf1_daily": 0.5711663471036854,
+    "n_days": 268
+   },
+   "BTC": {
+    "p05": -0.000357448468039534,
+    "p50": 8.37770835985241e-05,
+    "p95": 0.0005719081169417439,
+    "acf1_daily": 0.8169898634523994,
+    "n_days": 268
+   },
+   "DOGE": {
+    "p05": -0.0007954357323011751,
+    "p50": 0.00011271061748907574,
+    "p95": 0.0009773328938443293,
+    "acf1_daily": 0.49492592086490905,
+    "n_days": 268
+   },
+   "ENA": {
+    "p05": -0.003627752601095024,
+    "p50": 2.1687269572856493e-05,
+    "p95": 0.0036506634847655027,
+    "acf1_daily": 0.49169276695540254,
+    "n_days": 268
+   },
+   "ETH": {
+    "p05": -0.00047141743364020883,
+    "p50": 4.179684912697379e-05,
+    "p95": 0.0005272504420363866,
+    "acf1_daily": 0.7436744183045367,
+    "n_days": 268
+   },
+   "FET": {
+    "p05": -0.005178543364871429,
+    "p50": 0.00024013932319255638,
+    "p95": 0.005515886759603416,
+    "acf1_daily": 0.45211127797290784,
+    "n_days": 268
+   },
+   "HYPE": {
+    "p05": -0.002004961277452399,
+    "p50": 0.0001953125000000444,
+    "p95": 0.0021657663226943838,
+    "acf1_daily": 0.5582714665653384,
+    "n_days": 154
+   },
+   "LINK": {
+    "p05": -0.0010314845173962418,
+    "p50": 0.00011873275304408182,
+    "p95": 0.0012554368796581445,
+    "acf1_daily": 0.47195510378837935,
+    "n_days": 268
+   },
+   "NEAR": {
+    "p05": -0.002085968293657442,
+    "p50": 0.00016300914949762824,
+    "p95": 0.0024744733961781415,
+    "acf1_daily": 0.4557672263572106,
+    "n_days": 268
+   },
+   "PEPE": {
+    "p05": -0.0016101108194131464,
+    "p50": 6.0560183068658624e-05,
+    "p95": 0.0016544491334677391,
+    "acf1_daily": 0.43909257630519544,
+    "n_days": 268
+   },
+   "PUMP": {
+    "p05": -0.00545851528384278,
+    "p50": 0.0,
+    "p95": 0.005637267995466463,
+    "acf1_daily": 0.5316559591468911,
+    "n_days": 268
+   },
+   "SOL": {
+    "p05": -0.0006090041467591845,
+    "p50": 7.0556692653434e-05,
+    "p95": 0.0006302207754272926,
+    "acf1_daily": 0.536457680709161,
+    "n_days": 268
+   },
+   "SUI": {
+    "p05": -0.0010330578512396382,
+    "p50": 0.00014117314957051708,
+    "p95": 0.0013984356004285597,
+    "acf1_daily": 0.44660296149637374,
+    "n_days": 268
+   },
+   "TAO": {
+    "p05": -0.0021783531785609656,
+    "p50": 9.200263195097147e-05,
+    "p95": 0.0021387916403314833,
+    "acf1_daily": 0.5226184182121013,
+    "n_days": 268
+   },
+   "UNI": {
+    "p05": -0.0022443169195924704,
+    "p50": 0.0,
+    "p95": 0.0018924613818237285,
+    "acf1_daily": 0.5174324788857694,
+    "n_days": 268
+   },
+   "XLM": {
+    "p05": -0.0018820219685601602,
+    "p50": 5.1606979330598435e-05,
+    "p95": 0.0018526010556886296,
+    "acf1_daily": 0.5405367391952268,
+    "n_days": 268
+   },
+   "XRP": {
+    "p05": -0.0005061127412629984,
+    "p50": 6.109725044667336e-05,
+    "p95": 0.0006331821644490754,
+    "acf1_daily": 0.6427561588627231,
+    "n_days": 268
+   },
+   "ZEC": {
+    "p05": -0.0031012970435534692,
+    "p50": -9.53425179959222e-05,
+    "p95": 0.0018763726945415504,
+    "acf1_daily": 0.5996493752277445,
+    "n_days": 268
+   }
+  }
+ },
+ "market_counters": {
+  "valuation_stale": 0
+ },
+ "deployable_now": {
+  "deployable_now": "NO",
+  "reasons": [
+   "(a) UK retail access to perpetual products is restricted; eligibility not confirmed.",
+   "(b) No live broker in the code.",
+   "(c) No synchronised two-venue execution or margin management.",
+   "(d) No maker fill model."
+  ]
+ },
+ "notes": [
+  "Instrument metadata (min order, step) is the freeze-time snapshot applied to the past: a known anachronism (\u00a77.1)."
+ ]
+}

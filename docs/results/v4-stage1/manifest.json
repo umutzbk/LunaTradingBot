@@ -1,0 +1,105 @@
+{
+ "stage": 1,
+ "freeze_check": "PASSED",
+ "freeze_tag": "research-v4-spec-frozen",
+ "tag_sha": "9d833822c2edd7d71d6a9b1bfc7237bf3facfa33",
+ "git_sha": "b074b69ae25c141fd6614e944027f00f36fd7773",
+ "configs": [
+  "H1-Y10",
+  "H1-Y20",
+  "H2-L7-k1",
+  "H2-L7-k2",
+  "H2-L30-k1",
+  "H2-L30-k2",
+  "H5-HFWB"
+ ],
+ "null_seeds": [
+  1,
+  2,
+  3,
+  4,
+  5
+ ],
+ "bootstrap": {
+  "B": 10000,
+  "seed": 20261009,
+  "blocks": [
+   28,
+   14
+  ],
+  "alpha": 0.05
+ },
+ "cost_rows": {
+  "PRIMARY": {
+   "name": "PRIMARY",
+   "spot_fee": 0.008,
+   "perp_fee": 0.0005,
+   "spot_full_spread_hist": 0.002,
+   "spread_mult": 1.0,
+   "counts_for_go": true,
+   "historical_only": false
+  },
+  "S-SPREAD10": {
+   "name": "S-SPREAD10",
+   "spot_fee": 0.008,
+   "perp_fee": 0.0005,
+   "spot_full_spread_hist": 0.001,
+   "spread_mult": 1.0,
+   "counts_for_go": false,
+   "historical_only": true
+  },
+  "S-COST2X": {
+   "name": "S-COST2X",
+   "spot_fee": 0.016,
+   "perp_fee": 0.001,
+   "spot_full_spread_hist": 0.002,
+   "spread_mult": 2.0,
+   "counts_for_go": true,
+   "historical_only": false
+  },
+  "S-MAKER": {
+   "name": "S-MAKER",
+   "spot_fee": 0.004,
+   "perp_fee": 0.0002,
+   "spot_full_spread_hist": 0.002,
+   "spread_mult": 1.0,
+   "counts_for_go": false,
+   "historical_only": false
+  }
+ },
+ "universe": [
+  "ADA",
+  "AVAX",
+  "BNB",
+  "BTC",
+  "DOGE",
+  "ENA",
+  "ETH",
+  "FET",
+  "HYPE",
+  "LINK",
+  "NEAR",
+  "PEPE",
+  "PUMP",
+  "SOL",
+  "SUI",
+  "TAO",
+  "UNI",
+  "XLM",
+  "XRP",
+  "ZEC"
+ ],
+ "window": {
+  "eval_start": "2025-11-05T00:00:00+00:00",
+  "end": "2026-07-01T00:00:00+00:00"
+ },
+ "dq_thresholds": {
+  "stage1_coverage": 0.9
+ },
+ "dq_note": "M2 is computed per config (eligible + held assets; universe when empty), spec \u00a77.2",
+ "instruments_sha256": "d14a82bbae45e5492d0f974de9654042ca5f07602366046085f841c64b4a4128",
+ "prior_go": [],
+ "killed": [],
+ "family_sources_sha256": {},
+ "run_at": "2026-10-09T19:28:07.975166+00:00"
+}
