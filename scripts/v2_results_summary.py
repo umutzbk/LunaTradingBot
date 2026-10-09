@@ -38,6 +38,7 @@ def section(path: Path) -> str:
     acct = s["account"]
     v = s["variants"]
     real, edge, c2 = v["realistic"], v["edge"], v.get("cost_2x_edge", {})
+    c2r, alt = v.get("cost_2x", {}), v.get("order_alt_edge", {})
     naive = s.get("naive_momentum") or {}
     rob = s.get("robustness", {}).get("candidate", {})
     ext = s.get("extended", {}).get("candidate:realistic", {})
@@ -57,7 +58,24 @@ def section(path: Path) -> str:
         f"| Max drawdown | {pct(real.get('max_dd'))} | {pct(edge.get('max_dd'))} |",
         f"| Worst day | {pct(real.get('worst_day'))} | {pct(edge.get('worst_day'))} |",
         f"| Positive windows / total | {real.get('windows_net_positive')} | {edge.get('windows_net_positive')} |",
-        f"| 2x costs (edge): mean R, net | {f(c2.get('expectancy_r'))}, {usd(c2.get('pnl_net'))} (n={f(c2.get('n_trades'), '{:.0f}')}) | |",
+        "",
+        "| Sensitivity variant | Trades | Mean R (90% CI) | PF | Net | Positive windows |",
+        "|---|---|---|---|---|---|",
+    ]
+    for label, m in (
+        ("2x costs, realistic (re-run under 2x costs)", c2r),
+        ("2x costs, edge (frozen check cost_x2)", c2),
+        ("alternative order model, edge", alt),
+    ):
+        if m:
+            out.append(
+                f"| {label} | {f(m.get('n_trades'), '{:.0f}')} | {f(m.get('expectancy_r'))} {ci(m)} | "
+                f"{f(m.get('profit_factor'), '{:.2f}')} | {usd(m.get('pnl_net'))} | {m.get('windows_net_positive')} |"
+            )
+    same = all(real.get(k) == edge.get(k) for k in ("n_trades", "expectancy_r", "pnl_net", "max_dd"))
+    if same:
+        out += ["", "Realistic and edge are identical: the 15% drawdown kill switch never fired."]
+    out += [
         "",
         "**GO/NO-GO checks (frozen §3.5):**",
         "",
@@ -83,13 +101,19 @@ def section(path: Path) -> str:
             f"trimmed mean {f(rob.get('trimmed_mean_r'))}; median trade {f(rob.get('median_r'))}; "
             f"fragile={rob.get('fragile')}.",
             f"- P&L concentration: top 1% of trades {f(rob['concentration'].get('top1pct'), '{:.2f}')}, "
-            f"top 10% {f(rob['concentration'].get('top10pct'), '{:.2f}')} of net; asset HHI "
+            f"top 5% {f(rob['concentration'].get('top5pct'), '{:.2f}')}, "
+            f"top 10% {f(rob['concentration'].get('top10pct'), '{:.2f}')} of net (shares above 1 mean the rest "
+            f"lost money); without the top 1% of trades mean R {f(rob.get('ex_top1pct', {}).get('mean_r'))}; asset HHI "
             f"{f(rob['concentration'].get('asset_hhi'), '{:.2f}')}.",
             "- Asset leave-one-out (nested re-selection): "
-            + ", ".join(f"{r['asset']} {f(r['mean_r'])} (n={r['n']})" for r in rob.get("asset_loo", [])),
+            + ", ".join(
+                f"{r['asset']} {f(r['mean_r'])} / {usd(r.get('net_usd'))} (n={r['n']})"
+                for r in rob.get("asset_loo", [])
+            ),
             "- Period leave-one-out (by test window): "
             + ", ".join(
-                f"{str(r['test_start'])[:7]} {f(r['mean_r'])}" for r in rob.get("time_loo", []) if r.get("n")
+                f"{str(r['test_start'])[:7]} {f(r['mean_r']) if r.get('n') else 'n/a (no trades left)'}"
+                for r in rob.get("time_loo", [])
             ),
             f"- Without best month ({rob.get('ex_best_month', {}).get('removed')}): "
             f"{f(rob.get('ex_best_month', {}).get('mean_r'))}; without best quarter "

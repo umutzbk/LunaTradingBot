@@ -9,19 +9,19 @@
 - **Spec ve kurallar:**
   - Dondurulmuş V2 spec'i, SC-1 (cross-sectional emir limitleri) ve SC-2 (Kraken spot ücreti 0.40/0.80).
   - Önceden sabitlenmiş P1–P12. Sonuçlar görüldükten sonra hiçbir kriter ya da parametre değiştirilmedi.
-- **Koşular** (yeni PC, 2026-10-08/09, `--jobs 2`; checkpoint'lerden devam edilen kesintiler aşağıda):
+- **Koşular** (yeni PC, 2026-10-08/09; perp `--jobs 2`, spot kısmen `--jobs 1` ile, birim checkpoint'lerinden devam ederek; kesintiler aşağıda):
   - Spot: `var/reports/research_v2_spot_20261008T222035/`.
-    - İki kez kesildi: bir kez Claude Code'un düşük bellek koruması durdurdu, bir kez `--jobs` değeri değiştirilmek için elle durduruldu. Her seferinde manifest doğrulamalı `--resume` ile devam etti.
-  - Perp: `var/reports/research_v2_perp_20261009T000905/` (00:09 → 02:37 UTC).
+    - Bellek baskısı yüzünden iki kez kesildi; manifest doğrulamalı `--resume` ile devam etti.
+  - Perp: `var/reports/research_v2_perp_20261009T000905/` (00:09 → 02:37 UTC; `var/research_v2_perp_final.log`).
   - Çıktıların SHA256 değerleri `var/overnight/checkpoints/` altında kayıtlı; dosyalar salt-okunur.
 - **Veri** (PC değişimi nedeniyle yeniden indirildi; eski `var/` taşınamadı):
-  - Perp: eski koşudaki 21 varlık (`--assets` ile açıkça verildi), Kraken Futures API'sinden. Funding verisi 2025-10-06'dan itibaren.
+  - Perp: eski koşudaki 21 varlık (`--assets` ile açıkça verildi), Kraken Futures API'sinden. Funding verisi 2025-10-06'dan itibaren (`var/funding`, Kraken'ın döndürdüğü geçmiş).
   - Spot: yalnızca SHA256 ile sabitlenmiş Kraken OHLCVT arşivi (`Kraken_OHLCVT_Full_2026Q2`); 2026-07-01 sonrası için boşluk doldurma yapılmadı.
   - Instrument cache'leri 2026-10-08'de yeniden çekildi.
   - Okunan son bar 2026-06-30 23:45 UTC (`V2_DATA_END = 2026-07-01`); son funding kaydı 2026-06-30 23:00.
   - **Tekrarlanabilirlik kontrolü:**
     - Spot sonucu, eski PC'deki final koşuyla birebir aynı: 0 işlem; naive 158 işlem, +0.98 R, +$150.
-    - Perp sonucu, `d395c66` koşusuyla birebir aynı: 27 işlem, +0.27 R, CI [−0.37, +0.96].
+    - Perp sonucunun ana metrikleri (işlem sayısı, ortalama R, CI, GO/NO-GO kontrolleri) `d395c66` koşusuyla aynı: 27 işlem, +0.27 R, CI [−0.37, +0.96]. Closure düzeltmeleri (M1–M12, M-B, I-1) bazı ikincil metrikleri değiştirdi: örneğin maliyet/brüt oranı %26'dan %24'e indi, naive CI üst sınırı +3.53'ten +3.52'ye.
 - **Final generalization seti** (2026-07 → 2026-10) **hiç okunmadı.** Bu belgede onunla ilgili hiçbir metrik yok.
   `var/holdout_registry.json` yok.
 - **Özet script'i:** `uv run python scripts/v2_results_summary.py <summary.json> ...`. Aşağıdaki hesap bölümleri bu
@@ -51,7 +51,14 @@ kullanıcı kararıdır (D7); bu sonuçlar onun için bir aday ortaya koymuyor.
 | Max drawdown | 14.95% | 14.95% |
 | Worst day | -7.14% | -7.14% |
 | Positive windows / total | 2/11 | 2/11 |
-| 2x costs (edge): mean R, net | +0.19, +9.33 $ (n=27) | |
+
+| Sensitivity variant | Trades | Mean R (90% CI) | PF | Net | Positive windows |
+|---|---|---|---|---|---|
+| 2x costs, realistic (re-run under 2x costs) | 14 | -0.08 [-0.88, +0.84] | 0.87 | -2.66 $ | 1/11 |
+| 2x costs, edge (frozen check cost_x2) | 27 | +0.19 [-0.46, +0.89] | 1.27 | +9.33 $ | 2/11 |
+| alternative order model, edge | 26 | +0.30 [-0.38, +1.09] | 1.50 | +14.67 $ | 2/11 |
+
+Realistic and edge are identical: the 15% drawdown kill switch never fired.
 
 **GO/NO-GO checks (frozen §3.5):**
 
@@ -73,8 +80,8 @@ kullanıcı kararıdır (D7); bu sonuçlar onun için bir aday ortaya koymuyor.
 **Robustness (diagnostic only):**
 
 - Full: n=27, mean R +0.27 [-0.37, +0.96]; without top 1 trade +0.02; without top 3 -0.43; trimmed mean +0.08; median trade -0.58; fragile=True.
-- P&L concentration: top 1% of trades 0.99, top 10% 2.51 of net; asset HHI 0.34.
-- Asset leave-one-out (nested re-selection): ADA +0.27 (n=27), AVAX +0.27 (n=27), BNB +0.27 (n=27), BTC +0.00 (n=61), DOGE -0.02 (n=39), ETH +0.26 (n=43), LINK +0.05 (n=31), PEPE +0.27 (n=27), SOL +0.03 (n=45), SUI -0.05 (n=43), UNI +0.27 (n=27), XRP +0.05 (n=31), ZEC +0.01 (n=19)
+- P&L concentration: top 1% of trades 0.99, top 5% 1.90, top 10% 2.51 of net (shares above 1 mean the rest lost money); without the top 1% of trades mean R +0.02; asset HHI 0.34.
+- Asset leave-one-out (nested re-selection): ADA +0.27 / +14.11 $ (n=27), AVAX +0.27 / +14.11 $ (n=27), BNB +0.27 / +14.11 $ (n=27), BTC +0.00 / -3.55 $ (n=61), DOGE -0.02 / -2.80 $ (n=39), ETH +0.26 / +21.33 $ (n=43), LINK +0.05 / +2.65 $ (n=31), PEPE +0.27 / +14.11 $ (n=27), SOL +0.03 / +1.04 $ (n=45), SUI -0.05 / -24.04 $ (n=43), UNI +0.27 / +14.11 $ (n=27), XRP +0.05 / +2.65 $ (n=31), ZEC +0.01 / -0.06 $ (n=19)
 - Period leave-one-out (by test window): 2024-09 +0.27, 2024-11 +0.27, 2025-01 +0.25, 2025-03 +0.27, 2025-05 +0.27, 2025-07 +0.27, 2025-09 +0.27, 2025-11 +0.67, 2026-01 +0.27, 2026-03 +0.01, 2026-05 +0.27
 - Without best month (2025-01): +0.03; without best quarter (2026Q2): +0.11.
 
@@ -114,7 +121,14 @@ kullanıcı kararıdır (D7); bu sonuçlar onun için bir aday ortaya koymuyor.
 | Max drawdown | 0.00% | 0.00% |
 | Worst day | 0.00% | 0.00% |
 | Positive windows / total | 0/11 | 0/11 |
-| 2x costs (edge): mean R, net | n/a, +0.00 $ (n=0) | |
+
+| Sensitivity variant | Trades | Mean R (90% CI) | PF | Net | Positive windows |
+|---|---|---|---|---|---|
+| 2x costs, realistic (re-run under 2x costs) | 0 | n/a [n/a, n/a] | n/a | +0.00 $ | 0/11 |
+| 2x costs, edge (frozen check cost_x2) | 0 | n/a [n/a, n/a] | n/a | +0.00 $ | 0/11 |
+| alternative order model, edge | 0 | n/a [n/a, n/a] | n/a | +0.00 $ | 0/11 |
+
+Realistic and edge are identical: the 15% drawdown kill switch never fired.
 
 **GO/NO-GO checks (frozen §3.5):**
 
@@ -158,8 +172,9 @@ kullanıcı kararıdır (D7); bu sonuçlar onun için bir aday ortaya koymuyor.
    - DOGE ya da SUI evrenden çıkarılınca negatife dönüyor.
 3. **Spot'ta maliyet bariyeri bağlayıcı.** SC-2 ücretleri altında 16 konfigürasyonun hiçbiri hiçbir train penceresinde
    ranker kuralını geçmedi.
-4. **Yavaş timeframe'ler örneklem sorununu çözmedi.** 1h, 4h ve 1d konfigürasyonları 6 aylık train pencerelerinde
-   nadiren n ≥ 30 üretiyor.
+4. **Yavaş timeframe'ler örneklem sorununu çözmedi.** 1h, 4h ve 1d TSMOM/breakout konfigürasyonlarından yalnızca
+   breakout 1h (geniş) bir pencerede kabul edildi; geri kalanların hiçbiri hiçbir train penceresinde ranker kuralını
+   (n ≥ 30 dahil) geçmedi (konfigürasyon tablosu).
 5. **Naive momentum'un yüksek ortalaması tek uç işlemlere bağlı.** Perp'te +300R'lik XRP işlemi var; spot'ta CI sıfırı
    kesiyor.
 
@@ -172,7 +187,7 @@ Ayrıntılı teşhis: `docs/results/v1-v2-failure-analysis.md`.
   Spot verisi pinned arşivden geldiği için birebir aynı.
 - **Funding geçmişi kısa:** Perp adayında 306 bilinmeyen funding saati var. Bilinmeyen funding uydurulmuyor; V1'in
   worst-case kuralı yalnızca train hedefinde uygulanıyor.
-- **En kötü gün −%7.14 (perp, 2025-01-07):** Hata değil. Kârlı bir DOGE pozisyonu gün içinde kârının çoğunu geri verdi.
+- **En kötü gün −%7.14 (perp):** Hata değil. Önceki koşudaki inceleme (`git show 93aa3ef:docs/results/research-v2.md`) bunu 2025-01-07'deki kârlı bir DOGE pozisyonunun gün içinde kârının çoğunu geri vermesine bağlamıştı; değer final koşuda aynı.
   %2'lik acil stop girişe göre ölçüldüğü için kâr erimesinde tetiklenmiyor.
 - **Survivorship bias:** Yalnızca bugün listelenen varlıklar veride var (raporun uyarısı).
 - **M9 (kabul edildi):** `order_model` trade-list cache anahtarında; her V1 cache'i bir kez yeniden hesaplanıyor.
