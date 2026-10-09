@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+from luna.fsutil import replace_with_retry
 from luna.types import Venue
 
 BAR_COLUMNS = ["open", "high", "low", "close", "volume", "trades", "filled"]
@@ -75,7 +75,7 @@ class BarStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.name + ".tmp")
         _normalize(df).to_parquet(tmp)
-        os.replace(tmp, path)
+        replace_with_retry(tmp, path)  # Windows: retried while AV/indexer briefly holds the target
 
     def append(self, venue: Venue, asset: str, df: pd.DataFrame) -> int:
         """Merge into stored bars (new rows win on duplicate index); return rows added.
