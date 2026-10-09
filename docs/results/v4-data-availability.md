@@ -89,11 +89,11 @@ Venue basis'in 15m barlarla ölçülmesi gürültülü:
 
 ## 5. Holdout ve dataset durumu
 
-- **Holdout (2026-07-01 → 2026-10-09):** `var/funding` ve perp barlarında bu döneme ait satırlar fiziksel olarak var; paper bot onlara ihtiyaç duyuyor. Bu audit onları okumadı. V4 yükleyicileri `assert_before_cutoff` (2026-07-01) korumasını kullanmalı.
+- **Holdout [2026-07-01, `collector_start_ts`) (bkz. V4 spec R1):** `var/funding` ve perp barlarında bu döneme ait satırlar fiziksel olarak var; paper bot onlara ihtiyaç duyuyor. Bu audit onları okumadı. V4 yükleyicileri `assert_before_cutoff` (2026-07-01) korumasını kullanmalı.
 - **Development:**
   - Gerçek funding ile: 2025-10-06 → 2026-07-01.
   - Proxy ve OI/spread ile: 2023 → 2026-07-01. Bu dönem V1–V3'te kullanıldı (fiyat sinyalleri için).
-- **Forward (temiz):** 2026-10-09 ve sonrası. Toplayıcı (`docs/superpowers/specs/luna-v4-forward-collector-design.md`) bugünden itibaren kaydetmeye başlarsa V4'ün **tek kirlenmemiş kanıt kaynağı** bu olur.
+- **Forward (temiz):** `collector_start_ts` ve sonrası. Toplayıcı (`docs/superpowers/specs/luna-v4-forward-collector-design.md`) bugünden itibaren kaydetmeye başlarsa V4'ün **tek kirlenmemiş kanıt kaynağı** bu olur.
 
 ## 6. Eksik olan ve forward toplanması gerekenler
 

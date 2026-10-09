@@ -1,144 +1,367 @@
-# Luna Research V4: Funding / Basis (tasarım taslağı)
+# Luna Research V4: Funding / Basis / Structural Carry (spec rev 2)
 
 **Durum:**
-- TASLAK, **frozen değil**, kod yazılmadı.
-- Kullanıcı onayından sonra donar: commit ve `research-v4-spec-frozen` tag'i.
-- Donmadan önce hiçbir V4 getiri sonucu hesaplanmaz.
+- rev 2, 2026-10-09. **Frozen değil.** Kod yok. Stage 1 getiri koşusu **yapılmadı**.
+- Kullanıcının 15 maddelik pre-freeze kararlarını uygular. Independent red-team review'un 25 bulgusu (F1–F25) bu metne işlendi; özet `docs/results/v4-prefreeze-review.md` dosyasında.
+- Freeze akışı: kullanıcı onayı → commit → annotated tag `research-v4-spec-frozen`.
+- **Kural freeze'i ile evidence başlangıcı ayrıdır (§7.5):** `V4_EVIDENCE_START_TS` freeze'de önceden kaydedilen bir tarihtir, tag zamanı değildir.
 
-**Bağlam:**
-- V2 kapandı, aday yok (`docs/results/research-v2-closure.md`).
-- V3 sonucu NO-GO, aday yok (`docs/results/research-v3.md`).
+**İlgili belgeler:**
 - Veri envanteri: `docs/results/v4-data-availability.md`.
-- Toplayıcı: `luna-v4-forward-collector-design.md`.
+- Collector: `luna-v4-forward-collector-design.md` (rev 2).
+- Önceki sonuçlar: `research-v2-closure.md`, `research-v3.md`.
 
 ## 0. Değişmez kurallar
 
 | # | Kural |
 |---|---|
-| R1 | **Holdout (2026-07-01 → 2026-10-09) kullanılmaz.** V2/V3'te aday çıkmadığı için açılmadı. V4 de onu okumaz; bütün V4 yükleyicileri `assert_before_cutoff(2026-07-01)` korumasını kullanır. İleride açılıp açılmayacağı yalnızca kullanıcının kararıdır. |
-| R2 | V3'ten sonra yeni **fiyat-sinyali parametre optimizasyonu** yapılmaz: momentum, low-vol, prim-getiri sinyali için yeni grid yok. V4 hipotezleri **carry geliri** (funding) ve **basis**'e dayanır. |
-| R3 | **Funding uydurulmaz.** 2025-10-06 öncesi için yalnızca açıkça etiketlenmiş `premium_proxy` kullanılır. Proxy gerçek funding'le aynı tabloda veya kolonda birleştirilmez. |
-| R4 | Canlı emir yok, gerçek para yok. Perp, UK perakende yatırımcı için kısıtlı bir üründür; V4 yalnızca research ve paper kapsamındadır. |
-| R5 | Kabul kuralları gevşetilmez: V2 §3.5 kriter 1–7 aynen geçerli, kriter 8 V3'teki gibi (null baseline'ı günlük Sharpe'ta geçmek). Bunlar V4 frozen olmadan önce sabitlenir. |
-| R6 | Deneme sayımı sürer. Mevcut kümülatif sayı: V1 208, V2 perp 184 + spot 88, V3 10 konfigürasyon / 124 grid noktası. V4'ün önceden kaydedilmiş deneme bütçesi: **en fazla 16 konfigürasyon** (§3). |
-| R7 | **Tarihsel sonuçlar keşiftir.** Tek GO kanıtı, toplayıcının frozen tarihten sonra kaydettiği **forward** veridir (§4, Stage 2). |
+| R1 | **Holdout = [2026-07-01T00:00Z, `collector_start_ts`) — sealed.** V4 bu aralığı sinyal, lookback, eşik, medyan, evren veya config seçimi için okumaz. Tarihsel yükleyiciler `assert_before_cutoff(2026-07-01)` kullanır. Forward tarafı yalnızca `recv_ts ≥ collector_start_ts` collector verisini ve `settle_ts ≥ collector_start_ts` funding satırlarını okur (test ile). Tek bir frozen Stage-1 adayının holdout'ta bir kez blind kill-test edilmesi **yalnızca kullanıcı kararıdır**; o durumda bile tuning yapılmaz. |
+| R2 | Yeni fiyat-sinyali optimizasyonu yok. V4'te sinyal, carry nakit akışı (funding) ve basis'tir. |
+| R3 | **`premium_proxy` asla nakit akışı üretmez.** Yalnızca rank/sign persistence, rejim, sinyal sayısı ve veri kalitesi için kullanılır. Proxy'den funding seviyesine kalibrasyon yasak. **Eksik funding saati** asla proxy, ortalama veya tahmin (`fundingRatePrediction`) ile doldurulmaz (§2). Net carry getirisi yalnızca gerçek settle edilmiş funding'in olduğu dönemde (2025-10-06 → 2026-07-01) ve forward veride hesaplanır. |
+| R4 | Canlı emir yok, gerçek para yok. Rapor iki ayrı sonuç verir: **RESEARCH EDGE** (GO / NO-GO / INSUFFICIENT DATA) ve **DEPLOYABLE NOW** (YES / NO). Bkz. §9. |
+| R5 | §6'daki kabul kriterleri frozen'dır. Sonuç görüldükten sonra gevşetilmez. Kanıt yetersizse sonuç INSUFFICIENT DATA olur. |
+| R6 | **Deneme sayısı kapalı: 7 executable config** (§4). Bütçe yok, yedek yok. Yeni config veya hipotez = V5 ya da spec değişikliği. Sensitivity satırları (§5.4) ve null'lar config değildir, hepsi zorunlu raporlanır. **Null'lar hiçbir zaman GO alamaz ve stratejiye terfi ettirilemez.** |
+| R7 | GO kanıtı yalnızca forward evidence'tan gelir: `recv_ts ≥ V4_EVIDENCE_START_TS` (§7.5). Bu tarihten önceki collector verisi warmup'tır: veri kalitesi ve lookback girdisi olarak kullanılabilir, kanıt olarak kullanılamaz. |
+| R8 | Kümülatif deneme kaydı: V1 208; V2 perp 184 + spot 88; V3 10 config / 124 grid; **V4 7 config**. |
+| R9 | **Freeze tag'inden önce hiçbir tarihsel veya forward getiri/P&L hesaplanmaz.** V4 kodu o zamana kadar yalnızca sentetik veriyle test edilir. |
 
-## 1. Neden funding/basis?
+## 1. Gerekçe
 
-V1–V3 bulgusu: **fiyat sinyallerinde** maliyetten sonra ayırt edilebilir bir alpha yok.
+V1–V3'ün bulgusu: fiyat sinyallerinde, maliyetler düşüldükten sonra ayırt edilebilir bir alpha yok.
 
 Funding farklı bir getiri kaynağı:
-- Kaldıraçlı talebin yapısal primini öder: long'lar, kaldıraçlı maruziyet için short'lara faiz benzeri bir ücret öder.
-- Bu gelir yön tahmini gerektirmez. Yönsüz (hedge'li) pozisyonla toplanabilir.
-- Literatürde de gözleniyor: kripto perp'lerde funding ve basis, kalıcı ama zamanla değişen bir carry primidir.
+- Kaldıraçlı long talebinin ödediği yapısal bir primdir ve yön tahmini gerektirmez.
+- Hedge'li pozisyonla toplanabilir.
+- Kripto literatüründe funding ve basis, kalıcı ama zamanla değişen bir carry primidir.
 
-**Riskleri:**
-- Funding'in tersine dönmesi.
-- Spot ücretleri: SC-2'de 0,40/0,80, gidiş-dönüş taker yaklaşık %1,6.
-- İki bacak arasında basis şoku.
-- Likidasyon. Paper'da da modellenir.
+Riskler: funding'in tersine dönmesi, spot ücreti (taker %0,80), spread, basis şoku, hedge hatası, margin.
 
-## 2. Hipotezler
+## 2. Funding semantiği ve Stage 0 kapısı S0-F
 
-Her hipotez beş şeyle birlikte kaydedilir: ekonomik gerekçe, ölçülebilir iddia, null baseline, maliyet modeli ve öldürme kriteri.
+Varsayılan konvansiyon. S0-F ile teyit edilmeden hiçbir P&L koşusu yapılmaz.
+- `relativeFundingRate` (r): notional'a oranla funding kesri.
+- **İşaret:** r > 0 ise long öder, short alır. Perp pozisyonu q (long > 0) için ödeme anı h'de nakit akışı:
+  `cf_h = −q_h · P_mark,h · r_h`
+  - Burada q_h, ödeme anında açık olan pozisyondur.
+  - Funding, perp collateral nakdine **o anda** yazılır. E'de ayrı bir terim değildir.
+- **Eksik saat:** Pozisyon açıkken funding kaydı yoksa nakit akışı 0 sayılır (known_only). Saat `funding_unknown_hours` olarak sayılır ve raporlanır. Tutulan saatlerin %1'inden fazlası bilinmiyorsa config raporda işaretlenir.
 
-### H1: Perp–spot basis / cash-and-carry (delta-nötr)
+**S0-F maddeleri (hepsi geçmeli, aksi halde V4 BLOCKED):**
+1. Ödeme aralığı (saatlik mi?) ve işaret, Kraken dokümantasyonundan teyit edilir. Kaynak spec'e eklenir.
+2. **Zaman damgası semantiği:** `timestamp`, rate döneminin başlangıcı mı yoksa ödeme anı mı? Dokümanla ve ardışık saatlerdeki ticker `fundingRate` karşılaştırmasıyla belirlenir. Atama kuralı spec'e yazılır.
+3. Ödeme aralığı 1 saat değilse yıllıklandırma `8760 / interval_h` olur ve nakit akışı yalnızca ödeme anlarında uygulanır.
+4. `historicalfundingrates` ile `analytics/funding` (relativeRate), örtüştükleri 2026-02-11 → 2026-07-01 aralığında karşılaştırılır. Uyum, saatlerin ≥ %99'unda `|fark| ≤ max(1e-9, %1 · |r|)` olmalı.
+5. `fundingRate / mark_1h` ile `relativeFundingRate` arasında aynı toleransla tutarlılık aranır.
 
-- **Gerekçe:** Funding pozitifken spot long ve perp short pozisyonu funding'i toplar. Basis daralırsa ek kazanç olur.
-- **İddia:** Önceden belirlenen bir giriş eşiğinin üstünde, maliyet sonrası carry geliri pozitiftir:
-  - **Gelir:** gerçek funding + basis değişimi.
-  - **Maliyet:** spot 0,40/0,80, perp 0,02/0,05 ve spread.
+Sonuçta `luna/engine/backtest._Funding` ve `feeds.py` aynı konvansiyonu kullanıyorsa bu not edilir. V4 kodu bağımsız ve test edilmiş tek bir fonksiyon kullanır.
+
+## 3. Hipotezler
+
+**Ortak kurallar (H1, H5, H2):**
+- **Bar etiketi:** Barlar `open_ts` ile etiketlenir; `close_ts = open_ts + 15m`.
+- **Sinyal:** t anındaki sinyal yalnızca `open_ts ≤ t − 15m` barları ve `settle_ts < t` funding'i kullanır.
+- **Tarihsel yürütme:** `open_ts = t` olan barın kapanışında. Bu bar yoksa 1 saat içindeki ilk bar kullanılır; o da yoksa işlem o gün atlanır ve sayılır.
+- **Forward yürütme:** t'den sonraki ilk skew-geçerli `pair_seq` snapshot'ının mid'i (§7.2). 15 dakika içinde geçerli snapshot yoksa o günün kararları atlanır ve sayılır.
+- **Eşitlik:** alfabetik sıra.
+- **Çok bacaklı işlemler hep-ya-hiç kuralına tabidir.** Bu, H2 rebalance'ı ve her H1/H5 giriş/çıkışı için geçerlidir. Herhangi bir bacak atlanırsa (eksik fiyat, minimum emrin altı), bütün işlem atlanır, önceki portföy korunur ve sayılır. Atlanan H2 Pazartesi'si bir sonraki Pazartesi'ye kadar yeniden denenmez.
+- **Uygunluk, yalnızca girişte kontrol edilir.** Pozisyon açıkken uygunluk kaybolursa pozisyon kapanmaz.
+  - Delisting veya `suspended` olursa pozisyon son geçerli fiyattan kapatılır, ücret + spread + %0,5 ceza uygulanır.
+- **Günlük hacim:**
+  - Tarihsel: UTC günü içindeki 15m barların Σ(volume·close) değeri.
+  - Forward: 00:00 sonrası ilk geçerli snapshot'ta spot için `v[1]·p[1]`, perp için `volumeQuote`.
+  - 30 günlük medyan için 30 günlük değerin ≥ 27'si gerekir.
+- **Listeleme yaşı:** Tarihsel için ilk perp bar'ı; forward için collector'ın `fut_instruments` kaydı.
+- **Minimum emir:** Miktarlar freeze anında kaydedilen enstrüman metadata'sına göre yuvarlanır: `qty_step`, `min_qty` / spot için `ordermin` ve `costmin`. Minimumun altındaki işlem ve ayarlamalar atlanır, sayılır; oluşan hedge hatası raporlanır.
+
+### H1: Spot/perp cash-and-carry (delta-nötr, yalnızca pozitif funding)
+
+- **Gerekçe:** Spot long + perp short pozitif funding'i toplar. Spot short açılamadığı için ters carry kapsam dışıdır.
+- **Sinyal:** `F7_i(t)` = son 168 ödeme saatinin r ortalaması × 8760 (ya da S0-F'te belirlenen faktör). Yalnızca gerçek funding kullanılır.
+- **Uygunluk:**
+  - Perp ve spot listeli.
+  - 30 günlük medyan günlük spot hacmi ≥ $1M ve perp hacmi ≥ $1M.
+  - Son 168 saatin ≥ 160'ında funding kaydı var.
 - **Kurallar:**
-  - Giriş: son 7 günün ortalama funding'i yıllık %Y'nin üstünde olunca, Y ∈ {10, 20}.
-  - Çıkış: 7 günlük ortalama ≤ 0 olunca, ya da en geç 90 gün sonra.
-  - Asgari tutma süresi yoktur; maliyet zaten bunu cezalandırır.
-  - Evren: perp ve spot'ta likit olan varlıklar.
-- **Kısıtlar:**
-  - Spot short açılamaz, bu yüzden **ters carry** (funding negatifken) **uygulanamaz**. Yalnızca pozitif funding tarafı test edilir.
-  - Mevcut paper hesapları ayrı (perp $265, spot $265). Carry iki bacaklıdır, bu yüzden V4'te birleşik bir **sanal** carry hesabı modellenir. Paper bot'lar değişmez.
-- **Null:**
-  - (a) Her zaman açık carry: eşik yok.
-  - (b) Rastgele giriş zamanları: aynı sayıda giriş ve aynı tutma süreleri, 5 seed.
-- **Öldürme kriteri:** Maliyet sonrası ortalama getiri, gerçek funding penceresinde **ve** proxy penceresinde 2× maliyetle ≤ 0 çıkarsa H1 Stage 2'ye geçmez.
-- **Deneme:** 2 konfigürasyon.
+  - Karar her gün 00:00 UTC'de verilir. Önce çıkışlar işlenir, sonra girişler.
+  - Çıkış: `F7 ≤ 0` ya da tutma süresi 90 gün.
+  - Giriş: `F7 ≥ Y`. Uygun adaylar F7'ye göre azalan sıralanır; boş slot kadar alınır, en fazla 3 eşzamanlı pozisyon.
+  - Aynı varlığa yeniden giriş, `exit_day + 7` karar gününden itibaren mümkün.
+- **Configler:** `H1-Y10` (Y = %10), `H1-Y20` (Y = %20).
 
-### H2: Funding-rate carry (yalnızca perp, cross-sectional)
+### H2: Perp-only funding carry (cross-sectional, dollar-neutral)
 
-- **Gerekçe:** Yüksek funding ödeyen perp'leri short, düşük veya negatif funding'li perp'leri long tutmak, piyasa-nötr bir funding farkı geliri üretir.
-- **Kurallar:** Trailing funding penceresi L ∈ {7, 30} gün, her bacakta k ∈ {1, 2} varlık, haftalık rebalance, V2 portföy risk motoru ve SC-1 emir limitleri.
-- **V3 A'dan farkı:** V3 A, primi fiyat-getirisi tahmincisi olarak test etti. H2 ise **funding nakit akışını** P&L'e açıkça yazar ve hedefi carry gelirinin net değeridir. Bilgi örtüşmesi raporda beyan edilir.
-- **Null:** Funding sıralaması karıştırılmış (`shuffle<seed>`, 5 seed); aynı k ve aynı rebalance.
-- **Deneme:** 4 konfigürasyon.
+- **Sinyal:** `FL_i(t)` = son L×24 ödeme saatinin r ortalaması, L ∈ {7, 30}.
+- **Uygunluk:**
+  - Perp ≥ 30 gün listeli.
+  - 30 günlük medyan günlük perp hacmi ≥ $1M.
+  - Son L×24 saatin ≥ %90'ında funding kaydı var.
+- **Kurallar:**
+  - Rebalance her Pazartesi 00:00 UTC.
+  - En düşük FL'li k varlık long, en yüksek FL'li k varlık short.
+  - Her long ve her short notional'ı `0,5/k × E`. Gross 1,0 × E, net 0.
+  - Ara günlerde ağırlık kayması serbest. Beta-hedge yok.
+  - Uygun varlık sayısı 2k'dan azsa o hafta flat kalınır ve bu sayılır.
+- **Configler:** `H2-L7-k1`, `H2-L7-k2`, `H2-L30-k1`, `H2-L30-k2`.
 
-### H3: Cross-sectional funding dispersion
+### H5: Funding × basis (canonical kural önceden kayıtlı)
 
-- **Gerekçe:** Varlıklar arasında funding dağılımı genişken, H2'nin topladığı fark daha büyük olur ama kalabalık pozisyon riski de artar.
-- **Test:** **Yeni bir strateji değil, H2'nin koşullu analizi.** Dispersion, trailing 30 gün varlıklar arası standart sapmadır ve train medyanının altında ya da üstünde olmak üzere iki gruba ayrılır. Test: H2 P&L'i yüksek dispersion döneminde daha mı iyi? Bölme önceden kaydedilir, grid yoktur.
-- **Null:** Dispersion etiketinin zamanda bloklu permütasyonu.
-- **Deneme:** 1 konfigürasyon.
+- **Venue basis:** `B_i = (P_perp − P_spot) / P_spot`.
+  - Tarihsel: aynı `open_ts`'li 15m bar kapanışlarından. Bacaklardan biri `filled=True` ise o bar dışlanır.
+  - Forward: skew-geçerli `pair_seq` mid'lerinden.
+- **`B24_i(t)`:** son 24 saatin medyanı. Tarihsel için ≥ 48 geçerli bar, forward için ≥ 720 geçerli snapshot gerekir.
+- **`B30med_i(t)`:** son 30 günlük B24 değerlerinin medyanı. ≥ 27 gün gerekir.
+- **Kural `H5-HFWB`:** H1 mekaniği. Giriş koşulu: `F7 ≥ %10` **VE** `B24 ≥ B30med`.
+- **Diğer üç 2×2 hücresi:** yalnızca diagnostic (D-H5CELLS). Seçilemez.
 
-### H4: Funding mean reversion / persistence
+### Diagnostic'ler (config değil, GO/NO-GO'ya girmez, deneme sayılmaz)
 
-- **Gerekçe:**
-  - Carry ancak funding **kalıcıysa** toplanabilir.
-  - Aşırı funding ise kalabalık pozisyonun çözülmesiyle **geri dönebilir**.
-- **Testler:**
-  - (a) **Persistence:** Funding'in kendi geleceğini tahmin etmesi; getiri değil. Örnek: f(t, son 7 gün) ile f(t, sonraki 7 gün) arasındaki rank korelasyonu ve yarılanma süresi. Bu tanımlayıcı bir test ve H1/H2'nin ön koşulu; deneme sayılmaz ama raporlanır.
-  - (b) **Aşırı funding sonrası perp getirisi:** Funding üst ve alt desil, sonraki 7 günün delta-ham perp getirisi. **Önceki zayıflatıcı bulgu:** V3 A'da benzer bilgi NO-GO çıktı.
-- **Null:** Funding serisinin zamanda bloklu kaydırılması (+30 gün).
-- **Deneme:** 1 konfigürasyon (b).
+- **D-PERSIST (H1/H2 ön koşulu):**
+  - Ölçülen: haftalık örtüşmeyen pencerelerde F7(t) ile sonraki 7 günün ortalama funding'i arasındaki varlıklar-arası Spearman korelasyonu, ayrıca yarılanma süresi.
+  - Gerçek-funding penceresinde ölçülür. Proxy döneminde yalnızca proxy-rank versiyonu ölçülür.
+  - Persistence ≤ 0 ise uyarı bayrağı yazılır. Config setini değiştirmez.
+- **D-DISP:** H2 günlük getirisi, varlıklar-arası funding std'sinin (trailing 30 gün) genişleyen medyanının üstünde ve altında ayrı ayrı raporlanır. Bundan strateji türetmek yasaktır (V5).
+- **D-H5CELLS:** 2×2 tablonun dört hücresi.
+- **Kaldırılan:** Eski H4(b) (aşırı funding sonrası fiyat getirisi) V4'te yok, raporlanmaz.
 
-### H5: Funding × basis etkileşimi
+## 4. Executable configler (kapalı, toplam 7) ve null'lar
 
-- **Gerekçe:** Venue basis (Kraken perp − Kraken spot) ile funding'in birlikte yüksek olması, carry girişi için daha iyi koşul olabilir: basis daralma kazancı + funding geliri. Uyumsuzluk ise venue'ya özgü bir dislokasyon olabilir.
-- **Test:** H1 girişleri için 2×2 (funding yüksek/düşük × basis geniş/dar). Eşikler train medyanından alınır, grid yoktur.
-- **Veri uyarısı:** Venue basis tarihsel olarak yalnızca 15m trade kapanışlarından ölçülebiliyor, bu yüzden gürültülü. Güvenilir ölçüm yalnızca forward toplayıcıdaki eşzamanlı mid'lerle mümkün. H5'in tarihsel sonucu **yalnızca bilgi amaçlıdır**.
-- **Deneme:** 1 konfigürasyon.
-
-**Toplam önceden kaydedilen deneme:** 2 + 4 + 1 + 1 + 1 = **9**. Bütçe 16'dır; fark yalnızca Stage 1'de önceden tanımlı bir robustness varyantı için kullanılabilir.
-
-## 3. Veri ve pencereler
-
-| Pencere | Tarih | Kullanım | Kanıt değeri |
+| # | Config | Hesap | Null'lar |
 |---|---|---|---|
-| Proxy-tarihsel | 2023-01 (OI 2023-03, spread 2023-05) → 2026-07-01 | H1/H2/H5 için `premium_proxy`. Gerçek funding yerine geçmez. | Keşif. V3 A kontaminasyonu beyan edilir. |
-| Gerçek-funding-tarihsel | 2025-10-06 → 2026-07-01 (268 gün) | Bütün hipotezler, gerçek funding ile | Keşif. Tek OOS penceresi; istatistiksel güç düşük. |
-| Holdout | 2026-07-01 → 2026-10-09 | **Kullanılmaz** (R1) | — |
-| **Forward** | spec freeze tarihi → en az +6 ay | Stage 2 değerlendirmesi | **Tek GO kanıtı** |
+| 1 | H1-Y10 | Carry (§5.1) | N-RANDENTRY ×5, N-ALWAYS |
+| 2 | H1-Y20 | Carry | N-RANDENTRY ×5, N-ALWAYS |
+| 3 | H2-L7-k1 | H2 (§5.2) | N-SHUFFLE ×5 |
+| 4 | H2-L7-k2 | H2 | N-SHUFFLE ×5 |
+| 5 | H2-L30-k1 | H2 | N-SHUFFLE ×5 |
+| 6 | H2-L30-k2 | H2 | N-SHUFFLE ×5 |
+| 7 | H5-HFWB | Carry | N-RANDENTRY ×5, N-ALWAYS; H1-Y10 karşılaştırması (bilgi) |
 
-**Walk-forward düzeni:**
-- Proxy penceresi: V2 düzeni, 6 ay train / 2 ay test.
-- Gerçek-funding penceresi: kısa olduğu için tek bölme, 6 ay train / 2,8 ay test, ve tek pencere olarak raporlanır. Bu, V2 düzeninden bir sapma değil; veri kısıtı. Spec'te sabitlenir.
+**N-RANDENTRY:**
+- Config'in gerçekleşen her girişi için tutma süresi korunur. Giriş günü ve varlık, o günün uygun kümesinden düzgün dağılımla çekilir: `rng = numpy.default_rng([seed, crc32(config_id)])`, seed 1–5.
+- En fazla 3 eşzamanlı pozisyon ve 7 günlük cooldown korunur. Kısıta uymayan çekim 100 kez yeniden denenir; yine olmazsa atılır ve sayılır.
+- Config'in hiç girişi yoksa C4 = FAIL.
 
-## 4. Aşamalar
+**N-ALWAYS:**
+- Yalnızca §5.1 muhasebesi kullanılır. F7 çıkışı, 90 gün sınırı veya cooldown **yoktur**.
+- D0'da (Stage 1'de değerlendirme başında) ve her ayın 1'inde 00:00 UTC'de uygun kümeden alfabetik ilk 3 varlık hedeflenir. Yalnızca değişen varlıklar işlem görür.
 
-- **Stage 0, veri doğrulama (getiri yok):**
-  - `backfill-v4` ve toplayıcı devreye alınır.
-  - Boşluk raporu çıkarılır.
-  - Proxy ile gerçek funding örtüşmesi tüm varlıklarda, yalnızca development penceresinde ölçülür.
-  - Funding semantiği birim testlerle doğrulanır: `relativeFundingRate` saatlik kesir, işaret ve settle zamanı.
-- **Stage 1, tarihsel keşif:** H1–H5 tek seferde çalıştırılır.
-  - Raporun ilk paragrafında şunlar beyan edilir: veri yeniden kullanımı, proxy etiketi ve V3 A örtüşmesi.
-  - Çıktı **GO olamaz**; yalnızca her hipotez için "Stage 2'ye geç" ya da "öldür" kararı verilebilir.
-- **Stage 2, forward doğrulama:**
-  - Stage 2'ye geçen hipotezler frozen konfigürasyonla forward veride **kağıt üzerinde** izlenir; günlük, sanal hesap. Paper bot'lardan ayrıdır ve ayrı bir rapor üretir.
-  - **En erken değerlendirme:** freeze + 6 ay. Örneğin 2026-10 freeze edilirse 2027-04.
-  - Karar V2 §3.5 kriterleri 1–7 ve kriter 8 (null Sharpe) ile verilir.
-  - Ara bakışlar sayılır. Her biri ledger'a bir deneme olarak yazılır, bu yüzden en fazla aylık durum raporu ve sinyal sağlığı görülür; getiri istatistiği yalnızca final'de.
+**N-SHUFFLE:**
+- Her rebalance anında FL sıralaması `crc32(f"{seed}:{config_id}:{t}")` ile karıştırılır, seed 1–5.
 
-## 5. Maliyet modeli
+## 5. Muhasebe (frozen)
 
-- Spot: SC-2, maker 0,40 / taker 0,80. Perp: 0,02 / 0,05. Taker birincil, 2× maliyet sensitivity'si.
-- Funding: yalnızca bilinen funding (known_only). Proxy döneminde funding nakit akışı `premium_proxy`'den türetilir ve **ayrı bir satırda** raporlanır.
-- Spread:
-  - Perp: analytics spread geçmişi kullanılır (2023-05'ten beri, saatlik).
-  - Spot: tarihsel spread yok, bu yüzden sabit ve muhafazakâr bir varsayım konur. Bu bir **kullanıcı kararı**: 10 veya 20 bps. Forward veride gerçek spread ölçülür.
-- Başabaş örneği (H1): spot taker gidiş-dönüş %1,6 + perp %0,1 ≈ %1,7. Yıllık %20 funding ile başabaş tutma süresi ≈ 31 gün. Spot ücreti carry'nin ana engeli olabilir; bunu Stage 1 açıkça ölçer.
+### 5.1 Carry hesabı (H1, H5, N-RANDENTRY, N-ALWAYS)
 
-## 6. Kodlamaya geçmeden önce kullanıcının vereceği kararlar
+| Kalem | Değer |
+|---|---|
+| Başlangıç equity E0 | **$530**: spot sleeve $265 + perp sleeve $265. Sanal; paper bot'lardan ayrı. |
+| Slot notional | `N = 0,30 × E_spot` (girişteki değer). En fazla 3 slot, spot sleeve'in ≤ %90'ı. |
+| Hedge | USD-eşit notional: `q_s = N / P_spot`, `q_p = −N / P_perp` (giriş fiyatlarıyla). |
+| Perp collateral | Perp sleeve nakdi. Funding buraya yazılır. Toplam short notional ≤ ~$239, perp leverage ≤ ~0,9×. |
+| Margin buffer | Günlük 00:00: `perp_equity / perp_notional < 0,50` ise iki bacak orantılı küçültülerek oran 1,00'e döndürülür. |
+| Likidasyon | Gün içinde `perp_equity ≤ 0,05 × perp_notional` olursa pozisyon kapanır. Tarihsel: 15m mark high ile kontrol, o barın kötü fiyatından kapanış. Forward: snapshot'ların maks `markPrice`'ı. İki bacağa ücret + spread + %0,5 ceza. |
+| Hedge düzeltmesi | Günlük 00:00: `|spot_notional − perp_notional| / spot_notional > 0,05` ise perp notional düzeltilir. Minimum emrin altındaysa atlanır ve sayılır. |
+| Sleeve transferi | Yok. |
+| Equity | E = spot nakit + `q_s · P_spot` + perp nakit (collateral + gerçekleşmiş P&L + funding) + perp unrealized. |
+| Getiri | `r_d = E_d / E_{d−1} − 1`. E_d, `open_ts = d 23:45` barının kapanışında (forward'da 00:00 sonrası ilk geçerli snapshot'ta) değerlenir. Flat günler 0 getiri ile seriye dahildir. |
+| Gross / net | `gross = spot_notional + |perp_notional|`, `net = spot_notional − |perp_notional|`. Günlük raporlanır. |
+| Mark fiyatı | Tarihsel: h'deki funding için `open_ts = h − 15m` olan mark 15m barının kapanışı; yoksa aynı barın trade kapanışı (sayılır). Forward: h anında veya hemen öncesindeki son snapshot'ın `markPrice`'ı. |
+| Ücret tabanı | `fee = oran × |q| × mid`, `spread_cost = |q| × half_spread × mid`. T4 bu tanımı kullanır. |
 
-1. Bu taslağın onayı ve freeze'i: hipotez listesi, deneme bütçesi (9/16), pencereler.
-2. Toplayıcının başlatılması: `luna-v4-forward-collector-design.md` onaylanırsa toplayıcı TDD ile yazılır ve **önce o** devreye alınır. Toplama ne kadar erken başlarsa forward kanıt o kadar erken birikir.
-3. Spot spread varsayımı: 10 veya 20 bps.
-4. Forward veri yedekleme hedefi: bulut klasörü, harici disk ya da başka bir yer.
-5. Stage 2 asgari süresi: 6 ay ya da daha uzun.
+**Günlük P&L ayrışımı:**
+`spot_price_pnl + perp_price_pnl + funding_cf − fees − spread_slippage − liquidation_penalty`
+
+Ek olarak hedge error raporlanır: `net/gross` ve net exposure'ın fiyat P&L'i.
+
+**Sentetik el hesabı testleri (TDD, implementasyondan önce):**
+
+| Test | Girdi | Beklenen |
+|---|---|---|
+| T1 "unit hedge" | 1 spot long @100 → 110; 1 perp short @101 → 110,55 | spot +10,00; perp −9,55; fiyat toplamı **+0,45** (basis 1,00 → 0,55 USD) |
+| T2 "USD hedge" | N = 100: q_s = 1, q_p = −100/101 = −0,990099; aynı fiyatlar | perp −9,4554; fiyat toplamı **+0,5446** = N·(S1/S0 − P1/P0) |
+| T3 funding | 24 saat, r = +0,0001, mark sabit 101, q_p = −1 | short alır **+0,2424**; r = −0,0001 → **−0,2424** |
+| T4 maliyetler (T1 üzerinde; spot taker %0,80, perp taker %0,05, spot 20 bps full, perp 10 bps full) | — | spot ücret 0,80 + 0,88; perp ücret 0,0505 + 0,055275; spot yarım-spread 0,10 + 0,11; perp yarım-spread 0,0505 + 0,055275; toplam maliyet **2,10155** |
+| T5 net (T1 + T3 + T4) | — | 0,45 + 0,2424 − 2,10155 = **−1,40915** |
+
+### 5.2 H2 hesabı
+
+| Kalem | Değer |
+|---|---|
+| Başlangıç equity | **$265** (sanal perp hesabı). |
+| Exposure | Dollar-neutral: rebalance anında gross 1,0 × E, net 0. |
+| Margin / likidasyon | Carry hesabıyla aynı. |
+| Getiri | `E_d / E_{d−1} − 1`, aynı değerleme anı. |
+| Ayrışım (zorunlu) | `funding_pnl`, `price_pnl`, `fees`, `spread_slippage`. |
+| Carry bileşeni | `carry_net_d = (funding_pnl_d − fees_d − spread_d) / E_{d−1}`. Ayrı seri olarak test edilir (C6). |
+| Diagnostic | Net exposure / E, residual BTC beta (H2 günlük getirisinin BTC perp günlük getirisi üzerine OLS eğimi), long ve short bacak P&L'leri ayrı. |
+
+### 5.3 Ücret ve spread
+
+**Ücretler (SC-2):**
+- Spot: maker %0,40, taker %0,80.
+- Perp: maker %0,02, taker %0,05.
+- Taker primary. Maker yalnızca secondary; GO'ya katkı vermez.
+
+**Spread:**
+- Tanım: quoted **full** spread = (ask − bid) / mid. Taker her işlemde **yarım** spread öder.
+- Tarihsel spot: primary 20 bps full, secondary 10 bps full.
+- Tarihsel perp: analytics `spreads`'ten karar saati içindeki 1 dakikalık değerlerin ortalaması alınır. Veri yoksa 10 bps full kullanılır ve bu sayılır.
+- Forward (iki bacak): yürütme snapshot'ındaki gerçek bid/ask. Emir top-of-book'u aşarsa yürütmeden önceki en yakın derinlik snapshot'ında book walk yapılır.
+
+### 5.4 Zorunlu sensitivity satırları
+
+| Satır | Tarihsel | Forward | GO'ya katkı |
+|---|---|---|---|
+| **PRIMARY** | taker, spot 20 bps full | taker, gerçek bid/ask | Evet |
+| S-SPREAD10 | taker, spot 10 bps full | — | Hayır |
+| **S-COST2X** | 2× taker, 2× spread | 2× taker, 2× gerçekleşen yarım-spread ve book-walk | Evet (C3) |
+| S-MAKER | maker, spot 20 bps full | maker, gerçek bid/ask | Hayır |
+
+## 6. Kanıt birimi ve kabul kriterleri (frozen)
+
+**Kanıt birimi:**
+- V2'nin "n ≥ 30 trade" kuralı V4'e **uygulanmaz**; bacaklar ve pozisyonlar bağımsız gözlem değildir.
+- Kanıt birimi **günlük net portföy getirisi**dir.
+
+**Bootstrap ve p-değeri:**
+- Merkezlenmiş moving block bootstrap. B = 10.000, seed 20261009.
+- `p = (1 + #{b : m*_b − m̂ ≥ m̂}) / (B + 1)`; m = ortalama günlük net getiri.
+- İki blok uzunluğu **birlikte** (konjonktif) geçmeli:
+  - **b = 14:** F7 penceresi + haftalık rebalance.
+  - **b = 28:** L30 sinyali ve uzun H1 tutma süreleri için muhafazakâr kontrol.
+- **Holm:** Her bakışta 7 configin p-değerleri üzerinde, bakış başına α = 0,05/3. Her blok uzunluğu için ayrı Holm uygulanır; ikisi de reddetmeli.
+
+**Minimum kanıt.** Yalnızca örnekleme yapısından türetildi, hiçbir V4 getirisi görülmeden:
+
+| Şart | H1 / H5 | H2 | Türetme |
+|---|---|---|---|
+| M1: Değerlendirme penceresi | ≥ 182 takvim günü | ≥ 182 | b = 14 ile ≥ 13 blok, b = 28 ile ≥ 6 blok |
+| M2: Veri-kalite kapsamı | M1 günlerinin ≥ %90'ı DQ-geçerli (§7.2) | aynı | Boşluklu veriyle ortalama yanlı olur |
+| M3: Aktif exposure | ≥ 60 pozisyonlu gün | ≥ 150 pozisyonlu gün (sabit) | H1 koşullu (en az ~1/3); H2 sürekli yatırımda. Flat bir hafta (< 2k uygun varlık) M4 için karar sayılır, M3 için aktif gün sayılmaz. |
+| M4: Karar sayısı | ≥ 4 ayrı giriş (açık veya kapalı), ≥ 2 farklı varlıkta | ≥ ⌊pencere/7⌋ − 2 rebalance kararı (182 gün → 24). Kararlar örtüşür; bağımsız sayılmaz. | 3 slot, 90 gün maks tutma ve 7 gün cooldown ile 182 günde slot başına yaklaşık 1–2 döngü olur; "6 döngü" yapısal maksimumdu, bu yüzden 4 giriş seçildi |
+
+Bir şart sağlanmazsa o bakışta sonuç **INSUFFICIENT DATA** olur. (Eski M5, M1 ile özdeş olduğu için kaldırıldı.)
+
+**Kriterler (hepsi gerekli):**
+
+| # | Kriter |
+|---|---|
+| C1 | M1–M4 sağlanmış. |
+| C2 | PRIMARY ortalama günlük net getiri: Holm reddediyor (b = 14 **ve** b = 28). |
+| C3 | S-COST2X ortalama günlük net getiri > 0 (nokta tahmini). |
+| C4 | Yıllıklandırılmış günlük Sharpe > null'ların ortalama Sharpe'ı. H1/H5 için ayrıca > N-ALWAYS Sharpe'ı. |
+| C5 | Maks drawdown ≤ %15; en kötü gün ≥ −%5; günlük ES(97,5%) ≥ −%3. |
+| C6 | Carry bileşeni. H2: Holm, **4 H2** `carry_net` p-değeri üzerinde, α = 0,05/3, b = 14 ve b = 28 için ayrı ayrı; ikisi de reddetmeli. H1/H5: `Σ funding_cf − fees − spread` > 0 (nokta). Bu şart geçmezse toplam P&L pozitif olsa bile **NO-GO**. |
+| C7 | Yalnızca tam takvim ayları sayılır, en az 3 ay gerekir. Ayların ≥ %60'ında aylık ortalama getiri > 0. 3 aydan azsa C7 = FAIL. |
+
+## 7. Aşamalar
+
+### 7.1 Stage 0 (getiri hesaplanmaz)
+
+- S0-F (§2).
+- `backfill-v4`: mark/index 15m, analytics spreads, gerçek funding; hepsi `< 2026-07-01`.
+- Boşluk raporu (FET 2024 dahil).
+- Spot gap-fill'in development dönemine kadar tamam olduğu doğrulanır.
+- Enstrüman metadata'sı (min emir, adım) freeze commit'inde snapshot olarak alınır ve SHA256'sı commit'e yazılır. Stage 1 de bunu kullanır; bu bilinen bir anakronizmdir ve raporlanır.
+- Look-ahead testleri: t sonrası veri bozulduğunda karar değişmemeli.
+
+### 7.2 Forward veri-kalite kapısı (sonuçtan bağımsız)
+
+Eşikler freeze commit'inde **kesin sayılarla** yazılır. Girdi yalnızca ≥ 72 saatlik `luna forward-dq` dry-run çıktısıdır; P&L, getiri, fiyat seviyesi veya basis değerine bakılmaz.
+
+**Dry-run penceresi:** [`collector_start_ts`, freeze commit − 1 sa], tam olarak; alt-seçim yapılmaz.
+
+**Dönüşüm kuralı:**
+- **Üst sınır metrikleri** (paired skew, clock skew, en uzun boşluk): Önerilen değer, dry-run saatlerinin > %10'unda aşılıyorsa `1,5 × dry-run p99` olarak sabitlenir. Aksi halde önerilen değer kalır.
+- **Alt sınır metrikleri** (ticker kapsamı ≥ %95, funding 24/24): değiştirilemez.
+
+**Önerilen eşikler:**
+- Paired skew: **snapshot başına** ≤ 2.000 ms. Bu eşiği geçen snapshot "skew-geçerli"dir; geçemeyen mid/basis için kullanılmaz. Günlük skew-geçerli snapshot oranı ≥ %95 olmalı.
+- Clock skew: medyan |recv − server| ≤ 2 sn.
+- Ticker kapsamı: günlük ≥ %95.
+- Tek boşluk: ≤ 15 dakika.
+- Funding: günde 24/24 kayıt. Eksik saat, collector'ın sonraki `fut_funding` çağrılarıyla gerçek veriden tamamlanabilir.
+
+**Geçerli gün:** Bütün eşikler geçilmişse gün geçerlidir. Geçersiz günler **getiri serisinde kalır**; pozisyonlar muhasebelenir ve E_d ilk skew-geçerli snapshot'tan alınır. Yalnızca M2 kapsamına sayılmazlar.
+
+**Kesinti günü:** d+1 günü 23:59'a kadar hiç skew-geçerli snapshot yoksa `E_d = E_{d−1}` alınır (r_d = 0). Değişim bir sonraki geçerli güne yazılır. O gün margin, hedge ve likidasyon kontrolleri atlanır ve sayılır.
+
+### 7.3 Stage 1: tarihsel keşif (yalnızca gerçek funding)
+
+- **Pencere:** 2025-10-06 → 2026-07-01. İlk 30 gün lookback; değerlendirme 2025-11-05 → 2026-07-01 (~238 gün ≥ M1).
+- Fit yok, walk-forward yok: kurallar sabit.
+- **Stage 1 M2:** Bir gün, funding ve bar kapsamı ayrı ayrı ≥ %90 ise geçerlidir. Günlerin ≥ %90'ı geçerli olmalı.
+- **Stage 1 çoklu test:** Holm α = 0,05 (tek bakış), b = 14 ve b = 28.
+- **Etiket:** "EXPLORATORY — reused development period; not generalization evidence." Stage 1 tek başına GO veremez.
+- **Stage-1 adayı (yalnızca bilgi ve opsiyonel holdout kill-test için):**
+  - Stage 1'de C1–C7'yi geçen configler arasından PRIMARY m̂'nin b = 14 tek taraflı %95 alt sınırı en yüksek olan.
+  - Eşitlikte daha küçük L, k ve Y.
+  - Hiçbiri geçmezse aday yoktur.
+- **Stage 1 forward setini değiştirmez:** 7 configin hepsi Stage 2'de izlenir.
+- **Proxy dönemi (2023 → 2025-10-06):** yalnızca diagnostic.
+  - D-PERSIST'in proxy-rank versiyonu.
+  - Venue basis dağılımı ve otokorelasyonu.
+  - Rank/sign tabanlı sinyal sayıları.
+  - **P&L yok.**
+
+### 7.4 Stage 2: forward doğrulama (tek GO kanıtı)
+
+- **Pencere:** [D0, bakış). M1, bu aralıktaki tam UTC günlerini sayar.
+- **Lookback:** Yalnızca collector verisi kullanılır (warmup dahil). §7.5 sayesinde lookback'ler evidence başında dolu olur.
+- **Bakışlar:** D0 + 182, D0 + 273 ve D0 + 365 gün, 00:00 UTC. **En fazla 3.**
+- **Bakış semantiği:**
+  - Her bakışta bir config, C1–C7'nin hepsi tutarsa **GO** olur. GO **kesindir** ve config sonraki Holm ailelerinden çıkar.
+  - 1. ve 2. bakışta NO-GO veya INSUFFICIENT geçicidir.
+  - 3. bakıştaki sonuç **kesindir**: yeterli kanıt yoksa INSUFFICIENT DATA.
+  - Her bakışın α/3'ü, M şartları sağlanmasa da harcanmış sayılır.
+- **Ara dönem:** Evidence simülasyonu bakış tarihinden önce **hiç çalıştırılmaz**. Aylık raporlar yalnızca collector sağlığını, kapsamı, boşlukları, geçerli gün sayısını ve M2 ilerlemesini gösterir.
+  - Gösterilen tek sinyal benzeri bilgi, **uygun evren büyüklüğüdür** (yalnızca hacim ve listeleme filtreleri).
+  - F7 eşik sayıları ve giriş/rebalance sayıları gösterilmez. F7 sayıları funding rejimini, yani H1'in brüt sonucunu ele verir.
+  - Kural ihlal edilirse olay ledger'a "forward peek" olarak yazılır.
+
+### 7.5 Freeze ve evidence başlangıcı (ayrık)
+
+- **Freeze (kurallar):** Kullanıcı onayı + S0-F geçti + DQ dry-run (≥ 72 saat) tamam olunca hemen tag'lenir. R9 gereği o zamana kadar getiri hesaplanmaz.
+- **`V4_EVIDENCE_START_TS`:** Freeze commit'inde sabit olarak yazılır: `collector_start_ts + 31 gün`'den sonraki ilk 00:00 UTC. Eğer freeze bu tarihten sonra olursa, freeze'den sonraki ilk 00:00 UTC kullanılır.
+  - Böylece 30 günlük hacim medyanı, L30, B30med ve F7 lookback'leri evidence başında dolu olur.
+- **D0 = `V4_EVIDENCE_START_TS`** (her zaman bir 00:00 UTC).
+- Collector 2026-10-09 09:xx UTC'de başlarsa: D0 = **2026-11-10 00:00 UTC**; bakışlar 2027-05-11, 2027-08-10, 2027-11-10.
+
+## 8. Look-ahead ve sızıntı kuralları (özet)
+
+- Sinyal: `open_ts ≤ t − 15m` barları, `settle_ts < t` funding'i.
+- Yürütme: `open_ts = t` barının kapanışı (tarihsel) ya da t sonrasındaki ilk geçerli snapshot (forward).
+- Funding: ödeme anında açık olan pozisyona yazılır; o anda açılan pozisyon o ödemeyi almaz.
+- Uygunluk, medyanlar ve D-DISP genişleyen medyanı yalnızca t öncesi veriyle hesaplanır. Bugünün evren listesi geçmişe uygulanmaz.
+- **Testler:**
+  - Her sinyal için "t sonrası veri bozulunca çıktı değişmez".
+  - `HoldoutLeak`.
+  - Forward yükleyici `settle_ts < collector_start_ts` satırlarını atar.
+  - `premium_proxy` modülünün P&L kodundan import edilemediğini doğrulayan statik test.
+  - Eksik funding saati 0 nakit akışı olarak sayılır.
+
+## 9. Sonuç formatı
+
+Her config için:
+- **RESEARCH EDGE:** GO / NO-GO / INSUFFICIENT DATA;
+- C1–C7 ve M1–M4 tabloları;
+- P&L ayrışımı;
+- sensitivity satırları;
+- null'lar;
+- diagnostic'ler;
+- sayaçlar: atlanan işlem, minimum emir, bilinmeyen funding saati, likidasyon.
+
+**DEPLOYABLE NOW: NO.** Sebepler:
+- (a) UK'de perp ürünlerine perakende erişim kısıtlı; uygunluk teyit edilmedi.
+- (b) Kodda canlı broker yok.
+- (c) İki venue'yu senkron yürütme ve margin yönetimi yok.
+- (d) Maker fill modeli yok.
+
+Bu sonuç RESEARCH EDGE'i değiştirmez; RESEARCH EDGE: GO da canlıya geçişi otomatik açmaz.
+
+## 10. Açık kararlar (kullanıcı)
+
+1. rev 2'nin onayı. Freeze, S0-F + ≥ 72 saatlik DQ dry-run tamamlanınca yapılır (en erken ~2026-10-12).
+2. Freeze/evidence ayrımı (§7.5, önerilen) ya da alternatif: freeze'i `collector_start + 31 gün`'e ertelemek. Bu alternatifte R9 bir ay boyunca tek koruma olarak kalır. **Önerilen: ayrık freeze.**
+3. Blok uzunluğu: b = 14 ve b = 28 birlikte (önerilen) ya da yalnızca b = 30. b = 30 seçilirse 182 günde ~6 blok kalır.
+4. Holdout blind kill-test: yalnızca Stage 1'den sonra ve tek bir Stage-1 adayı çıkarsa.
+5. Forward backup hedefi (`LUNA_FORWARD_BACKUP_HOST_DIR`).

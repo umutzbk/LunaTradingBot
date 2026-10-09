@@ -1,88 +1,161 @@
-# Luna V4: Forward funding/basis dataset collector (tasarım)
+# Luna V4: Forward collector spec (rev 2)
 
-**Durum:**
-- TASLAK, kullanıcı onayı bekliyor. Kod yazılmadı.
-- Envanter: `docs/results/v4-data-availability.md`.
-- Spec: `luna-research-v4-design.md`.
+**Durum:** rev 2, 2026-10-09.
+- Kullanıcı, collector'ın research spec freeze'ini beklemeden yazılıp deploy edilmesine izin verdi. Şart: TDD ve independent review.
+- Collector hiçbir sinyal veya getiri hesaplamaz.
 
-## 1. Amaç
+**İlgili belgeler:** envanter `docs/results/v4-data-availability.md`; research spec `luna-research-v4-design.md` (rev 2).
 
-2026-10-09'dan itibaren V4 hipotezlerinin ihtiyaç duyduğu, geçmişi olmayan veya API'nin kesebileceği serileri zaman damgasıyla ve değiştirilemez biçimde kaydetmek. Bu veri V4'ün **tek kirlenmemiş kanıt kaynağıdır**. Bu yüzden toplayıcı:
-- hiçbir sinyal hesaplamaz;
-- hiçbir şeyi filtrelemez;
-- hiçbir boşluğu doldurmaz.
+**rev 1'den farklar:**
+- Warmup ile evidence ayrımı (§2).
+- Backup zorunlu (§6).
+- Eşzamanlılık ve data-quality ölçümü (§7).
+- Spot saat kontrolü.
+- Kesinleşmiş dosya formatı (§5).
 
-## 2. Ayrışma kuralları (paper ve research ile karışmaz)
+## 1. Amaç ve sınırlar
 
-- **Ayrı süreç:** docker-compose'ta ayrı bir servis, `collector`, kendi lock'uyla.
-  - Paper bot'ların DB'lerine (`var/luna_*.db`) ve `var/bars/` dosyalarına **yazmaz**.
-  - Engine, broker ya da strateji kodu import etmez.
-- **Ayrı depolama:** Yalnızca `var/forward/` altına yazar.
-- **Research erişimi:** Research kodu `var/forward/`'ı yalnızca frozen V4 spec'i ve onun açıkça adlandırdığı forward değerlendirme penceresi üzerinden okur. Ara bakış ("peeking") olmaması için forward verisinden getiri istatistiği hesaplayan her çalıştırma, ledger'a bir deneme olarak yazılır.
-- **Sadece public endpoint:** API anahtarı yok, emir yok.
+Kraken'in public perp ve spot verisini zaman damgalarıyla, **ham** ve **append-only** olarak kaydetmek.
 
-## 3. Kaydedilecekler
+Collector şunları **yapmaz**:
+- basis, mid, spread, getiri, sinyal hesaplamak;
+- boşluk doldurmak;
+- veriyi yeniden örneklemek.
 
-| Kaynak | Endpoint | Sıklık | Alanlar |
+Tek dönüşüm, V4 evrenine süzmedir. Yalnızca `fut_tickers` ve `fut_instruments` süzülür ve ikisi de zarfta `filtered_to_universe=true` ile işaretlenir.
+
+**Evren:** Collector config'inde sabit 21 varlık.
+- ADA, AVAX, BNB, BTC, DOGE, ENA, ETH, FET, HYPE, LINK, MUBARAK, NEAR, PEPE, PUMP, SOL, SUI, TAO, UNI, XLM, XRP, ZEC.
+- Perp sembolü `luna.instruments.perp_symbol`, spot çifti `luna.instruments.spot_pair` ile üretilir.
+
+## 2. Zaman damgaları: warmup ve evidence
+
+- **`collector_start_ts`:** collector'ın ilk başarılı başlangıcında `var/forward/meta.json` dosyasına bir kez yazılır, **bir daha üzerine yazılmaz**.
+- **`V4_EVIDENCE_START_TS`:** V4 research spec'inin frozen tag zamanıdır. Collector bunu **bilmez ve saklamaz**; research tarafında spec'te sabitlenir.
+  - `recv_ts < V4_EVIDENCE_START_TS` olan her kayıt **warmup**'tır: yalnızca data-quality ve sinyal lookback girdisi olarak kullanılabilir, kanıt olmaz.
+- Collector tarihsel backfill yapmaz.
+- **İstisna:** `fut_funding` yanıtı API'nin bütün funding geçmişini içerir (2025-10-06'dan itibaren). Bu geçmiş, sealed holdout'u da (2026-07-01 → `collector_start_ts`) kapsar.
+  - Ham yanıt değiştirilmeden saklanır.
+  - `forward-dq` ve research yükleyicileri `settle_ts < collector_start_ts` olan satırları **atar**. Bunu testler zorlar.
+
+## 3. Kaynaklar ve sıklık
+
+| source id | Endpoint | Sıklık | Not |
 |---|---|---|---|
-| Futures tickers (21 PF_ perp, tek çağrı) | `derivatives/api/v3/tickers` | **60 sn** | symbol, bid, ask, bidSize, askSize, last, lastTime, markPrice, indexPrice, fundingRate, relativeFundingRate, fundingRatePrediction, relativeFundingRatePrediction, openInterest, vol24h, volumeQuote, suspended, postOnly |
-| Spot ticker (21 çift, tek çağrı) | `0/public/Ticker` | **60 sn** | a (ask px/size), b (bid px/size), c (last), v (volume today/24h), p (vwap), t (trade count), l/h/o |
-| Spot top-of-book derinlik | `0/public/Depth?count=10` | 5 dk | ilk 10 seviye (px, qty, ts), 21 çift |
-| Perp top-of-book derinlik | `derivatives/api/v3/orderbook` | 5 dk | ilk 10 seviye, 21 perp |
-| Settle edilmiş funding | `derivatives/api/v4/historicalfundingrates` | 1 sa (+5 dk) | timestamp, fundingRate, relativeFundingRate; önceki saatlerle tekrarsız birleştirilir |
-| Analytics | `api/charts/v1/analytics/<sym>/{open-interest, spreads, liquidity, future-basis, funding, long-short-info}` | 1 sa; son 3 saat tekrar istenir | 5 dk çözünürlük |
+| `fut_tickers` | `GET futures.kraken.com/derivatives/api/v3/tickers` | 60 sn, :00 sn hizalı | Evren sembollerine süzülür |
+| `spot_ticker` | `GET api.kraken.com/0/public/Ticker?pair=<21 çift>` | 60 sn, `fut_tickers`'tan **hemen sonra** | Eşzamanlılık ölçümü için ikili snapshot; `pair_seq` aynı |
+| `fut_book` | `GET .../derivatives/api/v3/orderbook?symbol=X` | 5 dk, :02:30 ofsetli | 21 çağrı, aralarında ≥0,5 sn; yanıt tam saklanır |
+| `spot_depth` | `GET .../0/public/Depth?pair=X&count=10` | 5 dk, :02:30 ofsetli | 21 çağrı, ≥1 sn aralıkla |
+| `fut_funding` | `GET .../derivatives/api/v4/historicalfundingrates?symbol=X` | saatte bir, :05:00'da | Yanıt tam saklanır (tekrarlar research tarafında ayıklanır) |
+| `fut_analytics` | `GET futures.kraken.com/api/charts/v1/analytics/<sym>/<type>?since&to&interval=300` | saatte bir, :07:00'da; son 3 saat | Tipler: open-interest, spreads, liquidity, future-basis, funding, long-short-info |
+| `spot_time` | `GET api.kraken.com/0/public/Time` | 5 dk | Spot saat kayması ölçümü için |
+| `fut_instruments` | `GET .../derivatives/api/v3/instruments` | günlük 00:10 + açılışta | Evrene süzülür. Listeleme yaşı, kontrat boyutu ve tick için. |
+| `spot_assetpairs` | `GET .../0/public/AssetPairs?pair=<21 çift>` | günlük 00:12 + açılışta | `ordermin`, `costmin`, lot ondalıkları |
 
-**Türetilmiş alanlar:** basis, mid, spread gibi alanlar toplayıcıda **hesaplanmaz**. Ham veriden research tarafında, kodu test edilmiş tek bir fonksiyonla türetilir. Böylece bir hesaplama hatası ham veriyi bozmaz.
+Günlük kaynaklar için bayatlık eşiği 26 saattir. Bu eşik yalnızca uyarı üretir; health çıkış kodunu etkilemez.
 
-**Zaman damgaları:** Her satırda şunlar bulunur:
-- `recv_ts`: yerel UTC ns, yanıt geldiği an;
-- `req_ts`: istek atıldığı an;
-- `server_ts`: futures `serverTime`, spot için yok;
-- varsa exchange alan zamanı (`lastTime`);
-- `latency_ms`.
+**Spot bot ile çakışmamak:**
+- Spot bot :00/:15/:30/:45 + 20 sn'de tick atar. 5 dakikalık kaynaklar :02:30 ofsetiyle çalışır.
+- Ağır kaynaklar (`fut_book`, `spot_depth`, `fut_analytics`) sırayla çalışır, aynı anda değil.
 
-**Hız limitleri:** Dakikada en fazla ~2 ticker çağrısı yapılır; 5 dakikada bir 42 derinlik çağrısı, aralarında ≥1 sn bekleyerek. Bu, Kraken'in public limitlerinin altında. Spot bot'un `Trades` ve `Depth` çağrılarıyla aynı IP'yi paylaşır, bu yüzden spot derinlik çağrıları bot tick'inin olduğu dakikaya (:00/:15/:30/:45) denk getirilmez.
+**Hata davranışı:**
+- Her çağrı `luna.http.get_json` ile yapılır (retry'li).
+- Başarısız çağrı da bir zarf satırı olarak yazılır: `ok=false`, `error=...`, `payload=null`. Böylece boşluk kanıtı ham veride kalır.
+- Hata collector'ı çökertmez.
+- Art arda 30 dakika boyunca **hiçbir** ticker çağrısı başarılı olmazsa süreç çıkış kodu 3 ile çıkar; compose `restart: unless-stopped` onu yeniden başlatır.
 
-## 4. Depolama ve bütünlük
+## 4. Zarf (her satır)
 
-- **Düzen:** `var/forward/<source>/date=YYYY-MM-DD/HHMM.parquet`.
-  - Saatlik dosyalar yalnızca eklenir (append-only) ve ham JSON'dan dönüştürülür.
-  - Ayrıca `var/forward/raw/<source>/date=…/HH.jsonl.gz` altında ham yanıtlar saklanır (denetim izi).
-- **Atomik yazma:** önce tmp dosyaya yazılır, sonra `os.replace` ile yerine konur. Windows'ta `PermissionError` görülürse kısa backoff ile 5 kez yeniden denenir; spot gap-fill'deki hata bu yüzden ele alındı.
-- **Günlük kapanış:** Günün dosyaları için `var/forward/manifest/date=YYYY-MM-DD.json` yazılır: SHA256, satır sayısı, beklenen ve gelen snapshot sayısı, boşluk listesi. Kapanmış günler salt okunur yapılır.
-- **Hacim tahmini:**
-  - Ticker: günde ~60 bin satır.
-  - Derinlik: günde ~12 bin snapshot.
-  - Toplam sıkıştırılmış hacim günde onlarca MB değil, birkaç MB'tir.
-- **Yedekleme:** `var/` git'e girmez. PC değişince (bu sefer olduğu gibi) forward veri **kaybolur ve geri getirilemez**. Bu yüzden haftalık bir harici kopya önerilir: bulut klasörü ya da `rclone`. Hedefi kullanıcı seçecek.
+```json
+{"source": "fut_tickers", "seq": 12345, "pair_seq": 678, "req_ts": "<UTC ISO ns>",
+ "recv_ts": "<UTC ISO ns>", "latency_ms": 123.4, "ok": true, "error": null,
+ "url": "...", "params": {...}, "filtered_to_universe": true, "payload": <ham JSON>}
+```
 
-## 5. Sağlık ve izleme
+- `seq`: kaynak başına monoton artan sayaç; restart'ta `meta.json`'dan devam eder.
+- `pair_seq`: aynı dakikadaki `fut_tickers` ve `spot_ticker` çağrıları için ortak sayaç; yalnızca bu iki kaynakta bulunur.
+- `req_ts` / `recv_ts`: `time.time_ns()` ile alınır, UTC.
 
-- `luna collector-health`: Her kaynağın son başarılı snapshot'ı kendi eşiğinden gençse 0 döner.
-  - Ticker eşiği: 3 dk.
-  - Funding eşiği: 2 sa.
-  - Compose healthcheck bu komutu kullanır.
-- **Boşluk kaydı:** Kaçan her snapshot `gaps.parquet` dosyasına yazılır (kaynak, beklenen zaman, neden). Boşluk doldurulmaz; yalnızca kaydedilir.
-- **Saat kayması:** `recv_ts − server_ts` 5 sn'yi aşarsa uyarı verilir.
-- **Kendini iyileştirme:** Paper bot'lardaki `feed_dead_exit` desenini izler. Art arda 30 dk hiç yanıt alınamazsa süreç çıkış kodu 3 ile çıkar ve `restart: unless-stopped` onu yeniden başlatır.
-- **Dashboard:** "Forward data" sayfası; son snapshot yaşı, günlük satır sayısı ve boşluklar. Sinyal veya getiri **göstermez**.
+## 5. Depolama formatı
 
-## 6. Tek seferlik tarihsel indirme (toplayıcıdan ayrı)
+```
+var/forward/
+  meta.json                                    # collector_start_ts, seq sayaçları, version
+  status.json                                  # her döngüde atomik yazılır (health/dashboard)
+  raw/<source>/date=YYYY-MM-DD/HH.jsonl        # açık saat: satır ekle + flush + fsync
+  raw/<source>/date=YYYY-MM-DD/HH.jsonl.gz     # kapanmış saat (tmp → os.replace), .jsonl silinir
+  manifest/date=YYYY-MM-DD.json                # gün kapanışı: dosya, sha256, satır, ok/hata sayıları, beklenen/gelen
+  backup/date=YYYY-MM-DD.json                  # backup makbuzu (§6)
+```
 
-Kraken'de **gerçekten var olan** geçmiş, ayrı bir `luna backfill-v4` komutuyla `var/history_v4/` altına indirilir:
-- mark ve index 15m (2022-03 →);
-- OI, spreads, liquidity, future-basis (2023-03/05 →; 1 sa);
-- gerçek funding (2025-10-06 →).
+- **Saat kapanışı:** UTC saat bitip 2 dakika geçince o saatin `.jsonl` dosyası gzip'lenir. Yazım tmp dosyaya yapılır, sonra `os.replace` ile yerine konur ve doğrulanır. `.jsonl` ancak bundan sonra silinir. Kapanış başlangıçta da çalışır, böylece önceki çalışmadan kalan açık saatler de kapatılır.
+- **Gün kapanışı:** UTC gün bitip 3 saat geçince, ve `fut_funding`/`fut_analytics`'in o güne ait son çağrıları da yazıldıktan sonra, manifest yazılır. Sonra o günün dosyaları salt okunur yapılır.
+  - Manifest'i yazılmış bir güne yeni satır yazılmaya çalışılırsa hata verilir. Gece yarısını geçen geç bir yanıt da yeni günün dosyasına gider; dosya `recv_ts`'e göre seçilir.
+- **Atomik yazma:** `os.replace` `PermissionError` verirse 0,2 / 0,4 / 0,8 / 1,6 / 3,2 sn backoff ile 5 kez yeniden denenir. Bu Windows sorunu spot gap-fill'de görülmüştü.
+- **Normalize parquet:** Collector'ın işi değil. Research tarafı ham `.jsonl.gz`'den okur. Ham veri tek doğruluk kaynağıdır.
 
-Kurallar:
-- Her dosyaya bir provenance kaydı (endpoint, parametreler, çekim zamanı, SHA256) eşlik eder.
-- **2025-10-06 öncesi funding üretilmez.** Prim proxy'si ayrı bir `premium_proxy` dosyasıdır.
+## 6. Backup (zorunlu davranış, hedef konfigürasyonla)
 
-## 7. Test planı (uygulama onaylanırsa, TDD)
+- **Hedef:** `LUNA_FORWARD_BACKUP_DIR` (bir dizin). OneDrive veya Google Drive senkron klasörü, harici disk ya da rclone mount olabilir.
+- **Docker:** Host'taki `LUNA_FORWARD_BACKUP_HOST_DIR` konteynerde `/backup`'a mount edilir. Env değişkeni yalnızca o ayarlıysa set edilir.
+- **Kopyalama:** Manifest'i yazılmış her gün için:
+  1. dosyalar `<hedef>/forward/raw/...` ve `<hedef>/forward/manifest/...` altına kopyalanır (tmp → replace);
+  2. **kopyaların SHA256'sı manifest'e göre doğrulanır**;
+  3. ancak bundan sonra `var/forward/backup/date=….json` makbuzu yazılır.
+- **Tekrar deneme:** Doğrulama başarısız olursa makbuz yazılmaz ve kopyalama saatte bir yeniden denenir.
+- **Hedef ayarlı değil veya erişilemiyor:** Collection **durmaz**. `status.json`'da `backup_ok=false` ve bir uyarı yazılır. `collector-health` uyarıyı basar. Dashboard'daki "Forward data" sayfası kırmızı uyarı gösterir.
+- **Gecikme uyarısı:** Gün kapanışından sonra 36 saat içinde makbuzu yazılmamış bir gün varsa uyarı verilir.
 
-- **Ham veri koruma:** Ticker JSON'undan satıra dönüşümde alan kaybı veya tip değişikliği olmaz. Golden fixture kullanılır.
-- **Tekrarsızlık:** Aynı funding saati iki kez gelirse tek satır kalır.
-- **Kapanmış güne yazma:** Manifest'i yazılmış bir güne yazma reddedilir.
-- **Kesinti:** Endpoint hatası sürecin çökmesine yol açmaz; boşluk kaydı oluşur, sonraki snapshot normal alınır.
-- **Atomik yazma:** `os.replace` `PermissionError` verdiğinde yeniden denenir; veri kaybı olmaz.
-- **İzolasyon:** Toplayıcı modülü `luna.engine`, `luna.execution` veya `luna.store.db` import etmez. Statik import testi ile doğrulanır.
+## 7. Data-quality ölçümü (çıktısı sonuç içermez)
+
+`luna forward-dq [--since --until]` yalnızca şunları raporlar:
+
+| Ölçüm | Tanım |
+|---|---|
+| **Paired skew** | Aynı `pair_seq`'teki `fut_tickers` ve `spot_ticker` için `recv_ts` farkı (ms). Ayrıca futures ticker'ın `lastTime`'ı ile `recv_ts` arasındaki fark. |
+| **Clock skew** | `recv_ts − serverTime` (futures) ve `recv_ts − spot_time.unixtime` (spot). |
+| **Coverage** | Kaynak ve gün başına gelen başarılı snapshot / beklenen snapshot. |
+| **Gaps** | Ardışık başarılı snapshot'lar arasında sıklığın 2 katını aşan boşluklar; her biri başlangıç, bitiş ve süreyle. |
+| **Asset completeness** | Snapshot başına payload'da bulunan evren sembolü sayısı; eksik ve askıya alınmış (`suspended`) semboller. |
+| **Quote sanity** | `bid ≤ ask` ve pozitif fiyat oranı (yalnızca sayım). |
+
+**Sınırlama:**
+- Kraken spot `Ticker` yanıtı kotasyon zaman damgası taşımıyor. Spot tarafında skew yalnızca istek ve yanıt zamanı üzerinden ölçülebilir.
+- `spot_depth` seviye başına zaman damgası taşıyor; 5 dakikalık skew için tamamlayıcı ölçüm.
+
+**Kapsam dışı:** Rapor fiyat seviyesi, basis, spread büyüklüğü, getiri veya P&L **göstermez**.
+
+## 8. Health, status, dashboard
+
+- **`luna collector-health [--strict]`:**
+  - Exit 0 olması için `fut_tickers` ve `spot_ticker`'ın son başarılı yazımı < 3 dk, `fut_funding`'inki < 2 sa önce olmalı.
+  - Backup uyarısı stdout'a `WARNING` olarak basılır. Yalnızca `--strict` ile exit 2 döner.
+- **`status.json`:**
+  - Kaynak başına: son başarılı `recv_ts`, son hata, bugünkü ok/hata sayısı.
+  - Ayrıca `backup_ok` (ve neden), açık saat sayısı, `collector_start_ts`.
+- **Dashboard sayfası "Forward data":** Yalnızca `status.json` ve manifest'leri okur. Gösterdiği tek şey sağlık, kapsam ve boşluklar; fiyat ya da getiri göstermez.
+
+## 9. İzolasyon
+
+- `luna/forward/` paketi şunları **import etmez**: `luna.engine`, `luna.execution`, `luna.store`, `luna.strategy`, `luna.portfolio`, `luna.risk`, `luna.v2`, `luna.v3`, `luna.data.backfill`. Statik bir test bunu doğrular.
+- `var/forward/` dışına yazmaz. Tek istisna backup hedefidir. Bunu bir test doğrular: collector bir tmp `var` ile çalıştırılır ve `var/forward` dışında hiçbir dosya oluşmadığı kontrol edilir.
+- Docker'da ayrı servis: `collector`, `command: ["collect"]`, `restart: unless-stopped`, healthcheck `luna collector-health`, bind mount `./var:/app/var`.
+- Ayrı lock: `var/forward/collector.lock` (pid + heartbeat). İkinci bir collector exit 1 ile reddedilir. Bayat lock (heartbeat > 5 dk) devralınır.
+
+## 10. Testler (TDD; ağ çağrısı yok, `httpx.MockTransport`)
+
+1. **Ham veri koruma:** Ticker payload'ı zarfa tam ve tipleri değişmeden girer. Golden fixture ile JSON round-trip yapılır.
+2. **Evren süzmesi:** Yalnızca 21 sembol kalır, bayrak set edilir; evrendeki eksik semboller payload'da yoktur (doldurulmaz).
+3. **Hata zarfı:** Endpoint 500 veya timeout verirse süreç çökmez ve `ok=false` satırı yazılır. Sonraki tick normal devam eder.
+4. **Dead-feed:** 30 dk boyunca hiç ticker başarısı yoksa çıkış kodu 3 (sahte saat ile).
+5. **Saat kapanışı:** `.jsonl` → `.jsonl.gz`; içerik birebir aynı, açık dosya silinmiş. Kesintiden sonra açılışta kalan açık saatler kapatılır.
+6. **Gün kapanışı:** Manifest SHA256 ve satır sayıları doğru; dosyalar salt okunur. Kapanmış güne yazma hata verir.
+7. **`os.replace` `PermissionError`:** 2 kez hata verip sonra başarılı olursa veri kaybı yoktur; 6 kez hata verirse istisna yükselir.
+8. **Backup:** Kopyalar ve makbuz yazılır. Bozuk kopyada (hash uyuşmazlığı) makbuz yazılmaz. Hedef yoksa `backup_ok=false` olur ve collection devam eder.
+9. **`collector_start_ts`:** İkinci başlangıçta değişmez. `seq` restart sonrası devam eder.
+10. **Lock:** İkinci süreç reddedilir; bayat lock devralınır.
+11. **İzolasyon:** Yasaklı import yoktur (statik); `var/forward` dışına yazım yoktur.
+12. **`forward-dq`:** Sentetik zarflardan skew, coverage ve gap'ler doğru hesaplanır. Çıktıda fiyat, basis veya getiri alanı yoktur.
+13. **Zamanlama:** Sahte saat ile 10 dakikada `fut_tickers`/`spot_ticker` 10 kez, `fut_book` 2 kez çağrılır. `pair_seq` iki kaynakta eşit.
+14. **Günlük kaynaklar:** `fut_instruments` ve `spot_assetpairs` açılışta ve 00:10/00:12'de çağrılır; 26 saatlik bayatlık uyarısı verilir.
+15. **Holdout satırları:** `forward-dq`, `settle_ts < collector_start_ts` funding satırlarını sayımlara katmaz.
