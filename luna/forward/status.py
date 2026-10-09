@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from luna.forward.config import SOURCES
-from luna.forward.envelope import iso_ns
+from luna.forward.envelope import NS, iso_ns, ns_from_iso
 from luna.forward.writer import atomic_write_text, day_of
 
 STATUS_FILE = "status.json"
@@ -82,3 +82,48 @@ class StatusTracker:
             **self.backup,
         }
         atomic_write_text(self.root / STATUS_FILE, json.dumps(body, indent=1))
+
+
+HEALTH_MAX_AGE_S = {"fut_tickers": 180, "spot_ticker": 180, "fut_funding": 2 * 3600}
+REFERENCE_MAX_AGE_S = {"fut_instruments": 26 * 3600, "spot_assetpairs": 26 * 3600}
+
+
+def _age_s(ts: str | None, now_ns: int) -> float | None:
+    return None if not ts else (now_ns - ns_from_iso(ts)) / NS
+
+
+def check_health(status: dict[str, Any] | None, now_ns: int, strict: bool = False) -> tuple[int, list[str]]:
+    """(exit code, lines) for ``luna collector-health``: 0 healthy, 1 unhealthy, 2 backup warning
+    under ``--strict``. Healthy: fut_tickers and spot_ticker ok < 3 min ago, fut_funding < 2 h ago
+    (a funding source that never succeeded is tolerated during the first 2 h of the process).
+    Daily reference sources older than 26 h and backup problems only add WARNING lines."""
+    if status is None:
+        return 1, ["collector-health: status.json missing or unreadable"]
+    sources = status.get("sources") or {}
+    lines: list[str] = []
+    healthy = True
+    uptime = _age_s(status.get("started_ts"), now_ns)
+    for src, max_age in HEALTH_MAX_AGE_S.items():
+        age = _age_s((sources.get(src) or {}).get("last_ok_recv_ts"), now_ns)
+        if age is None and src == "fut_funding" and uptime is not None and uptime < max_age:
+            lines.append(f"{src}: no success yet (process up {uptime / 60:.0f} min, grace 2h)")
+        elif age is None or age >= max_age:
+            healthy = False
+            lines.append(f"{src}: STALE, last ok " + ("never" if age is None else f"{age:.0f}s ago"))
+        else:
+            lines.append(f"{src}: ok, last ok {age:.0f}s ago")
+    for src, max_age in REFERENCE_MAX_AGE_S.items():
+        age = _age_s((sources.get(src) or {}).get("last_ok_recv_ts"), now_ns)
+        if age is None or age > max_age:
+            last = "never" if age is None else f"{age / 3600:.1f}h ago"
+            lines.append(f"WARNING {src}: last ok {last} (> 26h)")
+    backup_warnings = []
+    if not status.get("backup_ok"):
+        backup_warnings.append(status.get("backup_reason") or "backup not ok")
+    backup_warnings += [w for w in status.get("backup_warnings") or [] if w not in backup_warnings]
+    lines += [f"WARNING backup: {w}" for w in backup_warnings]
+    if not healthy:
+        return 1, ["collector-health: unhealthy", *lines]
+    if strict and backup_warnings:
+        return 2, ["collector-health: ok, but backup warning (--strict)", *lines]
+    return 0, ["collector-health: ok", *lines]
