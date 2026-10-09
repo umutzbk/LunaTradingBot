@@ -74,6 +74,16 @@ def order_ok(q: float, px: float, meta: LegMeta | None) -> bool:
     return abs(q) >= meta.min_qty - EPS and abs(q) * px >= meta.min_cost - EPS
 
 
+def price_split(q_s: float, q_p: float, d_spot: float, d_perp: float) -> tuple[float, float]:
+    """Carry slot price P&L split (§5.1): ``basis_contribution = -min(q_s, |q_p|) * Δ(P_perp - P_spot)``
+    and ``residual_delta_pnl = (q_s - |q_p|) * ΔX`` with X = spot if q_s >= |q_p| else perp. The two
+    add up to q_s * ΔS + q_p * ΔP for a short perp leg."""
+    hedged = min(q_s, abs(q_p))
+    basis = -hedged * (d_perp - d_spot)
+    residual = (q_s - abs(q_p)) * (d_spot if q_s >= abs(q_p) else d_perp)
+    return basis, residual
+
+
 def hedge_qty(notional: float, spot_px: float, perp_px: float) -> tuple[float, float]:
     """USD-equal hedge (§5.1): q_s = N / P_spot, q_p = -N / P_perp."""
     return notional / spot_px, -notional / perp_px
@@ -174,7 +184,7 @@ COUNTERS = ("skipped_actions", "min_order_skips", "funding_unknown_hours", "fund
             "margin_check_skipped", "flat_weeks", "decisions", "entries", "exits")
 
 COMPONENTS = ("spot_price_pnl", "perp_price_pnl", "funding_cf", "fees", "spread_slippage",
-              "liquidation_penalty")
+              "liquidation_penalty", "basis_contribution", "residual_delta_pnl")
 
 
 @dataclass
@@ -199,6 +209,23 @@ class _Sim:
         self.pending = {k: 0.0 for k in COMPONENTS}
         self.prev_equity = spot_cash + perp_cash
         self.margin_after: dict[pd.Timestamp, float] = {}
+        self.split = spot_cash > 0  # carry account: basis / residual split of each slot's price P&L
+        self.seg: dict[str, tuple[float, float]] = {}
+        self.day_split = [0.0, 0.0]
+
+    def mark_segment(self, asset: str, spot_px: float | None, perp_px: float | None) -> None:
+        """Close the asset's price segment at (spot_px, perp_px) with the quantities held over it."""
+        if not self.split:
+            return
+        s0, p0 = self.seg.get(asset, (spot_px, perp_px))
+        s1 = spot_px if spot_px is not None else s0
+        p1 = perp_px if perp_px is not None else p0
+        q_s, q_p = self.book.spot_q.get(asset, 0.0), self.book.perp_q.get(asset, 0.0)
+        if (q_s or q_p) and s0 is not None and p0 is not None:
+            b, r = price_split(q_s, q_p, s1 - s0, p1 - p0)
+            self.day_split[0] += b
+            self.day_split[1] += r
+        self.seg[asset] = (s1, p1)
 
     # quotes & costs
     def quote(self, asset: str, leg: str, t: pd.Timestamp, qty: float = 0.0) -> Quote | None:
@@ -220,7 +247,10 @@ class _Sim:
         return (self.meta.get(asset) or {}).get(leg)
 
     def fill(self, asset: str, leg: str, dq: float, px: float, ts: pd.Timestamp, obs: float | None,
-             penalty: float = 0.0) -> None:
+             penalty: float = 0.0, other_px: float | None = None) -> None:
+        other_leg = "perp" if leg == "spot" else "spot"
+        other = other_px if other_px is not None else self.last_px.get((asset, other_leg))
+        self.mark_segment(asset, px if leg == "spot" else other, px if leg == "perp" else other)
         if leg == "perp":
             self.paths.setdefault(asset, [(ts.floor("D"), self.book.perp_q.get(asset, 0.0))])
         self.book.trade(asset, leg, dq, px, self.row.fee(leg), self.half(asset, leg, obs), penalty)
@@ -288,6 +318,10 @@ class _Sim:
     def close_day(self, day: pd.Timestamp, start: dict, active: bool, extra: dict | None = None) -> None:
         funding = self.accrue(day)
         spot_px, perp_px = self.valuation_prices(day)
+        for a in set(spot_px) | set(perp_px):
+            self.mark_segment(a, spot_px.get(a), perp_px.get(a))
+        for a in [a for a in self.seg if a not in self.book.spot_q and a not in self.book.perp_q]:
+            del self.seg[a]
         for a, px in perp_px.items():
             self.book.settle(a, px)
         spot_eq, perp_eq = self.book.spot_equity(spot_px), self.book.perp_equity(perp_px)
@@ -302,7 +336,10 @@ class _Sim:
             "fees": d["fees"]["spot"] + d["fees"]["perp"],
             "spread_slippage": d["spread"]["spot"] + d["spread"]["perp"],
             "liquidation_penalty": d["penalty"]["spot"] + d["penalty"]["perp"],
+            "basis_contribution": self.day_split[0],
+            "residual_delta_pnl": self.day_split[1],
         }
+        self.day_split = [0.0, 0.0]
         spot_n = sum(q * spot_px[a] for a, q in self.book.spot_q.items())
         perp_n = sum(abs(q) * perp_px[a] for a, q in self.book.perp_q.items())
         perp_net = sum(q * perp_px[a] for a, q in self.book.perp_q.items())
@@ -379,11 +416,12 @@ class _Sim:
             return False
         ts = t + pd.Timedelta(minutes=15)
         for a, q in sorted(self.book.perp_q.items()):
-            self.fill(a, "perp", -q, adv[a], ts, self.last_obs.get((a, "perp")), params.liq_penalty)
+            sp = ext[a].get("spot_low") or self.last_px.get((a, "spot"))
+            self.fill(a, "perp", -q, adv[a], ts, self.last_obs.get((a, "perp")), params.liq_penalty,
+                      other_px=sp)
             if spot_legs and a in self.book.spot_q:
-                sp = ext[a].get("spot_low") or self.last_px.get((a, "spot"))
                 self.fill(a, "spot", -self.book.spot_q[a], sp, ts, self.last_obs.get((a, "spot")),
-                          params.liq_penalty)
+                          params.liq_penalty, other_px=adv[a])
         self.c["liquidations"] += 1
         return True
 

@@ -47,6 +47,16 @@ def test_t2_usd_hedge_price_pnl_is_0_5446():
     assert book.equity({}) - 2000.0 == pytest.approx(100 * (110 / 100 - 110.55 / 101))
 
 
+def test_t2_price_pnl_splits_into_basis_and_residual_delta():
+    basis, residual = acc.price_split(1.0, -100 / 101, 110.0 - 100.0, 110.55 - 101.0)
+    assert basis == pytest.approx(0.44554, abs=5e-6)
+    assert residual == pytest.approx(0.09901, abs=5e-6)
+    assert basis + residual == pytest.approx(0.54455, abs=5e-6)
+    # more perp than spot: the residual is driven by the perp price
+    b2, r2 = acc.price_split(1.0, -1.25, 10.0, 9.55)
+    assert b2 == pytest.approx(-1.0 * (9.55 - 10.0)) and r2 == pytest.approx((1.0 - 1.25) * 9.55)
+
+
 def _t3_rates(sign=1.0):
     idx = pd.date_range(T0, periods=24, freq="1h")
     return pd.DataFrame({"funding_abs": sign * 0.0001 * 101, "funding_rel": sign * 0.0001}, index=idx)
@@ -221,6 +231,9 @@ def test_carry_daily_decomposition_adds_up_to_equity_change():
     prev = d["equity"].shift(1).fillna(530.0)
     np.testing.assert_allclose(comp, d["equity"] - prev, atol=1e-9)
     np.testing.assert_allclose(d["ret"], d["equity"] / prev - 1, atol=1e-12)
+    np.testing.assert_allclose(d["basis_contribution"] + d["residual_delta_pnl"],
+                               d["spot_price_pnl"] + d["perp_price_pnl"], atol=1e-9)
+    assert d["basis_contribution"].abs().sum() > 0
     assert d["funding_cf"].iloc[1] > 0 and d["funding_cf"].iloc[4] == 0
     assert res.trades[0]["exit_t"] == T0 + pd.Timedelta("3D")
 
