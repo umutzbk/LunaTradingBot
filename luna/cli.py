@@ -64,6 +64,25 @@ def backfill_v4_cmd(
     typer.echo(f"backfill-v4: {len(done)} assets ({', '.join(done)})")
 
 
+@app.command("v4-instruments")
+def v4_instruments_cmd(
+    out: Annotated[Path, typer.Option(help="Snapshot file")] = Path("config/v4_instruments.json"),
+    forward_dir: Annotated[Path | None, typer.Option(help="Collector root (default var/forward)")] = None,
+) -> None:
+    """Freeze-time instrument metadata snapshot (V4 spec §3, §7.1) from the collector's earliest raw
+    fut_instruments / spot_assetpairs envelopes only. Fails loudly on a missing asset or field."""
+    from luna.config import load_settings
+    from luna.v4.instruments import build_snapshot, write_snapshot
+
+    root = forward_dir if forward_dir is not None else Path(load_settings().var_dir) / "forward"
+    try:
+        sha = write_snapshot(build_snapshot(root), out)
+    except ValueError as e:
+        typer.echo(f"v4-instruments failed: {e}")
+        raise typer.Exit(1) from e
+    typer.echo(f"v4-instruments: {out} sha256 {sha}")
+
+
 @app.command("data-report")
 def data_report() -> None:
     """Report data coverage and quality."""

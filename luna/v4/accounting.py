@@ -57,6 +57,7 @@ class LegMeta:
     step: float = 0.0
     min_qty: float = 0.0
     min_cost: float = 0.0
+    tick: float = 0.0  # price tick (information; execution is at mid)
 
 
 def round_qty(q: float, meta: LegMeta | None) -> float:
