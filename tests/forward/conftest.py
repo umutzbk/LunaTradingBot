@@ -41,13 +41,15 @@ class Kraken:
     def __init__(self, clock: FakeClock, latency_s: float = 0.05) -> None:
         self.clock = clock
         self.latency_ns = int(latency_s * S)
+        self.latency_by: dict[str, float] = {}  # path substring -> seconds
         self.calls: list[tuple[str, dict, int]] = []
         self.fail: set[str] = set()  # path suffixes answering HTTP 500
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         self.calls.append((path, dict(request.url.params), self.clock.ns))
-        self.clock.ns += self.latency_ns
+        slow = [v for k, v in self.latency_by.items() if k in path]
+        self.clock.ns += int(slow[0] * S) if slow else self.latency_ns
         if any(path.endswith(f) for f in self.fail):
             return httpx.Response(500, text="down")
         return httpx.Response(200, json=kraken_payload(path))

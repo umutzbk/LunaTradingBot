@@ -75,7 +75,7 @@ def test_daily_reference_sources_cadence():
     fi, sa = config.SOURCES["fut_instruments"], config.SOURCES["spot_assetpairs"]
     assert (fi.period_s, fi.offset_s) == (86400, 600)  # 00:10 UTC
     assert (sa.period_s, sa.offset_s) == (86400, 720)  # 00:12 UTC
-    assert config.AT_START == ("fut_instruments", "spot_assetpairs")
+    assert config.AT_START == ("fut_instruments", "spot_assetpairs", "fut_funding_full")
 
 
 def test_fut_instruments_filtered_to_universe():

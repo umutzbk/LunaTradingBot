@@ -48,7 +48,7 @@ def test_ten_minutes_schedule_and_pair_seq(tmp_path, fake_kraken):
     assert kraken.count("/derivatives/api/v3/orderbook") == 2 * 21
     assert kraken.count("/0/public/Depth") == 2 * 21
     assert kraken.count("/0/public/Time") == 2
-    assert kraken.count("historicalfundingrates") == 21  # 12:05
+    assert kraken.count("historicalfundingrates") == 2 * 21  # start (full history) + 12:05
     assert kraken.count("/api/charts/v1/analytics/") == 21 * 6  # 12:07
     fut, spot = _rows(root, "fut_tickers"), _rows(root, "spot_ticker")
     assert [r["pair_seq"] for r in fut] == [r["pair_seq"] for r in spot] == list(range(1, 11))
@@ -60,8 +60,9 @@ def test_ten_minutes_schedule_and_pair_seq(tmp_path, fake_kraken):
             assert paths[i + 1].endswith("/0/public/Ticker")
     # minute rounds start at :00 seconds (at most one in-flight request late)
     assert all((t - T0) % (60 * S) <= kraken.latency_ns for t in kraken.times("/v3/tickers"))
-    assert kraken.times("/public/Time")[0] == T0 + 150 * S  # :02:30 round: spot_time, fut_book, spot_depth
-    assert kraken.times("/orderbook")[0] == T0 + 150 * S + kraken.latency_ns
+    assert kraken.times("/public/Time")[0] == T0 + 150 * S  # :02:30 spot round: spot_time, spot_depth
+    assert kraken.times("/Depth")[0] == T0 + 150 * S + kraken.latency_ns
+    assert kraken.times("/orderbook")[0] > kraken.times("/Depth")[20]  # then the futures round
 
 
 def test_heavy_sources_are_spaced_and_sequential(tmp_path, fake_kraken):
@@ -70,14 +71,14 @@ def test_heavy_sources_are_spaced_and_sequential(tmp_path, fake_kraken):
     book, depth = kraken.times("/orderbook"), kraken.times("/Depth")
     assert all(b - a >= 0.5 * S for a, b in zip(book, book[1:], strict=False))
     assert all(b - a >= 1.0 * S for a, b in zip(depth, depth[1:], strict=False))
-    assert book[-1] < depth[0]  # one after the other, never interleaved
+    assert depth[-1] < book[0]  # spot round first, then futures; never interleaved
 
 
 def test_hourly_and_daily_sources_and_start_fetch(tmp_path, fake_kraken):
     clock, kraken = fake_kraken(T0)
     _run(tmp_path / "forward", clock, kraken, 3600 + 8 * 60)
-    assert kraken.count("historicalfundingrates") == 2 * 21  # 12:05, 13:05
-    assert 0 <= kraken.times("historicalfundingrates")[0] - (T0 + 300 * S) < S  # :05, after the minute round
+    assert kraken.count("historicalfundingrates") == 3 * 21  # start (full), 12:05, 13:05
+    assert 0 <= kraken.times("historicalfundingrates")[21] - (T0 + 300 * S) < S  # :05, after the minute round
     assert kraken.count("/api/charts/v1/analytics/") == 2 * 21 * 6  # 12:07, 13:07
     assert kraken.count("/v3/instruments") == 1  # at start only (daily at 00:10)
     assert kraken.count("/AssetPairs") == 1
@@ -291,8 +292,9 @@ def test_funding_hourly_filtered_and_daily_full_at_00_20(tmp_path, fake_kraken):
     c.close()
     hourly, full = _rows(root, "fut_funding"), _rows(root, "fut_funding_full")
     assert len(hourly) == 21 and hourly[0]["filtered_since_ts"] == "2026-10-08T00:05:00.000000000Z"
-    assert len(full) == 21 and all(r["filtered_since_ts"] is None for r in full)
-    assert full[0]["recv_ts"].startswith("2026-10-10T00:20:")
+    assert len(full) == 42 and all(r["filtered_since_ts"] is None for r in full)
+    assert [r.get("at_start", False) for r in full] == [True] * 21 + [False] * 21  # start + 00:20
+    assert full[21]["recv_ts"].startswith("2026-10-10T00:20:")
     assert all(r["attempts"] == 1 for r in hourly)
 
 
@@ -418,3 +420,57 @@ def test_refuses_to_start_with_raw_data_but_no_meta(tmp_path, fake_kraken):
     with pytest.raises(CollectorStartError, match="meta.json"):
         c.start()
     assert not (root / "meta.json").exists() and not (root / "collector.lock").exists()
+
+
+# ---- second review: N1 (no starvation, no dropped slots), N4, N7
+
+
+def test_slow_fut_book_never_starves_spot_depth(tmp_path, fake_kraken):
+    clock, kraken = fake_kraken(T0)
+    kraken.latency_by = {"/orderbook": 15.0}  # a futures round now overruns its 5-minute slot
+    root = tmp_path / "forward"
+    c = _collector(root, clock, kraken)
+    c.start()
+    c.run_forever(until_ns=T0 + 3600 * S + 60 * S)
+    c.close()
+    hour = T0 + 3600 * S
+    assert len([t for t in kraken.times("/Depth") if t < hour]) == 12 * 21  # every slot, all calls
+    starts = [t for p, q, t in kraken.calls
+              if "/orderbook" in p and q.get("symbol") == "PF_ADAUSD" and t < hour]
+    assert len(starts) == 12  # every futures slot is started, none dropped
+    st = json.loads((root / "status.json").read_text(encoding="utf-8"))
+    assert st["sources"]["fut_book"]["skipped_calls"] > 0
+    assert st["sources"]["spot_depth"]["skipped_calls"] == 0
+
+
+def test_whole_skipped_slots_are_counted(tmp_path, fake_kraken):
+    clock, kraken = fake_kraken(T0)
+    root = tmp_path / "forward"
+    c = _collector(root, clock, kraken)
+    c.start()
+    c.run_forever(until_ns=T0 + 30 * S)
+    real = c._run_round
+
+    def stall_once(r):
+        if "fut_book" in r.sources and not getattr(stall_once, "done", False):
+            stall_once.done = True
+            clock.ns += 16 * 60 * S  # e.g. the machine slept: three 5-minute slots pass unseen
+        return real(r)
+
+    c._run_round = stall_once
+    c.run_forever(until_ns=T0 + 25 * 60 * S)
+    c.close()
+    st = json.loads((root / "status.json").read_text(encoding="utf-8"))
+    assert st["sources"]["fut_book"]["skipped_slots"] >= 2
+
+
+def test_backup_handoff_and_join_timeout():
+    import queue
+
+    import httpx
+
+    from luna.forward import collector as coll
+
+    c = Collector("unused", make_client(httpx.MockTransport(lambda r: httpx.Response(500))))
+    assert isinstance(c._backup_results, queue.SimpleQueue)
+    assert coll.BACKUP_JOIN_S == 10.0 and c.backup_join_s == 10.0

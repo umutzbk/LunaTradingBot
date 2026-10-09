@@ -15,7 +15,8 @@ STATUS_FILE = "status.json"
 
 def _source_entry(day: str) -> dict[str, Any]:
     return {"last_ok_recv_ts": None, "last_error_ts": None, "last_error": None,
-            "today": {"date": day, "ok": 0, "error": 0}, "skipped_calls": 0, "last_skipped_ts": None}
+            "today": {"date": day, "ok": 0, "error": 0}, "skipped_calls": 0, "skipped_slots": 0,
+            "last_skipped_ts": None}
 
 
 def read_status(root: Path) -> dict[str, Any] | None:
@@ -36,7 +37,7 @@ class StatusTracker:
             entry = _source_entry(today)
             old = (prev.get("sources") or {}).get(s)
             if old:  # resume last-ok/last-error and, on the same UTC day, today's counters
-                for k in ("last_ok_recv_ts", "last_error_ts", "last_error", "skipped_calls",
+                for k in ("last_ok_recv_ts", "last_error_ts", "last_error", "skipped_calls", "skipped_slots",
                           "last_skipped_ts"):
                     entry[k] = old.get(k, entry[k])
                 if (old.get("today") or {}).get("date") == today:
@@ -69,6 +70,12 @@ class StatusTracker:
         """Calls of an aborted round (its next slot was due): gap info only, never fake rows."""
         entry = self.sources.setdefault(source, _source_entry(ts[:10]))
         entry["skipped_calls"] = entry.get("skipped_calls", 0) + n
+        entry["last_skipped_ts"] = ts
+
+    def record_skipped_slots(self, source: str, n: int, ts: str) -> None:
+        """Whole scheduled slots that were never started (gap info only)."""
+        entry = self.sources.setdefault(source, _source_entry(ts[:10]))
+        entry["skipped_slots"] = entry.get("skipped_slots", 0) + n
         entry["last_skipped_ts"] = ts
 
     def set_backup(self, ok: bool, reason: str | None, warnings: list[str], now_ns: int) -> None:

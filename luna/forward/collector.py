@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import math
+import queue
 import threading
 import time
 from collections.abc import Callable
@@ -39,6 +40,7 @@ TICKER_SOURCES = ("fut_tickers", "spot_ticker")
 FEED_DEAD_AFTER_S = 30 * 60
 FEED_DEAD_EXIT_CODE = 3
 LOCK_LOST_EXIT_CODE = 1
+BACKUP_JOIN_S = 10.0  # close() waits this long for a running backup (stop grace 30 s)
 MAX_SLEEP_S = 1.0  # keep the loop responsive to stop()
 _NEVER = math.inf
 
@@ -66,10 +68,10 @@ class _Round:
 
 
 def _rounds() -> list[_Round]:
-    groups: dict[tuple[int, int], list[str]] = {}
+    groups: dict[tuple[int, int, str], list[str]] = {}
     for name, cad in SOURCES.items():
-        groups.setdefault((cad.period_s, cad.offset_s), []).append(name)
-    out = [_Round("+".join(srcs), tuple(srcs), p, o, i) for i, ((p, o), srcs) in enumerate(groups.items())]
+        groups.setdefault((cad.period_s, cad.offset_s, cad.round), []).append(name)
+    out = [_Round("+".join(srcs), tuple(srcs), p, o, i) for i, ((p, o, _), srcs) in enumerate(groups.items())]
     out.append(_Round("start", AT_START, None, 0, 1))  # right after the first minute round
     return out
 
@@ -91,7 +93,7 @@ class Collector:
         backoff: float = 0.5,
         lock_pid: int | None = None,
         lock_host: str | None = None,
-        backup_join_s: float = 30.0,
+        backup_join_s: float = BACKUP_JOIN_S,
     ) -> None:
         self.root = Path(root)
         self.client = client
@@ -114,7 +116,7 @@ class Collector:
         self._last_ticker_ok_ns = 0
         self._backup_hour = -1
         self._backup_thread: threading.Thread | None = None
-        self._backup_done: tuple | None = None  # (result, error, now_ns), set by the worker
+        self._backup_results: queue.SimpleQueue = queue.SimpleQueue()  # (result, error, now_ns)
         self._backup_wanted = False
 
     # ---- lifecycle
@@ -186,9 +188,23 @@ class Collector:
         if r.period_s is None:
             r.next_ns = _NEVER
             return
-        nxt = int(slot_ns) + r.period_s * NS
+        period = r.period_s * NS
+        nxt = int(slot_ns) + period
         now = self.clock_ns()
-        r.next_ns = nxt if nxt >= now else r.first_slot_at_or_after(now)  # fell behind: skip
+        if nxt >= now:
+            r.next_ns = nxt
+            return
+        # fell behind (overran round, slept machine): run the latest due slot right away and count
+        # the whole slots in between that were never started
+        latest = r.first_slot_at_or_after(now)
+        latest = latest if latest == now else latest - period
+        skipped = (latest - nxt) // period
+        if skipped > 0:
+            ts = iso_ns(now)
+            for src in r.sources:
+                self.status.record_skipped_slots(src, skipped, ts)
+            log.warning("round %s: %d whole slot(s) skipped", r.name, skipped)
+        r.next_ns = latest
 
     def _run_round(self, r: _Round) -> None:
         slot = r.next_ns
@@ -332,17 +348,19 @@ class Collector:
 
         def work() -> None:
             try:
-                self._backup_done = (run_backup(root, target, now), None, now)
+                self._backup_results.put((run_backup(root, target, now), None, now))
             except Exception as e:  # noqa: BLE001 - reported in status, never crashes collection
-                self._backup_done = (None, e, now)
+                self._backup_results.put((None, e, now))
 
         self._backup_thread = threading.Thread(target=work, name="luna-forward-backup", daemon=True)
         self._backup_thread.start()
 
     def _publish_backup(self) -> None:
-        done, self._backup_done = self._backup_done, None
-        if done is not None:
-            res, err, ts = done
+        while True:
+            try:
+                res, err, ts = self._backup_results.get_nowait()
+            except queue.Empty:
+                break
             if err is not None:
                 self.status.set_backup(False, f"backup error: {type(err).__name__}: {err}", [], ts)
             else:

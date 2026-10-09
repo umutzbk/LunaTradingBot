@@ -32,14 +32,16 @@ class Cadence:
     offset_s: int  # ... at UTC epoch multiples of period_s plus offset_s
     calls: int  # requests per round (envelope rows expected per round)
     spacing_s: float = 0.0  # minimum pause between the round's requests
+    round: str = ""  # sources with the same cadence *and* round name run as one round
 
 
 SOURCES: dict[str, Cadence] = {
     "fut_tickers": Cadence(60, 0, 1),
     "spot_ticker": Cadence(60, 0, 1),  # right after fut_tickers, same pair_seq
-    "spot_time": Cadence(300, 150, 1),
-    "fut_book": Cadence(300, 150, len(UNIVERSE), 0.5),
-    "spot_depth": Cadence(300, 150, len(UNIVERSE), 1.0),
+    # two :02:30 rounds, spot first, each with its own deadline: slow futures never starve spot
+    "spot_time": Cadence(300, 150, 1, round="spot"),
+    "fut_book": Cadence(300, 150, len(UNIVERSE), 0.5, round="futures"),
+    "spot_depth": Cadence(300, 150, len(UNIVERSE), 1.0, round="spot"),
     "fut_funding": Cadence(3600, 300, len(UNIVERSE), 0.5),
     "fut_analytics": Cadence(3600, 420, len(UNIVERSE) * len(ANALYTICS_TYPES), 0.5),
     # daily reference data, also fetched once at every collector start
@@ -48,7 +50,7 @@ SOURCES: dict[str, Cadence] = {
     # daily full (unfiltered) funding history as an audit trail, 00:20 UTC
     "fut_funding_full": Cadence(86400, 1200, len(UNIVERSE), 0.5),
 }
-AT_START = ("fut_instruments", "spot_assetpairs")
+AT_START = ("fut_instruments", "spot_assetpairs", "fut_funding_full")
 
 
 def rounds_between(cad: Cadence, start_s: float, end_s: float) -> int:
