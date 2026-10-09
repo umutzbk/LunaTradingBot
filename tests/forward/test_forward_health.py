@@ -105,3 +105,18 @@ def test_daily_full_funding_staleness_warns_only():
     st["sources"]["fut_funding_full"] = {"last_ok_recv_ts": iso_ns(NOW - 27 * 3600 * S)}
     code, lines = check_health(st, NOW)
     assert code == 0 and any(x.startswith("WARNING fut_funding_full") for x in lines)
+
+
+def test_importing_every_forward_module_loads_nothing_forbidden():
+    import subprocess
+    import sys
+
+    pkg = Path(luna.forward.__file__).parent
+    mods = sorted(f"luna.forward.{f.stem}" for f in pkg.glob("*.py") if f.stem != "__init__")
+    code = (f"import sys\nfor m in {mods!r}:\n    __import__(m)\nforbidden = {FORBIDDEN!r}\n"
+            "bad = sorted(n for n in sys.modules\n"
+            "             if any(n == f or n.startswith(f + '.') for f in forbidden))\n"
+            "print(','.join(bad))")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == ""
+    assert len(mods) >= 10
