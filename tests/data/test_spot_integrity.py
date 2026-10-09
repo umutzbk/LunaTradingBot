@@ -14,8 +14,14 @@ def bars(start="2026-06-29", end="2026-07-02 12:00", freq="15min"):
     idx = pd.date_range(start, end, freq=freq, tz="UTC")
     n = len(idx)
     return pd.DataFrame(
-        {"open": np.full(n, 10.0), "high": np.full(n, 11.0), "low": np.full(n, 9.0),
-         "close": np.full(n, 10.5), "volume": np.ones(n), "trades": np.ones(n, dtype="int64")},
+        {
+            "open": np.full(n, 10.0),
+            "high": np.full(n, 11.0),
+            "low": np.full(n, 9.0),
+            "close": np.full(n, 10.5),
+            "volume": np.ones(n),
+            "trades": np.ones(n, dtype="int64"),
+        },
         index=idx,
     )
 
@@ -132,3 +138,57 @@ def test_cli_any_fail_exit_1(tmp_path, monkeypatch):
 def test_cli_empty_universe_fails(tmp_path, monkeypatch):
     res = _cli(tmp_path, monkeypatch)
     assert res.exit_code == 1
+
+
+# ---- review: gap visibility on PASS (I1), candle consistency, positive prices, 15-min grid (I2)
+
+
+def test_pass_reports_hour_gaps_and_largest_gap(tmp_path):
+    df = bars()
+    df = df[(df.index < "2026-07-01") | (df.index >= "2026-07-01 03:00")]  # 3h15m gap
+    df = df[(df.index < "2026-07-01 06:00") | (df.index >= "2026-07-01 07:30")]  # 1h45m gap
+    r = check(seed(tmp_path, {"BTC": df, "ETH": bars()}))
+    assert r["BTC"].ok and r["BTC"].gaps_over_1h == 2 and r["BTC"].max_gap_h == 3.25
+    assert r["ETH"].ok and r["ETH"].gaps_over_1h == 0 and r["ETH"].max_gap_h == 0.25
+
+
+def test_cli_pass_line_shows_gaps(tmp_path, monkeypatch):
+    df = bars()
+    seed(tmp_path, {"BTC": df[(df.index < "2026-07-01") | (df.index >= "2026-07-01 02:00")]})
+    line = _cli(tmp_path, monkeypatch).output.splitlines()[0]
+    assert line.startswith("BTC PASS") and "gaps>1h=1" in line and "max_gap=2.25h" in line
+
+
+def test_high_below_open_or_close_fails(tmp_path):
+    df = bars()
+    df.iloc[150, df.columns.get_loc("close")] = 11.5  # above high
+    r = check(seed(tmp_path, {"BTC": df}))["BTC"]
+    assert not r.ok and "high<max(open,close)" in r.reason
+
+
+def test_low_above_open_or_close_fails(tmp_path):
+    df = bars()
+    df.iloc[150, df.columns.get_loc("open")] = 8.5  # below low
+    r = check(seed(tmp_path, {"BTC": df}))["BTC"]
+    assert not r.ok and "low>min(open,close)" in r.reason
+
+
+def test_non_positive_price_fails(tmp_path):
+    df = bars()
+    df.iloc[150, df.columns.get_loc("low")] = 0.0
+    r = check(seed(tmp_path, {"BTC": df}))["BTC"]
+    assert not r.ok and "non-positive" in r.reason
+
+
+def test_off_grid_timestamp_fails(tmp_path):
+    df = bars()
+    off = df.iloc[[100]].copy()
+    off.index = off.index + pd.Timedelta("7min")
+    r = check(seed(tmp_path, {"BTC": pd.concat([df, off]).sort_index()}))["BTC"]
+    assert not r.ok and "15-minute grid" in r.reason
+
+
+def test_off_grid_before_window_ignored(tmp_path):
+    old = bars(start="2026-01-01", end="2026-01-01 01:00")
+    old.index = old.index + pd.Timedelta("1min")
+    assert check(seed(tmp_path, {"BTC": pd.concat([old, bars()])}))["BTC"].ok

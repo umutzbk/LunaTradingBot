@@ -276,8 +276,7 @@ def test_stale_quote_age_breaks_on_change_and_missing_symbol(tmp_path):
     def tick(bid, ask, sym="PF_XBTUSD"):
         return {"result": "success", "tickers": [{"symbol": sym, "bid": bid, "ask": ask}]}
 
-    quotes = [(1.5, 2.5), (1.5, 2.5), (1.5, 2.5), (1.5, 2.75), (1.5, 2.75), None, (1.5, 2.75),
-              (1.5, 2.75)]
+    quotes = [(1.5, 2.5), (1.5, 2.5), (1.5, 2.5), (1.5, 2.75), (1.5, 2.75), None, (1.5, 2.75), (1.5, 2.75)]
     for i, q in enumerate(quotes):
         p = tick(*q) if q else tick(9.5, 9.75, "PF_ETHUSD")  # XBT missing at minute 5
         w.append(_env("fut_tickers", T0 + i * 60 * S, p, pair_seq=i + 1))
@@ -328,4 +327,3 @@ def test_coverage_per_day_excludes_at_start_ok_rows(tmp_path):
     RawWriter(root).append(e)
     cov = _dq(root)["coverage"]["fut_tickers"]["2026-10-09"]
     assert (cov["ok"], cov["expected"], cov["at_start"], cov["ratio"]) == (6, 10, 1, 0.6)
-

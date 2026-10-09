@@ -39,8 +39,14 @@ def _stats(values: list[float]) -> dict[str, float | int | None]:
     if not values:
         return {"n": 0, "min": None, "p50": None, "p95": None, "max": None, "mean": None}
     v = sorted(values)
-    return {"n": len(v), "min": round(v[0], 3), "p50": round(_pct(v, 0.5), 3),
-            "p95": round(_pct(v, 0.95), 3), "max": round(v[-1], 3), "mean": round(sum(v) / len(v), 3)}
+    return {
+        "n": len(v),
+        "min": round(v[0], 3),
+        "p50": round(_pct(v, 0.5), 3),
+        "p95": round(_pct(v, 0.95), 3),
+        "max": round(v[-1], 3),
+        "mean": round(sum(v) / len(v), 3),
+    }
 
 
 def _dist(values: list[float]) -> dict[str, float | int | None]:
@@ -48,8 +54,13 @@ def _dist(values: list[float]) -> dict[str, float | int | None]:
     if not values:
         return {"n": 0, "p50": None, "p95": None, "p99": None, "max": None}
     v = sorted(values)
-    return {"n": len(v), "p50": round(_pct(v, 0.5), 3), "p95": round(_pct(v, 0.95), 3),
-            "p99": round(_pct(v, 0.99), 3), "max": round(v[-1], 3)}
+    return {
+        "n": len(v),
+        "p50": round(_pct(v, 0.5), 3),
+        "p95": round(_pct(v, 0.95), 3),
+        "p99": round(_pct(v, 0.99), 3),
+        "max": round(v[-1], 3),
+    }
 
 
 class _StaleQuotes:
@@ -92,9 +103,11 @@ class _StaleQuotes:
     def out(self) -> dict[str, Any]:
         for sym in list(self.cur):
             self._close(sym)
-        return {"runs": _dist(self.runs),
-                "per_symbol_max": {k: round(v, 3) for k, v in self.sym_max.items()},
-                "out_of_order_skipped": self.out_of_order}
+        return {
+            "runs": _dist(self.runs),
+            "per_symbol_max": {k: round(v, 3) for k, v in self.sym_max.items()},
+            "out_of_order_skipped": self.out_of_order,
+        }
 
 
 def _hour_data(day_dir: Path) -> Iterator[bytes]:
@@ -288,8 +301,9 @@ class _Acc:
                 self.settled[sym].add(iso_ns(t))
 
 
-def forward_dq(root: Path, since_ns: int | None = None, until_ns: int | None = None,
-               now_ns: int | None = None) -> dict[str, Any]:
+def forward_dq(
+    root: Path, since_ns: int | None = None, until_ns: int | None = None, now_ns: int | None = None
+) -> dict[str, Any]:
     """Stream every source once and report data quality. Raises ValueError when
     ``collector_start_ts`` is unknown (no meta.json): warmup/evidence and funding cut-offs depend
     on it, so the report fails closed instead of guessing."""
@@ -315,8 +329,9 @@ def forward_dq(root: Path, since_ns: int | None = None, until_ns: int | None = N
             day = day_of((d0 + 86400) * NS)
         ok_times: list[int] = []
         for r in iter_rows(root, s, since_ns, until_ns):
-            entry = per_day.setdefault(day_of(r["_recv_ns"]),
-                                       {"expected": 0, "ok": 0, "errors": 0, "at_start": 0})
+            entry = per_day.setdefault(
+                day_of(r["_recv_ns"]), {"expected": 0, "ok": 0, "errors": 0, "at_start": 0}
+            )
             if r.get("at_start"):
                 entry["at_start"] += 1  # extra start fetch: not a scheduled snapshot
             else:
@@ -341,19 +356,26 @@ def forward_dq(root: Path, since_ns: int | None = None, until_ns: int | None = N
     first_hour = -(-fund_from // hour) * hour
     expected_settlements = max(0, -(-(until_ns - first_hour) // hour))
     return {
-        "window": {"since": iso_ns(since_ns), "until": iso_ns(until_ns),
-                   "collector_start_ts": iso_ns(start_ns)},
+        "window": {
+            "since": iso_ns(since_ns),
+            "until": iso_ns(until_ns),
+            "collector_start_ts": iso_ns(start_ns),
+        },
         "paired_skew": {
             "pairs": len(pair_diff),
             "fut_minus_spot_recv_ms": _stats(pair_diff),
             "fut_recv_minus_lasttime_ms": _stats(acc.last_lag),
             "abs_ms": _dist(pair_abs),
-            "abs_within_ms": {str(lim): (round(sum(x <= lim for x in pair_abs) / len(pair_abs), 4)
-                                         if pair_abs else None) for lim in ABS_SKEW_LIMITS_MS},
+            "abs_within_ms": {
+                str(lim): (round(sum(x <= lim for x in pair_abs) / len(pair_abs), 4) if pair_abs else None)
+                for lim in ABS_SKEW_LIMITS_MS
+            },
             "note": "spot Ticker has no quote timestamp: spot skew is request/response time only",
         },
-        "clock_skew": {"futures_recv_minus_server_ms": _stats(acc.fut_server),
-                       "spot_recv_minus_server_ms": _stats(acc.spot_server)},
+        "clock_skew": {
+            "futures_recv_minus_server_ms": _stats(acc.fut_server),
+            "spot_recv_minus_server_ms": _stats(acc.spot_server),
+        },
         "coverage": coverage,
         "funding_coverage": {
             "since": iso_ns(fund_from),
