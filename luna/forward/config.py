@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from luna.instruments import perp_symbol, spot_pair
@@ -41,3 +42,16 @@ SOURCES: dict[str, Cadence] = {
     "fut_funding": Cadence(3600, 300, len(UNIVERSE), 0.5),
     "fut_analytics": Cadence(3600, 420, len(UNIVERSE) * len(ANALYTICS_TYPES), 0.5),
 }
+
+
+def rounds_between(cad: Cadence, start_s: float, end_s: float) -> int:
+    """Number of scheduled rounds ``k * period + offset`` in ``[start_s, end_s)``."""
+    if end_s <= start_s:
+        return 0
+    p, o = cad.period_s, cad.offset_s
+    return math.ceil((end_s - o) / p) - math.ceil((start_s - o) / p)
+
+
+def expected_rows(source: str, start_s: float, end_s: float) -> int:
+    cad = SOURCES[source]
+    return rounds_between(cad, start_s, end_s) * cad.calls
