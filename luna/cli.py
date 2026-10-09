@@ -410,7 +410,7 @@ def collect() -> None:
                        backup_dir=resolve_backup_dir(settings.forward_backup_dir))
     try:
         c.start()
-    except CollectorLocked as e:
+    except (CollectorLocked, coll.CollectorStartError) as e:
         typer.echo(f"collect: {e}", err=True)
         client.close()
         raise typer.Exit(1) from e

@@ -15,7 +15,7 @@ STATUS_FILE = "status.json"
 
 def _source_entry(day: str) -> dict[str, Any]:
     return {"last_ok_recv_ts": None, "last_error_ts": None, "last_error": None,
-            "today": {"date": day, "ok": 0, "error": 0}}
+            "today": {"date": day, "ok": 0, "error": 0}, "skipped_calls": 0, "last_skipped_ts": None}
 
 
 def read_status(root: Path) -> dict[str, Any] | None:
@@ -36,12 +36,14 @@ class StatusTracker:
             entry = _source_entry(today)
             old = (prev.get("sources") or {}).get(s)
             if old:  # resume last-ok/last-error and, on the same UTC day, today's counters
-                for k in ("last_ok_recv_ts", "last_error_ts", "last_error"):
-                    entry[k] = old.get(k)
+                for k in ("last_ok_recv_ts", "last_error_ts", "last_error", "skipped_calls",
+                          "last_skipped_ts"):
+                    entry[k] = old.get(k, entry[k])
                 if (old.get("today") or {}).get("date") == today:
                     entry["today"] = dict(old["today"])
             self.sources[s] = entry
         self.unclosed_days: list[str] = []
+        self.backup_running = False
         self.backup: dict[str, Any] = {"backup_ok": False, "backup_reason": "backup not run yet",
                                        "backup_warnings": [], "backup_last_run_ts": None}
 
@@ -63,6 +65,12 @@ class StatusTracker:
         entry = self.sources.setdefault(source, _source_entry(ts[:10]))
         entry["last_error_ts"], entry["last_error"] = ts, error
 
+    def record_skipped(self, source: str, n: int, ts: str) -> None:
+        """Calls of an aborted round (its next slot was due): gap info only, never fake rows."""
+        entry = self.sources.setdefault(source, _source_entry(ts[:10]))
+        entry["skipped_calls"] = entry.get("skipped_calls", 0) + n
+        entry["last_skipped_ts"] = ts
+
     def set_backup(self, ok: bool, reason: str | None, warnings: list[str], now_ns: int) -> None:
         self.backup = {"backup_ok": ok, "backup_reason": reason, "backup_warnings": list(warnings),
                        "backup_last_run_ts": iso_ns(now_ns)}
@@ -82,6 +90,7 @@ class StatusTracker:
             "closed_days": closed_days[-7:],
             "unclosed_days": list(self.unclosed_days),
             **self.backup,
+            "backup_running": self.backup_running,
         }
         atomic_write_text(self.root / STATUS_FILE, json.dumps(body, indent=1))
 

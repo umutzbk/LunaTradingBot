@@ -5,15 +5,18 @@ round in ``config.SOURCES`` order: the minute round is ``fut_tickers`` then ``sp
 shared ``pair_seq``; the :02:30 five-minute round is ``spot_time``, ``fut_book``, ``spot_depth``
 (spaced); funding at :05, analytics at :07; the daily reference sources at 00:10/00:12 and once at
 start. A due minute round is run between the requests of a longer round, so it stays on time.
-After every round: hour/day close, backup (hourly, and when a day closes), status.json, lock
-heartbeat. If neither ticker source succeeded for 30 minutes, ``exit_code`` becomes 3 and the
-loop stops (Docker restarts the process).
+After every minute round (also inside long rounds): dead-feed check, status.json, lock heartbeat
+(a lost lock stops the loop with exit 1). After every round: hour/day close and the backup, which
+runs in one background worker thread (hourly, and when a day closes). A long round whose next slot
+is due is abandoned (skipped calls are counted in status). If neither ticker source succeeded for
+30 minutes, ``exit_code`` becomes 3 and the loop stops (Docker restarts the process).
 """
 
 from __future__ import annotations
 
 import logging
 import math
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -25,7 +28,7 @@ from luna.forward import sources
 from luna.forward.backup import run_backup
 from luna.forward.config import AT_START, SOURCES
 from luna.forward.envelope import NS, Request, fetch, iso_ns, ns_from_iso
-from luna.forward.lock import CollectorLock
+from luna.forward.lock import CollectorLock, CollectorLocked
 from luna.forward.meta import Meta
 from luna.forward.status import StatusTracker
 from luna.forward.writer import ClosedDayError, RawWriter
@@ -35,6 +38,7 @@ log = logging.getLogger("luna.forward")
 TICKER_SOURCES = ("fut_tickers", "spot_ticker")
 FEED_DEAD_AFTER_S = 30 * 60
 FEED_DEAD_EXIT_CODE = 3
+LOCK_LOST_EXIT_CODE = 1
 MAX_SLEEP_S = 1.0  # keep the loop responsive to stop()
 _NEVER = math.inf
 
@@ -70,6 +74,10 @@ def _rounds() -> list[_Round]:
     return out
 
 
+class CollectorStartError(RuntimeError):
+    """The collector refuses to start (e.g. raw data exists but meta.json is missing)."""
+
+
 class Collector:
     def __init__(
         self,
@@ -83,6 +91,7 @@ class Collector:
         backoff: float = 0.5,
         lock_pid: int | None = None,
         lock_host: str | None = None,
+        backup_join_s: float = 30.0,
     ) -> None:
         self.root = Path(root)
         self.client = client
@@ -91,6 +100,7 @@ class Collector:
         self.backup_dir = backup_dir
         self.retries = retries
         self.backoff = backoff
+        self.backup_join_s = backup_join_s
         self.writer = RawWriter(self.root, sleep)
         self.lock = CollectorLock(self.root / "collector.lock", clock_ns, pid=lock_pid, host=lock_host)
         self.meta: Meta | None = None
@@ -103,11 +113,22 @@ class Collector:
         self._in_minute = False
         self._last_ticker_ok_ns = 0
         self._backup_hour = -1
+        self._backup_thread: threading.Thread | None = None
+        self._backup_done: tuple | None = None  # (result, error, now_ns), set by the worker
+        self._backup_wanted = False
 
     # ---- lifecycle
     def start(self) -> None:
-        """Lock (raises CollectorLocked), meta/start ts, close leftovers, first backup + status."""
+        """Lock (raises CollectorLocked), meta/start ts, close leftovers, first backup + status.
+        Raises CollectorStartError when raw data exists without meta.json: starting would reset
+        collector_start_ts (restore meta.json, e.g. from the backup target, first)."""
         self.root.mkdir(parents=True, exist_ok=True)
+        raw = self.root / "raw"
+        if not (self.root / "meta.json").exists() and raw.is_dir() and any(raw.rglob("*.jsonl*")):
+            raise CollectorStartError(
+                f"{raw} has data but {self.root / 'meta.json'} is missing; refusing to start because "
+                f"collector_start_ts would be reset. Restore meta.json (backup: <target>/forward/meta.json)."
+            )
         self.lock.acquire()
         now = self.clock_ns()
         try:
@@ -132,10 +153,13 @@ class Collector:
         if not self._started:
             return
         try:
+            if self._backup_thread is not None:
+                self._backup_thread.join(self.backup_join_s)
+            self._publish_backup()
             self.meta.save()
             self._write_status(self.clock_ns())
         finally:
-            self.lock.release()
+            self.lock.release()  # only removes the lock if it is still ours
             self._started = False
 
     def run_forever(self, until_ns: int | None = None) -> None:
@@ -143,13 +167,19 @@ class Collector:
             now = self.clock_ns()
             if until_ns is not None and now >= until_ns:
                 return
+            for r in self.rounds:  # the clock stepped back: do not wait for a far future slot
+                if r.period_s is not None and r.next_ns - now > r.period_s * NS:
+                    r.next_ns = r.first_slot_at_or_after(now)
             r = min(self.rounds, key=lambda x: (x.next_ns, x.priority))
             if r.next_ns > now:
                 wait = r.next_ns - now if until_ns is None else min(r.next_ns, until_ns) - now
                 self.sleep(min(wait / NS, MAX_SLEEP_S))
                 continue
             self._run_round(r)
-            self._maintenance(self.clock_ns())
+            if not self._stop:
+                self._maintenance(self.clock_ns())
+            else:
+                self._write_status(self.clock_ns())
 
     # ---- rounds
     def _reschedule(self, r: _Round, slot_ns: float) -> None:
@@ -163,24 +193,40 @@ class Collector:
     def _run_round(self, r: _Round) -> None:
         slot = r.next_ns
         if r.sources == TICKER_SOURCES:
-            self._run_minute(r)
+            self._run_minute()
         else:
-            slot_s = int(slot // NS)
-            for src in r.sources:
-                spacing = SOURCES[src].spacing_s
-                reqs = build_requests(src, slot_s)
-                if r.period_s is None:  # the start fetch: flagged, excluded from coverage ratios
-                    reqs = [replace(q, extra={**(q.extra or {}), "at_start": True}) for q in reqs]
-                first = self.meta.reserve(src, len(reqs))
-                self.meta.save()
-                for i, req in enumerate(reqs):
-                    if i and spacing:
-                        self._pause(spacing)
-                    self._fetch_write(req, first + i)
-                    self._minute_if_due()
+            self._run_heavy(r, slot)
         self._reschedule(r, slot)
 
-    def _run_minute(self, r: _Round) -> None:
+    def _run_heavy(self, r: _Round, slot: float) -> None:
+        """Sequential, spaced requests. Stops at stop(); when the round's next slot is due, the
+        remaining calls are abandoned and counted as skipped (gap info, no fake rows)."""
+        slot_s = int(slot // NS)
+        deadline = slot + r.period_s * NS if r.period_s is not None else _NEVER
+        for k, src in enumerate(r.sources):
+            spacing = SOURCES[src].spacing_s
+            reqs = build_requests(src, slot_s)
+            if r.period_s is None:  # the start fetch: flagged, excluded from coverage ratios
+                reqs = [replace(q, extra={**(q.extra or {}), "at_start": True}) for q in reqs]
+            first = self.meta.reserve(src, len(reqs))
+            self.meta.save()
+            for i, req in enumerate(reqs):
+                if i and spacing:
+                    self._pause(spacing)
+                if self._stop:
+                    return
+                if self.clock_ns() >= deadline:
+                    ts = iso_ns(self.clock_ns())
+                    self.status.record_skipped(src, len(reqs) - i, ts)
+                    for later in r.sources[k + 1:]:
+                        self.status.record_skipped(later, SOURCES[later].calls, ts)
+                    log.warning("round %s overran its next slot: %d %s calls skipped", r.name,
+                                len(reqs) - i, src)
+                    return
+                self._fetch_write(req, first + i)
+                self._minute_if_due()
+
+    def _run_minute(self) -> None:
         self._in_minute = True
         try:
             pair_seq = self.meta.next_pair_seq()
@@ -188,14 +234,17 @@ class Collector:
             seqs = [self.meta.next_seq(req.source) for req in reqs]
             self.meta.save()
             for req, seq in zip(reqs, seqs, strict=True):
+                if self._stop:
+                    break
                 self._fetch_write(req, seq, pair_seq)
         finally:
             self._in_minute = False
+        self._light_maintenance(self.clock_ns())
 
     def _pause(self, seconds: float) -> None:
         """Sleep ``seconds``, running a minute round that falls due meanwhile on time."""
         end = self.clock_ns() + round(seconds * NS)
-        while (now := self.clock_ns()) < end:
+        while not self._stop and (now := self.clock_ns()) < end:
             due = self.rounds[0].next_ns
             if due <= now and not self._in_minute:
                 self._minute_if_due()
@@ -204,12 +253,12 @@ class Collector:
 
     def _minute_if_due(self) -> None:
         """Run a due minute round between the requests of a longer round."""
-        if self._in_minute:
+        if self._in_minute or self._stop:
             return
         minute = self.rounds[0]
         if minute.next_ns <= self.clock_ns():
             slot = minute.next_ns
-            self._run_minute(minute)
+            self._run_minute()
             self._reschedule(minute, slot)
 
     def _fetch_write(self, req: Request, seq: int, pair_seq: int | None = None) -> None:
@@ -219,14 +268,38 @@ class Collector:
         except (ClosedDayError, OSError) as e:
             log.error("could not write %s row: %s", req.source, e)
             self.status.record_error(req.source, env["recv_ts"], f"write failed: {e}"[:500])
-            return
-        self.status.record(env)
-        if env["ok"] and req.source in TICKER_SOURCES:
-            self._last_ticker_ok_ns = ns_from_iso(env["recv_ts"])
-        elif not env["ok"]:
-            log.warning("%s failed: %s", req.source, env["error"])
+        else:
+            self.status.record(env)
+            if env["ok"] and req.source in TICKER_SOURCES:
+                self._last_ticker_ok_ns = ns_from_iso(env["recv_ts"])
+            elif not env["ok"]:
+                log.warning("%s failed: %s", req.source, env["error"])
+        self._check_dead(self.clock_ns())
 
     # ---- maintenance
+    def _check_dead(self, now: int) -> None:
+        if now - self._last_ticker_ok_ns >= FEED_DEAD_AFTER_S * NS and not self.exit_code:
+            self.exit_code = FEED_DEAD_EXIT_CODE
+            self.exit_reason = (f"no successful fut_tickers/spot_ticker call since "
+                                f"{iso_ns(self._last_ticker_ok_ns)} (>= 30 min)")
+            log.error("feed dead: %s; exiting with code %d", self.exit_reason, self.exit_code)
+            self._stop = True
+
+    def _light_maintenance(self, now: int) -> None:
+        """After every minute round (also inside long rounds): dead feed, status, lock heartbeat."""
+        self._check_dead(now)
+        self._publish_backup()
+        self._write_status(now)
+        try:
+            self.lock.heartbeat()
+        except CollectorLocked as e:
+            if not self.exit_code:
+                self.exit_code, self.exit_reason = LOCK_LOST_EXIT_CODE, str(e)
+                log.error("lock lost: %s; stopping", e)
+            self._stop = True
+        except OSError as e:
+            log.error("lock heartbeat failed: %s", e)
+
     def _maintenance(self, now: int, force_backup: bool = False) -> None:
         closed: list[str] = []
         try:
@@ -241,25 +314,42 @@ class Collector:
         hour = now // (3600 * NS)
         if force_backup or closed or hour != self._backup_hour:
             self._backup_hour = hour
+            self._backup_wanted = True
+        self._publish_backup()
+        if self._backup_wanted:
+            self._start_backup(now)
+        self._light_maintenance(now)
+
+    # ---- backup worker (never blocks collection)
+    def _backup_running(self) -> bool:
+        return self._backup_thread is not None and self._backup_thread.is_alive()
+
+    def _start_backup(self, now: int) -> None:
+        if self._backup_running():
+            return  # one worker at most; the wanted run starts when it finishes
+        self._backup_wanted = False
+        root, target = self.root, self.backup_dir
+
+        def work() -> None:
             try:
-                res = run_backup(self.root, self.backup_dir, now)
-            except (OSError, ValueError) as e:
-                self.status.set_backup(False, f"backup error: {type(e).__name__}: {e}", [], now)
+                self._backup_done = (run_backup(root, target, now), None, now)
+            except Exception as e:  # noqa: BLE001 - reported in status, never crashes collection
+                self._backup_done = (None, e, now)
+
+        self._backup_thread = threading.Thread(target=work, name="luna-forward-backup", daemon=True)
+        self._backup_thread.start()
+
+    def _publish_backup(self) -> None:
+        done, self._backup_done = self._backup_done, None
+        if done is not None:
+            res, err, ts = done
+            if err is not None:
+                self.status.set_backup(False, f"backup error: {type(err).__name__}: {err}", [], ts)
             else:
-                self.status.set_backup(res.ok, res.reason, res.warnings, now)
+                self.status.set_backup(res.ok, res.reason, res.warnings, ts)
                 for w in ([res.reason] if res.reason else []) + res.warnings:
                     log.warning("backup: %s", w)
-        if now - self._last_ticker_ok_ns >= FEED_DEAD_AFTER_S * NS and not self.exit_code:
-            self.exit_code = FEED_DEAD_EXIT_CODE
-            self.exit_reason = (f"no successful fut_tickers/spot_ticker call since "
-                                f"{iso_ns(self._last_ticker_ok_ns)} (>= 30 min)")
-            log.error("feed dead: %s; exiting with code %d", self.exit_reason, self.exit_code)
-            self._stop = True
-        self._write_status(now)
-        try:
-            self.lock.heartbeat()
-        except OSError as e:
-            log.error("lock heartbeat failed: %s", e)
+        self.status.backup_running = self._backup_running()
 
     def _write_status(self, now: int) -> None:
         try:

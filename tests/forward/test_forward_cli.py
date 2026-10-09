@@ -14,6 +14,20 @@ from luna.forward.meta import Meta
 S = 1_000_000_000
 
 
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    """``luna collect`` must never reach Kraken from a test: every request fails at once."""
+    import httpx
+
+    import luna.http
+
+    def refuse(request):
+        raise httpx.ConnectError("network disabled in tests", request=request)
+
+    real = luna.http.make_client
+    monkeypatch.setattr(luna.http, "make_client", lambda transport=None: real(httpx.MockTransport(refuse)))
+
+
 @pytest.fixture
 def var(tmp_path, monkeypatch):
     monkeypatch.setenv("LUNA_VAR_DIR", str(tmp_path))
@@ -117,3 +131,11 @@ def test_second_collect_is_refused_with_exit_1(var):
 def test_forward_dq_without_meta_exits_1(var):
     res = CliRunner().invoke(app, ["forward-dq"])
     assert res.exit_code == 1 and "collector_start_ts" in res.output
+
+
+def test_collect_refuses_raw_without_meta_exit_1(var):
+    d = var / "forward" / "raw" / "spot_time" / "date=2026-10-09"
+    d.mkdir(parents=True)
+    (d / "12.jsonl").write_bytes(b'{"x":1}\n')
+    res = CliRunner().invoke(app, ["collect"])
+    assert res.exit_code == 1 and "meta.json" in res.output

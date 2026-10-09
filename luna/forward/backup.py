@@ -19,6 +19,7 @@ from luna.forward.writer import atomic_write_text, replace_with_retry, sha256_fi
 
 ENV_VAR = "LUNA_FORWARD_BACKUP_DIR"
 OVERDUE_S = 36 * 3600
+MARKER = ".luna-backup-target"  # must exist in the target: guards against an unmounted/empty dir
 
 
 @dataclass
@@ -75,6 +76,24 @@ def _backup_day(root: Path, target: Path, day: str, manifest: dict) -> str | Non
     return None
 
 
+def _backup_meta(root: Path, target: Path) -> str | None:
+    """Copy meta.json (collector_start_ts, seq counters) to ``<target>/forward/meta.json``:
+    tmp copy, sha256 check against the source, then replace. The failure reason, or None."""
+    src = root / "meta.json"
+    if not src.exists():
+        return None
+    dst = target / "forward" / "meta.json"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(dst.name + ".tmp")
+    before = sha256_file(src)
+    _copy(src, tmp)
+    if sha256_file(tmp) not in (before, sha256_file(src)):  # src may be replaced meanwhile
+        tmp.unlink(missing_ok=True)
+        return "sha256 mismatch for backup copy meta.json"
+    replace_with_retry(tmp, dst)
+    return None
+
+
 def run_backup(root: Path, target: Path | None, now_ns: int) -> BackupResult:
     root = Path(root)
     pending = _pending(root)
@@ -83,7 +102,16 @@ def run_backup(root: Path, target: Path | None, now_ns: int) -> BackupResult:
         res.ok, res.reason = False, f"{ENV_VAR} not set: closed days are not backed up"
     elif not Path(target).is_dir():
         res.ok, res.reason = False, f"backup target unreachable: {target}"
+    elif not (Path(target) / MARKER).is_file():
+        res.ok, res.reason = False, (f"backup target not initialised: create {Path(target) / MARKER} "
+                                     f"(guards against an unmounted or wrong directory)")
     else:
+        try:
+            err = _backup_meta(root, Path(target))
+        except OSError as e:
+            err = f"meta.json copy failed: {type(e).__name__}: {e}"
+        if err is not None:
+            res.ok, res.reason = False, err
         for day, manifest in pending:
             try:
                 err = _backup_day(root, Path(target), day, manifest)

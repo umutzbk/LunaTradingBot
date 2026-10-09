@@ -6,8 +6,9 @@ from pathlib import Path
 import pytest
 
 from luna.forward import backup as b
-from luna.forward.backup import resolve_backup_dir, run_backup
+from luna.forward.backup import MARKER, resolve_backup_dir, run_backup
 from luna.forward.envelope import iso_ns
+from luna.forward.meta import Meta
 from luna.forward.writer import RawWriter
 
 S = 1_000_000_000
@@ -21,9 +22,19 @@ def _env(source, recv_ns):
             "filtered_to_universe": False, "payload": {"v": 1}}
 
 
+def _target(tmp_path):
+    target = tmp_path / "drive"
+    target.mkdir()
+    (target / MARKER).write_text("", encoding="utf-8")
+    return target
+
+
 @pytest.fixture
 def root(tmp_path):
     root = tmp_path / "var" / "forward"
+    meta = Meta.load(root)
+    meta.start(DAY0)
+    meta.save()
     wr = RawWriter(root)
     wr.append(_env("fut_tickers", DAY0 + S))
     wr.append(_env("spot_time", DAY0 + 5 * 3600 * S))
@@ -39,8 +50,7 @@ def test_resolve_backup_dir_treats_empty_as_unset():
 
 
 def test_backup_copies_verifies_and_writes_receipt(root, tmp_path):
-    target = tmp_path / "drive"
-    target.mkdir()
+    target = _target(tmp_path)
     res = run_backup(root, target, CLOSE + 60 * S)
     assert res.ok and res.reason is None and res.backed_up == ["2026-10-09"] and res.warnings == []
     manifest = json.loads((root / "manifest" / "date=2026-10-09.json").read_text(encoding="utf-8"))
@@ -54,8 +64,7 @@ def test_backup_copies_verifies_and_writes_receipt(root, tmp_path):
 
 
 def test_corrupt_copy_writes_no_receipt(root, tmp_path, monkeypatch):
-    target = tmp_path / "drive"
-    target.mkdir()
+    target = _target(tmp_path)
 
     def bad_copy(src, dst):
         Path(dst).write_bytes(b"corrupted")
@@ -84,3 +93,35 @@ def test_overdue_warning_after_36h_without_receipt(root):
     assert run_backup(root, None, CLOSE + 36 * 3600 * S).warnings == []
     res = run_backup(root, None, CLOSE + 36 * 3600 * S + S)
     assert any("2026-10-09" in w and "36h" in w for w in res.warnings)
+
+
+def test_marker_file_required(root, tmp_path):
+    target = tmp_path / "drive"
+    target.mkdir()
+    res = run_backup(root, target, CLOSE + 60 * S)
+    assert not res.ok and "not initialised" in res.reason and MARKER in res.reason
+    assert list(target.iterdir()) == []
+    assert MARKER == ".luna-backup-target"
+
+
+def test_meta_json_copied_and_verified_on_every_backup(root, tmp_path):
+    target = _target(tmp_path)
+    run_backup(root, target, CLOSE + 60 * S)
+    assert (target / "forward" / "meta.json").read_bytes() == (root / "meta.json").read_bytes()
+    m = Meta.load(root)
+    m.next_seq("spot_time")
+    m.save()
+    res = run_backup(root, target, CLOSE + 3600 * S)  # nothing pending: meta still refreshed
+    assert res.ok and (target / "forward" / "meta.json").read_bytes() == (root / "meta.json").read_bytes()
+
+
+def test_corrupt_meta_copy_is_not_ok(root, tmp_path, monkeypatch):
+    target = _target(tmp_path)
+    run_backup(root, target, CLOSE + 60 * S)
+
+    def bad_copy(src, dst):
+        Path(dst).write_bytes(b"x")
+
+    monkeypatch.setattr(b, "_copy", bad_copy)
+    res = run_backup(root, target, CLOSE + 3600 * S)
+    assert not res.ok and "meta.json" in res.reason

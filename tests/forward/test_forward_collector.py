@@ -6,6 +6,7 @@ import json
 import pytest
 
 from luna.forward.collector import Collector
+from luna.forward.envelope import iso_ns
 from luna.forward.lock import CollectorLocked
 from luna.forward.writer import RawWriter
 from luna.http import make_client
@@ -138,6 +139,7 @@ def test_start_closes_leftover_open_hours(tmp_path, fake_kraken):
     old = RawWriter(root).path_for("spot_time", T0 - 2 * 3600 * S)
     old.parent.mkdir(parents=True)
     old.write_bytes(b'{"x":1}\n')
+    (root / "meta.json").write_text('{"collector_start_ts": "2026-10-09T09:00:00Z"}', encoding="utf-8")
     c = _collector(root, clock, kraken)
     c.start()
     c.close()
@@ -205,6 +207,7 @@ def test_day_close_and_backup_while_collecting(tmp_path, fake_kraken):
     clock, kraken = fake_kraken(start)
     root, target = tmp_path / "var" / "forward", tmp_path / "drive"
     target.mkdir()
+    (target / ".luna-backup-target").write_text("", encoding="utf-8")
     c = _collector(root, clock, kraken, backup_dir=target)
     c.start()
     c.run_forever(until_ns=start + (3 * 3600 + 20 * 60) * S)  # past 03:00 next day
@@ -291,3 +294,127 @@ def test_funding_hourly_filtered_and_daily_full_at_00_20(tmp_path, fake_kraken):
     assert len(full) == 21 and all(r["filtered_since_ts"] is None for r in full)
     assert full[0]["recv_ts"].startswith("2026-10-10T00:20:")
     assert all(r["attempts"] == 1 for r in hourly)
+
+
+def test_hanging_backup_does_not_block_collection(tmp_path, fake_kraken, monkeypatch):
+    import threading
+
+    from luna.forward import backup as bk
+    from luna.forward import collector as coll
+
+    start = T0 + 11 * 3600 * S + 50 * 60 * S  # 23:50
+    clock, kraken = fake_kraken(start)
+    root, target = tmp_path / "var" / "forward", tmp_path / "drive"
+    target.mkdir()
+    (target / bk.MARKER).write_text("", encoding="utf-8")
+    release = threading.Event()
+    real_copy, calls = bk._copy, []
+
+    def hanging_copy(src, dst):
+        release.wait(30)
+        real_copy(src, dst)
+
+    def counting(*a, **k):
+        calls.append(a)
+        return bk.run_backup(*a, **k)
+
+    monkeypatch.setattr(bk, "_copy", hanging_copy)
+    monkeypatch.setattr(coll, "run_backup", counting)
+    c = _collector(root, clock, kraken, backup_dir=target)
+    c.start()
+    c.run_forever(until_ns=start + (3 * 3600 + 20 * 60) * S)
+    assert len(calls) == 1  # still running: hourly triggers are skipped, never a second worker
+    st = json.loads((root / "status.json").read_text(encoding="utf-8"))
+    assert st["sources"]["fut_tickers"]["last_ok_recv_ts"].startswith("2026-10-10T03:09")
+    assert st["backup_running"] is True
+    release.set()
+    c.close()
+    st = json.loads((root / "status.json").read_text(encoding="utf-8"))
+    assert st["backup_ok"] is True and st["backup_running"] is False
+
+
+def test_slow_failures_keep_status_and_heartbeat_fresh_and_exit_3_in_time(tmp_path, fake_kraken):
+    clock, kraken = fake_kraken(T0, latency_s=20.0)
+    kraken.fail = {""}  # every endpoint answers 500 after 20 s
+    root = tmp_path / "forward"
+    c = _collector(root, clock, kraken)
+    c.start()
+    writes, beats = [], []
+    real_write, real_beat = c.status.write, c.lock.heartbeat
+
+    def spy_write(now, *a, **k):
+        writes.append(now)
+        return real_write(now, *a, **k)
+
+    def spy_beat():
+        beats.append(clock.ns)
+        return real_beat()
+
+    c.status.write, c.lock.heartbeat = spy_write, spy_beat
+    c.run_forever(until_ns=T0 + 3 * 3600 * S)
+    c.close()
+    assert c.exit_code == 3 and clock.ns <= T0 + 31 * 60 * S
+    for seq in (writes, beats):
+        times = [T0, *seq]
+        assert max(b - a for a, b in zip(times, times[1:], strict=False)) <= 120 * S
+    st = json.loads((root / "status.json").read_text(encoding="utf-8"))
+    assert st["sources"]["fut_book"]["skipped_calls"] > 0  # aborted at the next slot, no fake rows
+    assert len(_rows(root, "fut_book")) < 21 * 6
+
+
+def test_stop_interrupts_a_heavy_round(tmp_path, fake_kraken):
+    clock, kraken = fake_kraken(T0 + 150 * S)  # 12:02:30, five-minute round due
+    c = _collector(tmp_path / "forward", clock, kraken)
+    c.start()
+    real = c._fetch_write
+    n = {"calls": 0}
+
+    def counting(*a, **k):
+        n["calls"] += 1
+        if n["calls"] == 5:
+            c.stop()
+        return real(*a, **k)
+
+    c._fetch_write = counting
+    c.run_forever(until_ns=T0 + 600 * S)
+    c.close()
+    assert n["calls"] == 5
+
+
+def test_lost_lock_stops_the_collector(tmp_path, fake_kraken):
+    clock, kraken = fake_kraken(T0)
+    root = tmp_path / "forward"
+    c = _collector(root, clock, kraken)
+    c.start()
+    c.run_forever(until_ns=T0 + 90 * S)
+    (root / "collector.lock").write_text(json.dumps({"pid": 5, "host": "intruder", "heartbeat_ns": clock.ns}),
+                                         encoding="utf-8")
+    c.run_forever(until_ns=T0 + 600 * S)
+    assert c.exit_code == 1 and clock.ns < T0 + 200 * S
+    c.close()
+    assert json.loads((root / "collector.lock").read_text(encoding="utf-8"))["host"] == "intruder"
+
+
+def test_backward_clock_step_reschedules(tmp_path, fake_kraken):
+    clock, kraken = fake_kraken(T0)
+    root = tmp_path / "forward"
+    c = _collector(root, clock, kraken)
+    c.start()
+    c.run_forever(until_ns=T0 + 300 * S)
+    n = kraken.count("/v3/tickers")
+    clock.ns -= 3600 * S  # NTP steps the clock back an hour
+    c.run_forever(until_ns=clock.ns + 300 * S)
+    c.close()
+    assert kraken.count("/v3/tickers") - n >= 4
+
+
+def test_refuses_to_start_with_raw_data_but_no_meta(tmp_path, fake_kraken):
+    from luna.forward.collector import CollectorStartError
+
+    clock, kraken = fake_kraken(T0)
+    root = tmp_path / "forward"
+    RawWriter(root).append({"source": "spot_time", "recv_ts": iso_ns(T0 - S), "ok": True})
+    c = _collector(root, clock, kraken)
+    with pytest.raises(CollectorStartError, match="meta.json"):
+        c.start()
+    assert not (root / "meta.json").exists() and not (root / "collector.lock").exists()
