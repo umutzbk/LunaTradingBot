@@ -380,6 +380,87 @@ def health(
     typer.echo(f"health {account}: ok, last equity {row[0]} ({age:.1f} min old)")
 
 
+def _utc_ns(ts: datetime | None) -> int | None:
+    if ts is None:
+        return None
+    from datetime import UTC
+
+    return int((ts if ts.tzinfo else ts.replace(tzinfo=UTC)).timestamp()) * 1_000_000_000
+
+
+@app.command()
+def collect() -> None:
+    """Run the V4 forward data collector forever (raw Kraken public snapshots into var/forward;
+    spec docs/superpowers/specs/luna-v4-forward-collector-design.md). Exit 1 if another collector
+    holds var/forward/collector.lock; exit 3 after 30 min without any ticker success.
+    Backup target: LUNA_FORWARD_BACKUP_DIR (unset/empty = no backup, reported as a warning)."""
+    import signal
+
+    from luna.config import load_settings
+    from luna.forward import collector as coll
+    from luna.forward.backup import resolve_backup_dir
+    from luna.forward.lock import CollectorLocked
+    from luna.http import make_client
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    settings = load_settings()
+    client = make_client()
+    c = coll.Collector(Path(settings.var_dir) / "forward", client,
+                       backup_dir=resolve_backup_dir(settings.forward_backup_dir))
+    try:
+        c.start()
+    except CollectorLocked as e:
+        typer.echo(f"collect: {e}", err=True)
+        client.close()
+        raise typer.Exit(1) from e
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: c.stop())
+    try:
+        c.run_forever()
+    finally:
+        c.close()
+        client.close()
+    if c.exit_code:
+        typer.echo(f"collect: exiting with code {c.exit_code} ({c.exit_reason})", err=True)
+        raise typer.Exit(c.exit_code)
+
+
+@app.command("collector-health")
+def collector_health(
+    strict: Annotated[bool, typer.Option(help="Exit 2 when there is a backup warning")] = False,
+) -> None:
+    """Collector liveness probe (Docker healthcheck), reads var/forward/status.json only: exit 0 iff
+    fut_tickers and spot_ticker succeeded < 3 min ago and fut_funding < 2 h ago, else 1. Backup and
+    stale daily reference data are printed as WARNING lines; --strict turns a backup warning into 2."""
+    import time
+
+    from luna.config import load_settings
+    from luna.forward.status import check_health, read_status
+
+    code, lines = check_health(read_status(Path(load_settings().var_dir) / "forward"), time.time_ns(), strict)
+    for line in lines:
+        typer.echo(line)
+    if code:
+        raise typer.Exit(code)
+
+
+@app.command("forward-dq")
+def forward_dq_cmd(
+    since: Annotated[datetime | None, typer.Option(help="UTC start (default collector_start_ts)")] = None,
+    until: Annotated[datetime | None, typer.Option(help="UTC end, exclusive (default now)")] = None,
+) -> None:
+    """Data-quality report of the forward data as JSON: paired/clock skew, coverage, gaps, asset
+    completeness, quote-sanity counts. Never prints prices, basis, spreads or returns."""
+    import json
+
+    from luna.config import load_settings
+    from luna.forward.dq import forward_dq
+
+    rep = forward_dq(Path(load_settings().var_dir) / "forward", _utc_ns(since), _utc_ns(until))
+    typer.echo(json.dumps(rep, indent=1))
+
+
 @app.command()
 def label(
     account: Annotated[Literal["perp", "spot"], typer.Option(help="Account to label")] = "perp",
