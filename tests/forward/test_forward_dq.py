@@ -146,6 +146,9 @@ def test_funding_rows_before_collector_start_are_excluded(tmp_path):
 def test_report_contains_no_prices_basis_spreads_or_returns(tmp_path):
     rep = _dq(_setup(tmp_path))
     json.dumps(rep)  # serialisable
+    # the ops additions are covered too (durations / skew / gap / coverage stats only)
+    assert {"stale_quote_age_s", "gap_stats_daily", "coverage"} <= set(rep)
+    assert {"abs_ms", "abs_within_ms"} <= set(rep["paired_skew"])
     keys = {k.lower() for k in _keys(rep)}
     forbidden = {"price", "bid", "ask", "mid", "mark", "markprice", "last", "basis", "spread",
                  "return", "returns", "pnl", "fundingrate", "relativefundingrate", "rate"}
@@ -246,3 +249,83 @@ def test_hour_closed_between_listing_and_reading_is_read_once(tmp_path, monkeypa
     monkeypatch.setattr(dq, "already_closed", close_meanwhile)
     cov = _dq(root)["coverage"]["fut_tickers"]["2026-10-09"]
     assert (cov["ok"], cov["errors"]) == (6, 1)
+
+
+# ---- ops additions: stale quote age, paired skew abs, per-day gap stats, per-day coverage
+
+
+def test_stale_quote_age(tmp_path):
+    sq = _dq(_setup(tmp_path))["stale_quote_age_s"]
+    fut = sq["fut_tickers"]
+    # XBT identical over all 6 ok snapshots (12:00:00.1 .. 12:09:00.1; the failed one is ignored);
+    # ETH differs at minute 1 (swapped quote), then identical from minute 2 to 9
+    assert fut["per_symbol_max"] == {"PF_XBTUSD": 540.0, "PF_ETHUSD": 420.0}
+    assert fut["runs"] == {"n": 2, "p50": 480.0, "p95": 534.0, "p99": 538.8, "max": 540.0}
+    spot = sq["spot_ticker"]
+    assert spot["per_symbol_max"] == {"XBTUSD": 540.0, "SOLUSD": 540.0}
+    assert spot["runs"]["n"] == 2 and spot["runs"]["max"] == 540.0
+
+
+def test_stale_quote_age_breaks_on_change_and_missing_symbol(tmp_path):
+    root = tmp_path / "forward"
+    m = Meta.load(root)
+    m.start(T0)
+    m.save()
+    w = RawWriter(root)
+
+    def tick(bid, ask, sym="PF_XBTUSD"):
+        return {"result": "success", "tickers": [{"symbol": sym, "bid": bid, "ask": ask}]}
+
+    quotes = [(1.5, 2.5), (1.5, 2.5), (1.5, 2.5), (1.5, 2.75), (1.5, 2.75), None, (1.5, 2.75),
+              (1.5, 2.75)]
+    for i, q in enumerate(quotes):
+        p = tick(*q) if q else tick(9.5, 9.75, "PF_ETHUSD")  # XBT missing at minute 5
+        w.append(_env("fut_tickers", T0 + i * 60 * S, p, pair_seq=i + 1))
+    fut = _dq(root)["stale_quote_age_s"]["fut_tickers"]
+    # runs: 0-2 (120 s), 3-4 (60 s), 6-7 (60 s); ETH appears once (no repeat)
+    assert fut["runs"]["n"] == 3 and fut["runs"]["max"] == 120.0 and fut["runs"]["p50"] == 60.0
+    assert fut["per_symbol_max"] == {"PF_XBTUSD": 120.0, "PF_ETHUSD": 0.0}
+
+
+def test_paired_skew_abs_distribution(tmp_path):
+    root = _setup(tmp_path)
+    w = RawWriter(root)
+    # one extra pair with 3 s skew (fut later than spot)
+    t = T0 + 5 * 60 * S
+    w.append(_env("fut_tickers", t + 3000 * MS, _fut_payload(t, t), pair_seq=50))
+    w.append(_env("spot_ticker", t, _spot_payload(), pair_seq=50))
+    ps = _dq(root)["paired_skew"]
+    assert ps["pairs"] == 7
+    a = ps["abs_ms"]
+    assert set(a) == {"n", "p50", "p95", "p99", "max"}
+    assert a["n"] == 7 and a["p50"] == 30.0 and a["max"] == 3000.0
+    assert ps["abs_within_ms"] == {"1000": round(6 / 7, 4), "2000": round(6 / 7, 4), "5000": 1.0}
+
+
+def test_gap_stats_per_day(tmp_path):
+    root = tmp_path / "forward"
+    m = Meta.load(root)
+    m.start(T0)
+    m.save()
+    w = RawWriter(root)
+    # 12:00, 12:01, 12:21 (20 min gap), 12:40 (19 min), then next day 00:10 after midnight
+    mins = [0, 1, 21, 40, 12 * 60 + 10]
+    for i, mi in enumerate(mins):
+        w.append(_env("spot_ticker", T0 + mi * 60 * S, _spot_payload(), pair_seq=i + 1))
+    rep = forward_dq(root, since_ns=T0, until_ns=T0 + 13 * 3600 * S)
+    g = rep["gap_stats_daily"]["spot_ticker"]
+    assert g["2026-10-09"] == {"max_gap_s": 1200.0, "gaps_over_15min": 2}
+    # the gap crossing midnight counts on the day it ends
+    assert g["2026-10-10"] == {"max_gap_s": 11.5 * 3600, "gaps_over_15min": 1}
+    assert rep["gap_stats_daily"]["fut_tickers"]["2026-10-09"] == {"max_gap_s": None, "gaps_over_15min": 0}
+    assert set(rep["gap_stats_daily"]) == set(config.SOURCES)
+
+
+def test_coverage_per_day_excludes_at_start_ok_rows(tmp_path):
+    root = _setup(tmp_path)
+    e = _env("fut_tickers", T0 + 30 * S, _fut_payload(T0, T0), pair_seq=77)
+    e["at_start"] = True
+    RawWriter(root).append(e)
+    cov = _dq(root)["coverage"]["fut_tickers"]["2026-10-09"]
+    assert (cov["ok"], cov["expected"], cov["at_start"], cov["ratio"]) == (6, 10, 1, 0.6)
+

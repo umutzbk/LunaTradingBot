@@ -475,7 +475,8 @@ def forward_dq_cmd(
     until: Annotated[datetime | None, typer.Option(help="UTC end, exclusive (default now)")] = None,
 ) -> None:
     """Data-quality report of the forward data as JSON: paired/clock skew, coverage, gaps, asset
-    completeness, quote-sanity counts. Never prints prices, basis, spreads or returns."""
+    completeness, quote-sanity counts, per-day gap stats, stale-quote durations. Never prints
+    prices, basis, spreads or returns."""
     import json
 
     from luna.config import load_settings
