@@ -104,9 +104,11 @@ def test_clock_skew(tmp_path):
 
 def test_coverage(tmp_path):
     cov = _dq(_setup(tmp_path))["coverage"]
-    assert cov["fut_tickers"]["2026-10-09"] == {"expected": 10, "ok": 6, "errors": 1, "ratio": 0.6}
+    assert cov["fut_tickers"]["2026-10-09"] == {"expected": 10, "ok": 6, "errors": 1, "at_start": 0,
+                                             "ratio": 0.6}
     assert cov["spot_time"]["2026-10-09"]["expected"] == 2
-    assert cov["fut_book"]["2026-10-09"] == {"expected": 42, "ok": 0, "errors": 0, "ratio": 0.0}
+    assert cov["fut_book"]["2026-10-09"] == {"expected": 42, "ok": 0, "errors": 0, "at_start": 0,
+                                          "ratio": 0.0}
     assert set(cov) == set(config.SOURCES)
 
 
@@ -150,3 +152,81 @@ def test_report_contains_no_prices_basis_spreads_or_returns(tmp_path):
     assert not keys & forbidden
     nums = set(_numbers(rep))
     assert not nums & {PRICE_BID, PRICE_ASK, 12346.0, 12346.1, 0.1, 0.2, 1e-5, 2e-5}
+
+
+# ---- review fixes: M1 (rows read once), M3 (fail closed), M6 (streaming), m6, DISK
+
+
+def test_open_file_duplicating_a_closed_part_is_read_once(tmp_path):
+    import gzip as _gz
+
+    root = _setup(tmp_path)
+    w = RawWriter(root)
+    w.close_hours(T0 + 2 * 3600 * S)
+    gz = root / "raw" / "fut_tickers" / "date=2026-10-09" / "12.jsonl.gz"
+    (gz.with_suffix("")).write_bytes(_gz.decompress(gz.read_bytes()))  # crash before unlink
+    late = _env("fut_tickers", T0 + 5 * 60 * S, _fut_payload(T0, T0), pair_seq=99)
+    w.append(late)  # lands in 12.late.jsonl
+    cov = _dq(root)["coverage"]["fut_tickers"]["2026-10-09"]
+    assert (cov["ok"], cov["errors"]) == (7, 1)
+
+
+def test_unknown_collector_start_fails_closed(tmp_path):
+    import pytest
+
+    root = tmp_path / "forward"
+    RawWriter(root).append(_env("spot_time", T0, {"error": [], "result": {"unixtime": 1}}))
+    with pytest.raises(ValueError, match="collector_start_ts"):
+        forward_dq(root, since_ns=T0, until_ns=T0 + 60 * S)
+
+
+def test_at_start_rows_are_excluded_from_coverage(tmp_path):
+    root = _setup(tmp_path)
+    w = RawWriter(root)
+    e = _env("fut_instruments", T0 + S, {"instruments": []})
+    e["at_start"] = True
+    w.append(e)
+    cov = forward_dq(root, since_ns=T0, until_ns=T0 + 86400 * S)["coverage"]["fut_instruments"]["2026-10-09"]
+    assert cov["ok"] == 0 and cov["at_start"] == 1
+
+
+def test_funding_coverage_uses_hourly_and_daily_full_rows(tmp_path):
+    root = _setup(tmp_path)
+    rates = [{"timestamp": "2026-10-09T13:00:00.000Z"}, {"timestamp": "2026-10-09T14:00:00.000Z"},
+             {"timestamp": "2026-10-01T00:00:00.000Z"}]
+    e = _env("fut_funding_full", T0 + 3 * 3600 * S, {"result": "success", "rates": rates},
+             params={"symbol": "PF_XBTUSD"})
+    e["filtered_since_ts"] = None
+    RawWriter(root).append(e)
+    fc = forward_dq(root, since_ns=T0, until_ns=T0 + 4 * 3600 * S)["funding_coverage"]
+    assert fc["symbols"]["PF_XBTUSD"]["settlements"] == 2  # 13:00 (both sources) + 14:00
+    assert fc["rows_before_start_excluded"] == 4
+
+
+def test_dq_streams_rows(tmp_path, monkeypatch):
+    import inspect
+    import weakref
+
+    from luna.forward import dq
+
+    assert inspect.isgeneratorfunction(dq.iter_rows)
+    root = _setup(tmp_path)
+
+    class Row(dict):
+        pass
+
+    alive: list = []
+    peak = {"n": 0}
+    real = dq.iter_rows
+
+    def spy(*a, **k):
+        for r in real(*a, **k):
+            row = Row(r)
+            alive.append(weakref.ref(row))
+            peak["n"] = max(peak["n"], sum(1 for x in alive if x() is not None))
+            yield row
+            del row
+
+    monkeypatch.setattr(dq, "iter_rows", spy)
+    forward_dq(root, since_ns=T0, until_ns=T0 + 7200 * S)
+    assert len(alive) > 10 and peak["n"] <= 2  # never a list of all rows/payloads

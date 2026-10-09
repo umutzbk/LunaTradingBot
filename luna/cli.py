@@ -457,7 +457,11 @@ def forward_dq_cmd(
     from luna.config import load_settings
     from luna.forward.dq import forward_dq
 
-    rep = forward_dq(Path(load_settings().var_dir) / "forward", _utc_ns(since), _utc_ns(until))
+    try:
+        rep = forward_dq(Path(load_settings().var_dir) / "forward", _utc_ns(since), _utc_ns(until))
+    except ValueError as e:
+        typer.echo(f"forward-dq: {e}", err=True)
+        raise typer.Exit(1) from e
     typer.echo(json.dumps(rep, indent=1))
 
 

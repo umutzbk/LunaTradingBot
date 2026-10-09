@@ -3,9 +3,10 @@
 Reports only timing, coverage, gaps, completeness and quote-sanity *counts*. By design it never
 outputs a price level, mid, basis, spread magnitude, funding rate, return or P&L.
 
-Funding: ``fut_funding`` payloads carry the full history (including periods before the collector
-existed, e.g. the sealed holdout). Only settlement rows with ``timestamp >= collector_start_ts``
-(from ``meta.json``) are counted; earlier rows are only counted as excluded.
+Funding: ``fut_funding`` (last 48 h per hourly call) and ``fut_funding_full`` (daily, full history,
+including periods before the collector existed, e.g. the sealed holdout) are both read. Only
+settlement rows with ``timestamp >= collector_start_ts`` (from ``meta.json``) are counted; earlier
+rows are only counted as excluded. Every source is streamed; rows are never held in memory.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from typing import Any
 from luna.forward.config import PERP_SYMBOLS, SOURCES, SPOT_PAIRS, expected_rows
 from luna.forward.envelope import NS, iso_ns, ns_from_iso
 from luna.forward.meta import Meta
-from luna.forward.writer import day_of, day_start_s
+from luna.forward.writer import already_closed, day_of, day_start_s
 
 MS = 1_000_000
 
@@ -41,25 +42,33 @@ def _stats(values: list[float]) -> dict[str, float | int | None]:
             "max": round(v[-1], 3), "mean": round(sum(v) / len(v), 3)}
 
 
+def _hour_files(day_dir: Path) -> Iterator[Path]:
+    """Closed parts then open files of a day dir; an open file whose bytes already sit in a closed
+    part (crash between gz replace and unlink) is skipped so every row is read exactly once."""
+    for f in sorted(day_dir.iterdir()):
+        if f.name.endswith(".jsonl.gz"):
+            yield f
+        elif f.name.endswith(".jsonl") and not already_closed(f):
+            yield f
+
+
 def iter_rows(root: Path, source: str, since_ns: int, until_ns: int) -> Iterator[dict[str, Any]]:
-    """Envelopes of ``source`` with ``since_ns <= recv < until_ns`` (closed .gz and open .jsonl)."""
+    """Stream the envelopes of ``source`` with ``since_ns <= recv < until_ns``, one at a time
+    (closed ``.gz`` parts and open ``.jsonl``); unparsable lines are skipped."""
     first_day, last_day = day_of(since_ns), day_of(max(since_ns, until_ns - 1))
     for d in sorted((Path(root) / "raw" / source).glob("date=*")):
-        day = d.name.removeprefix("date=")
-        if not first_day <= day <= last_day:
+        if not first_day <= d.name.removeprefix("date=") <= last_day:
             continue
-        for f in sorted(d.iterdir()):
-            if f.name.endswith(".jsonl.gz"):
-                data = gzip.decompress(f.read_bytes())
-            elif f.name.endswith(".jsonl"):
-                data = f.read_bytes()
-            else:
-                continue
+        for f in _hour_files(d):
+            data = gzip.decompress(f.read_bytes()) if f.name.endswith(".gz") else f.read_bytes()
             for line in data.splitlines():
                 if not line.strip():
                     continue
-                row = json.loads(line)
-                recv = ns_from_iso(row["recv_ts"])
+                try:
+                    row = json.loads(line)
+                    recv = ns_from_iso(row["recv_ts"])
+                except (ValueError, KeyError, TypeError):
+                    continue
                 if since_ns <= recv < until_ns:
                     row["_recv_ns"] = recv
                     yield row
@@ -118,18 +127,89 @@ def _gaps(times: list[int], period_s: int) -> list[dict[str, Any]]:
     return out
 
 
+FUNDING_SOURCES = ("fut_funding", "fut_funding_full")
+
+
+class _Acc:
+    """Streaming accumulators: only small numbers per row are kept, never rows or payloads."""
+
+    def __init__(self) -> None:
+        self.fut_pair: dict[Any, int] = {}
+        self.spot_pair: dict[Any, int] = {}
+        self.last_lag: list[float] = []
+        self.fut_server: list[float] = []
+        self.spot_server: list[float] = []
+        self.fut_counts: list[int] = []
+        self.spot_counts: list[int] = []
+        self.fut_missing: Counter = Counter()
+        self.fut_susp: Counter = Counter()
+        self.spot_missing: Counter = Counter()
+        self.fut_sanity = _Sanity()
+        self.spot_sanity = _Sanity()
+        self.settled: dict[str, set[str]] = defaultdict(set)
+        self.excluded = 0
+
+    def fut_tickers(self, r: dict[str, Any]) -> None:
+        self.fut_pair[r.get("pair_seq")] = r["_recv_ns"]
+        payload = r["payload"] or {}
+        if payload.get("serverTime"):
+            self.fut_server.append((r["_recv_ns"] - ns_from_iso(payload["serverTime"])) / MS)
+        present = set()
+        for t in payload.get("tickers") or []:
+            sym = t.get("symbol")
+            present.add(sym)
+            if t.get("lastTime"):
+                self.last_lag.append((r["_recv_ns"] - ns_from_iso(t["lastTime"])) / MS)
+            if t.get("suspended"):
+                self.fut_susp[sym] += 1
+            self.fut_sanity.add(t.get("bid"), t.get("ask"))
+        self.fut_counts.append(len(present & set(PERP_SYMBOLS)))
+        self.fut_missing.update(s for s in PERP_SYMBOLS if s not in present)
+
+    def spot_ticker(self, r: dict[str, Any]) -> None:
+        self.spot_pair[r.get("pair_seq")] = r["_recv_ns"]
+        present = set()
+        for key, q in ((r["payload"] or {}).get("result") or {}).items():
+            pair = _spot_key_pair(key)
+            if pair:
+                present.add(pair)
+            if isinstance(q, dict):
+                self.spot_sanity.add((q.get("b") or [None])[0], (q.get("a") or [None])[0])
+        self.spot_counts.append(len(present))
+        self.spot_missing.update(p for p in SPOT_PAIRS if p not in present)
+
+    def spot_time(self, r: dict[str, Any]) -> None:
+        unix = ((r["payload"] or {}).get("result") or {}).get("unixtime")
+        if unix is not None:
+            self.spot_server.append((r["_recv_ns"] - int(unix) * NS) / MS)
+
+    def funding(self, r: dict[str, Any], from_ns: int, until_ns: int) -> None:
+        sym = (r.get("params") or {}).get("symbol", "?")
+        for row in (r["payload"] or {}).get("rates") or []:
+            ts = row.get("timestamp")
+            if not ts:
+                continue
+            t = ns_from_iso(ts)
+            if t < from_ns:
+                self.excluded += 1
+            elif t < until_ns:
+                self.settled[sym].add(iso_ns(t))
+
+
 def forward_dq(root: Path, since_ns: int | None = None, until_ns: int | None = None,
                now_ns: int | None = None) -> dict[str, Any]:
+    """Stream every source once and report data quality. Raises ValueError when
+    ``collector_start_ts`` is unknown (no meta.json): warmup/evidence and funding cut-offs depend
+    on it, so the report fails closed instead of guessing."""
     root = Path(root)
     start_ns = Meta.load(root).collector_start_ns
+    if start_ns is None:
+        raise ValueError(f"collector_start_ts unknown ({root / 'meta.json'} missing or empty)")
     until_ns = until_ns if until_ns is not None else (now_ns if now_ns is not None else time.time_ns())
-    if since_ns is None:
-        since_ns = start_ns if start_ns is not None else 0
-    rows = {s: list(iter_rows(root, s, since_ns, until_ns)) for s in SOURCES}
-    ok_rows = {s: [r for r in rs if r["ok"]] for s, rs in rows.items()}
-
-    # coverage + gaps
-    window_start = max(since_ns, start_ns or since_ns)
+    since_ns = start_ns if since_ns is None else since_ns
+    window_start = max(since_ns, start_ns)
+    fund_from = window_start
+    acc = _Acc()
     coverage: dict[str, dict[str, dict[str, Any]]] = {}
     gaps: dict[str, list[dict[str, Any]]] = {}
     for s in SOURCES:
@@ -138,98 +218,56 @@ def forward_dq(root: Path, since_ns: int | None = None, until_ns: int | None = N
         while day <= day_of(max(window_start, until_ns - 1)):
             d0 = day_start_s(day)
             a, b = max(d0, window_start / NS), min(d0 + 86400, until_ns / NS)
-            per_day[day] = {"expected": expected_rows(s, a, b), "ok": 0, "errors": 0}
+            per_day[day] = {"expected": expected_rows(s, a, b), "ok": 0, "errors": 0, "at_start": 0}
             day = day_of((d0 + 86400) * NS)
-        for r in rows[s]:
-            entry = per_day.setdefault(day_of(r["_recv_ns"]), {"expected": 0, "ok": 0, "errors": 0})
-            entry["ok" if r["ok"] else "errors"] += 1
+        ok_times: list[int] = []
+        for r in iter_rows(root, s, since_ns, until_ns):
+            entry = per_day.setdefault(day_of(r["_recv_ns"]),
+                                       {"expected": 0, "ok": 0, "errors": 0, "at_start": 0})
+            if r.get("at_start"):
+                entry["at_start"] += 1  # extra start fetch: not a scheduled snapshot
+            else:
+                entry["ok" if r.get("ok") else "errors"] += 1
+            if not r.get("ok"):
+                continue
+            ok_times.append(r["_recv_ns"])
+            if s in ("fut_tickers", "spot_ticker", "spot_time"):
+                getattr(acc, s)(r)
+            elif s in FUNDING_SOURCES:
+                acc.funding(r, fund_from, until_ns)
         for entry in per_day.values():
             entry["ratio"] = round(entry["ok"] / entry["expected"], 4) if entry["expected"] else None
         coverage[s] = per_day
-        gaps[s] = _gaps(sorted(r["_recv_ns"] for r in ok_rows[s]), SOURCES[s].period_s)
+        ok_times.sort()
+        gaps[s] = _gaps(ok_times, SOURCES[s].period_s)
 
-    # paired skew (same pair_seq, both ok) and futures timing
-    spot_by_pair = {r.get("pair_seq"): r for r in ok_rows["spot_ticker"]}
-    pair_diff, last_lag, fut_server = [], [], []
-    fut_counts, spot_counts = [], []
-    fut_missing, fut_susp, spot_missing = Counter(), Counter(), Counter()
-    fut_sanity, spot_sanity = _Sanity(), _Sanity()
-    for r in ok_rows["fut_tickers"]:
-        spot = spot_by_pair.get(r.get("pair_seq"))
-        if spot is not None:
-            pair_diff.append((r["_recv_ns"] - spot["_recv_ns"]) / MS)
-        payload = r["payload"] or {}
-        if payload.get("serverTime"):
-            fut_server.append((r["_recv_ns"] - ns_from_iso(payload["serverTime"])) / MS)
-        present = set()
-        for t in payload.get("tickers") or []:
-            sym = t.get("symbol")
-            present.add(sym)
-            if t.get("lastTime"):
-                last_lag.append((r["_recv_ns"] - ns_from_iso(t["lastTime"])) / MS)
-            if t.get("suspended"):
-                fut_susp[sym] += 1
-            fut_sanity.add(t.get("bid"), t.get("ask"))
-        fut_counts.append(len(present & set(PERP_SYMBOLS)))
-        fut_missing.update(s for s in PERP_SYMBOLS if s not in present)
-    for r in ok_rows["spot_ticker"]:
-        result = (r["payload"] or {}).get("result") or {}
-        present = set()
-        for key, q in result.items():
-            pair = _spot_key_pair(key)
-            if pair:
-                present.add(pair)
-            if isinstance(q, dict):
-                spot_sanity.add((q.get("b") or [None])[0], (q.get("a") or [None])[0])
-        spot_counts.append(len(present))
-        spot_missing.update(p for p in SPOT_PAIRS if p not in present)
-    spot_server = []
-    for r in ok_rows["spot_time"]:
-        unix = ((r["payload"] or {}).get("result") or {}).get("unixtime")
-        if unix is not None:
-            spot_server.append((r["_recv_ns"] - int(unix) * NS) / MS)
-
-    # funding settlements since collector_start_ts only
-    fund_from = max(start_ns or since_ns, since_ns)
-    settled: dict[str, set[str]] = defaultdict(set)
-    excluded = 0
-    for r in ok_rows["fut_funding"]:
-        sym = (r.get("params") or {}).get("symbol", "?")
-        for row in (r["payload"] or {}).get("rates") or []:
-            ts = row.get("timestamp")
-            if not ts:
-                continue
-            t = ns_from_iso(ts)
-            if t < fund_from:
-                excluded += 1
-            elif t < until_ns:
-                settled[sym].add(ts)
+    pair_diff = [(t - acc.spot_pair[k]) / MS for k, t in acc.fut_pair.items() if k in acc.spot_pair]
     hour = 3600 * NS
     first_hour = -(-fund_from // hour) * hour
     expected_settlements = max(0, -(-(until_ns - first_hour) // hour))
-
     return {
         "window": {"since": iso_ns(since_ns), "until": iso_ns(until_ns),
-                   "collector_start_ts": iso_ns(start_ns) if start_ns is not None else None},
+                   "collector_start_ts": iso_ns(start_ns)},
         "paired_skew": {
             "pairs": len(pair_diff),
             "fut_minus_spot_recv_ms": _stats(pair_diff),
-            "fut_recv_minus_lasttime_ms": _stats(last_lag),
+            "fut_recv_minus_lasttime_ms": _stats(acc.last_lag),
             "note": "spot Ticker has no quote timestamp: spot skew is request/response time only",
         },
-        "clock_skew": {"futures_recv_minus_server_ms": _stats(fut_server),
-                       "spot_recv_minus_server_ms": _stats(spot_server)},
+        "clock_skew": {"futures_recv_minus_server_ms": _stats(acc.fut_server),
+                       "spot_recv_minus_server_ms": _stats(acc.spot_server)},
         "coverage": coverage,
         "funding_coverage": {
             "since": iso_ns(fund_from),
+            "sources": list(FUNDING_SOURCES),
             "expected_settlements_per_symbol": expected_settlements,
-            "symbols": {s: {"settlements": len(settled.get(s, ()))} for s in PERP_SYMBOLS},
-            "rows_before_start_excluded": excluded,
+            "symbols": {s: {"settlements": len(acc.settled.get(s, ()))} for s in PERP_SYMBOLS},
+            "rows_before_start_excluded": acc.excluded,
         },
         "gaps": gaps,
         "asset_completeness": {
-            "fut_tickers": _completeness(fut_counts, fut_missing, fut_susp),
-            "spot_ticker": _completeness(spot_counts, spot_missing, None),
+            "fut_tickers": _completeness(acc.fut_counts, acc.fut_missing, acc.fut_susp),
+            "spot_ticker": _completeness(acc.spot_counts, acc.spot_missing, None),
         },
-        "quote_sanity": {"fut_tickers": fut_sanity.out(), "spot_ticker": spot_sanity.out()},
+        "quote_sanity": {"fut_tickers": acc.fut_sanity.out(), "spot_ticker": acc.spot_sanity.out()},
     }

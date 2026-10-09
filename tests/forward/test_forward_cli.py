@@ -112,3 +112,8 @@ def test_second_collect_is_refused_with_exit_1(var):
     assert res.exit_code == 1
     assert "lock" in res.output
     assert not (var / "forward" / "raw").exists()
+
+
+def test_forward_dq_without_meta_exits_1(var):
+    res = CliRunner().invoke(app, ["forward-dq"])
+    assert res.exit_code == 1 and "collector_start_ts" in res.output
