@@ -9,7 +9,7 @@
 
 **Koşu bilgileri:**
 - **Spec ve kod:** Dondurulmuş spec, tag `research-v4-spec-frozen` (commit 9d83382, spec sha256 `81f5d2e9…bea1e`). Kod `b074b69`. Freeze kontrolü PASSED (tag HEAD'in atası, çalışma ağacı temiz, spec'te fark yok).
-- **Çıktılar:** `docs/results/v4-stage1/` (`summary.json` sha256 `ae4825bc…97454`, `manifest.json`, `report.md`, `proxy_diagnostics.json`). Bu `summary.json`, Stage 2'nin KILL edilmiş config kümesinin kaynağıdır.
+- **Çıktılar:** `docs/results/v4-stage1/` (`summary.json` sha256 `aa652503…043ae` (LF, commit edilen içerik), `manifest.json`, `report.md`, `proxy_diagnostics.json`). Bu `summary.json`, Stage 2'nin KILL edilmiş config kümesinin kaynağıdır.
 - **Evren:** §2a'ya göre 20 varlık; MUBARAK U3/U4/U6/U7 kurallarını geçemedi (`v4-universe.md`).
 
 ## Config bazında Stage 1 kararı (önceden kayıtlı kural, §7.3)
