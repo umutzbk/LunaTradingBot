@@ -129,7 +129,7 @@ def test_n_shuffle_permutes_with_the_crc32_seed():
     tab = _h2_table(n=8)
     real = st.H2Rule(st.CONFIGS["H2-L7-k2"], tab).decide(T).sides
     names = sorted(f"A{i}" for i in range(8))
-    perm = list(np.random.default_rng(zlib.crc32(f"3:H2-L7-k2:{T.isoformat()}".encode())).permutation(names))
+    perm = list(np.random.default_rng(zlib.crc32(f"3:H2-L7-k2:{T}".encode())).permutation(names))
     expected = {perm[0]: 1, perm[1]: 1, perm[-2]: -1, perm[-1]: -1}
     assert st.H2Rule(st.CONFIGS["H2-L7-k2"], tab, shuffle_seed=3).decide(T).sides == expected
     seeds = {
@@ -212,6 +212,22 @@ def test_schedule_rule_enters_and_exits_on_schedule():
     assert rule.decide(T, _state()).entries == ["AAA"]
     assert rule.decide(T + pd.Timedelta("3D"), _state(pos={"AAA": T})).exits == ["AAA"]
     assert rule.decide(T + pd.Timedelta("1D"), _state(pos={"AAA": T})).exits == []
+    # the exit day was skipped (no price): the exit fires on the next decision while still held
+    assert rule.decide(T + pd.Timedelta("4D"), _state(pos={"AAA": T})).exits == ["AAA"]
+    assert rule.decide(T + pd.Timedelta("4D"), _state()).exits == []
+
+
+def test_schedule_rule_exit_belongs_to_the_entry_that_is_held():
+    sched = [{"asset": "AAA", "entry_t": T, "exit_t": T + pd.Timedelta("3D")},
+             {"asset": "AAA", "entry_t": T + pd.Timedelta("10D"), "exit_t": T + pd.Timedelta("20D")}]
+    rule = st.ScheduleRule(sched)
+    later = T + pd.Timedelta("10D")
+    assert rule.decide(T + pd.Timedelta("12D"), _state(pos={"AAA": later})).exits == []
+    assert rule.decide(T + pd.Timedelta("20D"), _state(pos={"AAA": later})).exits == ["AAA"]
+
+
+def test_n_shuffle_key_is_str_of_t_exactly():
+    assert str(T) == "2026-03-02 00:00:00+00:00"
 
 
 @pytest.mark.parametrize("cid", ["H1-Y10", "H2-L7-k1"])

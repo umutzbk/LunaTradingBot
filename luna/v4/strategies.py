@@ -124,8 +124,9 @@ class ScheduleRule:
         self.schedule = schedule
 
     def decide(self, t: pd.Timestamp, state: CarryState) -> CarryDecision:
-        held = state.positions
-        exits = sorted(x["asset"] for x in self.schedule if x["exit_t"] == t and x["asset"] in held)
+        held = state.positions  # exit when t >= exit_t of the scheduled entry that is actually held
+        exits = sorted(x["asset"] for x in self.schedule
+                       if held.get(x["asset"]) == x["entry_t"] and t >= x["exit_t"])
         entries = sorted(x["asset"] for x in self.schedule if x["entry_t"] == t)
         return CarryDecision(exits=exits, entries=entries)
 
@@ -193,6 +194,6 @@ class H2Rule(_Table):
         if self.seed is None:
             order = [a for _, a in sorted((float(v), a) for a, v in ok[col].items())]
         else:
-            key = f"{self.seed}:{self.cfg.id}:{t.isoformat()}"
+            key = f"{self.seed}:{self.cfg.id}:{t}"  # spec §4: crc32(f"{seed}:{config_id}:{t}")
             order = list(np.random.default_rng(zlib.crc32(key.encode())).permutation(sorted(ok.index)))
         return H2Decision.rebalance({**{a: 1 for a in order[:k]}, **{a: -1 for a in order[-k:]}})
