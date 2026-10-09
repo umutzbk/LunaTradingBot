@@ -1,0 +1,36 @@
+{
+ "result": "success",
+ "serverTime": "(trimmed fixture; rows 2026-03-02 09:00-14:00 UTC only, development window)",
+ "rates": [
+  {
+   "timestamp": "2026-03-02T09:00:00Z",
+   "fundingRate": 0.09939535770168875,
+   "relativeFundingRate": 1.500166666667e-06
+  },
+  {
+   "timestamp": "2026-03-02T10:00:00Z",
+   "fundingRate": -0.01433547985709641,
+   "relativeFundingRate": -2.16684722222e-07
+  },
+  {
+   "timestamp": "2026-03-02T11:00:00Z",
+   "fundingRate": 0.22506535671981376,
+   "relativeFundingRate": 3.394254166667e-06
+  },
+  {
+   "timestamp": "2026-03-02T12:00:00Z",
+   "fundingRate": 0.18802957453435545,
+   "relativeFundingRate": 2.833679166667e-06
+  },
+  {
+   "timestamp": "2026-03-02T13:00:00Z",
+   "fundingRate": 0.0191051407142909,
+   "relativeFundingRate": 2.89697222222e-07
+  },
+  {
+   "timestamp": "2026-03-02T14:00:00Z",
+   "fundingRate": 0.31528958123147094,
+   "relativeFundingRate": 4.819181944444e-06
+  }
+ ]
+}
