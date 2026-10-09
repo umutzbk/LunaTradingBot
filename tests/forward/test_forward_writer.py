@@ -239,11 +239,11 @@ def test_late_rows_for_a_gzipped_hour_go_to_late_parts(tmp_path):
     (gz,) = wr.close_hours(H12 + 2 * 3600 * S)
     sha = hashlib.sha256(gz.read_bytes()).hexdigest()
     late = wr.append(_env("spot_time", H12 + 2 * S, seq=2))
-    assert late.name == "12.late.jsonl"
+    assert late.name == f"12.late.{H12 + 2 * S}.jsonl"  # unique per open episode
     (g1,) = wr.close_hours(H12 + 2 * 3600 * S)
     wr.append(_env("spot_time", H12 + 3 * S, seq=3))
     (g2,) = wr.close_hours(H12 + 2 * 3600 * S)
-    assert (g1.name, g2.name) == ("12.late.1.jsonl.gz", "12.late.2.jsonl.gz")
+    assert (g1.name, g2.name) == (f"12.late.{H12 + 2 * S}.jsonl.gz", f"12.late.{H12 + 3 * S}.jsonl.gz")
     assert hashlib.sha256(gz.read_bytes()).hexdigest() == sha  # a verified gz is never rewritten
     assert (_gz_seqs(gz), _gz_seqs(g1), _gz_seqs(g2)) == ([1], [2], [3])
 
@@ -310,3 +310,87 @@ def test_manifest_records_collector_start_ts(tmp_path):
     wr.close_days(end + 3 * 3600 * S, start_ns=DAY0 + 5 * S)
     m = json.loads((tmp_path / "manifest" / "date=2026-10-09.json").read_text(encoding="utf-8"))
     assert m["collector_start_ts"] == iso_ns(DAY0 + 5 * S)
+
+
+# ---- second review: N2 (unbuffered append), N3 (late episodes), m1 (no scans of closed days)
+
+
+def test_partial_os_write_is_truncated_away(tmp_path, monkeypatch):
+    wr = RawWriter(tmp_path)
+    p = wr.append(_env("spot_time", H12 + S))
+    before = p.read_bytes()
+    real = w._os_write
+    calls = {"n": 0}
+
+    def enospc_after_50(fd, data):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real(fd, bytes(data[:50]))
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(w, "_os_write", enospc_after_50)
+    with pytest.raises(OSError):
+        wr.append(_env("spot_time", H12 + 2 * S, seq=2))
+    assert calls["n"] == 2 and p.read_bytes() == before
+    monkeypatch.undo()
+    wr.append(_env("spot_time", H12 + 3 * S, seq=3))
+    assert [json.loads(x)["seq"] for x in p.read_bytes().splitlines()] == [1, 3]
+
+
+def test_short_os_writes_are_completed(tmp_path, monkeypatch):
+    real = w._os_write
+    monkeypatch.setattr(w, "_os_write", lambda fd, data: real(fd, bytes(data[:7])))
+    p = RawWriter(tmp_path).append(_env("spot_time", H12 + S))
+    assert json.loads(p.read_bytes())["seq"] == 1
+
+
+def test_a_closed_late_file_is_never_appended_to(tmp_path, monkeypatch):
+    sleeps = Sleeps()
+    wr = RawWriter(tmp_path, sleep=sleeps)
+    wr.append(_env("spot_time", H12 + S, seq=1))
+    wr.close_hours(H12 + 2 * 3600 * S)
+    late3 = wr.append(_env("spot_time", H12 + 3 * S, seq=3))
+
+    def locked(p, *a, **k):
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(w.os, "unlink", locked)
+    with pytest.raises(PermissionError):
+        wr.close_hours(H12 + 2 * 3600 * S)  # late gz [3] written, unlink failed
+    monkeypatch.undo()
+    late4 = wr.append(_env("spot_time", H12 + 4 * S, seq=4))
+    assert late4 != late3
+    wr.close_hours(H12 + 2 * 3600 * S)
+    parts = sorted(late3.parent.glob("12.late.*.jsonl.gz"), key=lambda x: int(x.name.split(".")[2]))
+    assert [_gz_seqs(x) for x in parts] == [[3], [4]]
+    assert not list(late3.parent.glob("*.jsonl"))
+
+
+def test_open_file_scan_skips_closed_date_dirs(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    wr = RawWriter(tmp_path)
+    for d in range(5):
+        wr.append(_env("spot_time", DAY0 - d * 86400 * S + S))
+    now = DAY0 + 86400 * S + 4 * 3600 * S
+    wr.close_hours(now)
+    wr.close_days(now)
+    assert len(wr.closed_days()) == 5
+    wr.append(_env("spot_time", DAY0 + 86400 * S + 3 * 3600 * S))
+    listed = []
+    real_glob, real_iterdir = Path.glob, Path.iterdir
+
+    def glob(self, pattern, *a, **k):
+        listed.append((self, pattern))
+        return real_glob(self, pattern, *a, **k)
+
+    def iterdir(self):
+        listed.append((self, None))
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "glob", glob)
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+    assert wr.open_hours() == 1
+    wr.close_hours(now + 3600 * S)
+    closed = {f"date={d}" for d in wr.closed_days()}
+    assert not [(p, pat) for p, pat in listed if p.name in closed or (pat and "*/date=" in pat)]

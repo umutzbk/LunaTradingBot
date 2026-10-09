@@ -47,6 +47,18 @@ def replace_with_retry(src: Path, dst: Path, sleep: Callable[[float], None] = ti
             sleep(delay)
 
 
+_os_write = os.write  # indirection for tests (partial writes, ENOSPC)
+
+
+def _write_all(fd: int, data: bytes) -> None:
+    view = memoryview(data)
+    while view:
+        n = _os_write(fd, view)
+        if n <= 0:
+            raise OSError("os.write wrote nothing")
+        view = view[n:]
+
+
 def unlink_with_retry(path: Path, sleep: Callable[[float], None] = time.sleep) -> None:
     """``os.unlink`` with the same PermissionError backoff as :func:`replace_with_retry`."""
     for delay in (*REPLACE_BACKOFF_S, None):
@@ -130,8 +142,26 @@ class RawWriter:
         hour = datetime.fromtimestamp(recv_ns // NS, UTC).hour
         return self.root / "raw" / source / f"date={day_of(recv_ns)}" / f"{hour:02d}.jsonl"
 
-    def _open_files(self, day: str = "*") -> list[Path]:
-        return sorted((self.root / "raw").glob(f"*/date={day}/*.jsonl"))
+    def _date_dirs(self) -> list[tuple[str, Path]]:
+        """(day, raw/<source>/date=<day>) by listing the source dirs only (never their contents)."""
+        raw = self.root / "raw"
+        if not raw.is_dir():
+            return []
+        out = []
+        for src in raw.iterdir():
+            if src.is_dir():
+                out += [(d.name.removeprefix("date="), d) for d in src.iterdir()
+                        if d.name.startswith("date=")]
+        return sorted(out)
+
+    def _open_files(self, day: str | None = None) -> list[Path]:
+        """Open hour/late files; date dirs of closed days (manifest written) are never scanned."""
+        closed = set(self.closed_days())
+        out: list[Path] = []
+        for d, path in self._date_dirs():
+            if d not in closed and (day is None or d == day):
+                out += path.glob("*.jsonl")
+        return sorted(out)
 
     def open_hours(self) -> int:
         return len(self._open_files())
@@ -143,7 +173,7 @@ class RawWriter:
         return sorted(self._closed)
 
     def _raw_days(self) -> list[str]:
-        return sorted({p.name.removeprefix("date=") for p in (self.root / "raw").glob("*/date=*")})
+        return sorted({d for d, _ in self._date_dirs()})
 
     def overdue_unclosed_days(self, now_ns: int) -> list[str]:
         """Days with raw data but no manifest more than 4 h after their end (a stuck close)."""
@@ -153,26 +183,33 @@ class RawWriter:
 
     # ---- writing
     def append(self, env: dict[str, Any]) -> Path:
-        """Append one envelope line to its ``recv_ts`` hour file (flush + fsync). Rows for an hour
-        that is already gzipped go to ``HH.late.jsonl``. A failed write is truncated away."""
+        """Append one envelope line to its ``recv_ts`` hour file (unbuffered write loop + fsync).
+        Rows for an hour that is already gzipped go to an open ``HH.late.<recv_ns>.jsonl`` whose own
+        gz does not exist yet (a closed late file is never appended to). Any failure truncates the
+        file back to its previous size, so no partial line is ever left behind."""
         recv_ns = ns_from_iso(env["recv_ts"])
         day = day_of(recv_ns)
         if day in set(self.closed_days()) or self.manifest_path(day).exists():
             raise ClosedDayError(f"{day} is closed (manifest written); refusing a {env['source']} row")
         path = self.path_for(env["source"], recv_ns)
         if path.with_name(path.name + ".gz").exists():
-            path = path.with_name(f"{path.name[:2]}.late.jsonl")
+            hh = path.name[:2]
+            open_late = [p for p in sorted(path.parent.glob(f"{hh}.late.*.jsonl"))
+                         if not p.with_name(p.name + ".gz").exists()]
+            path = open_late[0] if open_late else path.with_name(f"{hh}.late.{recv_ns}.jsonl")
         path.parent.mkdir(parents=True, exist_ok=True)
         line = (json.dumps(env, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
-        with open(path, "ab") as f:
-            size = f.seek(0, os.SEEK_END)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_BINARY", 0), 0o644)
+        try:
+            size = os.lseek(fd, 0, os.SEEK_END)
             try:
-                f.write(line)
-                f.flush()
-                os.fsync(f.fileno())
+                _write_all(fd, line)
+                os.fsync(fd)
             except BaseException:
-                f.truncate(size)  # never leave a partial line behind
+                os.ftruncate(fd, size)  # never leave a partial line behind
                 raise
+        finally:
+            os.close(fd)
         return path
 
     # ---- hour close
@@ -189,17 +226,25 @@ class RawWriter:
         return closed
 
     def _close_hour(self, path: Path) -> Path | None:
-        parts = hour_parts(path)
-        if already_closed(path):  # crash after replace, before unlink: never duplicate rows
-            unlink_with_retry(path, self.sleep)
-            return parts[-1] if parts else None
-        base = path.parent / f"{path.name[:2]}.jsonl.gz"
-        if not base.exists():
-            gz = base
-        else:
-            n = max([int(p.name.split(".")[2]) for p in parts if ".late." in p.name], default=0) + 1
-            gz = path.parent / f"{path.name[:2]}.late.{n}.jsonl.gz"
+        """``X.jsonl`` -> ``X.jsonl.gz``. If the bytes already sit in a closed part (crash after the
+        verified replace, before the unlink) the file is only unlinked: rows are never duplicated."""
+        gz = path.with_name(path.name + ".gz")
         content = path.read_bytes()
+        if already_closed(path):
+            unlink_with_retry(path, self.sleep)
+            return gz if gz.exists() else None
+        if gz.exists():  # unexpected extra rows next to a closed part: keep them as a new late part
+            prior = gzip.decompress(gz.read_bytes())
+            content = content[len(prior):] if content.startswith(prior) else content
+            ns = time.time_ns()
+            try:
+                ns = ns_from_iso(json.loads(content.splitlines()[0])["recv_ts"])
+            except (ValueError, KeyError, IndexError, TypeError):
+                pass
+            gz = path.with_name(f"{path.name[:2]}.late.{ns}.jsonl.gz")
+            while gz.exists():
+                ns += 1
+                gz = path.with_name(f"{path.name[:2]}.late.{ns}.jsonl.gz")
         atomic_write_bytes(gz, gzip.compress(content, mtime=0), self.sleep)
         if gzip.decompress(gz.read_bytes()) != content:  # pragma: no cover - disk corruption
             raise OSError(f"verification of {gz} failed; keeping {path}")
@@ -233,7 +278,7 @@ class RawWriter:
         for s in SOURCES:
             sources[s]["expected"] = expected_rows(s, window, start_s + 86400)
         files = []
-        for gz in sorted((self.root / "raw").glob(f"*/date={day}/*.jsonl.gz")):
+        for gz in sorted(g for d, p in self._date_dirs() if d == day for g in p.glob("*.jsonl.gz")):
             source = gz.parent.parent.name
             data = gz.read_bytes()
             rows, bad = [], 0
