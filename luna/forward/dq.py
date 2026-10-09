@@ -42,14 +42,28 @@ def _stats(values: list[float]) -> dict[str, float | int | None]:
             "max": round(v[-1], 3), "mean": round(sum(v) / len(v), 3)}
 
 
-def _hour_files(day_dir: Path) -> Iterator[Path]:
-    """Closed parts then open files of a day dir; an open file whose bytes already sit in a closed
-    part (crash between gz replace and unlink) is skipped so every row is read exactly once."""
-    for f in sorted(day_dir.iterdir()):
-        if f.name.endswith(".jsonl.gz"):
-            yield f
-        elif f.name.endswith(".jsonl") and not already_closed(f):
-            yield f
+def _hour_data(day_dir: Path) -> Iterator[bytes]:
+    """Contents of a day dir's closed parts and open files, each row exactly once: an open file
+    whose bytes already sit in a closed part (crash between gz replace and unlink) is skipped, and
+    an open file that the collector closes while we read (it vanishes) is read from its new gz."""
+    try:
+        listed = sorted(day_dir.iterdir())
+    except FileNotFoundError:
+        return
+    names = {f.name for f in listed}
+    for f in listed:
+        data = None
+        try:
+            if f.name.endswith(".jsonl.gz"):
+                data = gzip.decompress(f.read_bytes())
+            elif f.name.endswith(".jsonl") and not already_closed(f):
+                data = f.read_bytes()
+        except FileNotFoundError:
+            gz = f.with_name(f.name + ".gz")
+            if f.name.endswith(".jsonl") and gz.name not in names and gz.exists():
+                data = gzip.decompress(gz.read_bytes())
+        if data is not None:
+            yield data
 
 
 def iter_rows(root: Path, source: str, since_ns: int, until_ns: int) -> Iterator[dict[str, Any]]:
@@ -59,8 +73,7 @@ def iter_rows(root: Path, source: str, since_ns: int, until_ns: int) -> Iterator
     for d in sorted((Path(root) / "raw" / source).glob("date=*")):
         if not first_day <= d.name.removeprefix("date=") <= last_day:
             continue
-        for f in _hour_files(d):
-            data = gzip.decompress(f.read_bytes()) if f.name.endswith(".gz") else f.read_bytes()
+        for data in _hour_data(d):
             for line in data.splitlines():
                 if not line.strip():
                     continue

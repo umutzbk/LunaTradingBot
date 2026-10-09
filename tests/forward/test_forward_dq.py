@@ -230,3 +230,19 @@ def test_dq_streams_rows(tmp_path, monkeypatch):
     monkeypatch.setattr(dq, "iter_rows", spy)
     forward_dq(root, since_ns=T0, until_ns=T0 + 7200 * S)
     assert len(alive) > 10 and peak["n"] <= 2  # never a list of all rows/payloads
+
+
+def test_hour_closed_between_listing_and_reading_is_read_once(tmp_path, monkeypatch):
+    from luna.forward import dq
+
+    root = _setup(tmp_path)
+    real = dq.already_closed
+
+    def close_meanwhile(path):
+        result = real(path)
+        RawWriter(root).close_hours(T0 + 2 * 3600 * S)  # the collector closes the hour right now
+        return result
+
+    monkeypatch.setattr(dq, "already_closed", close_meanwhile)
+    cov = _dq(root)["coverage"]["fut_tickers"]["2026-10-09"]
+    assert (cov["ok"], cov["errors"]) == (6, 1)
