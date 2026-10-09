@@ -148,7 +148,18 @@ def _execute(
             keep(name, path, fut.result())
     except BaseException:
         for f in futs:
-            f.cancel()  # queued units are dropped; finished ones are already checkpointed
+            f.cancel()  # queued units are dropped
+        # Units already finished (as_completed may not have yielded them yet) or still running
+        # cannot be cancelled; the pool's shutdown waits for them anyway, so drain them here and
+        # checkpoint every success before re-raising.
+        for f, (name, path) in futs.items():
+            if f.cancelled() or name in out:
+                continue
+            try:
+                value = f.result()
+            except BaseException:
+                continue
+            keep(name, path, value)
         raise
     return out
 
