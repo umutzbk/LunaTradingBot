@@ -5,13 +5,38 @@ import pandas as pd
 from luna.v4 import constants as c
 
 
-def test_universe_is_the_collector_universe_without_mubarak():
+def test_universe_is_loaded_from_the_frozen_universe_document():
     from luna.forward.config import UNIVERSE as COLLECTOR
 
     assert len(c.V4_UNIVERSE) == 20
     assert "MUBARAK" not in c.V4_UNIVERSE
     assert set(c.V4_UNIVERSE) == set(COLLECTOR) - {"MUBARAK"}
     assert list(c.V4_UNIVERSE) == sorted(c.V4_UNIVERSE)
+    assert c.V4_UNIVERSE == c.load_universe(c.UNIVERSE_DOC)
+    assert c.UNIVERSE_DOC.name == "v4-universe.md"
+
+
+def test_universe_loader_cross_checks_table_and_eligible_line(tmp_path):
+    import pytest
+
+    doc = tmp_path / "u.md"
+    good = (
+        "| asset | eligible | failed rules |\n|---|---|---|\n| AAA | YES | - |\n| BBB | NO | U3 |\n"
+        "| CCC | YES | - |\n\n**Eligible (2):** AAA, CCC.\n"
+    )
+    doc.write_text(good, encoding="utf-8")
+    assert c.load_universe(doc) == ("AAA", "CCC")
+    doc.write_text(good.replace("AAA, CCC.", "AAA, BBB."), encoding="utf-8")
+    with pytest.raises(ValueError):
+        c.load_universe(doc)
+
+
+def test_no_asset_specific_branch_in_v4_logic():
+    from pathlib import Path
+
+    root = Path(c.__file__).parent
+    for f in root.glob("*.py"):
+        assert "MUBARAK" not in f.read_text(encoding="utf-8"), f.name
 
 
 def test_holdout_and_evidence_dates():

@@ -2,14 +2,38 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pandas as pd
 
 from luna.forward.config import UNIVERSE as COLLECTOR_UNIVERSE
 from luna.v2.data import V2_DATA_END
 
-# §2: MUBARAK failed the outcome-free funding consistency gate (2026-10-09) and is excluded.
-EXCLUDED = ("MUBARAK",)
-V4_UNIVERSE: tuple[str, ...] = tuple(sorted(a for a in COLLECTOR_UNIVERSE if a not in EXCLUDED))
+# §2a: the research universe is the result of the general rules U1-U7, frozen in this document.
+UNIVERSE_DOC = Path(__file__).resolve().parents[2] / "docs" / "results" / "v4-universe.md"
+_ROW = re.compile(r"^\|\s*([A-Z0-9]+)\s*\|\s*(YES|NO)\s*\|")
+_ELIGIBLE = re.compile(r"\*\*Eligible \((\d+)\):\*\*\s*([A-Z0-9, ]+)\.")
+
+
+def load_universe(path: Path = UNIVERSE_DOC) -> tuple[str, ...]:
+    """Eligible assets of the frozen universe document; the table and the "Eligible (n)" line must agree
+    and every asset must be a collector candidate."""
+    text = Path(path).read_text(encoding="utf-8", errors="replace")
+    table = {m.group(1): m.group(2) == "YES" for m in map(_ROW.match, text.splitlines()) if m}
+    m = _ELIGIBLE.search(text)
+    if not table or m is None:
+        raise ValueError(f"{path}: universe table or Eligible line not found")
+    listed = tuple(sorted(a.strip() for a in m.group(2).split(",") if a.strip()))
+    yes = tuple(sorted(a for a, ok in table.items() if ok))
+    if listed != yes or int(m.group(1)) != len(yes):
+        raise ValueError(f"{path}: Eligible line {listed} disagrees with the table {yes}")
+    return yes
+
+
+V4_UNIVERSE: tuple[str, ...] = load_universe()
+if not set(V4_UNIVERSE) <= set(COLLECTOR_UNIVERSE):  # pragma: no cover - document integrity
+    raise ValueError("V4 universe contains an asset the collector does not record")
 
 # R1: sealed holdout [V4_DATA_END, COLLECTOR_START_TS); historical loaders stop at V4_DATA_END.
 V4_DATA_END = V2_DATA_END
