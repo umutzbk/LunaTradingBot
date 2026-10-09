@@ -270,3 +270,50 @@ Host'ta uv komutları için: `UV_SYSTEM_CERTS=1 uv run ...`.
 - Strateji parametrelerini paper sonuçlarına bakarak değiştirmek walk-forward'u geçersiz kılar.
 - P2 → P3 kapısı: ≥ 8 hafta paper, maliyet farkı ≤ %50, açıklanamayan risk/mutabakat olayı yok (spec §13).
 - `.env`, `var/` ve `docker/certs/` git'e girmez. Telegram token'ı loglarda görünmez (httpx logları WARNING).
+
+## 13. V4 forward data collector (`collector` servisi)
+
+Spec: `docs/superpowers/specs/luna-v4-forward-collector-design.md`. Kraken public perp + spot verisini **ham** ve
+append-only olarak `var/forward/` altına yazar; sinyal, getiri, basis veya fiyat hesabı yapmaz. Botlardan bağımsızdır
+(ayrı süreç, ayrı lock `var/forward/collector.lock`; ikinci bir collector exit 1 ile reddedilir). Compose servisi sabit
+`hostname: luna-collector` kullanır: yeniden yaratılan konteyner aynı host sayılır; eski pid yaşamıyorsa ve heartbeat
+180 sn'den eskiyse lock devralınır (aynı pid ise hemen). Farklı host + taze heartbeat (≤ 5 dk) her zaman reddedilir.
+
+- **Başlatma:** `docker compose up -d --build collector` (Docker'sız: `uv run luna collect`). Loglar:
+  `docker compose logs -f collector`. 30 dakika boyunca hiçbir ticker çağrısı başarılı olmazsa exit 3 ile çıkar,
+  `restart: unless-stopped` yeniden başlatır. Lock başka bir sürece geçerse exit 1.
+- **`meta.json` kaybı:** `var/forward/raw/` doluyken `meta.json` yoksa collector **başlamaz** (exit 1), çünkü
+  `collector_start_ts` sıfırlanırdı. `meta.json`'u backup hedefinden (`<hedef>/forward/meta.json`) geri koyun.
+- **Kaynaklar:** her dakika `fut_tickers` + `spot_ticker` (aynı `pair_seq`); :02:30'da iki ayrı 5 dakikalık tur,
+  önce spot (`spot_time`, `spot_depth`), sonra futures (`fut_book`), her birinin kendi süresi var; :05'te `fut_funding` (yalnızca son 48 saatin satırları, `filtered_since_ts`), :07'de
+  `fut_analytics`; günlük 00:10 `fut_instruments`, 00:12 `spot_assetpairs`, 00:20 `fut_funding_full` (tam,
+  süzülmemiş funding geçmişi; denetim izi, `filtered_since_ts=null`); bu üçü başlangıçta da çalışır (`at_start=true`).
+  Bir sonraki slotu gelen uzun tur yarıda bırakılır (atlanan çağrılar `skipped_calls`) ve gelen slot hemen çalışır;
+  hiç başlatılamayan slotlar `skipped_slots` olarak `status.json`'da sayılır.
+- **Dosyalar:** `var/forward/raw/<source>/date=YYYY-MM-DD/HH.jsonl` (açık saat) → saat bitip 2 dk geçince
+  `HH.jsonl.gz`. Kapanmış saate geç gelen satırlar `HH.late.jsonl` → `HH.late.N.jsonl.gz` olur (doğrulanmış gz
+  asla yeniden yazılmaz). Gün bitip 3 saat geçince `var/forward/manifest/date=….json` (sha256, satır, ok/hata,
+  okunamayan satır `bad_lines`, beklenen/gelen, `collector_start_ts`) ve o günün dosyaları salt okunur olur.
+  `meta.json`: `collector_start_ts` (bir kez yazılır) ve seq sayaçları. `status.json`: kaynak başına son
+  başarı/hata, bugünkü sayılar, atlanan çağrılar, backup durumu, kapanamayan günler (`unclosed_days`).
+- **Health:** `docker compose exec collector uv run luna collector-health [--strict]`. Exit 0: `fut_tickers` ve
+  `spot_ticker` son başarı < 3 dk, `fut_funding` < 2 sa (yeni başlayan süreçte funding için 2 sa tolerans).
+  `WARNING` satırları: backup sorunu, 26 saatten eski günlük veri (`fut_instruments`, `spot_assetpairs`,
+  `fut_funding_full`), bitişinden 4 saat sonra hâlâ manifest'i olmayan gün. `--strict` backup veya kapanamayan gün
+  uyarısında exit 2 döner. Dashboard'daki **Forward data** sayfası aynı bilgiyi gösterir (sorunlar kırmızı).
+- **Data quality:** `uv run luna forward-dq [--since 2026-10-10T00:00:00] [--until …]` (UTC) JSON basar: paired skew
+  (`pair_seq`), clock skew, coverage (`at_start` satırları oranın dışında), gaps, varlık tamlığı, kotasyon sağlık
+  sayıları. Fiyat/basis/spread/getiri basmaz. Veriyi akış halinde okur. `meta.json` yoksa exit 1 verir. Funding
+  kapsaması `fut_funding` + `fut_funding_full` satırlarından yalnızca `collector_start_ts` sonrası settlement'ları sayar.
+- **Backup (zorunlu davranış):** `.env`'de `LUNA_FORWARD_BACKUP_HOST_DIR=<host klasörü>` (OneDrive/Google Drive
+  senkron klasörü, harici disk, rclone mount). Compose bunu konteynerde `/backup`'a bağlar ve yalnızca o zaman
+  `LUNA_FORWARD_BACKUP_DIR=/backup` set edilir (boş değer = ayarlı değil). Docker'sız çalıştırmada doğrudan
+  `LUNA_FORWARD_BACKUP_DIR` verin. **Hedefi bir kez işaretleyin:** hedef klasörün kökünde boş bir
+  `.luna-backup-target` dosyası olmalı (ör. PowerShell: `New-Item -ItemType File <hedef>\.luna-backup-target`,
+  Linux: `touch <hedef>/.luna-backup-target`). İşaret yoksa (bağlanmamış disk, yanlış klasör) backup yapılmaz ve
+  "backup target not initialised" uyarısı verilir. Backup ayrı bir arka plan iş parçacığında çalışır; toplamayı
+  bekletmez. Kapanmış her gün `<hedef>/forward/...` altına kopyalanır, sha256 manifest'e göre doğrulanır, sonra
+  `var/forward/backup/date=….json` makbuzu yazılır; `meta.json` her backup'ta `<hedef>/forward/meta.json`'a
+  doğrulanarak kopyalanır. Başarısızsa saatte bir yeniden denenir. Hedef yoksa/erişilemiyorsa collection **durmaz**,
+  `backup_ok=false` olur; gün kapanışından 36 saat sonra hâlâ makbuz yoksa ayrıca uyarı verilir. Ayar değişince:
+  `docker compose up -d collector` (konteyner yeniden yaratılır).

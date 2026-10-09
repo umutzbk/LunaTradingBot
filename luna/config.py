@@ -91,6 +91,7 @@ class Settings(BaseSettings):
     telegram_chat_id: str | None = None
     healthcheck_url: str | None = None
     gbp_usd: float
+    forward_backup_dir: str | None = None  # LUNA_FORWARD_BACKUP_DIR; "" = not configured
 
 
 class _EnvOverrides(BaseSettings):
@@ -109,6 +110,7 @@ class _EnvOverrides(BaseSettings):
     telegram_chat_id: str | None = None
     healthcheck_url: str | None = None
     gbp_usd: float | None = None
+    forward_backup_dir: str | None = None
 
 
 def _deep_update(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:

@@ -49,6 +49,37 @@ services:
       <<: *bot-healthcheck
       test: ["CMD", "uv", "run", "luna", "health", "--account", "spot"]
 
+  # V4 forward data collector (docs/superpowers/specs/luna-v4-forward-collector-design.md): raw
+  # Kraken public snapshots into var/forward, its own lock (var/forward/collector.lock). Healthcheck:
+  # `luna collector-health` exits 0 iff fut_tickers/spot_ticker succeeded < 3 min and fut_funding
+  # < 2 h ago (funding gets a 2 h grace after a start); start_period 5m covers the first rounds.
+  # Backup: set LUNA_FORWARD_BACKUP_HOST_DIR in .env to a host directory (OneDrive/Google Drive
+  # sync folder, external disk, rclone mount); it is mounted at /backup and only then is
+  # LUNA_FORWARD_BACKUP_DIR set (otherwise it is "", i.e. not configured: collection continues and
+  # collector-health / the dashboard warn). Exit code 3 (no ticker success for 30 min) -> restart.
+  collector:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    command: ["collect"]
+    hostname: luna-collector  # stable across recreates: the lock treats it as the same host
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      LUNA_FORWARD_BACKUP_DIR: ${LUNA_FORWARD_BACKUP_HOST_DIR:+/backup}
+    volumes:
+      - ./var:/app/var
+      - ${LUNA_FORWARD_BACKUP_HOST_DIR:-./var/.forward_backup_unset}:/backup
+    restart: unless-stopped
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "uv", "run", "luna", "collector-health"]
+      interval: 60s
+      timeout: 20s
+      retries: 3
+      start_period: 5m
+
   dashboard:
     build:
       context: .

@@ -128,9 +128,33 @@ def _research() -> None:
         components.html(Path(pick).read_text(encoding="utf-8"), height=900, scrolling=True)
 
 
+def _forward() -> None:
+    """V4 forward collector health: var/forward/status.json + day manifests only (no prices)."""
+    from luna.forward.status import forward_view
+
+    v = forward_view(VAR_DIR / "forward", time.time_ns())
+    if not v["status_found"]:
+        st.info(f"No collector status at {VAR_DIR / 'forward' / 'status.json'} yet.")
+    if v["status_found"] and not v["backup_ok"]:
+        st.error(f"Forward data backup NOT OK: {v['backup_reason'] or 'unknown reason'}")
+    for w in v["backup_warnings"]:
+        st.error(f"Backup warning: {w}")
+    for d in v["unclosed_days"]:
+        st.error(f"Day {d} has raw data but no manifest > 4h after its end: day close is failing")
+    if v["status_found"]:
+        st.caption(f"status.json updated {v['updated_ts']}; collector_start_ts {v['collector_start_ts']}; "
+                   f"open hours {v['open_hours']}")
+    st.subheader("Sources (last ok age, today's counts)")
+    _table(pd.DataFrame(v["sources"]))
+    st.subheader("Closed days: expected vs received (gaps)")
+    _table(pd.DataFrame(v["days"]))
+
+
 def _page(page: str, account: str, limit: int) -> None:
     v = str(VAR_DIR)
-    if page == "Overview":
+    if page == "Forward data":
+        _forward()
+    elif page == "Overview":
         _overview(account)
     elif page == "Research":
         _research()
@@ -156,14 +180,16 @@ def _page(page: str, account: str, limit: int) -> None:
 def main() -> None:
     st.sidebar.title("Luna")
     account = st.sidebar.selectbox("Account", _accounts(str(VAR_DIR)))
-    page = st.sidebar.radio("Page", ["Overview", "Positions", "Scanner", "Risk", "Research", "Dataset"])
+    page = st.sidebar.radio(
+        "Page", ["Overview", "Positions", "Scanner", "Risk", "Research", "Dataset", "Forward data"]
+    )
     limit = st.sidebar.number_input("Rows", 20, 2000, 200, step=20)
     if st.sidebar.button("Refresh"):
         st.cache_data.clear()
         st.rerun()
     st.title(f"{page} - {account}")
     path = q.db_file(VAR_DIR, account)
-    if page != "Research" and not path.exists():
+    if page not in ("Research", "Forward data") and not path.exists():
         st.warning(f"No database at {path} yet. {NO_DATA}")
     try:
         _page(page, account, int(limit))

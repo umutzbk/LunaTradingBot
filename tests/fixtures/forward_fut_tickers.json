@@ -1,0 +1,8 @@
+{"result": "success", "serverTime": "2026-10-09T12:00:00.512Z", "tickers": [
+ {"tag": "perpetual", "pair": "XBT:USD", "symbol": "PF_XBTUSD", "markPrice": 61234.5, "bid": 61234.0, "bidSize": 0.0123, "ask": 61235, "askSize": 1.5, "vol24h": 4376.9, "volumeQuote": 375300000.0, "openInterest": 1234.5678, "open24h": 60000.1, "high24h": 62000, "low24h": 59000.25, "last": 61234.5, "lastTime": "2026-10-09T11:59:59.873Z", "lastSize": 0.001, "suspended": false, "fundingRate": -0.000123456789, "fundingRatePrediction": 1e-7, "postOnly": false},
+ {"tag": "perpetual", "pair": "ETH:USD", "symbol": "PF_ETHUSD", "markPrice": 2500.25, "bid": 2500.1, "ask": 2500.3, "last": 2500.2, "lastTime": "2026-10-09T11:59:58.000Z", "suspended": false, "fundingRate": 0.0},
+ {"tag": "perpetual", "pair": "MUBARAK:USD", "symbol": "PF_MUBARAKUSD", "markPrice": 0.0312, "bid": 0.0311, "ask": 0.0313, "last": 0.0312, "lastTime": "2026-10-09T11:59:00.000Z", "suspended": true, "fundingRate": null},
+ {"tag": "perpetual", "pair": "FOO:USD", "symbol": "PF_FOOUSD", "markPrice": 1.0, "bid": 0.9, "ask": 1.1, "suspended": false},
+ {"tag": "month", "pair": "XBT:USD", "symbol": "FI_XBTUSD_261225", "markPrice": 62000.0, "bid": 61990, "ask": 62010, "suspended": false},
+ {"symbol": "in", "tag": "index", "last": 1}
+]}
