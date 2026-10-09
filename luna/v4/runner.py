@@ -51,6 +51,7 @@ from luna.v4.strategies import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FREEZE_TAG = "research-v4-spec-frozen"
+SPEC_PATH = Path("docs") / "superpowers" / "specs" / "luna-research-v4-design.md"
 INSTRUMENTS_SNAPSHOT = Path("config") / "v4_instruments.json"
 STAGE1_CAVEAT = "EXPLORATORY — reused development period; not generalization evidence."
 
@@ -96,6 +97,14 @@ def check_freeze(repo: Path | None = None) -> dict[str, str]:
     rc, status = _git_rc(repo, "status", "--porcelain")
     if rc != 0 or status.strip():
         raise RefuseRun("the work tree is dirty (uncommitted changes): commit or stash first")
+    spec = SPEC_PATH.as_posix()
+    rc_head, _ = _git_rc(repo, "cat-file", "-e", f"HEAD:{spec}")
+    rc_tag, _ = _git_rc(repo, "cat-file", "-e", f"{tag.strip()}:{spec}")
+    if rc_head != 0 or rc_tag != 0:
+        raise RefuseRun(f"the frozen spec {spec} is missing at HEAD or at {FREEZE_TAG}")
+    rc, diff = _git_rc(repo, "diff", tag.strip(), "--", spec)
+    if rc != 0 or diff.strip():
+        raise RefuseRun(f"the spec {spec} differs from its frozen version at {FREEZE_TAG}")
     return {"tag_sha": tag.strip(), "head_sha": head.strip()}
 
 

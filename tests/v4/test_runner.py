@@ -39,7 +39,10 @@ def repo(tmp_path: Path) -> Path:
     r.mkdir()
     _git(r, "init", "-q")
     (r / "a.txt").write_text("a", encoding="utf-8")
-    _git(r, "add", "a.txt")
+    spec = r / rn.SPEC_PATH
+    spec.parent.mkdir(parents=True)
+    spec.write_text("# spec", encoding="utf-8")
+    _git(r, "add", "a.txt", rn.SPEC_PATH.as_posix())
     _git(r, "commit", "-qm", "one")
     return r
 
@@ -64,6 +67,22 @@ def test_refuses_on_a_dirty_tree(repo: Path):
     _git(repo, "tag", "-a", rn.FREEZE_TAG, "-m", "frozen")
     (repo / "a.txt").write_text("changed", encoding="utf-8")
     with pytest.raises(rn.RefuseRun, match="dirty"):
+        rn.check_freeze(repo)
+
+
+def test_refuses_when_the_spec_differs_from_the_tagged_spec(repo: Path):
+    _git(repo, "tag", "-a", rn.FREEZE_TAG, "-m", "frozen")
+    (repo / rn.SPEC_PATH).write_text("# spec, edited after the freeze", encoding="utf-8")
+    _git(repo, "commit", "-qam", "edit spec")
+    with pytest.raises(rn.RefuseRun, match="spec"):
+        rn.check_freeze(repo)
+
+
+def test_refuses_when_the_spec_file_is_missing(repo: Path):
+    _git(repo, "rm", "-q", rn.SPEC_PATH.as_posix())
+    _git(repo, "commit", "-qm", "drop spec")
+    _git(repo, "tag", "-a", rn.FREEZE_TAG, "-m", "frozen")
+    with pytest.raises(rn.RefuseRun, match="spec"):
         rn.check_freeze(repo)
 
 
