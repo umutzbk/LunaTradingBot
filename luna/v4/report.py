@@ -72,12 +72,21 @@ def render_report(s: dict) -> str:
         "margin_reductions",
         "flat_weeks",
         "outage_days",
+        "funding_unknown_flag",
     ]
     lines.append("| config | " + " | ".join(keys) + " |")
     lines.append("|---" * (len(keys) + 1) + "|")
     for cid, c in s["configs"].items():
-        cnt = c["rows"]["PRIMARY"]["counters"]
-        lines.append(f"| {cid} | " + " | ".join(_f(cnt.get(k), "{:.4g}") for k in keys) + " |")
+        prim = c["rows"]["PRIMARY"]
+        cnt = {
+            **prim["counters"],
+            "funding_unknown_flag": "FLAG (>1%)" if prim["funding_unknown_flag"] else "ok",
+        }
+        lines.append(
+            f"| {cid} | "
+            + " | ".join(str(v) if isinstance(v := cnt.get(k), str) else _f(v, "{:.4g}") for k in keys)
+            + " |"
+        )
     lines.append("\n## Nulls (PRIMARY; never GO, never promoted)\n")
     lines.append("| config | null | Sharpe | mean daily | entries |")
     lines.append("|---|---|---|---|---|")

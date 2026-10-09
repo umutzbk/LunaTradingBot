@@ -317,9 +317,21 @@ def _sums(daily: pd.DataFrame) -> dict[str, float]:
     return {c: float(daily[c].sum()) for c in cols}
 
 
+UNKNOWN_FUNDING_FLAG = 0.01  # §2: flag when > 1% of held funding hours are unknown
+
+
+def unknown_funding_flag(counters: dict) -> tuple[float, bool]:
+    held = float(counters.get("funding_held_hours", 0.0))
+    share = float(counters.get("funding_unknown_hours", 0.0)) / held if held > 0 else 0.0
+    return share, share > UNKNOWN_FUNDING_FLAG
+
+
 def _row_summary(res: SimResult) -> dict:
     r = res.daily["ret"]
+    share, flag = unknown_funding_flag(res.counters)
     return {
+        "funding_unknown_share": share,
+        "funding_unknown_flag": flag,
         "mean_daily": float(r.mean()),
         "sharpe": stats.sharpe(r),
         "max_drawdown": stats.max_drawdown(r),
@@ -463,8 +475,8 @@ def run_stage(
         "prior_go": list(prior_go),
         "run_at": pd.Timestamp.now(tz="UTC").isoformat(),
     }
-    _write_json(out_dir / "manifest.json", manifest)
-    _write_json(out_dir / "summary.json", summary)
+    write_json(out_dir / "manifest.json", manifest)
+    write_json(out_dir / "summary.json", summary)
     from luna.v4.report import render_report
 
     (out_dir / "report.md").write_text(render_report(_jsonable(summary)), encoding="utf-8")
@@ -520,5 +532,5 @@ def _jsonable(x):
     return x
 
 
-def _write_json(path: Path, obj) -> None:
+def write_json(path: Path, obj) -> None:
     path.write_text(json.dumps(_jsonable(obj), indent=1), encoding="utf-8")

@@ -25,6 +25,8 @@ LOOKS: tuple[pd.Timestamp, ...] = tuple(D0 + pd.Timedelta(days=d) for d in LOOK_
 STAGE1_START = pd.Timestamp("2025-10-06T00:00:00Z")
 STAGE1_EVAL_START = STAGE1_START + pd.Timedelta(days=30)
 STAGE1_END = V4_DATA_END
+# §7.3 proxy period (diagnostics only, no P&L): config history_start -> start of real funding
+PROXY_START = pd.Timestamp("2023-01-01T00:00:00Z")
 
 BAR = pd.Timedelta(minutes=15)
 HOUR = pd.Timedelta(hours=1)

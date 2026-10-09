@@ -297,6 +297,17 @@ def research_v4(
     except rn.RefuseRun as e:
         typer.echo(f"research-v4 refused: {e}")
         raise typer.Exit(2) from e
+    if stage == 1:  # §7.3 proxy period: rank / sign diagnostics only, kept outside the P&L runner
+        from luna.v4 import data as v4data
+        from luna.v4.constants import PROXY_START, STAGE1_START, V4_UNIVERSE
+        from luna.v4.proxy import run_proxy_diagnostics
+
+        var = load_settings().var_dir
+        mark = {a: v4data.load_hist_mark(var, a) for a in V4_UNIVERSE}
+        index = {a: v4data.load_hist_index(var, a) for a in V4_UNIVERSE}
+        Path(out).mkdir(parents=True, exist_ok=True)
+        rn.write_json(Path(out) / "proxy_diagnostics.json",
+                      run_proxy_diagnostics(mark, index, PROXY_START, STAGE1_START))
     for cid, c in summary["configs"].items():
         typer.echo(f"{cid}: RESEARCH EDGE {c['research_edge']}")
     deploy = summary["deployable_now"]["deployable_now"]

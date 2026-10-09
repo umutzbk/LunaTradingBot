@@ -224,3 +224,32 @@ def test_stage2_inputs_read_nothing_after_the_look_except_the_valuation_snapshot
     assert len(ex) == 1 and ex["perp_mid"].iloc[0] == 100.0
     assert inp.days[0] == rn.D0 and inp.days[-1] == look - pd.Timedelta("1D") and len(inp.days) == 182
     assert inp.funding["BTC"].empty  # the only envelope arrived after the look
+
+
+def test_unknown_funding_share_above_1pct_is_flagged():
+    assert rn.unknown_funding_flag({"funding_held_hours": 1000.0, "funding_unknown_hours": 10.0}) == (
+        0.01,
+        False,
+    )
+    assert rn.unknown_funding_flag({"funding_held_hours": 1000.0, "funding_unknown_hours": 10.5})[1] is True
+    assert rn.unknown_funding_flag({"funding_held_hours": 0.0, "funding_unknown_hours": 0.0}) == (0.0, False)
+
+
+def test_cli_stage1_writes_proxy_diagnostics_after_the_run(monkeypatch, tmp_path: Path):
+    """The premium proxy is computed by the CLI next to (never inside) the P&L runner."""
+    from luna.cli import app
+
+    monkeypatch.setattr(rn, "check_freeze", lambda repo=None: {"tag_sha": "t", "head_sha": "h"})
+    monkeypatch.setattr(rn, "load_stage_inputs", lambda *a, **k: "inputs")
+    monkeypatch.setattr(
+        rn, "run_stage", lambda *a, **k: {"configs": {}, "deployable_now": {"deployable_now": "NO"}}
+    )
+    start = pd.Timestamp("2025-09-01T00:00:00Z")
+    monkeypatch.setattr("luna.v4.data.load_hist_mark", lambda var, a: bars(start, 96 * 40, close=101.0))
+    monkeypatch.setattr("luna.v4.data.load_hist_index", lambda var, a: bars(start, 96 * 40, close=100.0))
+    out = tmp_path / "o"
+    res = CliRunner().invoke(app, ["research-v4", "--stage", "1", "--out", str(out)])
+    assert res.exit_code == 0, res.output
+    proxy = json.loads((out / "proxy_diagnostics.json").read_text(encoding="utf-8"))
+    assert proxy["window"]["end"] == "2025-10-06T00:00:00+00:00"
+    assert "rank_persistence" in proxy and "premium_proxy" in proxy["series"]
