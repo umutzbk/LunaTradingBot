@@ -37,11 +37,13 @@ def test_observed_half_spread_is_used_for_perp_and_forward_and_doubled_in_cost2x
     assert rows["PRIMARY"].half_spread("spot", 0.0003, forward=True) == 0.0003
 
 
-def test_perp_hist_spread_is_hourly_mean_or_counted_10bps_fallback():
+def test_perp_hist_spread_is_mean_of_the_hour_before_t_or_counted_10bps_fallback():
     idx = pd.date_range("2026-03-01T00:00Z", periods=4, freq="15min")
     sp = pd.DataFrame({"spread_full": [0.001, 0.003, 0.002, 0.002]}, index=idx)
-    half, fallback = c.perp_half_spread_hist(sp, pd.Timestamp("2026-03-01T00:15Z"))
+    half, fallback = c.perp_half_spread_hist(sp, pd.Timestamp("2026-03-01T01:00Z"))  # [00:00, 01:00)
     assert half == pytest.approx(0.002 / 2) and not fallback
+    half, _ = c.perp_half_spread_hist(sp, pd.Timestamp("2026-03-01T00:15Z"))  # only the 00:00 sample
+    assert half == pytest.approx(0.001 / 2)
     half, fallback = c.perp_half_spread_hist(sp, pd.Timestamp("2026-03-01T05:00Z"))
     assert half == pytest.approx(0.0010 / 2) and fallback
     assert c.perp_half_spread_hist(None, pd.Timestamp("2026-03-01T05:00Z")) == (0.0005, True)

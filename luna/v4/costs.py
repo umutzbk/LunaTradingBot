@@ -3,7 +3,7 @@
 Fees (SC-2): spot maker 0.40% / taker 0.80%, perp maker 0.02% / taker 0.05%; taker is primary.
 Spread: the quoted FULL spread (ask - bid) / mid; a taker pays HALF of it on every trade.
 - historical spot: 20 bps full (PRIMARY), 10 bps full (S-SPREAD10);
-- historical perp: mean of the analytics `spreads` samples in the trade's hour, else 10 bps full
+- historical perp: mean of the analytics `spreads` samples in [t - 1h, t), else 10 bps full
   (fallback, counted);
 - forward (both legs): the executing snapshot's real bid / ask (plus book walk when the order exceeds
   the top of book), passed in as the observed half spread.
@@ -65,15 +65,12 @@ def cost_rows(costs=None) -> dict[str, CostRow]:
 
 
 def perp_half_spread_hist(spreads: pd.DataFrame | None, t: pd.Timestamp) -> tuple[float, bool]:
-    """(half spread, fallback used) for a perp trade at t: mean full spread of the hour containing t."""
+    """(half spread, fallback used) for a perp trade decided at t: mean full spread of the analytics
+    samples in the hour before the decision, [t - 1h, t) (§5.3)."""
     if spreads is not None and len(spreads):
-        h = t.floor("1h")
         idx = spreads.index
-        w = (
-            spreads["spread_full"]
-            .iloc[idx.searchsorted(h, "left") : idx.searchsorted(h + HOUR, "left")]
-            .dropna()
-        )
+        lo, hi = idx.searchsorted(t - HOUR, "left"), idx.searchsorted(t, "left")
+        w = spreads["spread_full"].iloc[lo:hi].dropna()
         if len(w):
             return float(w.mean()) / 2, False
     return PERP_FALLBACK_FULL / 2, True

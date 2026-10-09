@@ -55,7 +55,7 @@ def test_hist_exec_falls_back_to_first_bar_within_one_hour_else_none():
 
 
 def test_hist_perp_spread_from_analytics_hour():
-    sp = pd.DataFrame({"spread_full": [0.0004]}, index=[D])
+    sp = pd.DataFrame({"spread_full": [0.0004, 0.009]}, index=[D - pd.Timedelta("30min"), D])
     q = mk.HistoricalMarket(_hist(spreads=sp)).quote("A", "perp", D)
     assert q.half_spread_obs == pytest.approx(0.0002) and not q.fallback
     assert mk.HistoricalMarket(_hist()).quote("A", "spot", D).half_spread_obs is None

@@ -2,9 +2,11 @@
 
 Historical: a decision at t executes at the close of the bar with open_ts = t; if that bar is missing
 (or forward-filled) the first real bar within the next hour is used, else nothing executes. Perp half
-spread = hourly analytics mean / 2, else 10 bps full (fallback flagged). Valuation of day d = close of
-the bar with open_ts = d 23:45 (the last earlier bar when it is missing). Liquidation extremes = mark
-15m highs / lows of the bars after the execution bar (trade bars when no mark data).
+spread = mean analytics spread of [t - 1h, t) / 2, else 10 bps full (fallback flagged). Valuation of
+day d = close of the bar with open_ts = d 23:45 (the last earlier bar when it is missing).
+Mark (margin ratio and liquidation only, never funding): margin at t uses the close of the mark bar with
+open_ts = t - 15m (trade close if missing, counted); liquidation extremes = mark 15m highs (short perp
+legs) / lows (long perp legs) of the bars after the execution bar (trade bars when no mark data).
 
 Forward: decisions at 00:00 execute at the first skew-valid paired snapshot within 15 minutes (the
 ``ForwardDaily.exec`` row); the real bid / ask gives the half spread; an order larger than the top of
