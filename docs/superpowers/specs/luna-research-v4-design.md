@@ -43,6 +43,7 @@ Riskler: funding'in tersine dönmesi, spot ücreti (taker %0,80), spread, basis 
 - Kraken Futures API referansı "Historical funding rates".
 - Development penceresinde (< 2026-07-01) 21 varlık üzerinde sonuçtan bağımsız ampirik kontrol.
 - Ayrıntı: `docs/results/v4-funding-semantics.md`. Kilitleyen testler: `tests/v4/test_funding.py`.
+- **Kullanıcı kararı (2026-10-09):** S0-F PASS kabul edildi.
 
 **Kurallar:**
 - **Dönem:** 1 saat. API `timestamp` = rate'in uygulandığı dönemin **başlangıcı** T. Rate, [T−1h, T) primine göre hesaplanır.
@@ -58,11 +59,26 @@ Riskler: funding'in tersine dönmesi, spot ücreti (taker %0,80), spread, basis 
   - Mark fiyatı gerekmez, çünkü abs rate doğrudan USD/birimdir.
 - **Bilinen rate:** t anındaki karar yalnızca `T + 1h ≤ t` olan, yani bitmiş dönemlerin rate'lerini kullanır (`known_rates`).
 - **Eksik dönem:** Nakit akışı 0 (known_only); `funding_unknown_hours` sayılır. Tutulan saatlerin > %1'i bilinmiyorsa raporda işaretlenir.
-- **Varlık bazında tutarlılık kapısı (sonuçtan bağımsız):** Development penceresinde aşağıdaki iki şarttan biri sağlanmıyorsa varlık **V4 evreninden çıkarılır**:
-  - `median |fundingRate / relativeFundingRate − perp fiyatı| / fiyat ≤ %0,5`
-  - `corr(rel_T, prim[T−1h, T)) > 0`
+- Varlık bazında semantik tutarlılık, §2a'daki genel uygunluk kurallarının (U3, U4) parçasıdır.
 
-  2026-10-09 kontrolünde yalnızca **MUBARAK** başarısız oldu (%1,15; −0,34) ve çıkarıldı. V4 evreni 20 varlıktır.
+## 2a. V4 araştırma evreni: genel uygunluk kuralları (frozen)
+
+**Kapsam:**
+- Aday küme: V2/V3 ile aynı 21 varlık.
+- Aynı kurallar her varlığa uygulanır. Varlık adı ya da geçmiş strateji performansı kurallara girmez.
+- Kurallar yalnızca development penceresi [2025-10-06T08:00Z, 2026-07-01T00:00Z) verisiyle ve getiri hesaplanmadan değerlendirilir.
+- Sonuç freeze commit'inde `docs/results/v4-universe.md` olarak sabitlenir.
+- Bir kuralı geçemeyen varlık V4 araştırma evreninin dışında kalır. Bu, paper bot evrenini **değiştirmez**; ikisi ayrı kavramlardır.
+
+| # | Kural | Eşik ve gerekçe |
+|---|---|---|
+| U1 | Zorunlu funding alanları | Her satırda `timestamp`, `fundingRate`, `relativeFundingRate` mevcut ve sonlu sayı (%100). Muhasebe abs rate'i, sinyal rel rate'i kullanır. |
+| U2 | Tekrar bütünlüğü | Aynı dönem başlangıcı için birden fazla satır varsa değerler aynı olmalı. Çelişkili tekrar sayısı 0. |
+| U3 | İşaret ve birim geçerliliği | `sign(abs) = sign(rel)` satırların ≥ %99,9'unda. `median |abs/rel − P_perp(T)| / P_perp(T) ≤ %0,5`, burada P_perp(T) = `open_ts = T − 15m` barının kapanışı. Birim (rel = abs/fiyat) varlıkta gerçekten geçerli olmalı; aksi halde funding cash flow'u ile sinyal tutarsızlaşır. |
+| U4 | Zaman damgası semantiği | 1h mark/index priminden: `corr(rel_T, prim[T−1h, T)) > 0` **ve** `> corr(rel_T, prim[T, T+1h))`. Kraken'in "rate, önceki saatten hesaplanır" kuralı o varlıkta gözlenmeli. |
+| U5 | Piyasa erişimi | PF_ perp listeli ve Kraken spot USD çifti mevcut (H1/H5 iki bacak gerektirir). |
+| U6 | Asgari kapsam | Funding: beklenen saatlik dönemlerin ≥ %99'u. Perp 15m bar: beklenen slotların ≥ %95'i. Spot 15m bar: ≥ %90. |
+| U7 | Azami boşluk | Funding ≤ 6 saat (API'nin tüm varlıklarda ortak 2–3 saatlik boşluklarına tolerans). Perp ve spot bar ≤ 24 saat. |
 
 ## 3. Hipotezler
 
@@ -240,6 +256,7 @@ Ek olarak hedge error raporlanır: `net/gross` ve net exposure'ın fiyat P&L'i.
   - GO için ikisinin de alt güven sınırı > 0 olmalı.
 - **Holm:** Her bakışta 7 configin p-değerleri üzerinde, bakış başına α = 0,05/3. Her blok uzunluğu için ayrı Holm uygulanır; ikisi de reddetmeli.
 - Holm-reddi, Holm'un o config'e verdiği α seviyesindeki tek taraflı alt güven sınırının > 0 olmasıyla eşdeğerdir.
+- **Başlık sonucu** b = 28 sonucudur; b = 14 zorunlu robustness olarak yanında raporlanır.
 
 **Minimum kanıt.** Yalnızca örnekleme yapısından türetildi, hiçbir V4 getirisi görülmeden:
 
@@ -275,26 +292,27 @@ Bir şart sağlanmazsa o bakışta sonuç **INSUFFICIENT DATA** olur. (Eski M5, 
 - Enstrüman metadata'sı (min emir, adım) freeze commit'inde snapshot olarak alınır ve SHA256'sı commit'e yazılır. Stage 1 de bunu kullanır; bu bilinen bir anakronizmdir ve raporlanır.
 - Look-ahead testleri: t sonrası veri bozulduğunda karar değişmemeli.
 
-### 7.2 Forward veri-kalite kapısı (sonuçtan bağımsız)
+### 7.2 Forward veri-kalite kapısı (frozen, sonuçtan bağımsız)
 
-Eşikler freeze commit'inde **kesin sayılarla** yazılır. Girdi yalnızca ≥ 72 saatlik `luna forward-dq` dry-run çıktısıdır; P&L, getiri, fiyat seviyesi veya basis değerine bakılmaz.
+**Belirleme yöntemi:** Eşikler collector'ın tasarım frekansından ve mühendislik gereksinimlerinden belirlendi; P&L, getiri, Sharpe ya da strateji sonucu kullanılmadı. İlk saatlerin ölçümleri (paired skew ~80 ms, saat kayması ~80 ms) yalnızca sağlama kontrolü olarak kullanıldı, optimizasyon için değil. Forward dönemde eşikler pratikte fazla katı ya da gevşek görünse bile V4'te **değiştirilmez**; o veri DQ FAIL ya da INSUFFICIENT DATA olur. Eşik değişikliği ancak spec değişikliği veya V5 ile yapılabilir.
 
-**Dry-run penceresi:** [`collector_start_ts`, freeze commit − 1 sa], tam olarak; alt-seçim yapılmaz.
+| # | Kural | Eşik | Gerekçe |
+|---|---|---|---|
+| Q1 | Spot/perp eşleştirme | Basis ve mid yalnızca aynı `pair_seq`'teki `fut_tickers` ve `spot_ticker` ok çiftinden hesaplanır; `|recv_spot − recv_fut| ≤ 2.000 ms` | İki istek ardışık; beklenen fark ≈ bir istek gecikmesi (~0,1 s). 2 s, 20× pay bırakır ama dakika ölçeğinde kaymayı keser. |
+| Q2 | İstek tazeliği | `recv − req ≤ 5.000 ms`; aşan snapshot geçersiz | 60 s'lik frekansta 5 s'lik gecikme kotasyonun bayatladığını gösterir. |
+| Q3 | Saat anomalisi | Futures: `|recv − serverTime| ≤ 5 s` (snapshot başına). Spot: `|recv − Time.unixtime| ≤ 5 s` (5 dk'lık kontrol; aşarsa sonraki 5 dk'nın spot snapshot'ları geçersiz). | Collector saati ile borsa saati arasında 5 s'yi aşan fark, zaman damgalı eşleştirmeyi güvenilmez yapar. |
+| Q4 | Kotasyon geçerliliği | Varlık başına: bid > 0, ask > 0, bid < ask, varlık payload'da var ve `suspended` değil | Aksi halde mid ve spread tanımsız. |
+| Q5 | Günlük kapsam | Gün geçerliliği için Q1–Q4'ü geçen ticker çifti sayısı ≥ 1.368 / 1.440 (%95) | Dakikalık frekansta %5 kayıp (~72 dk) gün ortalamasını bozmaz. |
+| Q6 | Ardışık eksik snapshot | Gün içinde ardışık geçersiz veya eksik ticker çifti ≤ 15 | 00:00 karar anında 15 dakikalık yürütme penceresiyle uyumlu. |
+| Q7 | Funding tazeliği | Her uygun varlık için günün 24 döneminin tamamı, dönem başlangıcından sonraki 3 saat içinde en az bir `fut_funding` yanıtında gözlenmiş olmalı | Saatlik toplama ve 48 saatlik süzme ile normal koşulda her dönem 3 kez görülür. API'nin kendi boşlukları nakit akışında 0 sayılır ve günü geçersiz yapar. |
+| Q8 | Yürütme penceresi | Karar t'den sonraki 15 dakika içinde Q1–Q4'ü geçen ilk çift kullanılır; yoksa o günün kararları atlanır ve sayılır | §3 ile aynı. |
+| Q9 | Derinlik (book walk) | Yürütmeden önceki en yakın `fut_book` / `spot_depth` snapshot'ı ≤ 10 dk eski olmalı; değilse yalnızca top-of-book kullanılır ve sayılır | 5 dakikalık frekansta en fazla bir tur kaçırmaya izin verir. |
 
-**Dönüşüm kuralı:**
-- **Üst sınır metrikleri** (paired skew, clock skew, en uzun boşluk): Önerilen değer, dry-run saatlerinin > %10'unda aşılıyorsa `1,5 × dry-run p99` olarak sabitlenir. Aksi halde önerilen değer kalır.
-- **Alt sınır metrikleri** (ticker kapsamı ≥ %95, funding 24/24): değiştirilemez.
+**Geçerli gün:** Q5, Q6 ve Q7 o gün için geçmişse gün DQ-geçerlidir.
+- Geçersiz günler **getiri serisinde kalır**. Pozisyonlar muhasebelenir ve E_d ilk geçerli snapshot'tan alınır. Yalnızca M2 kapsamına sayılmazlar.
+- Eşik ihlali bir DQ olayı olarak kaydedilir; ilgili kanıt geçersiz işaretlenir. Eşik değiştirilmez.
 
-**Önerilen eşikler:**
-- Paired skew: **snapshot başına** ≤ 2.000 ms. Bu eşiği geçen snapshot "skew-geçerli"dir; geçemeyen mid/basis için kullanılmaz. Günlük skew-geçerli snapshot oranı ≥ %95 olmalı.
-- Clock skew: medyan |recv − server| ≤ 2 sn.
-- Ticker kapsamı: günlük ≥ %95.
-- Tek boşluk: ≤ 15 dakika.
-- Funding: günde 24/24 kayıt. Eksik saat, collector'ın sonraki `fut_funding` çağrılarıyla gerçek veriden tamamlanabilir.
-
-**Geçerli gün:** Bütün eşikler geçilmişse gün geçerlidir. Geçersiz günler **getiri serisinde kalır**; pozisyonlar muhasebelenir ve E_d ilk skew-geçerli snapshot'tan alınır. Yalnızca M2 kapsamına sayılmazlar.
-
-**Kesinti günü:** d+1 günü 23:59'a kadar hiç skew-geçerli snapshot yoksa `E_d = E_{d−1}` alınır (r_d = 0). Değişim bir sonraki geçerli güne yazılır. O gün margin, hedge ve likidasyon kontrolleri atlanır ve sayılır.
+**Kesinti günü:** d+1 günü 23:59'a kadar hiç geçerli snapshot yoksa `E_d = E_{d−1}` alınır (r_d = 0). Değişim sonraki geçerli güne yazılır. O gün margin, hedge ve likidasyon kontrolleri atlanır ve sayılır.
 
 ### 7.3 Stage 1: tarihsel keşif (yalnızca gerçek funding)
 
@@ -303,11 +321,20 @@ Eşikler freeze commit'inde **kesin sayılarla** yazılır. Girdi yalnızca ≥ 
 - **Stage 1 M2:** Bir gün, funding ve bar kapsamı ayrı ayrı ≥ %90 ise geçerlidir. Günlerin ≥ %90'ı geçerli olmalı.
 - **Stage 1 çoklu test:** Holm α = 0,05 (tek bakış), primary b = 28 ve robustness b = 14.
 - **Etiket:** "EXPLORATORY — reused development period; not generalization evidence." Stage 1 tek başına GO veremez.
+- **Stage 1 kararı (önceden kayıtlı, config başına):** `ADVANCE TO FORWARD` ya da `KILL`. Stage 1 GO veremez ve config optimize etmez.
+  - **KILL**, aşağıdakilerden biri olursa:
+    - (a) PRIMARY ortalama günlük net getiri < 0 **ve** primary b = 28 tek taraflı %95 üst güven sınırı < 0 (istatistiksel olarak negatif);
+    - (b) carry bileşeni maliyeti karşılamıyor: H2 için `carry_net` ortalaması ≤ 0, H1/H5 için `Σ funding_cf − fees − spread ≤ 0`;
+    - (c) config değerlendirme penceresinde hiç pozisyon açmadı (M3 = 0).
+  - Diğer durumların hepsinde **ADVANCE TO FORWARD**. C1–C7 ve M1–M4 bilgi amaçlı raporlanır.
+  - **Hipotez düzeyi:** H1 (2 config), H2 (4 config), H5 (1 config). En az bir config'i ADVANCE olan hipotez forward'a geçer.
+  - **Forward Holm ailesi 7 config olarak kalır;** KILL edilen configlerin p-değeri 1 sayılır. Böylece Stage 1 elemesi çoklu test düzeltmesini gevşetmez.
+  - Tarihsel sonuç görüldükten sonra spec, kriter veya config değişikliği **yasaktır**.
 - **Stage-1 adayı (yalnızca bilgi; holdout kill-test kullanıcı kararıyla kapalı):**
   - Stage 1'de C1–C7'yi geçen configler arasından PRIMARY m̂'nin b = 28 tek taraflı %95 alt sınırı en yüksek olan.
   - Eşitlikte daha küçük L, k ve Y.
   - Hiçbiri geçmezse aday yoktur.
-- **Stage 1 forward setini değiştirmez:** 7 configin hepsi Stage 2'de izlenir.
+- **Forward seti:** Stage 2'de ADVANCE edilen configler izlenir; KILL edilenler raporda kalır ve tekrar açılamaz (yeni config = V5).
 - **Proxy dönemi (2023 → 2025-10-06):** yalnızca diagnostic.
   - D-PERSIST'in proxy-rank versiyonu.
   - Venue basis dağılımı ve otokorelasyonu.
@@ -331,12 +358,8 @@ Eşikler freeze commit'inde **kesin sayılarla** yazılır. Girdi yalnızca ≥ 
 
 ### 7.5 Freeze ve evidence başlangıcı (ayrık)
 
-- **Freeze (kurallar):** Şu üç şart tamamlanınca hemen tag'lenir; ertelenmez:
-  - S0-F;
-  - collector başlangıcından itibaren tam 72 saatlik DQ dry-run ve eşiklerin sabitlenmesi;
-  - final independent red-team review'un temiz çıkması.
-
-  Kullanıcı rev 2'yi prensipte onayladı (2026-10-09). R9 gereği freeze'e kadar getiri hesaplanmaz.
+- **Freeze (kurallar):** S0-F, §2a evren kuralları ve §7.2 DQ eşikleri sabitlendikten ve final red-team review'da Critical = 0, Major = 0 çıktıktan sonra hemen tag'lenir. 72 saatlik bekleme kullanıcı kararıyla iptal edildi (2026-10-09). R9 gereği freeze'e kadar getiri hesaplanmaz.
+- **Runner hard guard:** `luna research-v4` yalnızca şu durumda çalışır: `research-v4-spec-frozen` tag'i HEAD'in atası, çalışma ağacı temiz ve spec dosyası tag'deki haliyle birebir aynı (`git diff <tag> -- <spec>` boş).
 - **`V4_EVIDENCE_START_TS = 2026-11-10T00:00:00Z`** (kullanıcı kararı, sabit).
   - Kuralı: `collector_start_ts` (2026-10-09T11:52:48Z) + 31 gün sonrasındaki ilk 00:00 UTC.
   - Collector başlangıcı ile bu an arasındaki veri yalnızca warmup ve DQ içindir.
@@ -378,7 +401,7 @@ Bu sonuç RESEARCH EDGE'i değiştirmez; RESEARCH EDGE: GO da canlıya geçişi 
 
 ## 10. Kullanıcı kararları (2026-10-09, kapalı)
 
-1. **rev 2:** Prensipte onaylı. Freeze §7.5'teki üç şart temiz çıkınca yapılır; ertelenmez.
+1. **rev 2:** Onaylı. Freeze, §7.5'teki şartlar temiz çıkınca aynı gün yapılır; 72 saatlik DQ beklemesi iptal.
 2. **Evidence başlangıcı:** `V4_EVIDENCE_START_TS = 2026-11-10T00:00:00Z`.
 3. **Bootstrap:** Primary b = 28, zorunlu robustness b = 14. Holm ve 7 config sabit.
 4. **Holdout:** Tamamen kapalı (R1).
