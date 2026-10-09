@@ -63,17 +63,6 @@ def test_leftover_open_hours_are_closed_by_a_new_writer(tmp_path):
     assert gzip.decompress(closed[0].read_bytes()) == original and not p.exists()
 
 
-def test_closing_an_hour_that_already_has_a_gz_keeps_both_parts(tmp_path):
-    wr = RawWriter(tmp_path)
-    p = wr.append(_env("spot_time", H12 + S))
-    first = p.read_bytes()
-    wr.close_hours(H12 + 2 * 3600 * S)
-    wr.append(_env("spot_time", H12 + 2 * S, seq=2))
-    second = p.read_bytes()
-    (gz,) = wr.close_hours(H12 + 2 * 3600 * S)
-    assert gzip.decompress(gz.read_bytes()) == first + second
-
-
 def test_replace_retries_permission_error_then_succeeds(tmp_path, monkeypatch):
     real = os.replace
     fails = {"n": 2}
@@ -137,9 +126,11 @@ def test_day_close_writes_manifest_and_makes_files_read_only(tmp_path):
     data = (tmp_path / f0["path"]).read_bytes()
     assert f0["sha256"] == hashlib.sha256(data).hexdigest() and f0["bytes"] == len(data)
     assert (f0["lines"], f0["ok"], f0["errors"]) == (2, 1, 1)
-    assert m["sources"]["fut_tickers"] == {"expected": 1440, "received": 2, "lines": 3, "errors": 1}
+    assert m["sources"]["fut_tickers"] == {"expected": 1440, "received": 2, "lines": 3, "errors": 1,
+                                             "bad_lines": 0}
     assert m["sources"]["fut_funding"]["expected"] == 24 * 21
-    assert m["sources"]["fut_book"] == {"expected": 288 * 21, "received": 0, "lines": 0, "errors": 0}
+    assert m["sources"]["fut_book"] == {"expected": 288 * 21, "received": 0, "lines": 0, "errors": 0,
+                                          "bad_lines": 0}
     for f in files:
         assert not (tmp_path / f).stat().st_mode & stat.S_IWRITE
     assert wr.closed_days() == ["2026-10-09"]
@@ -173,3 +164,149 @@ def test_writing_into_a_closed_day_fails(tmp_path):
         wr.append(_env("spot_time", DAY0 + 5 * 3600 * S))
     assert not (tmp_path / "raw" / "spot_time" / "date=2026-10-09").exists()
     assert wr.append(_env("spot_time", end + S)).parent.name == "date=2026-10-10"
+
+
+# ---- review fixes: B1 (bad lines must never block closes), M1 (no duplicate rows), m1, M3
+
+
+def _gz_seqs(path):
+    return [json.loads(x)["seq"] for x in gzip.decompress(path.read_bytes()).splitlines()]
+
+
+def test_failed_fsync_truncates_the_partial_line(tmp_path, monkeypatch):
+    wr = RawWriter(tmp_path)
+    p = wr.append(_env("spot_time", H12 + S))
+    before = p.read_bytes()
+
+    def broken(fd):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(w.os, "fsync", broken)
+    with pytest.raises(OSError):
+        wr.append(_env("spot_time", H12 + 2 * S, seq=2))
+    assert p.read_bytes() == before
+    monkeypatch.undo()
+    wr.append(_env("spot_time", H12 + 3 * S, seq=3))
+    assert [json.loads(x)["seq"] for x in p.read_bytes().splitlines()] == [1, 3]
+
+
+def test_unparsable_lines_are_counted_not_fatal(tmp_path):
+    wr = RawWriter(tmp_path)
+    p = wr.append(_env("fut_tickers", DAY0 + 10 * S))
+    with open(p, "ab") as f:
+        f.write(b'{"source":"fut_tick')  # truncated by a crash, no newline
+    end = DAY0 + 86400 * S
+    wr.close_hours(end + 3 * 3600 * S)
+    assert wr.close_days(end + 3 * 3600 * S) == ["2026-10-09"]
+    m = json.loads((tmp_path / "manifest" / "date=2026-10-09.json").read_text(encoding="utf-8"))
+    (f0,) = m["files"]
+    assert (f0["lines"], f0["ok"], f0["bad_lines"]) == (1, 1, 1)
+    assert m["sources"]["fut_tickers"]["bad_lines"] == 1
+    assert gzip.decompress((tmp_path / f0["path"]).read_bytes()).endswith(b'{"source":"fut_tick')
+
+
+def test_one_failing_day_does_not_block_the_others(tmp_path, monkeypatch):
+    wr = RawWriter(tmp_path)
+    wr.append(_env("spot_time", DAY0 + S))
+    wr.append(_env("spot_time", DAY0 + 86400 * S + S))
+    real = RawWriter._close_day
+
+    def flaky(self, day, *a, **k):
+        if day == "2026-10-09":
+            raise ValueError("boom")
+        return real(self, day, *a, **k)
+
+    monkeypatch.setattr(RawWriter, "_close_day", flaky)
+    now = DAY0 + 2 * 86400 * S + 3 * 3600 * S
+    wr.close_hours(now)
+    assert wr.close_days(now) == ["2026-10-10"]
+
+
+def test_overdue_unclosed_days(tmp_path):
+    wr = RawWriter(tmp_path)
+    wr.append(_env("spot_time", DAY0 + S))
+    end = DAY0 + 86400 * S
+    assert wr.overdue_unclosed_days(end + 4 * 3600 * S) == []
+    assert wr.overdue_unclosed_days(end + 4 * 3600 * S + S) == ["2026-10-09"]
+    wr.close_hours(end + 5 * 3600 * S)
+    wr.close_days(end + 5 * 3600 * S)
+    assert wr.overdue_unclosed_days(end + 9 * 3600 * S) == []
+
+
+def test_late_rows_for_a_gzipped_hour_go_to_late_parts(tmp_path):
+    wr = RawWriter(tmp_path)
+    wr.append(_env("spot_time", H12 + S, seq=1))
+    (gz,) = wr.close_hours(H12 + 2 * 3600 * S)
+    sha = hashlib.sha256(gz.read_bytes()).hexdigest()
+    late = wr.append(_env("spot_time", H12 + 2 * S, seq=2))
+    assert late.name == "12.late.jsonl"
+    (g1,) = wr.close_hours(H12 + 2 * 3600 * S)
+    wr.append(_env("spot_time", H12 + 3 * S, seq=3))
+    (g2,) = wr.close_hours(H12 + 2 * 3600 * S)
+    assert (g1.name, g2.name) == ("12.late.1.jsonl.gz", "12.late.2.jsonl.gz")
+    assert hashlib.sha256(gz.read_bytes()).hexdigest() == sha  # a verified gz is never rewritten
+    assert (_gz_seqs(gz), _gz_seqs(g1), _gz_seqs(g2)) == ([1], [2], [3])
+
+
+def test_unlink_failing_once_is_retried(tmp_path, monkeypatch):
+    real = os.unlink
+    fails = {"n": 1}
+
+    def flaky(p, *a, **k):
+        if fails["n"]:
+            fails["n"] -= 1
+            raise PermissionError("locked")
+        real(p, *a, **k)
+
+    sleeps = Sleeps()
+    wr = RawWriter(tmp_path, sleep=sleeps)
+    p = wr.append(_env("spot_time", H12 + S, seq=1))
+    wr.append(_env("spot_time", H12 + 2 * S, seq=2))
+    monkeypatch.setattr(w.os, "unlink", flaky)
+    (gz,) = wr.close_hours(H12 + 2 * 3600 * S)
+    assert sleeps == [0.2] and not p.exists() and _gz_seqs(gz) == [1, 2]
+
+
+def test_open_file_left_after_a_verified_gz_is_only_unlinked(tmp_path, monkeypatch):
+    def locked(p, *a, **k):
+        raise PermissionError("locked")
+
+    wr = RawWriter(tmp_path, sleep=Sleeps())
+    p = wr.append(_env("spot_time", H12 + S, seq=1))
+    wr.append(_env("spot_time", H12 + 2 * S, seq=2))
+    monkeypatch.setattr(w.os, "unlink", locked)
+    with pytest.raises(PermissionError):
+        wr.close_hours(H12 + 2 * 3600 * S)
+    assert p.exists()
+    monkeypatch.undo()
+    (gz,) = wr.close_hours(H12 + 2 * 3600 * S)
+    assert _gz_seqs(gz) == [1, 2] and not p.exists()  # not [1, 2, 1, 2]
+    assert not list(gz.parent.glob("*.late*"))
+
+
+def test_close_days_skips_closed_days_without_scanning_them(tmp_path, monkeypatch):
+    wr = RawWriter(tmp_path)
+    _fill_day(wr)
+    end = DAY0 + 86400 * S
+    wr.close_hours(end + 3 * 3600 * S)
+    wr.close_days(end + 3 * 3600 * S)
+    scanned = []
+    real = RawWriter._open_files
+
+    def spy(self, day="*"):
+        scanned.append(day)
+        return real(self, day)
+
+    monkeypatch.setattr(RawWriter, "_open_files", spy)
+    wr.close_days(end + 6 * 3600 * S)
+    assert "2026-10-09" not in scanned
+
+
+def test_manifest_records_collector_start_ts(tmp_path):
+    wr = RawWriter(tmp_path)
+    _fill_day(wr)
+    end = DAY0 + 86400 * S
+    wr.close_hours(end + 3 * 3600 * S)
+    wr.close_days(end + 3 * 3600 * S, start_ns=DAY0 + 5 * S)
+    m = json.loads((tmp_path / "manifest" / "date=2026-10-09.json").read_text(encoding="utf-8"))
+    assert m["collector_start_ts"] == iso_ns(DAY0 + 5 * S)

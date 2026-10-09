@@ -11,6 +11,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import logging
 import os
 import stat
 import time
@@ -22,9 +23,12 @@ from typing import Any
 from luna.forward.config import SOURCES, expected_rows
 from luna.forward.envelope import NS, iso_ns, ns_from_iso
 
+log = logging.getLogger("luna.forward")
+
 REPLACE_BACKOFF_S = (0.2, 0.4, 0.8, 1.6, 3.2)
 HOUR_CLOSE_DELAY_S = 120
 DAY_CLOSE_DELAY_S = 3 * 3600
+DAY_OVERDUE_S = 4 * 3600  # raw data but no manifest this long after the day: warn
 
 
 class ClosedDayError(RuntimeError):
@@ -41,6 +45,37 @@ def replace_with_retry(src: Path, dst: Path, sleep: Callable[[float], None] = ti
             if delay is None:
                 raise
             sleep(delay)
+
+
+def unlink_with_retry(path: Path, sleep: Callable[[float], None] = time.sleep) -> None:
+    """``os.unlink`` with the same PermissionError backoff as :func:`replace_with_retry`."""
+    for delay in (*REPLACE_BACKOFF_S, None):
+        try:
+            os.unlink(path)
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            if delay is None:
+                raise
+            sleep(delay)
+
+
+def hour_parts(path: Path) -> list[Path]:
+    """The closed parts of ``path``'s hour: ``HH.jsonl.gz`` then ``HH.late.N.jsonl.gz`` by N."""
+    hh = path.name[:2]
+    late = sorted(path.parent.glob(f"{hh}.late.*.jsonl.gz"), key=lambda p: int(p.name.split(".")[2]))
+    base = path.parent / f"{hh}.jsonl.gz"
+    return ([base] if base.exists() else []) + late
+
+
+def already_closed(path: Path) -> bool:
+    """True if the open file's bytes are already the tail of a closed part of its hour (a crash
+    between the verified gz replace and the unlink): the open file is then a duplicate."""
+    data = path.read_bytes()
+    if not data:
+        return True
+    return any(gzip.decompress(gz.read_bytes()).endswith(data) for gz in hour_parts(path))
 
 
 def atomic_write_bytes(path: Path, data: bytes, sleep: Callable[[float], None] = time.sleep) -> None:
@@ -78,13 +113,14 @@ def _read_only(path: Path) -> None:
 
 
 def _empty_counts() -> dict[str, int]:
-    return {"expected": 0, "received": 0, "lines": 0, "errors": 0}
+    return {"expected": 0, "received": 0, "lines": 0, "errors": 0, "bad_lines": 0}
 
 
 class RawWriter:
     def __init__(self, root: Path, sleep: Callable[[float], None] = time.sleep) -> None:
         self.root = Path(root)
         self.sleep = sleep
+        self._closed: set[str] | None = None  # cache of days with a manifest
 
     # ---- paths
     def manifest_path(self, day: str) -> Path:
@@ -101,57 +137,92 @@ class RawWriter:
         return len(self._open_files())
 
     def closed_days(self) -> list[str]:
-        return sorted(p.stem.removeprefix("date=") for p in (self.root / "manifest").glob("date=*.json"))
+        if self._closed is None:
+            found = (self.root / "manifest").glob("date=*.json")
+            self._closed = {p.stem.removeprefix("date=") for p in found}
+        return sorted(self._closed)
+
+    def _raw_days(self) -> list[str]:
+        return sorted({p.name.removeprefix("date=") for p in (self.root / "raw").glob("*/date=*")})
+
+    def overdue_unclosed_days(self, now_ns: int) -> list[str]:
+        """Days with raw data but no manifest more than 4 h after their end (a stuck close)."""
+        closed = set(self.closed_days())
+        return [d for d in self._raw_days()
+                if d not in closed and now_ns > (day_start_s(d) + 86400 + DAY_OVERDUE_S) * NS]
 
     # ---- writing
     def append(self, env: dict[str, Any]) -> Path:
-        """Append one envelope line to its ``recv_ts`` hour file (flush + fsync)."""
+        """Append one envelope line to its ``recv_ts`` hour file (flush + fsync). Rows for an hour
+        that is already gzipped go to ``HH.late.jsonl``. A failed write is truncated away."""
         recv_ns = ns_from_iso(env["recv_ts"])
         day = day_of(recv_ns)
-        if self.manifest_path(day).exists():
+        if day in set(self.closed_days()) or self.manifest_path(day).exists():
             raise ClosedDayError(f"{day} is closed (manifest written); refusing a {env['source']} row")
         path = self.path_for(env["source"], recv_ns)
+        if path.with_name(path.name + ".gz").exists():
+            path = path.with_name(f"{path.name[:2]}.late.jsonl")
         path.parent.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(env, ensure_ascii=False, separators=(",", ":")) + "\n"
+        line = (json.dumps(env, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
         with open(path, "ab") as f:
-            f.write(line.encode("utf-8"))
-            f.flush()
-            os.fsync(f.fileno())
+            size = f.seek(0, os.SEEK_END)
+            try:
+                f.write(line)
+                f.flush()
+                os.fsync(f.fileno())
+            except BaseException:
+                f.truncate(size)  # never leave a partial line behind
+                raise
         return path
 
     # ---- hour close
     def close_hours(self, now_ns: int) -> list[Path]:
-        """Gzip every open hour that ended at least 2 minutes before ``now_ns``."""
+        """Gzip every open hour (and late part) that ended at least 2 minutes before ``now_ns``."""
         closed = []
         for path in self._open_files():
             day = path.parent.name.removeprefix("date=")
-            hour_end_s = day_start_s(day) + (int(path.stem) + 1) * 3600
+            hour_end_s = day_start_s(day) + (int(path.name[:2]) + 1) * 3600
             if now_ns >= (hour_end_s + HOUR_CLOSE_DELAY_S) * NS:
-                closed.append(self._close_hour(path))
+                gz = self._close_hour(path)
+                if gz is not None:
+                    closed.append(gz)
         return closed
 
-    def _close_hour(self, path: Path) -> Path:
-        gz = path.with_name(path.name + ".gz")
-        prior = gzip.decompress(gz.read_bytes()) if gz.exists() else b""
-        content = prior + path.read_bytes()
+    def _close_hour(self, path: Path) -> Path | None:
+        parts = hour_parts(path)
+        if already_closed(path):  # crash after replace, before unlink: never duplicate rows
+            unlink_with_retry(path, self.sleep)
+            return parts[-1] if parts else None
+        base = path.parent / f"{path.name[:2]}.jsonl.gz"
+        if not base.exists():
+            gz = base
+        else:
+            n = max([int(p.name.split(".")[2]) for p in parts if ".late." in p.name], default=0) + 1
+            gz = path.parent / f"{path.name[:2]}.late.{n}.jsonl.gz"
+        content = path.read_bytes()
         atomic_write_bytes(gz, gzip.compress(content, mtime=0), self.sleep)
         if gzip.decompress(gz.read_bytes()) != content:  # pragma: no cover - disk corruption
             raise OSError(f"verification of {gz} failed; keeping {path}")
-        path.unlink()
+        unlink_with_retry(path, self.sleep)
         return gz
 
     # ---- day close
     def close_days(self, now_ns: int, start_ns: int | None = None) -> list[str]:
         """Write the manifest of each finished day (>= 3h after its end, no open hour left).
-        ``start_ns`` (collector_start_ts) trims the expected-row window of the first day."""
-        days = sorted({p.name.removeprefix("date=") for p in (self.root / "raw").glob("*/date=*")})
+        ``start_ns`` (collector_start_ts) trims the expected-row window of the first day. A day
+        that fails is logged and retried next time; it never blocks the other days."""
         already = set(self.closed_days())
         done = []
-        for day in days:
-            end_s = day_start_s(day) + 86400
-            if day in already or now_ns < (end_s + DAY_CLOSE_DELAY_S) * NS or self._open_files(day):
+        for day in self._raw_days():
+            if day in already or now_ns < (day_start_s(day) + 86400 + DAY_CLOSE_DELAY_S) * NS:
                 continue
-            self._close_day(day, now_ns, start_ns)
+            if self._open_files(day):
+                continue
+            try:
+                self._close_day(day, now_ns, start_ns)
+            except Exception as e:  # noqa: BLE001 - one bad day must not block the rest
+                log.error("closing day %s failed (retried later): %s: %s", day, type(e).__name__, e)
+                continue
             done.append(day)
         return done
 
@@ -165,8 +236,15 @@ class RawWriter:
         for gz in sorted((self.root / "raw").glob(f"*/date={day}/*.jsonl.gz")):
             source = gz.parent.parent.name
             data = gz.read_bytes()
-            rows = [json.loads(x) for x in gzip.decompress(data).splitlines() if x.strip()]
-            ok = sum(1 for r in rows if r.get("ok"))
+            rows, bad = [], 0
+            for x in gzip.decompress(data).splitlines():
+                if not x.strip():
+                    continue
+                try:
+                    rows.append(json.loads(x))
+                except ValueError:
+                    bad += 1  # kept verbatim in the gz, only counted here
+            ok = sum(1 for r in rows if isinstance(r, dict) and r.get("ok"))
             files.append({
                 "path": gz.relative_to(self.root).as_posix(),
                 "source": source,
@@ -176,14 +254,20 @@ class RawWriter:
                 "lines": len(rows),
                 "ok": ok,
                 "errors": len(rows) - ok,
+                "bad_lines": bad,
             })
             agg = sources.setdefault(source, _empty_counts())
             agg["received"] += ok
             agg["lines"] += len(rows)
             agg["errors"] += len(rows) - ok
-        manifest = {"date": day, "closed_ts": iso_ns(now_ns), "files": files, "sources": sources}
+            agg["bad_lines"] += bad
+        manifest = {"date": day, "closed_ts": iso_ns(now_ns),
+                    "collector_start_ts": iso_ns(start_ns) if start_ns is not None else None,
+                    "files": files, "sources": sources}
         path = self.manifest_path(day)
         atomic_write_text(path, json.dumps(manifest, indent=1), self.sleep)
+        self.closed_days()
+        self._closed.add(day)
         for f in files:
             _read_only(self.root / f["path"])
         _read_only(path)
