@@ -37,13 +37,18 @@ def test_observed_half_spread_is_used_for_perp_and_forward_and_doubled_in_cost2x
     assert rows["PRIMARY"].half_spread("spot", 0.0003, forward=True) == 0.0003
 
 
-def test_perp_hist_spread_is_mean_of_the_hour_before_t_or_counted_10bps_fallback():
-    idx = pd.date_range("2026-03-01T00:00Z", periods=4, freq="15min")
-    sp = pd.DataFrame({"spread_full": [0.001, 0.003, 0.002, 0.002]}, index=idx)
-    half, fallback = c.perp_half_spread_hist(sp, pd.Timestamp("2026-03-01T01:00Z"))  # [00:00, 01:00)
+def test_perp_hist_spread_is_mean_of_1_minute_rows_of_the_hour_before_t_or_counted_10bps_fallback():
+    idx = pd.date_range("2026-03-01T00:00Z", periods=61, freq="1min")
+    vals = [0.001] * 30 + [0.003] * 30 + [9.0]  # the 01:00 row is not in [00:00, 01:00)
+    sp = pd.DataFrame({"spread_full": vals}, index=idx)
+    half, fallback = c.perp_half_spread_hist(sp, pd.Timestamp("2026-03-01T01:00Z"))
     assert half == pytest.approx(0.002 / 2) and not fallback
-    half, _ = c.perp_half_spread_hist(sp, pd.Timestamp("2026-03-01T00:15Z"))  # only the 00:00 sample
-    assert half == pytest.approx(0.001 / 2)
+    assert c.MIN_SPREAD_MINUTES == 30
+    half, fallback = c.perp_half_spread_hist(sp.iloc[:29], pd.Timestamp("2026-03-01T01:00Z"))  # 29 minutes
+    assert fallback and half == pytest.approx(0.0005)
+    nan30 = sp.copy()
+    nan30.iloc[:31, 0] = float("nan")  # 29 valid minutes left
+    assert c.perp_half_spread_hist(nan30, pd.Timestamp("2026-03-01T01:00Z"))[1] is True
     half, fallback = c.perp_half_spread_hist(sp, pd.Timestamp("2026-03-01T05:00Z"))
     assert half == pytest.approx(0.0010 / 2) and fallback
     assert c.perp_half_spread_hist(None, pd.Timestamp("2026-03-01T05:00Z")) == (0.0005, True)

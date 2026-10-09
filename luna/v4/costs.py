@@ -3,7 +3,8 @@
 Fees (SC-2): spot maker 0.40% / taker 0.80%, perp maker 0.02% / taker 0.05%; taker is primary.
 Spread: the quoted FULL spread (ask - bid) / mid; a taker pays HALF of it on every trade.
 - historical spot: 20 bps full (PRIMARY), 10 bps full (S-SPREAD10);
-- historical perp: mean of the analytics `spreads` samples in [t - 1h, t), else 10 bps full
+- historical perp: mean of the 1-minute analytics `spreads` in [t - 1h, t) (>= 30 valid minutes), else
+  10 bps full
   (fallback, counted);
 - forward (both legs): the executing snapshot's real bid / ask (plus book walk when the order exceeds
   the top of book), passed in as the observed half spread.
@@ -21,6 +22,7 @@ from luna.v4.constants import HOUR
 
 SC2 = {"spot": {"maker": 0.004, "taker": 0.008}, "perp": {"maker": 0.0002, "taker": 0.0005}}
 PERP_FALLBACK_FULL = 0.0010
+MIN_SPREAD_MINUTES = 30  # fewer valid 1-minute samples in [t - 1h, t) -> counted 10 bps fallback
 
 
 @dataclass(frozen=True)
@@ -71,7 +73,7 @@ def perp_half_spread_hist(spreads: pd.DataFrame | None, t: pd.Timestamp) -> tupl
         idx = spreads.index
         lo, hi = idx.searchsorted(t - HOUR, "left"), idx.searchsorted(t, "left")
         w = spreads["spread_full"].iloc[lo:hi].dropna()
-        if len(w):
+        if len(w) >= MIN_SPREAD_MINUTES:
             return float(w.mean()) / 2, False
     return PERP_FALLBACK_FULL / 2, True
 

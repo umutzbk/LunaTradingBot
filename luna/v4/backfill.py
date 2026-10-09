@@ -5,7 +5,8 @@ sealed holdout (2026-07-01):
   `relativeFundingRate` (rel, decimal/h). The API returns its whole history in one response, so rows
   at or after the cut are dropped in memory before anything is written;
 - mark and index (`charts/v1/mark|spot/<sym>/15m`) candles;
-- perp analytics `spreads` (hourly by default), full quoted spread as a fraction of mid.
+- perp analytics `spreads` at 1-minute resolution for the hour before every Stage 1 decision
+  ([d 23:00, d + 1 00:00)), full quoted spread (ask - bid) / mid.
 
 Requests never ask for a time at or after the cut. Every written file gets a sibling
 `<asset>.provenance.json` (endpoint, params, fetched_at, sha256 of the parquet, rows, cutoff).
@@ -18,8 +19,8 @@ import hashlib
 import json
 import logging
 import os
+import time
 from pathlib import Path
-from typing import Any
 
 import httpx
 import pandas as pd
@@ -27,7 +28,7 @@ import pandas as pd
 from luna.http import get_json
 from luna.instruments import perp_symbol
 from luna.v2.data import HoldoutLeak
-from luna.v4.constants import BAR, V4_DATA_END
+from luna.v4.constants import BAR, DAY, HOUR, STAGE1_START, V4_DATA_END
 from luna.v4.funding import parse_funding
 
 log = logging.getLogger(__name__)
@@ -35,8 +36,8 @@ log = logging.getLogger(__name__)
 BASE = "https://futures.kraken.com"
 FUNDING_URL = f"{BASE}/derivatives/api/v4/historicalfundingrates"
 HISTORY_START = pd.Timestamp("2023-01-01T00:00:00Z")
-SPREAD_INTERVAL_S = 3600
-SPREAD_CHUNK = pd.Timedelta(days=30)
+SPREAD_INTERVAL_S = 60  # 1-minute samples (§5.3 mean over [t - 1h, t))
+SPREAD_SPACING_S = 0.3
 TICK_DIRS = {"mark": "mark", "spot": "index"}  # Kraken "spot" chart = its index price
 
 
@@ -102,61 +103,113 @@ def fetch_chart_candles(
     return df, meta
 
 
-def _num_list(x: Any) -> list[float] | None:
-    if isinstance(x, list) and all(v is None or isinstance(v, (int, float, str)) for v in x):
+def _prices(x) -> list[float] | None:
+    """A ``best_price`` list (strings or numbers; None -> NaN)."""
+    if not isinstance(x, list):
+        return None
+    try:
         return [float("nan") if v is None else float(v) for v in x]
-    return None
+    except (TypeError, ValueError):
+        return None
 
 
 def parse_spreads(payload: dict) -> pd.DataFrame:
-    """Analytics `spreads` -> frame indexed by UTC timestamp with `spread_full` (fraction of mid).
+    """Analytics `spreads` -> frame indexed by UTC timestamp with `spread_full` = (ask - bid) / mid.
 
-    Accepted shapes of `result.data` (the exact shape must be confirmed on the live API in Stage 0;
-    an unknown shape fails loudly rather than being guessed): a list of spread values, a dict with a
-    `spread` list, or a dict with `bid` / `ask` lists (spread = (ask - bid) / mid)."""
-    res = payload.get("result") or {}
-    ts = res.get("timestamp") or []
-    data = res.get("data")
-    idx = pd.DatetimeIndex(pd.to_datetime([int(t) for t in ts], unit="s", utc=True))
-    spread: list[float] | None = _num_list(data)
-    if spread is None and isinstance(data, dict):
-        if "spread" in data:
-            spread = _num_list(data["spread"])
-        elif "bid" in data and "ask" in data:
-            bid, ask = _num_list(data["bid"]), _num_list(data["ask"])
-            if bid is not None and ask is not None:
-                spread = [(a - b) / ((a + b) / 2) for b, a in zip(bid, ask, strict=True)]
-    if spread is None or len(spread) != len(idx):
+    The only accepted shape is the one verified on the live API (dev window, PF_XBTUSD):
+    ``{"result": {"timestamp": [...], "data": {"bid": {"best_price": [str]}, "ask": {"best_price":
+    [str]}}, "more": bool}}``. Anything else fails loudly; a missing quote gives NaN (never guessed)."""
+    res = payload.get("result") if isinstance(payload, dict) else None
+    data = res.get("data") if isinstance(res, dict) else None
+    ts = res.get("timestamp") if isinstance(res, dict) else None
+    bid = (
+        _prices((data.get("bid") or {}).get("best_price"))
+        if isinstance(data, dict) and isinstance(data.get("bid"), dict)
+        else None
+    )
+    ask = (
+        _prices((data.get("ask") or {}).get("best_price"))
+        if isinstance(data, dict) and isinstance(data.get("ask"), dict)
+        else None
+    )
+    if not isinstance(ts, list) or bid is None or ask is None or not (len(ts) == len(bid) == len(ask)):
         raise ValueError("unknown analytics spreads payload shape")
+    idx = pd.DatetimeIndex(pd.to_datetime([int(t) for t in ts], unit="s", utc=True))
+    spread = [
+        (a - b) / ((a + b) / 2) if b > 0 and a > 0 else float("nan") for b, a in zip(bid, ask, strict=True)
+    ]
     df = pd.DataFrame({"spread_full": spread}, index=idx)
     return df[~df.index.duplicated(keep="last")].sort_index()
 
 
-def fetch_spreads(
+def _fetch_spread_range(
+    client: httpx.Client, url: str, lo: int, hi: int, interval_s: int
+) -> list[pd.DataFrame]:
+    """One window [lo, hi] (epoch s), following ``more: true`` pages."""
+    parts = []
+    while lo <= hi:
+        payload = get_json(client, url, {"since": lo, "to": hi, "interval": interval_s})
+        df = parse_spreads(payload)
+        parts.append(df)
+        if not (payload.get("result") or {}).get("more") or df.empty:
+            break
+        nxt = int(df.index.max().timestamp()) + interval_s
+        if nxt <= lo:
+            break
+        lo = nxt
+    return parts
+
+
+def stage1_spread_days(
+    start: pd.Timestamp = STAGE1_START, cutoff: pd.Timestamp = V4_DATA_END
+) -> list[pd.Timestamp]:
+    """Days d whose window [d 23:00, d + 1 00:00) precedes a Stage 1 decision at d + 1 00:00."""
+    return list(pd.date_range(start, cutoff - DAY, freq="D"))
+
+
+def fetch_spread_windows(
     client: httpx.Client,
     asset: str,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
+    days: list[pd.Timestamp],
     cutoff: pd.Timestamp = V4_DATA_END,
-    interval_s: int = SPREAD_INTERVAL_S,
+    sleep=time.sleep,
 ):
-    last = _last_request_s(end, cutoff)
+    """1-minute spreads of [d 23:00, d + 1 00:00) for every day d: the hour before each 00:00 decision
+    (§5.3). One call per asset and day (plus ``more`` pages), >= 0.3 s apart, never past the cut."""
+    _check_cutoff(cutoff)
     url = f"{BASE}/api/charts/v1/analytics/{perp_symbol(asset)}/spreads"
     parts = []
-    lo = int(start.timestamp())
-    while lo <= last:
-        hi = min(lo + int(SPREAD_CHUNK.total_seconds()) - 1, last)
-        parts.append(parse_spreads(get_json(client, url, {"since": lo, "to": hi, "interval": interval_s})))
-        lo = hi + 1
-    df = pd.concat(parts) if parts else parse_spreads({"result": {"timestamp": [], "data": []}})
+    for i, d in enumerate(days):
+        lo, end = d + DAY - HOUR, d + DAY
+        hi = _last_request_s(end, cutoff)
+        if i:
+            sleep(SPREAD_SPACING_S)
+        parts.extend(_fetch_spread_range(client, url, int(lo.timestamp()), hi, SPREAD_INTERVAL_S))
+    df = (
+        pd.concat(parts)
+        if parts
+        else parse_spreads(
+            {"result": {"timestamp": [], "data": {"bid": {"best_price": []}, "ask": {"best_price": []}}}}
+        )
+    )
     df = df[~df.index.duplicated(keep="last")].sort_index()
-    df = df[(df.index >= start) & (df.index < min(end, cutoff))]
-    meta = {"endpoint": url, "params": {"since": int(start.timestamp()), "to": last, "interval": interval_s}}
+    df = df[df.index < cutoff]
+    meta = {
+        "endpoint": url,
+        "params": {
+            "interval": SPREAD_INTERVAL_S,
+            "windows": len(days),
+            "window": "[d 23:00, d+1 00:00)",
+            "first_day": days[0].isoformat() if days else None,
+            "last_day": days[-1].isoformat() if days else None,
+        },
+    }
     return df, meta
 
 
-def _write(root: Path, kind: str, asset: str, df: pd.DataFrame, meta: dict, now: pd.Timestamp,
-           cutoff: pd.Timestamp) -> None:
+def _write(
+    root: Path, kind: str, asset: str, df: pd.DataFrame, meta: dict, now: pd.Timestamp, cutoff: pd.Timestamp
+) -> None:
     if len(df) and df.index.max() >= cutoff:
         raise HoldoutLeak(f"{kind}/{asset}: row {df.index.max()} at or after {cutoff}")
     d = root / "history_v4" / kind
@@ -187,6 +240,8 @@ def backfill_v4(
     start: pd.Timestamp = HISTORY_START,
     now: pd.Timestamp | None = None,
     cutoff: pd.Timestamp = V4_DATA_END,
+    spread_days: list[pd.Timestamp] | None = None,
+    sleep=time.sleep,
 ) -> list[str]:
     """Download every V4 historical input for `assets` into `var_dir/history_v4/<kind>/`."""
     _check_cutoff(cutoff)
@@ -199,7 +254,8 @@ def backfill_v4(
         for tick, kind in TICK_DIRS.items():
             df, meta = fetch_chart_candles(client, tick, asset, start, cutoff, cutoff)
             _write(root, kind, asset, df, meta, now, cutoff)
-        df, meta = fetch_spreads(client, asset, start, cutoff, cutoff)
+        days = spread_days if spread_days is not None else stage1_spread_days(cutoff=cutoff)
+        df, meta = fetch_spread_windows(client, asset, days, cutoff, sleep=sleep)
         _write(root, "spreads", asset, df, meta, now, cutoff)
         log.info("backfill-v4 %s done", asset)
         done.append(asset)
