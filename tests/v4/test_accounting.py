@@ -382,3 +382,14 @@ def test_h2_rebalance_is_all_or_nothing_on_a_missing_price():
     plan = {MONDAY: acc.H2Decision.rebalance({"AAA": 1, "BBB": -1})}
     res = acc.run_h2(m, H2Scripted(plan), _days(2), PRIMARY, {})
     assert res.trades == [] and res.counters["skipped_actions"] == 1
+
+
+def test_h2_concentration_diagnostics_and_per_asset_pnl():
+    rates = {"AAA": _rates(-3e-5, 10.0), "BBB": _rates(3e-5, 20.0)}
+    m = FakeMarket(perp={"AAA": 10.0, "BBB": 20.0, "CCC": 40.0, "DDD": 50.0}, funding_rates=rates)
+    plan = {MONDAY: acc.H2Decision.rebalance({"AAA": 1, "BBB": 1, "CCC": -1, "DDD": -1})}
+    res = acc.run_h2(m, H2Scripted(plan), _days(2), PRIMARY, {})
+    d0 = res.daily.iloc[0]
+    assert d0["max_share"] == pytest.approx(0.25) and d0["herfindahl"] == pytest.approx(4 * 0.25**2)
+    assert set(res.asset_pnl) == {"AAA", "BBB", "CCC", "DDD"}
+    assert sum(res.asset_pnl.values()) == pytest.approx(res.daily["equity"].iloc[-1] - 265.0)

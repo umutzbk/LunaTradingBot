@@ -510,6 +510,9 @@ def _diagnostics(inp: StageInputs, sims: dict[str, dict[str, SimResult]]) -> dic
                 "mean_net_exposure": float(sims[cid]["PRIMARY"].daily["net_exposure"].mean()),
                 "long_pnl": float(sims[cid]["PRIMARY"].daily["long_pnl"].sum()),
                 "short_pnl": float(sims[cid]["PRIMARY"].daily["short_pnl"].sum()),
+                "mean_max_share": float(sims[cid]["PRIMARY"].daily["max_share"].mean()),
+                "mean_herfindahl": float(sims[cid]["PRIMARY"].daily["herfindahl"].mean()),
+                "asset_pnl": sims[cid]["PRIMARY"].asset_pnl,
             }
             for cid, c in CONFIGS.items()
             if c.account == "h2"

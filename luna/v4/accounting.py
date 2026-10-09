@@ -193,6 +193,7 @@ class SimResult:
     trades: list[dict]
     counters: dict[str, float]
     margin_ratio_after: dict[pd.Timestamp, float] = field(default_factory=dict)
+    asset_pnl: dict[str, float] = field(default_factory=dict)  # H2: per-asset P&L contribution (net)
 
 
 class _Sim:
@@ -633,7 +634,13 @@ def run_h2(market: Market, decider: H2Decider, days: list[pd.Timestamp], row: Co
         d["short_pnl"] = sum(v for a, v in pnl.items() if side.get(a, 0) < 0)
         d["net_exposure"] = (sum(q * perp_px[a] for a, q in b.perp_q.items()) / d["equity"]
                              if d["equity"] else 0.0)
-    return SimResult(pd.DataFrame(sim.rows).set_index("day"), trades, sim.c, sim.margin_after)
+        notional = [abs(q) * perp_px[a] for a, q in b.perp_q.items()]
+        gross = sum(notional)
+        w = [x / gross for x in notional] if gross > EPS else []
+        d["max_share"] = max(w) if w else 0.0  # concentration diagnostics (§5.2)
+        d["herfindahl"] = sum(x * x for x in w)
+    return SimResult(pd.DataFrame(sim.rows).set_index("day"), trades, sim.c, sim.margin_after,
+                     asset_pnl=dict(b.asset_pnl))
 
 
 def _rebalance(sim: _Sim, sides: dict[str, int], t: pd.Timestamp, params: H2Params) -> list[tuple] | None:
