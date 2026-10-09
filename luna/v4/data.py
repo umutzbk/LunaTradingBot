@@ -221,6 +221,8 @@ class ForwardDaily:
     listing: dict[str, pd.Timestamp] = field(default_factory=dict)
     asset_quality: pd.DataFrame = field(default_factory=pd.DataFrame)  # Q5 / Q6 per (day, asset)
     exec_pairs: dict = field(default_factory=dict)  # day -> [(ts, {asset: quote row})] first 15 min (Q8)
+    first: pd.DataFrame = field(default_factory=pd.DataFrame)  # first valid pair of each (day, asset)
+    early: dict = field(default_factory=dict)  # (day, asset) -> [(ts, mark, spot mid | None)] first 15 min
 
 
 def _spot_quotes(payload: dict) -> dict[str, dict[str, float | None]]:
@@ -231,8 +233,11 @@ def _spot_quotes(payload: dict) -> dict[str, dict[str, float | None]]:
             continue
         bid, ask = _f((q.get("b") or [None])[0]), _f((q.get("a") or [None])[0])
         v24, p24 = _f((q.get("v") or [None, None])[1]), _f((q.get("p") or [None, None])[1])
-        out[asset_from_spot(pair)] = {"bid": bid, "ask": ask,
-                                      "vol_usd": v24 * p24 if v24 is not None and p24 is not None else None}
+        out[asset_from_spot(pair)] = {
+            "bid": bid,
+            "ask": ask,
+            "vol_usd": v24 * p24 if v24 is not None and p24 is not None else None,
+        }
     return out
 
 
@@ -246,6 +251,8 @@ def load_forward_daily(
     wanted = set(assets)
     exec_rows: dict[tuple, dict] = {}
     exec_pairs: dict[pd.Timestamp, list] = {}
+    first_rows: dict[tuple, dict] = {}
+    early: dict[tuple, list] = {}
     day_acc: dict[tuple, dict] = {}
     aq: dict[tuple, dict] = {}
     quality = []
@@ -292,24 +299,42 @@ def load_forward_daily(
                     continue
                 s = sp[1].get(asset)
                 pb, pa, mark = _f(t.get("bid")), _f(t.get("ask")), _f(t.get("markPrice"))
-                acc = day_acc.setdefault((day, asset), {"basis": [], "mark": [], "perp": [], "spot": []})
+                acc = day_acc.setdefault(
+                    (day, asset),
+                    {"basis": [], "mark": [], "perp": [], "spot": [], "mark_after": [], "spot_after": []},
+                )
                 if mark is not None:
                     acc["mark"].append(mark)
                     if recv >= acc.get("mark_last", (-1, None))[0]:
                         acc["mark_last"] = (recv, mark)
-                if not (pair_valid and dq.asset_ok(t, s)):
+                ok_i = pair_valid and dq.asset_ok(t, s)
+                sm = (s["bid"] + s["ask"]) / 2 if ok_i else None
+                if in_exec:  # liquidation extremes: only snapshots after the execution ts count (F8)
+                    early.setdefault((day, asset), []).append((ts, mark, sm))
+                else:
+                    if mark is not None:
+                        acc["mark_after"].append(mark)
+                    if sm is not None:
+                        acc["spot_after"].append(sm)
+                if not ok_i:
                     continue
                 valid_min[asset].add(minute)
-                pm, sm = (pb + pa) / 2, (s["bid"] + s["ask"]) / 2
+                pm = (pb + pa) / 2
                 acc["basis"].append(pm / sm - 1.0)
                 acc["perp"].append(pm)
                 acc["spot"].append(sm)
                 row = {
-                    "ts": ts, "perp_mid": pm, "perp_half_spread": (pa - pb) / 2 / pm,
-                    "spot_mid": sm, "spot_half_spread": (s["ask"] - s["bid"]) / 2 / sm,
-                    "mark": mark, "perp_vol_quote": _f(t.get("volumeQuote")),
-                    "spot_vol_usd": s["vol_usd"], "suspended": bool(t.get("suspended")),
+                    "ts": ts,
+                    "perp_mid": pm,
+                    "perp_half_spread": (pa - pb) / 2 / pm,
+                    "spot_mid": sm,
+                    "spot_half_spread": (s["ask"] - s["bid"]) / 2 / sm,
+                    "mark": mark,
+                    "perp_vol_quote": _f(t.get("volumeQuote")),
+                    "spot_vol_usd": s["vol_usd"],
+                    "suspended": bool(t.get("suspended")),
                 }
+                first_rows.setdefault((day, asset), row)  # valuation: first valid pair of the day (F8)
                 if in_exec:
                     group[asset] = row
                     exec_rows.setdefault((day, asset), row)
@@ -319,24 +344,41 @@ def load_forward_daily(
             aq[(day, a)] = dq.day_asset_checks(valid_min[a])
         times.sort()
         gap = max((b - a for a, b in zip(times, times[1:], strict=False)), default=None)
-        quality.append({"day": day, "fut_ok": len(times), "pairs": pairs, "pairs_valid": pairs_valid,
-                        "max_gap_s": gap / NS if gap is not None else None})
+        quality.append(
+            {
+                "day": day,
+                "fut_ok": len(times),
+                "pairs": pairs,
+                "pairs_valid": pairs_valid,
+                "max_gap_s": gap / NS if gap is not None else None,
+            }
+        )
         day += DAY
     daily = {
-        k: {"basis_median": median(v["basis"]) if v["basis"] else float("nan"), "basis_n": len(v["basis"]),
+        k: {
+            "basis_median": median(v["basis"]) if v["basis"] else float("nan"),
+            "basis_n": len(v["basis"]),
             "mark_max": max(v["mark"]) if v["mark"] else float("nan"),
             "mark_min": min(v["mark"]) if v["mark"] else float("nan"),
             "mark_last": v["mark_last"][1] if "mark_last" in v else float("nan"),
             "perp_max": max(v["perp"]) if v["perp"] else float("nan"),
             "perp_min": min(v["perp"]) if v["perp"] else float("nan"),
-            "spot_min": min(v["spot"]) if v["spot"] else float("nan")}
+            "spot_min": min(v["spot"]) if v["spot"] else float("nan"),
+            "mark_max_after": max(v["mark_after"]) if v["mark_after"] else float("nan"),
+            "mark_min_after": min(v["mark_after"]) if v["mark_after"] else float("nan"),
+            "spot_min_after": min(v["spot_after"]) if v["spot_after"] else float("nan"),
+        }
         for k, v in day_acc.items()
     }
     return ForwardDaily(
-        exec=_frame(exec_rows), daily=_frame(daily),
+        exec=_frame(exec_rows),
+        daily=_frame(daily),
         quality=pd.DataFrame(quality).set_index("day") if quality else pd.DataFrame(),
         listing=load_forward_listing(root, assets, until),
-        asset_quality=_frame(aq), exec_pairs=exec_pairs,
+        asset_quality=_frame(aq),
+        exec_pairs=exec_pairs,
+        first=_frame(first_rows),
+        early=early,
     )
 
 

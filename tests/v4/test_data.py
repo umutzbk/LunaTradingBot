@@ -318,3 +318,21 @@ def test_funding_first_seen_from_hourly_fut_funding_only(tmp_path: Path):
     )
     seen = d.funding_first_seen(tmp_path, ["BTC"], until=t + pd.Timedelta("1D"))
     assert seen["BTC"] == {t.value: (t + pd.Timedelta("1h5min")).value}
+
+
+def test_forward_daily_first_valid_snapshot_and_post_execution_extremes(tmp_path: Path):
+    write_meta(tmp_path)
+    day = pd.Timestamp("2026-10-12T00:00Z")
+    _pair(
+        tmp_path, day + pd.Timedelta("1min"), 1, _fut(300, 302, 900), _spot(99, 101), skew_ms=2500
+    )  # invalid
+    _pair(tmp_path, day + pd.Timedelta("2min"), 2, _fut(100, 102, 101), _spot(99, 101))  # execution
+    _pair(tmp_path, day + pd.Timedelta("5min"), 3, _fut(100, 102, 150), _spot(99, 101))  # early, after exec
+    _pair(tmp_path, day + pd.Timedelta("40min"), 4, _fut(100, 102, 120), _spot(80, 82))
+    nxt = day + pd.Timedelta("1D")
+    _pair(tmp_path, nxt + pd.Timedelta("20min"), 5, _fut(110, 112, 111), _spot(109, 111))  # only after 15 min
+    fd = d.load_forward_daily(tmp_path, ["BTC"], since=day, until=nxt + pd.Timedelta("1D"))
+    assert fd.first.loc[(nxt, "BTC"), "perp_mid"] == 111 and (nxt, "BTC") not in fd.exec.index
+    row = fd.daily.loc[(day, "BTC")]
+    assert row["mark_max_after"] == 120 and row["spot_min_after"] == 81
+    assert [m for _, m, _ in fd.early[(day, "BTC")]] == [900, 101, 150]

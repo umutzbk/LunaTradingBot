@@ -8,10 +8,11 @@ Mark (margin ratio and liquidation only, never funding): margin at t uses the cl
 open_ts = t - 15m (trade close if missing, counted); liquidation extremes = mark 15m highs (short perp
 legs) / lows (long perp legs) of the bars after the execution bar (trade bars when no mark data).
 
-Forward: decisions at 00:00 execute at the first skew-valid paired snapshot within 15 minutes (the
+Forward: decisions at 00:00 execute at the first DQ-valid paired snapshot within 15 minutes (the
 ``ForwardDaily.exec`` row); the real bid / ask gives the half spread; an order larger than the top of
-book is walked through the nearest earlier depth snapshot. Valuation of day d = the next day's execution
-snapshot. A day with no valid snapshot at all on d + 1 is an outage (E_d = E_{d-1}).
+book is walked through the nearest earlier depth snapshot. Valuation of day d = the first valid pair of
+d + 1 (any time that day); liquidation extremes use only snapshots after the execution. A day with
+no valid snapshot at all on d + 1 is an outage (E_d = E_{d-1}).
 """
 
 from __future__ import annotations
@@ -201,22 +202,35 @@ class ForwardMarket:
         return Quote(mid, half, ts)
 
     def value(self, asset: str, leg: str, day: pd.Timestamp) -> float | None:
-        r = self._exec(day + DAY, asset)
-        return float(r[f"{leg}_mid"]) if r is not None else None
+        """E_d at the first valid pair after d + 1 00:00, whenever it comes that day (F8)."""
+        key = (day + DAY, asset)
+        first = self.fd.first
+        if not len(first) or key not in first.index:
+            return None
+        return float(first.loc[key, f"{leg}_mid"])
 
     def extremes(self, asset: str, day: pd.Timestamp) -> dict[str, float | None]:
         key = (day, asset)
         if not len(self.fd.daily) or key not in self.fd.daily.index:
             return {"perp_high": None, "perp_low": None, "spot_low": None, "spot_high": None}
         r = self.fd.daily.loc[key]
+        ex = self._exec(day, asset)
+        after = pd.Timestamp(ex["ts"]) if ex is not None else day  # only snapshots after execution (F8)
+        early = [x for x in (self.fd.early or {}).get(key, []) if x[0] > after]
+        marks = [m for _, m, _ in early if m is not None]
+        spots = [sp for _, _, sp in early if sp is not None]
 
         def f(x):
             return float(x) if x is not None and np.isfinite(x) else None
 
+        def ext(fn, base, extra):
+            vals = [v for v in [f(base), *extra] if v is not None]
+            return fn(vals) if vals else None
+
         return {
-            "perp_high": f(r["mark_max"]),
-            "perp_low": f(r["mark_min"]),
-            "spot_low": f(r["spot_min"]),
+            "perp_high": ext(max, r.get("mark_max_after"), marks),
+            "perp_low": ext(min, r.get("mark_min_after"), marks),
+            "spot_low": ext(min, r.get("spot_min_after"), spots),
             "spot_high": None,
         }
 

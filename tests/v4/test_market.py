@@ -124,10 +124,13 @@ def _fd():
             "perp_max": [130.0, 103.0],
             "perp_min": [90.0, 101.0],
             "spot_min": [95.0, 100.0],
+            "mark_max_after": [130.0, 103.0],
+            "mark_min_after": [90.0, 101.0],
+            "spot_min_after": [95.0, 100.0],
         },
         index=idx,
     )
-    return ForwardDaily(exec=ex, daily=daily, quality=pd.DataFrame())
+    return ForwardDaily(exec=ex, daily=daily, quality=pd.DataFrame(), first=ex.copy())
 
 
 def test_forward_mark_is_the_last_mark_before_t():
@@ -239,3 +242,29 @@ def test_hist_valuation_fallback_is_counted_as_stale():
     m3.value("A", "spot", D)
     m3.value("A", "spot", D)  # memoised: counted once per (asset, leg, day)
     assert m3.counters["valuation_stale"] == 1
+
+
+def test_forward_valuation_is_the_first_valid_snapshot_of_the_next_day_even_after_15_minutes():
+    fd = _fd()
+    nxt = D + pd.Timedelta("1D")
+    fd.exec = fd.exec.drop((nxt, "A"))  # no valid pair within 15 minutes on d + 1
+    first = fd.first.copy()
+    first.loc[(nxt, "A"), ["ts", "perp_mid", "spot_mid"]] = [nxt + pd.Timedelta("40min"), 104.0, 103.0]
+    fd.first = first
+    m = mk.ForwardMarket(fd, {})
+    assert m.value("A", "perp", D) == 104.0 and m.value("A", "spot", D) == 103.0
+    assert m.quote("A", "perp", nxt) is None
+
+
+def test_forward_extremes_only_after_the_execution_snapshot():
+    fd = _fd()
+    fd.daily.loc[(D, "A"), ["mark_max_after", "mark_min_after", "spot_min_after"]] = [120.0, 95.0, 97.0]
+    exec_ts = fd.exec.loc[(D, "A"), "ts"]
+    fd.early = {
+        (D, "A"): [
+            (exec_ts - pd.Timedelta("5s"), 500.0, 1.0),  # before execution: ignored
+            (exec_ts + pd.Timedelta("30s"), 125.0, 96.0),
+        ]
+    }
+    e = mk.ForwardMarket(fd, {}).extremes("A", D)
+    assert e == {"perp_high": 125.0, "perp_low": 95.0, "spot_low": 96.0, "spot_high": None}
