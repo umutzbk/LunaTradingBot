@@ -1,0 +1,277 @@
+"""Paper engine: persistence, restart idempotence, reconciliation, lock, loop cadence."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
+import pytest
+from sqlalchemy import func, select
+
+from luna.carry import store as cstore
+from luna.carry.engine import CarryEngine, EngineLocked
+from luna.carry.funding import FundingStore
+from luna.carry.market import MarketSnapshot, parse_tickers
+from luna.config import CostConfig
+from luna.execution.costs import CostModel
+from luna.execution.paper import PaperBroker
+from luna.store import models as m
+from luna.store.db import Db
+from tests.carry.helpers import (
+    T0,
+    carry_config,
+    flat_history,
+    funding_envelope,
+    instrument,
+    ticker,
+    tickers_envelope,
+)
+
+FL = {"A": 5e-5, "B": 4e-5, "C": 1e-5, "D": 0.0, "E": -1e-5, "F": -3e-5}
+MIN = pd.Timedelta("1min")
+
+
+class FakeSource:
+    def __init__(self, fl=FL) -> None:
+        self.fl = dict(fl)
+        self.mids = {a: 100.0 for a in fl}
+        self.snap_ts: pd.Timestamp | None = None
+
+    def set(self, ts: pd.Timestamp, **mids: float) -> None:
+        self.snap_ts = ts
+        self.mids.update(mids)
+
+    def latest_tickers(self, now: pd.Timestamp) -> MarketSnapshot | None:
+        ts = self.snap_ts or now
+        return parse_tickers(tickers_envelope(ts, [ticker(a, self.mids[a], 2.0) for a in self.fl]))
+
+    def has_new_tickers(self, now, last_ts) -> bool:
+        ts = self.snap_ts or now
+        return last_ts is None or ts > last_ts
+
+    def _fill(self, store: FundingStore, now: pd.Timestamp) -> int:
+        n = 0
+        for a, r in self.fl.items():
+            n += store.merge_envelope(funding_envelope(a, flat_history(r, now.floor("h"))))
+        return n
+
+    def refresh_funding(self, store: FundingStore, now: pd.Timestamp) -> int:
+        return self._fill(store, now)
+
+    def bootstrap_funding(self, store: FundingStore, now: pd.Timestamp, keep_hours: int) -> int:
+        return self._fill(store, now)
+
+    def latest_books(self, now: pd.Timestamp) -> dict:
+        return {}
+
+
+class FakeBook:
+    """PaperBroker feed: a deep two-sided book around the source's mid (1 bp half spread)."""
+
+    def __init__(self, source: FakeSource) -> None:
+        self.source = source
+
+    def book(self, asset: str):
+        mid = self.source.mids[asset]
+        return [(mid * (1 - 1e-4), 1e6)], [(mid * (1 + 1e-4), 1e6)]
+
+
+class Clock:
+    def __init__(self, t: pd.Timestamp) -> None:
+        self.t = t
+
+    def __call__(self) -> pd.Timestamp:
+        return self.t
+
+
+def make_engine(
+    path: Path, source: FakeSource, clock: Clock, owner: str = "test-1", **cfg_over
+) -> CarryEngine:
+    cfg = carry_config(universe=sorted(source.fl), **cfg_over)
+    db = Db(f"sqlite:///{(path / 'luna_carry.db').as_posix()}")
+    costs = CostModel(
+        CostConfig(maker_fee=0.0002, taker_fee=0.0005, half_spread_bps={"default": 1.0}, slippage_bps=2.0)
+    )
+    broker = PaperBroker("perp", costs, FakeBook(source), db, cfg.account, band=cfg.risk.max_price_band)
+    return CarryEngine(
+        cfg,
+        source,
+        broker,
+        db,
+        {a: instrument(a) for a in source.fl},
+        0.0005,
+        clock=clock,
+        sleep=lambda s: None,
+        owner=owner,
+    )
+
+
+def count(db: Db, table) -> int:
+    with db.engine.connect() as c:
+        return int(c.execute(select(func.count()).select_from(table)).scalar() or 0)
+
+
+def test_first_cycle_opens_the_book_and_persists_everything(tmp_path: Path) -> None:
+    src, clock = FakeSource(), Clock(T0)
+    e = make_engine(tmp_path, src, clock)
+    e.start()
+    res = e.cycle(T0)
+    assert {p.key: p.direction for p in e.core.portfolio.positions.values()} == {
+        "A": -1,
+        "B": -1,
+        "E": 1,
+        "F": 1,
+    }
+    assert {(p.key, p.direction) for p in e.db.open_positions("carry")} == {
+        ("A", -1),
+        ("B", -1),
+        ("E", 1),
+        ("F", 1),
+    }
+    assert count(e.db, m.fills) == 4 and count(e.db, m.orders) == 4
+    assert count(e.db, cstore.evaluations) == 1
+    with e.db.engine.connect() as c:
+        rows = c.execute(select(cstore.decisions)).mappings().all()
+    enters = [r for r in rows if r["decision"] == "ENTER"]
+    assert len(enters) == 2 and all(r["expected_carry"] > 0 and r["switch_cost"] > 0 for r in enters)
+    assert res is not None and res.equity < 265.0  # fees and spread paid
+    e.close()
+
+
+def test_restart_reloads_without_duplicate_orders_or_churn(tmp_path: Path) -> None:
+    src, clock = FakeSource(), Clock(T0)
+    e1 = make_engine(tmp_path, src, clock)
+    e1.start()
+    e1.cycle(T0)
+    ids = sorted(e1.core.portfolio.positions)
+    e1.close()
+    orders, fills = count(e1.db, m.orders), count(e1.db, m.fills)
+
+    clock.t = T0 + 3 * MIN
+    src.set(T0 + 3 * MIN)
+    e2 = make_engine(tmp_path, src, clock, owner="test-2")
+    e2.start()
+    assert sorted(e2.core.portfolio.positions) == ids  # same legs, same entry times
+    e2.cycle(T0 + 3 * MIN)
+    assert count(e2.db, m.orders) == orders and count(e2.db, m.fills) == fills
+    assert not e2.core.risk_state.paused
+    e2.close()
+
+
+def test_fill_recorded_before_a_crash_is_booked_exactly_once(tmp_path: Path) -> None:
+    src, clock = FakeSource(), Clock(T0)
+    e1 = make_engine(tmp_path, src, clock)
+    e1.start()
+
+    real_submit = e1.broker.submit
+    calls = {"n": 0}
+
+    def crash_after_second(order, ref_mid=None):
+        real_submit(order, ref_mid=ref_mid)
+        calls["n"] += 1
+        if calls["n"] == 2:  # the broker recorded the fill; the process dies before booking it
+            raise KeyboardInterrupt
+
+    e1.broker.submit = crash_after_second
+    with pytest.raises(KeyboardInterrupt):
+        e1.cycle(T0)
+    e1.close()
+
+    e2 = make_engine(tmp_path, src, clock, owner="test-2")
+    e2.start()
+    held = {p.key: p.qty[p.key] for p in e2.core.portfolio.positions.values()}
+    assert len(held) == 2  # the two filled legs of the first pair, booked once
+    assert sum(abs(q) for q in held.values()) == pytest.approx(2 * 0.6625, rel=1e-3)
+    assert not e2.core.risk_state.paused  # holdings == positions == fills
+    e2.cycle(T0 + MIN)
+    assert len(e2.core.portfolio.positions) == 4  # the rest of the book follows, no duplicates
+    assert count(e2.db, m.fills) == 4
+    e2.close()
+
+
+def test_second_engine_cannot_take_the_lock(tmp_path: Path) -> None:
+    src, clock = FakeSource(), Clock(T0)
+    e1 = make_engine(tmp_path, src, clock)
+    e1.start()
+    e2 = make_engine(tmp_path, src, clock, owner="other")
+    with pytest.raises(EngineLocked):
+        e2.start()
+    e1.close()
+
+
+def test_reconciliation_mismatch_pauses_entries(tmp_path: Path) -> None:
+    src, clock = FakeSource(), Clock(T0)
+    e1 = make_engine(tmp_path, src, clock)
+    e1.start()
+    e1.cycle(T0)
+    e1.close()
+    st = e1.db.get_state("carry", "carry_core")
+    st["holdings"]["A"] = st["holdings"]["A"] * 2  # tampered account state
+    e1.db.save_snapshot("carry", {"carry_core": st}, [])
+    e2 = make_engine(tmp_path, src, clock, owner="test-2")
+    e2.start()
+    assert e2.core.risk_state.paused and e2.db.get_state("carry", "paused") is True
+    e2.close()
+
+
+def test_external_kill_flag_flattens_the_book(tmp_path: Path) -> None:
+    src, clock = FakeSource(), Clock(T0)
+    e = make_engine(tmp_path, src, clock)
+    e.start()
+    e.cycle(T0)
+    e.db.set_flag("carry", "kill_switch", True)
+    src.set(T0 + MIN)
+    e.cycle(T0 + MIN)
+    assert e.core.portfolio.positions == {}
+    assert {p.key for p in e.db.open_positions("carry")} == set()
+    e.close()
+
+
+def test_loop_evaluates_on_new_snapshots_and_at_least_every_max_interval(tmp_path: Path) -> None:
+    src, clock = FakeSource(), Clock(T0)
+    e = make_engine(tmp_path, src, clock, evaluation__poll_s=5, evaluation__max_interval_s=60)
+    e.start()
+    src.set(T0)
+    seen: list[pd.Timestamp] = []
+    real = e.cycle
+
+    def spy(now):
+        seen.append(now)
+        return real(now)
+
+    e.cycle = spy
+    ticks = iter(range(0, 200, 5))
+
+    def sleep(_s: float) -> None:
+        try:
+            clock.t = T0 + pd.Timedelta(seconds=next(ticks))
+        except StopIteration:
+            e.stop()
+        if clock.t == T0 + pd.Timedelta(seconds=30):
+            src.set(T0 + pd.Timedelta(seconds=30))  # a new collector snapshot
+
+    e.sleep = sleep
+    e.run_forever()
+    secs = [(t - T0).total_seconds() for t in seen]
+    assert secs[:3] == [0.0, 30.0, 90.0]  # start, new snapshot at :30, then the 60 s floor
+    e.close()
+
+
+def test_evaluation_rows_carry_the_dashboard_fields(tmp_path: Path) -> None:
+    src, clock = FakeSource(), Clock(T0)
+    e = make_engine(tmp_path, src, clock)
+    e.start()
+    e.cycle(T0)
+    src.set(T0 + MIN)
+    e.cycle(T0 + MIN)
+    with e.db.engine.connect() as c:
+        ev = c.execute(select(cstore.evaluations).order_by(cstore.evaluations.c.id.desc())).mappings().first()
+    import json
+
+    sig = {r["asset"]: r for r in json.loads(ev["signals"])}
+    assert sig["A"]["rank"] == 1 and sig["F"]["rank"] == 6 and sig["A"]["fl"] == pytest.approx(5e-5)
+    hold = json.loads(ev["holdings"])
+    assert {h["asset"] for h in hold} == {"A", "B", "E", "F"}
+    assert json.loads(ev["ideal"]) == {"long": ["F", "E"], "short": ["A", "B"]}
+    assert ev["summary"] == "HOLD" and ev["book_carry_h"] > 0
+    e.close()

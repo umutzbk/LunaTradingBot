@@ -150,9 +150,62 @@ def _forward() -> None:
     _table(pd.DataFrame(v["days"]))
 
 
+def _carry(limit: int) -> None:
+    """V5 adaptive funding carry (paper): the book, why it holds or switches, signals, P&L."""
+    from luna.carry import views as cv
+    from luna.carry.config import load_carry_config
+
+    try:
+        cfg = load_carry_config()
+    except Exception as e:  # noqa: BLE001
+        st.error(f"No valid carry config ({type(e).__name__}): {e}")
+        return
+    eng = q.open_readonly(VAR_DIR, cfg.account)
+    if eng is None:
+        st.info(f"No database {q.db_file(VAR_DIR, cfg.account)} yet (bot-carry has not run).")
+        return
+    try:
+        ev = cv.latest_evaluation(eng, cfg.account)
+        pnl = cv.pnl_summary(eng, cfg.account, cfg.capital_usd)
+        if ev is None:
+            st.info(NO_DATA)
+            return
+        age = ev.get("snapshot_age_s")
+        st.caption(f"Last evaluation {ev['ts']} - collector snapshot age {_num(age, '.0f')} s - "
+                   f"rebalance allowed: {bool(ev['allow_rebalance'])} - entries allowed: "
+                   f"{bool(ev['opens_allowed'])} - eligible assets: {ev['n_eligible']} - "
+                   f"expected book carry {_num(ev.get('book_carry_h'), '.4f')} USD/h. "
+                   f"Decision: {ev['summary']}")
+        if pnl is not None:
+            c = st.columns(6)
+            c[0].metric("Equity", _num(pnl["equity"], ",.2f"))
+            c[1].metric("Net P&L", _num(pnl["net"], ",.2f"))
+            c[2].metric("Funding P&L", _num(pnl["funding"], ",.2f"))
+            c[3].metric("Price P&L", _num(pnl["price"], ",.2f"))
+            c[4].metric("Costs (fees + spread)", _num(pnl["fees"] + pnl["spread_slip"], ",.2f"))
+            c[5].metric("Turnover", _num(pnl["turnover"], ",.0f"), help=f"{pnl['fills']} fills")
+        st.subheader("Current book")
+        _table(cv.book_table(eng, cfg.account, ev))
+        st.subheader("Latest evaluation: every alternative weighed (USD over the switch horizon)")
+        st.caption("value = incremental carry - switch_cost_multiplier x switch cost - safety buffer; "
+                   "a trade needs value > 0 (forced exits: value empty).")
+        _table(cv.alternatives(eng, cfg.account, ev["id"]))
+        st.subheader("Universe: FL30 rank and funding (annualized)")
+        _table(cv.signals_table(ev))
+        st.subheader("Decision log (ENTER / EXIT / SWITCH / REJECT)")
+        _table(cv.decision_log(eng, cfg.account, limit))
+        curve = cv.equity_curve(eng, cfg.account)
+        if not curve.empty:
+            st.line_chart(curve.set_index("ts")["equity"])
+    finally:
+        eng.dispose()
+
+
 def _page(page: str, account: str, limit: int) -> None:
     v = str(VAR_DIR)
-    if page == "Forward data":
+    if page == "Adaptive Carry":
+        _carry(limit)
+    elif page == "Forward data":
         _forward()
     elif page == "Overview":
         _overview(account)
@@ -181,7 +234,8 @@ def main() -> None:
     st.sidebar.title("Luna")
     account = st.sidebar.selectbox("Account", _accounts(str(VAR_DIR)))
     page = st.sidebar.radio(
-        "Page", ["Overview", "Positions", "Scanner", "Risk", "Research", "Dataset", "Forward data"]
+        "Page", ["Overview", "Positions", "Scanner", "Risk", "Research", "Dataset", "Forward data",
+                 "Adaptive Carry"]
     )
     limit = st.sidebar.number_input("Rows", 20, 2000, 200, step=20)
     if st.sidebar.button("Refresh"):
@@ -189,7 +243,7 @@ def main() -> None:
         st.rerun()
     st.title(f"{page} - {account}")
     path = q.db_file(VAR_DIR, account)
-    if page not in ("Research", "Forward data") and not path.exists():
+    if page not in ("Research", "Forward data", "Adaptive Carry") and not path.exists():
         st.warning(f"No database at {path} yet. {NO_DATA}")
     try:
         _page(page, account, int(limit))

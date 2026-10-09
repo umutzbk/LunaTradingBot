@@ -317,3 +317,27 @@ append-only olarak `var/forward/` altına yazar; sinyal, getiri, basis veya fiya
   doğrulanarak kopyalanır. Başarısızsa saatte bir yeniden denenir. Hedef yoksa/erişilemiyorsa collection **durmaz**,
   `backup_ok=false` olur; gün kapanışından 36 saat sonra hâlâ makbuz yoksa ayrıca uyarı verilir. Ayar değişince:
   `docker compose up -d collector` (konteyner yeniden yaratılır).
+
+## 14. V5 Adaptive Funding Carry (`bot-carry` servisi)
+
+Tasarım: `docs/superpowers/specs/luna-v5-adaptive-carry.md`. **Yalnızca paper** (`carry.risk.live_enabled: false`,
+PaperBroker). Sürekli çalışan, olay güdümlü servis: collector'ın `var/forward/raw` dosyalarını salt okunur okur (yeni
+`fut_tickers` snapshot'ı geldikçe ya da en geç 60 sn'de bir değerlendirir), kendi veritabanı `var/luna_carry.db`
+(tek yazar). Cron / Task Scheduler ile tetiklenmez. Frozen V4 deneyinden bağımsızdır.
+
+- **Başlatma:** `docker compose up -d --build bot-carry` (collector çalışıyor olmalı). Docker'sız:
+  `uv run luna carry` (tek değerlendirme: `uv run luna carry --once`). Loglar: `docker compose logs -f bot-carry`.
+  Aynı hesap için ikinci süreç lock yüzünden exit 1 alır; art arda 10 değerlendirme hatası exit 3 → Docker yeniden başlatır.
+- **Health:** `docker compose exec bot-carry uv run luna carry-health`. Exit 0: son değerlendirme < 5 dk önce ve
+  < 10 dk yaşında bir collector snapshot'ıyla yapılmış. Collector durursa bot emir göndermez ve health düşer.
+- **Dashboard:** sol menüden **Adaptive Carry**: P&L ayrışımı (funding, fiyat, ücret + spread, net, turnover), mevcut
+  long/short bacaklar, son değerlendirmede tartılan her alternatif ve neden HOLD/SWITCH olduğu (USD, switch horizon
+  boyunca), FL30 sıralı evren ve funding oranları, karar günlüğü, equity eğrisi.
+- **Kill / pause:** paylaşılan bayraklar: `luna_carry.db` `state` tablosunda `kill_switch` / `paused` (bot her
+  değerlendirmede okur). Kill → bütün bacaklar kapatılır, yeni giriş yok. R4 drawdown ve R18 uyuşmazlığı bu
+  bayrakları botun kendisi de kaldırır.
+- **Restart:** state her emirden önce ve her değerlendirmeden sonra kaydedilir. Yeniden başlatmada kayıtlı ama
+  işlenmemiş fill'ler tam bir kez işlenir, açık kalan emirler iptal edilir, holdings = bacaklar = fill'lerin neti
+  kontrol edilir (uyuşmazlık → `paused` + risk olayı). Mevcut bacaklar kapatılıp yeniden açılmaz.
+- **Parametreler:** `config/default.yaml` → `carry:` (env: `LUNA_CARRY__<ALAN>`). Başlangıç değerleridir, hiçbir
+  backtest sonucuna göre ayarlanmadı. Değişiklik → `docker compose up -d bot-carry`.

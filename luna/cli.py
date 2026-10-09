@@ -469,6 +469,125 @@ def collector_health(
         raise typer.Exit(code)
 
 
+@app.command()
+def carry(
+    once: Annotated[bool, typer.Option(help="Run one evaluation, print the book, then exit")] = False,
+) -> None:
+    """Run the V5 adaptive funding-carry paper bot forever (luna/carry; docker service bot-carry).
+    Reads the collector's var/forward raw files read-only, trades only on paper (PaperBroker IOC
+    against the live public book), state in var/luna_<carry.account>.db. Exit 1 if another process
+    holds the account lock or the config is invalid; exit 3 after repeated evaluation failures."""
+    import signal
+
+    from luna.carry.config import load_carry_config
+    from luna.carry.engine import CarryEngine, EngineLocked
+    from luna.carry.source import CollectorSource
+    from luna.config import load_settings
+    from luna.data.store import BarStore
+    from luna.engine.feeds import KrakenFuturesLiveFeed
+    from luna.execution.costs import CostModel
+    from luna.execution.paper import PaperBroker
+    from luna.http import make_client
+    from luna.instruments import load_instruments
+    from luna.store.db import Db, default_url
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    settings = load_settings()
+    try:
+        cfg = load_carry_config(settings)
+    except ValueError as e:
+        typer.echo(f"carry: invalid config: {e}", err=True)
+        raise typer.Exit(1) from e
+    instruments = load_instruments(settings, "perp")
+    missing = [a for a in cfg.universe if a not in instruments]
+    if missing:
+        typer.echo(f"carry: no perp instrument for {missing} (var/instruments/perp.json)", err=True)
+        raise typer.Exit(1)
+    client = make_client()
+    feed = KrakenFuturesLiveFeed(list(cfg.universe), BarStore(settings.var_dir), client)  # book() only
+    database = Db(default_url(settings.var_dir, cfg.account))
+    costs = settings.costs["perp"]
+    broker = PaperBroker("perp", CostModel(costs), feed, database, cfg.account, band=cfg.risk.max_price_band)
+    engine = CarryEngine(cfg, CollectorSource(Path(settings.var_dir) / "forward"), broker, database,
+                         {a: instruments[a] for a in cfg.universe}, costs.taker_fee)
+    try:
+        engine.start()
+    except EngineLocked as e:
+        typer.echo(f"carry: {e}", err=True)
+        database.close()
+        client.close()
+        raise typer.Exit(1) from e
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: engine.stop())
+    try:
+        if once:
+            import pandas as pd
+
+            res = engine.cycle(pd.Timestamp.now(tz="UTC"))
+            if res is not None:
+                n_elig = sum(s.eligible for s in res.signals.values())
+                typer.echo(f"equity {res.equity:.2f}; eligible {n_elig}; orders {len(res.orders)}")
+            for p in engine.core.portfolio.positions.values():
+                side = "LONG" if p.direction > 0 else "SHORT"
+                typer.echo(f"  {p.key:6s} {side:5s} qty {p.qty[p.key]:.6g}")
+        else:
+            engine.run_forever()
+    finally:
+        engine.close()
+        database.close()
+        client.close()
+    if engine.exit_code:
+        typer.echo(f"carry: exiting with code {engine.exit_code} ({engine.exit_reason})", err=True)
+        raise typer.Exit(engine.exit_code)
+
+
+@app.command("carry-health")
+def carry_health(
+    max_age_min: Annotated[float, typer.Option(help="Max age of the latest evaluation, minutes")] = 5,
+    max_snapshot_min: Annotated[float, typer.Option(help="Max collector snapshot age at it, minutes")] = 10,
+) -> None:
+    """Carry bot liveness probe (Docker healthcheck), read-only: exit 0 iff the latest evaluation is
+    younger than --max-age-min and was made on a collector snapshot younger than --max-snapshot-min."""
+    import sqlite3
+
+    import pandas as pd
+
+    from luna.carry.config import load_carry_config
+    from luna.config import load_settings
+    from luna.store.db import db_path
+    from luna.store.models import ts_from_str
+
+    settings = load_settings()
+    account = load_carry_config(settings).account
+    db = db_path(settings.var_dir, account)
+    if not db.is_file():
+        typer.echo(f"carry-health: database missing ({db})")
+        raise typer.Exit(1)
+    try:
+        conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True, timeout=10)
+        try:
+            row = conn.execute("SELECT ts, snapshot_age_s FROM carry_evaluations WHERE account = ? "
+                               "ORDER BY id DESC LIMIT 1", (account,)).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        typer.echo(f"carry-health: database error ({e})")
+        raise typer.Exit(1) from e
+    if row is None:
+        typer.echo("carry-health: no evaluation yet")
+        raise typer.Exit(1)
+    age = (pd.Timestamp.now(tz="UTC") - ts_from_str(row[0])).total_seconds() / 60
+    snap = None if row[1] is None else row[1] / 60
+    if age >= max_age_min:
+        typer.echo(f"carry-health: stale, last evaluation {row[0]} ({age:.1f} min old)")
+        raise typer.Exit(1)
+    if snap is None or snap >= max_snapshot_min:
+        typer.echo(f"carry-health: collector data stale at the last evaluation ({snap} min)")
+        raise typer.Exit(1)
+    typer.echo(f"carry-health: ok, last evaluation {row[0]} ({age:.1f} min old, snapshot {snap:.1f} min)")
+
+
 @app.command("forward-dq")
 def forward_dq_cmd(
     since: Annotated[datetime | None, typer.Option(help="UTC start (default collector_start_ts)")] = None,
