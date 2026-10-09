@@ -316,31 +316,31 @@ def research_v2(
 @app.command("research-v4")
 def research_v4(
     stage: Annotated[int, typer.Option(min=1, max=2, help="1 = historical (exploratory), 2 = forward look")],
-    out: Annotated[Path, typer.Option(help="Report directory")],
-    prior_go: Annotated[
-        str | None, typer.Option(help="Stage 2: comma-separated configs already GO at an earlier look")
-    ] = None,
-    killed: Annotated[
-        str | None, typer.Option(help="Stage 2: comma-separated configs KILLed in Stage 1 (p = 1 in Holm)")
+    out: Annotated[
+        Path | None, typer.Option(help="Report directory (default var/reports/research_v4_stage<n>_<ts>)")
     ] = None,
 ) -> None:
     """Research V4 (funding / basis carry). Refuses (exit 2) unless git tag research-v4-spec-frozen
-    exists, is an ancestor of HEAD and the work tree is clean; Stage 2 also refuses before
-    D0 + 182 days. Writes manifest.json, summary.json and report.md to --out."""
+    exists, is an ancestor of HEAD, the work tree is clean and the spec equals its frozen version;
+    Stage 2 also refuses before D0 + 182 days and takes its KILLed / prior-GO configs only from the
+    committed summaries under docs/results/. Writes manifest.json, summary.json and report.md."""
     import pandas as pd
 
     from luna.config import load_settings
     from luna.v4 import runner as rn
 
     now = pd.Timestamp.now(tz="UTC")
+    out = out if out is not None else rn.default_out_dir(load_settings().var_dir, stage, now)
     try:
         rn.check_freeze(rn.REPO_ROOT)
+        rn.check_out_dir(out, rn.REPO_ROOT)
+        fam = {"killed": (), "prior_go": (), "provenance": {}}
         if stage == 2:
             rn.check_stage2_time(now)
+            fam = rn.stage2_families(rn.REPO_ROOT, rn.current_look(now)[0])
         inputs = rn.load_stage_inputs(stage, load_settings().var_dir, now)
-        prior = tuple(c.strip() for c in prior_go.split(",") if c.strip()) if prior_go else ()
-        dead = tuple(c.strip() for c in killed.split(",") if c.strip()) if killed else ()
-        summary = rn.run_stage(inputs, out, prior_go=prior, killed=dead, now=now)
+        summary = rn.run_stage(inputs, out, prior_go=fam["prior_go"], killed=fam["killed"],
+                               provenance=fam["provenance"], now=now)
     except rn.RefuseRun as e:
         typer.echo(f"research-v4 refused: {e}")
         raise typer.Exit(2) from e

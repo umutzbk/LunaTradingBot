@@ -111,6 +111,76 @@ def check_freeze(repo: Path | None = None) -> dict[str, str]:
     return {"tag_sha": tag.strip(), "head_sha": head.strip()}
 
 
+STAGE1_SUMMARY = Path("docs") / "results" / "v4-stage1" / "summary.json"
+
+
+def look_summary_path(look: int) -> Path:
+    return Path("docs") / "results" / "v4-stage2" / f"look{look}" / "summary.json"
+
+
+def _committed_json(repo: Path, rel: Path, what: str) -> tuple[dict, str]:
+    path = Path(repo) / rel
+    if not path.exists():
+        raise RefuseRun(f"{what} {rel.as_posix()} is missing")
+    rc, _ = _git_rc(Path(repo), "ls-files", "--error-unmatch", rel.as_posix())
+    rc_diff, diff = _git_rc(Path(repo), "diff", "HEAD", "--", rel.as_posix())
+    if rc != 0 or rc_diff != 0 or diff.strip():
+        raise RefuseRun(f"{what} {rel.as_posix()} must be committed (tracked and unchanged)")
+    raw = path.read_bytes()
+    try:
+        data = json.loads(raw)
+    except ValueError as e:
+        raise RefuseRun(f"{what} {rel.as_posix()} is not valid json") from e
+    return data, hashlib.sha256(raw).hexdigest()
+
+
+def stage2_families(repo: Path, look: int) -> dict:
+    """Stage 2 Holm family inputs from committed files only (review F1): KILLed configs from the Stage 1
+    summary, prior-GO configs from the summaries of earlier looks. Refuses on anything missing or
+    inconsistent; the sha256 of every file read goes to the Stage 2 manifest."""
+    s1, sha1 = _committed_json(repo, STAGE1_SUMMARY, "Stage 1 summary")
+    v1 = {c: (v or {}).get("verdict") for c, v in (s1.get("configs") or {}).items()}
+    if (
+        s1.get("stage") != 1
+        or set(v1) != set(CONFIGS)
+        or any(v not in ("ADVANCE TO FORWARD", "KILL") for v in v1.values())
+    ):
+        raise RefuseRun("Stage 1 summary must list all 7 configs with ADVANCE TO FORWARD / KILL")
+    killed = tuple(c for c in CONFIGS if v1[c] == "KILL")
+    prov = {STAGE1_SUMMARY.as_posix(): sha1}
+    prior: list[str] = []
+    for n in range(1, look):
+        rel = look_summary_path(n)
+        try:
+            sn, sha = _committed_json(repo, rel, f"summary of look {n}")
+        except RefuseRun as e:
+            raise RefuseRun(f"look {n}: {e}") from e
+        vn = {c: (v or {}).get("verdict") for c, v in (sn.get("configs") or {}).items()}
+        expected = {c for c in CONFIGS if c not in killed and c not in prior}
+        if sn.get("stage") != 2 or sn.get("look") != n or set(vn) != expected:
+            raise RefuseRun(f"look {n} summary is inconsistent with Stage 1 KILLs and earlier GO configs")
+        prior.extend(c for c in CONFIGS if vn.get(c) == "GO")
+        prov[rel.as_posix()] = sha
+    return {"killed": killed, "prior_go": tuple(prior), "provenance": prov}
+
+
+def check_out_dir(out: Path, repo: Path | None = None) -> None:
+    """A run must not dirty the repository (the clean-tree guard must hold on reruns)."""
+    repo = Path(repo if repo is not None else REPO_ROOT).resolve()
+    target = Path(out).resolve()
+    try:
+        rel = target.relative_to(repo)
+    except ValueError:
+        return
+    rc, _ = _git_rc(repo, "check-ignore", "-q", "--no-index", rel.as_posix() + "/x")
+    if rc != 0:
+        raise RefuseRun(f"--out {out} is inside the repository and not git-ignored (use var/reports/...)")
+
+
+def default_out_dir(var_dir: Path, stage: int, now: pd.Timestamp) -> Path:
+    return Path(var_dir) / "reports" / f"research_v4_stage{stage}_{now:%Y%m%dT%H%M%S}"
+
+
 def check_stage2_time(now: pd.Timestamp) -> None:
     if now < LOOKS[0]:
         raise RefuseRun(
@@ -388,6 +458,7 @@ def run_stage(
     prior_go: tuple[str, ...] = (),  # noqa: N803
     killed: tuple[str, ...] = (),
     rows: dict[str, CostRow] | None = None,
+    provenance: dict[str, str] | None = None,
     now: pd.Timestamp | None = None,
     repo: Path | None = None,
     _unsafe_skip_freeze_check_for_tests: bool = False,
@@ -513,6 +584,7 @@ def run_stage(
         "instruments_sha256": inp.instruments_sha256,
         "prior_go": list(prior_go),
         "killed": list(killed),
+        "family_sources_sha256": provenance or {},
         "run_at": pd.Timestamp.now(tz="UTC").isoformat(),
     }
     write_json(out_dir / "manifest.json", manifest)

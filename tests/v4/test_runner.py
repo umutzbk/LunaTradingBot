@@ -132,6 +132,8 @@ def test_cli_does_not_expose_the_test_bypass():
         assert word not in out.output.lower()
     assert all("unsafe" not in p for p in inspect.signature(research_v4).parameters)
     assert "_unsafe_skip_freeze_check_for_tests" not in inspect.getsource(research_v4)
+    # Stage 2 families come from committed summaries, never from free-form options (review F1)
+    assert "--killed" not in out.output and "--prior-go" not in out.output
 
 
 # --- synthetic end-to-end -------------------------------------------------------------------------
@@ -341,3 +343,88 @@ def test_m2_is_counted_per_config_from_eligible_and_held_assets():
         window={},
     )
     assert rn.config_dq_days("H1-Y10", stage1, held) == 1
+
+
+# --- Stage 2 families from committed summaries (review F1) -------------------------------------------
+
+
+def _summary(stage, verdicts, look=None):
+    return json.dumps(
+        {"stage": stage, "look": look, "configs": {c: {"verdict": v} for c, v in verdicts.items()}}
+    )
+
+
+S1 = {c: ("KILL" if c in ("H1-Y20", "H2-L30-k2") else "ADVANCE TO FORWARD") for c in CONFIGS}
+
+
+def _commit(repo: Path, rel: Path, text: str) -> None:
+    f = repo / rel
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(text, encoding="utf-8")
+    _git(repo, "add", rel.as_posix())
+    _git(repo, "commit", "-qm", f"add {rel}")
+
+
+def test_stage2_families_come_from_the_committed_stage1_summary(repo: Path):
+    import hashlib
+
+    with pytest.raises(rn.RefuseRun, match="Stage 1 summary"):
+        rn.stage2_families(repo, 1)
+    _commit(repo, rn.STAGE1_SUMMARY, _summary(1, S1))
+    fam = rn.stage2_families(repo, 1)
+    assert fam["killed"] == ("H1-Y20", "H2-L30-k2") and fam["prior_go"] == ()
+    sha = hashlib.sha256((repo / rn.STAGE1_SUMMARY).read_bytes()).hexdigest()
+    assert fam["provenance"] == {rn.STAGE1_SUMMARY.as_posix(): sha}
+
+
+def test_stage2_families_refuse_untracked_or_malformed_summaries(repo: Path):
+    f = repo / rn.STAGE1_SUMMARY
+    f.parent.mkdir(parents=True)
+    f.write_text(_summary(1, S1), encoding="utf-8")  # present but not committed
+    with pytest.raises(rn.RefuseRun, match="committed"):
+        rn.stage2_families(repo, 1)
+    _git(repo, "add", rn.STAGE1_SUMMARY.as_posix())
+    _git(repo, "commit", "-qm", "s1")
+    f.write_text(_summary(1, {**S1, "H1-Y10": "GO"}), encoding="utf-8")
+    _git(repo, "commit", "-qam", "bad")
+    with pytest.raises(rn.RefuseRun, match="ADVANCE"):
+        rn.stage2_families(repo, 1)
+
+
+def test_stage2_prior_go_comes_from_committed_earlier_looks(repo: Path):
+    _commit(repo, rn.STAGE1_SUMMARY, _summary(1, S1))
+    with pytest.raises(rn.RefuseRun, match="look 1"):
+        rn.stage2_families(repo, 2)
+    look1 = {c: ("GO" if c == "H1-Y10" else "NO-GO") for c in CONFIGS if S1[c] != "KILL"}
+    _commit(repo, rn.look_summary_path(1), _summary(2, look1, look=1))
+    fam = rn.stage2_families(repo, 2)
+    assert fam["prior_go"] == ("H1-Y10",) and set(fam["provenance"]) == {
+        rn.STAGE1_SUMMARY.as_posix(),
+        rn.look_summary_path(1).as_posix(),
+    }
+    look2 = {c: "NO-GO" for c in CONFIGS if S1[c] != "KILL"}  # H1-Y10 should have left the family
+    _commit(repo, rn.look_summary_path(2), _summary(2, look2, look=2))
+    with pytest.raises(rn.RefuseRun, match="inconsistent"):
+        rn.stage2_families(repo, 3)
+
+
+def test_stage2_families_refuse_a_killed_config_in_a_look_summary(repo: Path):
+    _commit(repo, rn.STAGE1_SUMMARY, _summary(1, S1))
+    _commit(repo, rn.look_summary_path(1), _summary(2, {c: "NO-GO" for c in CONFIGS}, look=1))
+    with pytest.raises(rn.RefuseRun, match="inconsistent"):
+        rn.stage2_families(repo, 2)
+
+
+def test_output_directory_must_not_dirty_the_repository(repo: Path, tmp_path: Path):
+    (repo / ".gitignore").write_text("var/\n", encoding="utf-8")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-qm", "ignore var")
+    rn.check_out_dir(repo / "var" / "reports" / "x", repo)  # ignored: fine
+    rn.check_out_dir(tmp_path / "elsewhere", repo)  # outside: fine
+    with pytest.raises(rn.RefuseRun, match="ignored"):
+        rn.check_out_dir(repo / "docs" / "run", repo)
+
+
+def test_default_out_dir_is_under_var_reports():
+    out = rn.default_out_dir(Path("var"), 1, pd.Timestamp("2026-10-10T12:00:00Z"))
+    assert out.parts[:2] == ("var", "reports") and "stage1" in out.name
