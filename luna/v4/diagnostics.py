@@ -133,7 +133,8 @@ def basis_stats(basis: dict[str, pd.Series]) -> dict:
             out[a] = {"p05": math.nan, "p50": math.nan, "p95": math.nan, "acf1_daily": math.nan, "n_days": 0}
             continue
         daily = b.groupby(b.index.floor("D")).median()
-        acf = float(daily.autocorr(1)) if len(daily) > 2 else math.nan
+        with np.errstate(invalid="ignore", divide="ignore"):  # constant series -> NaN, no warning
+            acf = float(daily.autocorr(1)) if len(daily) > 2 and daily.std() > 0 else math.nan
         out[a] = {
             "p05": float(b.quantile(0.05)),
             "p50": float(b.quantile(0.5)),

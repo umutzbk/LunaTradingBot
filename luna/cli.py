@@ -270,6 +270,39 @@ def research_v2(
     typer.echo(f"report: {path}")
 
 
+@app.command("research-v4")
+def research_v4(
+    stage: Annotated[int, typer.Option(min=1, max=2, help="1 = historical (exploratory), 2 = forward look")],
+    out: Annotated[Path, typer.Option(help="Report directory")],
+    prior_go: Annotated[
+        str | None, typer.Option(help="Stage 2: comma-separated configs already GO at an earlier look")
+    ] = None,
+) -> None:
+    """Research V4 (funding / basis carry). Refuses (exit 2) unless git tag research-v4-spec-frozen
+    exists, is an ancestor of HEAD and the work tree is clean; Stage 2 also refuses before
+    D0 + 182 days. Writes manifest.json, summary.json and report.md to --out."""
+    import pandas as pd
+
+    from luna.config import load_settings
+    from luna.v4 import runner as rn
+
+    now = pd.Timestamp.now(tz="UTC")
+    try:
+        rn.check_freeze(rn.REPO_ROOT)
+        if stage == 2:
+            rn.check_stage2_time(now)
+        inputs = rn.load_stage_inputs(stage, load_settings().var_dir, now)
+        prior = tuple(c.strip() for c in prior_go.split(",") if c.strip()) if prior_go else ()
+        summary = rn.run_stage(inputs, out, prior_go=prior, now=now)
+    except rn.RefuseRun as e:
+        typer.echo(f"research-v4 refused: {e}")
+        raise typer.Exit(2) from e
+    for cid, c in summary["configs"].items():
+        typer.echo(f"{cid}: RESEARCH EDGE {c['research_edge']}")
+    deploy = summary["deployable_now"]["deployable_now"]
+    typer.echo(f"DEPLOYABLE NOW: {deploy}; report: {Path(out) / 'report.md'}")
+
+
 @app.command("research-v3")
 def research_v3(
     account: Annotated[Literal["perp", "spot"], typer.Option(help="Account to run")] = "perp",

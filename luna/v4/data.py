@@ -153,12 +153,17 @@ def iter_forward(root: Path, source: str, since: pd.Timestamp, until: pd.Timesta
 
 
 def load_forward_funding(
-    root: Path, assets: list[str] | tuple[str, ...], until: pd.Timestamp, since: pd.Timestamp | None = None
+    root: Path,
+    assets: list[str] | tuple[str, ...],
+    until: pd.Timestamp,
+    since: pd.Timestamp | None = None,
+    periods_before: pd.Timestamp | None = None,
 ) -> dict[str, pd.DataFrame]:
-    """Settled funding from the collector: rows of periods starting in [collector_start, until),
-    from envelopes received in [collector_start, until). Later receipts win on duplicates."""
+    """Settled funding from the collector: rows of periods starting in [collector_start,
+    periods_before (default until)), from envelopes received in [collector_start, until).
+    Later receipts win on duplicates."""
     start = collector_start(root)
-    lo, hi = _ns(start), _ns(until)
+    lo, hi = _ns(start), _ns(periods_before if periods_before is not None else until)
     syms = {perp_symbol(a): a for a in assets}
     rows: dict[str, dict[int, tuple[int, float, float]]] = {a: {} for a in assets}
     for source in FUNDING_SOURCES:
