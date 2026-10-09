@@ -20,6 +20,6 @@
   - Bu gece yapılan closure review'ı (bağımsız, en yetenekli model) yalnızca doküman bulguları verdi; hepsi `98e7fb5`'te düzeltildi.
   - Açık minor/operasyonel notlar `research-v2.md` §"Açık bilinen issue'lar" bölümünde.
 - **Final review:** Bağımsız closure review: "ready with fixes". Integrity temiz: manifest'ler `e0203c8`, `git_dirty=false`, `data_end` 2026-07-01; `git diff 1cc450a -- luna tests config` boş; holdout registry yok. "CLOSED — NO CANDIDATE" kararı dondurulmuş §3.5'e göre gerekçeli (perp n=27, spot n=0 < 30; perp ayrıca dört kontrolü daha geçemiyor). Düzeltmeler uygulandı.
-- **Merge:** `feat/research-v2` → yerel `feat/luna-core` (`--no-ff`, push yok). Sonuç ve merge sonrası test sayısı aşağıda, merge commit'inden sonra eklenecek.
+- **Merge:** `feat/research-v2` → yerel `feat/luna-core` (`--no-ff`, push yok). Merge commit `8204dda`, `origin/feat/luna-core` (`b70f3db`) üzerine; çakışma yok. Merge sonrası ağaç `feat/research-v2` ile birebir aynı. **Merge sonrası testler: 672 passed, 3 deselected** (2026-10-09 04:01–04:07 UK).
 - **Ayrıntılar:** `docs/results/research-v2.md`, `docs/superpowers/ledgers/2026-10-08-research-v2-ledger.md`,
   `docs/results/v1-v2-failure-analysis.md` (V3 branch'inde).
