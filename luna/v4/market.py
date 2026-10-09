@@ -29,6 +29,7 @@ from luna.v4.accounting import Quote
 from luna.v4.constants import BAR, DAY, HOUR
 from luna.v4.costs import perp_half_spread_hist
 from luna.v4.data import ForwardDaily, HistoricalInputs, iter_forward
+from luna.v4.dq import DEPTH_MAX_AGE
 
 
 def _empty_funding() -> pd.DataFrame:
@@ -153,6 +154,7 @@ class ForwardMarket:
     ):
         self.fd, self._funding, self.book_loader = fd, funding, book_loader
         self.counters: Counter = Counter()
+        self._pin: tuple[pd.Timestamp, frozenset, dict | None] | None = None
         valid = fd.daily["basis_n"].groupby(level="day").sum() if len(fd.daily) else pd.Series(dtype=float)
         self._valid_days = set(valid[valid > 0].index)
 
@@ -160,10 +162,25 @@ class ForwardMarket:
         key = (day, asset)
         return self.fd.exec.loc[key] if len(self.fd.exec) and key in self.fd.exec.index else None
 
+    def pin(self, assets, t: pd.Timestamp) -> bool:
+        """Q8: an action on several assets uses the first pair (within 15 min) valid for all of them."""
+        want = frozenset(assets)
+        group = next((g for _, g in (self.fd.exec_pairs or {}).get(t, []) if want <= set(g)), None)
+        self._pin = (t, want, group)
+        if group is None:
+            self.counters["no_common_pair"] += 1
+        return group is not None
+
+    def unpin(self) -> None:
+        self._pin = None
+
     def quote(self, asset: str, leg: str, t: pd.Timestamp, qty: float = 0.0) -> Quote | None:
         if t != t.floor("D"):
             return None
         r = self._exec(t, asset)
+        if self._pin is not None and self._pin[0] == t and asset in self._pin[1]:
+            group = self._pin[2]
+            r = pd.Series(group[asset]) if group is not None else None
         if r is None:
             return None
         mid, half = float(r[f"{leg}_mid"]), float(r[f"{leg}_half_spread"])
@@ -221,7 +238,7 @@ class ForwardMarket:
         return (day + DAY) not in self._valid_days
 
 
-BOOK_LOOKBACK = pd.Timedelta(minutes=10)
+BOOK_LOOKBACK = DEPTH_MAX_AGE  # Q9
 
 
 def _levels(rows) -> list[tuple[float, float]]:

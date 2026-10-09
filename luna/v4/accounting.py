@@ -261,6 +261,16 @@ class _Sim:
     def execute(self, orders: list[tuple[str, str, float, bool]], t: pd.Timestamp) -> list[tuple] | None:
         """All-or-nothing: ``orders`` = [(asset, leg, dq, is_full_close)]. Quotes for every leg must exist
         and every rounded opening / resizing leg must pass the minimum order; else nothing trades."""
+        pin = getattr(self.m, "pin", None)
+        if pin is not None:  # Q8: one pair valid for every leg asset of the action
+            pin({a for a, *_ in orders}, t)
+        try:
+            return self._execute(orders, t)
+        finally:
+            if pin is not None:
+                self.m.unpin()
+
+    def _execute(self, orders: list[tuple[str, str, float, bool]], t: pd.Timestamp) -> list[tuple] | None:
         fills = []
         for asset, leg, dq, full_close in orders:
             q = self.quote(asset, leg, t, dq)

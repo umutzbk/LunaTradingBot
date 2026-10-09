@@ -393,3 +393,20 @@ def test_h2_concentration_diagnostics_and_per_asset_pnl():
     assert d0["max_share"] == pytest.approx(0.25) and d0["herfindahl"] == pytest.approx(4 * 0.25**2)
     assert set(res.asset_pnl) == {"AAA", "BBB", "CCC", "DDD"}
     assert sum(res.asset_pnl.values()) == pytest.approx(res.daily["equity"].iloc[-1] - 265.0)
+
+
+def test_multi_leg_actions_pin_one_pair_for_all_assets():
+    pins = []
+
+    class Pinning(FakeMarket):
+        def pin(self, assets, t):
+            pins.append((frozenset(assets), t))
+            return True
+
+        def unpin(self):
+            pins.append("unpin")
+
+    m = Pinning(perp={"AAA": 10.0, "BBB": 20.0})
+    plan = {MONDAY: acc.H2Decision.rebalance({"AAA": 1, "BBB": -1})}
+    acc.run_h2(m, H2Scripted(plan), _days(1), PRIMARY, {})
+    assert (frozenset({"AAA", "BBB"}), MONDAY) in pins and pins[-1] == "unpin"

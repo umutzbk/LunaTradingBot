@@ -195,3 +195,28 @@ def test_nearest_book_reads_the_last_depth_snapshot_before_ts(tmp_path: Path):
     assert mk.nearest_book(tmp_path, "BTC", "perp", t) == {"bids": [(5.0, 6.0)], "asks": [(7.0, 8.0)]}
     assert mk.nearest_book(tmp_path, "BTC", "spot", t) == {"bids": [(9.0, 1.0)], "asks": [(11.0, 2.0)]}
     assert mk.nearest_book(tmp_path, "BTC", "perp", t - pd.Timedelta("1h")) is None
+
+
+def test_forward_pin_uses_the_first_pair_valid_for_all_leg_assets():
+    fd = _fd()
+    t1, t2 = D + pd.Timedelta("20s"), D + pd.Timedelta("80s")
+    row = dict(fd.exec.loc[(D, "A")])
+    fd.exec_pairs = {
+        D: [
+            (t1, {"A": {**row, "ts": t1}}),
+            (t2, {"A": {**row, "ts": t2, "perp_mid": 105.0}, "B": {**row, "ts": t2, "perp_mid": 7.0}}),
+        ]
+    }
+    m = mk.ForwardMarket(fd, {})
+    assert m.pin({"A", "B"}, D) is True
+    assert m.quote("A", "perp", D).mid == 105.0 and m.quote("B", "perp", D).mid == 7.0
+    m.unpin()
+    assert m.quote("A", "perp", D).mid == 101.0
+    assert m.pin({"A", "C"}, D) is False and m.quote("A", "perp", D) is None
+    m.unpin()
+
+
+def test_depth_snapshot_age_limit_is_q9():
+    from luna.v4.dq import DEPTH_MAX_AGE
+
+    assert mk.BOOK_LOOKBACK == DEPTH_MAX_AGE
