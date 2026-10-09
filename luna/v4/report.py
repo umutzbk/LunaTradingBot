@@ -29,9 +29,25 @@ def render_report(s: dict) -> str:
         lines.append(f"- {n}")
     if stage == 1:
         lines.append(f"\nStage-1 candidate (information only): {s.get('stage1_candidate') or 'none'}")
-    lines.append("\n## RESEARCH EDGE\n")
+        hyp = ", ".join(
+            f"{h}: {'advances' if ok else 'killed'}" for h, ok in (s.get("hypotheses") or {}).items()
+        )
+        lines.append(f"\nHypotheses (summary only; the forward set is per config): {hyp}")
+        lines.append("\n## Stage 1 decision (ADVANCE TO FORWARD / KILL)\n")
+        lines.append(
+            "KILL reasons: (a) mean < 0 and b=28 one-sided 95% upper bound < 0; (b) carry component does "
+            "not cover costs; (c) no position ever open. C1-C7 / M1-M4 are information only.\n"
+        )
+    else:
+        lines.append("\n## RESEARCH EDGE (headline b=28; b=14 mandatory robustness)\n")
+        if s.get("killed"):
+            lines.append(
+                f"KILLED in Stage 1 (p = 1 in the Holm family, not simulated): {', '.join(s['killed'])}\n"
+            )
     lines.append(
-        "| config | RESEARCH EDGE | "
+        "| config | "
+        + ("Stage 1 decision" if stage == 1 else "RESEARCH EDGE")
+        + " | "
         + " | ".join(f"C{i}" for i in range(1, 8))
         + " | "
         + " | ".join(f"M{i}" for i in range(1, 5))
@@ -44,7 +60,12 @@ def render_report(s: dict) -> str:
         crit = " | ".join("PASS" if c["criteria"][f"C{i}"] else "FAIL" for i in range(1, 8))
         m = " | ".join("PASS" if c["m"].get(f"M{i}") else "FAIL" for i in range(1, 5))
         ps = " | ".join(_f(c["pvalues"].get(f"b{b}")) for b in BLOCKS)
-        lines.append(f"| {cid} | {c['research_edge']} | {crit} | {m} | {ps} |")
+        why = (
+            f" ({', '.join(c['stage1']['reasons'])})"
+            if stage == 1 and c.get("stage1", {}).get("reasons")
+            else ""
+        )
+        lines.append(f"| {cid} | {c['research_edge']}{why} | {crit} | {m} | {ps} |")
     lines.append("\n## Sensitivity rows and P&L decomposition\n")
     lines.append(
         "| config | row | mean daily | Sharpe | max DD | spot price | perp price | funding | fees | "

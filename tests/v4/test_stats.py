@@ -192,3 +192,55 @@ def test_nulls_can_never_be_go():
 def test_deployable_now_is_always_no_with_four_reasons():
     d = s.deployable_now()
     assert d["deployable_now"] == "NO" and len(d["reasons"]) == 4
+
+
+# --- Stage 1 ADVANCE / KILL (§7.3) -------------------------------------------------------------------
+
+
+def test_upper_bound_is_the_one_sided_percentile_bound():
+    x = _series(-0.004, seed=5).to_numpy()
+    r = s.mbb_pvalue(x, 28)
+    assert r.upper_bound(0.05) == pytest.approx(r.m_hat - np.quantile(r.boot_means - r.m_hat, 0.05))
+    assert r.upper_bound(0.05) < 0
+
+
+def _s1(kind="carry", mean=0.001, carry_value=1.0, carry_net=None, active_days=100):
+    return s.stage1_decision(kind, _series(mean, sd=0.002), carry_value, carry_net, active_days, B=500)
+
+
+def test_stage1_kill_rules():
+    assert _s1()["decision"] == "ADVANCE TO FORWARD"
+    neg = _s1(mean=-0.003)
+    assert neg["decision"] == "KILL" and "a" in neg["reasons"]
+    # negative but not statistically negative: (a) needs mean < 0 AND upper bound < 0
+    noisy = s.stage1_decision("carry", _series(-0.00005, sd=0.01), 1.0, None, 100, B=500)
+    assert noisy["decision"] == "ADVANCE TO FORWARD"
+    assert _s1(carry_value=0.0)["reasons"] == ["b"]
+    assert _s1(kind="h2", carry_value=None, carry_net=_series(-1e-5))["reasons"] == ["b"]
+    assert _s1(kind="h2", carry_value=None, carry_net=_series(1e-5))["decision"] == "ADVANCE TO FORWARD"
+    assert _s1(active_days=0)["reasons"] == ["c"]
+
+
+def test_stage1_evaluate_reports_advance_or_kill_and_hypothesis_summary():
+    fam = _family(**{"H1-Y10": {"carry_value": -1.0}, "H1-Y20": {"carry_value": -1.0}})
+    out = s.evaluate(fam, stage=1, B=300)
+    assert out["H1-Y10"]["verdict"] == "KILL" and out["H2-L7-k1"]["verdict"] == "ADVANCE TO FORWARD"
+    hyp = s.hypothesis_summary(out)
+    assert hyp == {"H1": False, "H2": True, "H5": True}
+
+
+def test_forward_holm_family_keeps_killed_configs_with_p_one():
+    fam = _family()
+    killed = ["H1-Y20", "H2-L30-k2"]
+    for k in killed:
+        fam.pop(k)
+    out = s.evaluate(fam, stage=2, B=500, killed=killed)
+    assert set(out) == set(fam)
+    fam28 = out["H1-Y10"]["holm"]["b28"]
+    assert len(fam28) == 7 and fam28["H1-Y20"]["p"] == 1.0 and not fam28["H1-Y20"]["reject"]
+    assert len(out["H2-L7-k1"]["c6_holm"]["b28"]) == 4
+    assert out["H2-L7-k1"]["c6_holm"]["b28"]["H2-L30-k2"]["p"] == 1.0
+    # family = 7 - previous GO, killed stay with p = 1
+    out2 = s.evaluate({k: v for k, v in fam.items() if k != "H1-Y10"}, stage=2, B=500, killed=killed,
+                      prior_go=["H1-Y10"])
+    assert len(out2["H5-HFWB"]["holm"]["b28"]) == 6

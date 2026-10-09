@@ -171,7 +171,9 @@ def test_full_synthetic_stage1_run_writes_manifest_summary_and_report(tmp_path: 
     assert "git_sha" in man and "tag_sha" in man and man["freeze_check"] == "BYPASSED (test only)"
     s = json.loads((out / "summary.json").read_text(encoding="utf-8"))
     assert set(s["configs"]) == set(CONFIGS)
-    assert all(v["verdict"] != "GO" for v in s["configs"].values())
+    assert all(v["verdict"] in ("ADVANCE TO FORWARD", "KILL") for v in s["configs"].values())
+    assert set(s["hypotheses"]) == {"H1", "H2", "H5"}
+    assert all(v["stage1"]["reasons"] is not None for v in s["configs"].values())
     assert s["deployable_now"]["deployable_now"] == "NO"
     assert set(s["nulls"]["H1-Y10"]) == {f"N-RANDENTRY:{k}:H1-Y10" for k in range(1, 6)} | {"N-ALWAYS:H1-Y10"}
     assert set(s["nulls"]["H2-L7-k1"]) == {f"N-SHUFFLE:{k}:H2-L7-k1" for k in range(1, 6)}
@@ -181,6 +183,7 @@ def test_full_synthetic_stage1_run_writes_manifest_summary_and_report(tmp_path: 
     first = [ln for ln in report.splitlines() if ln.strip()][1]
     assert "EXPLORATORY" in first and "not generalization evidence" in first
     assert "DEPLOYABLE NOW: NO" in report
+    assert "## Stage 1 decision (ADVANCE TO FORWARD / KILL)" in report and "Hypotheses" in report
     assert summary["stage"] == 1
     daily = pd.read_csv(out / "daily" / "H2-L7-k1__PRIMARY.csv")
     assert {"funding_cf", "fees", "spread_slippage", "carry_net"} <= set(daily.columns)
@@ -272,3 +275,19 @@ def test_cli_stage1_writes_proxy_diagnostics_after_the_run(monkeypatch, tmp_path
     proxy = json.loads((out / "proxy_diagnostics.json").read_text(encoding="utf-8"))
     assert proxy["window"]["end"] == "2025-10-06T00:00:00+00:00"
     assert "rank_persistence" in proxy and "premium_proxy" in proxy["series"]
+
+
+def test_stage2_simulates_only_advanced_configs_and_keeps_killed_in_holm_with_p_one(tmp_path: Path):
+    start = pd.Timestamp("2025-10-06T00:00:00Z")
+    eval_start, end = start + pd.Timedelta("30D"), start + pd.Timedelta("45D")
+    inputs = rn.stage1_inputs(_synthetic_hist(start, end), meta={}, eval_start=eval_start, end=end)
+    inputs.stage = 2  # synthetic stand-in for forward inputs (guard bypassed, test only)
+    killed = ("H1-Y20", "H2-L30-k2")
+    s = rn.run_stage(inputs, tmp_path / "s2", B=100, killed=killed, _unsafe_skip_freeze_check_for_tests=True)
+    assert set(s["configs"]) == set(CONFIGS) - set(killed)
+    assert s["killed"] == list(killed)
+    fam = s["configs"]["H1-Y10"]["holm"]["b28"]
+    assert len(fam) == 7 and fam["H1-Y20"]["p"] == 1.0
+    assert not (tmp_path / "s2" / "daily" / "H1-Y20__PRIMARY.csv").exists()
+    man = json.loads((tmp_path / "s2" / "manifest.json").read_text(encoding="utf-8"))
+    assert man["killed"] == list(killed) and "S-SPREAD10" not in man["cost_rows"]

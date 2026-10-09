@@ -42,6 +42,12 @@ class BootResult:
             return math.nan
         return float(self.m_hat - np.quantile(self.boot_means - self.m_hat, 1 - alpha))
 
+    def upper_bound(self, alpha: float) -> float:
+        """One-sided (1 - alpha) upper confidence bound for the mean (percentile, mirror of the LB)."""
+        if not len(self.boot_means):
+            return math.nan
+        return float(self.m_hat - np.quantile(self.boot_means - self.m_hat, alpha))
+
 
 def mbb_pvalue(x: np.ndarray, block: int, B: int = B, seed: int = SEED) -> BootResult:  # noqa: N803
     """Moving block bootstrap of the mean: ceil(n / b) overlapping blocks drawn uniformly from the
@@ -144,6 +150,7 @@ class ConfigEvidence:
     always_sharpe: float | None
     had_entries: bool
     m: dict[str, bool] = field(default_factory=dict)
+    active_days: int | None = None  # days with a position (Stage 1 KILL rule (c))
 
 
 def _null_mean(xs: list[float]) -> float:
@@ -163,20 +170,57 @@ def verdict(config_id: str, criteria: dict[str, bool], stage: int) -> str:
     return "NO-GO"
 
 
+def stage1_decision(kind: str, primary: pd.Series, carry_value: float | None, carry_net: pd.Series | None,
+                    active_days: int | None, B: int = B, seed: int = SEED) -> dict:  # noqa: N803
+    """Stage 1 pre-registered rule (§7.3): KILL if (a) PRIMARY mean < 0 and its b = 28 one-sided 95%
+    upper bound < 0, (b) the carry component does not cover costs (H2: mean carry_net <= 0; H1/H5:
+    sum funding - fees - spread <= 0), or (c) no position was ever open; else ADVANCE TO FORWARD."""
+    r = mbb_pvalue(primary.to_numpy(), 28, B, seed)
+    ub = r.upper_bound(STAGE1_LCB_ALPHA)
+    reasons = []
+    if len(primary) and float(primary.mean()) < 0 and ub < 0:
+        reasons.append("a")
+    if kind == "h2":
+        if carry_net is None or not len(carry_net) or not float(carry_net.mean()) > 0:
+            reasons.append("b")
+    elif carry_value is None or not carry_value > 0:
+        reasons.append("b")
+    if active_days is not None and active_days == 0:
+        reasons.append("c")
+    return {"decision": "KILL" if reasons else "ADVANCE TO FORWARD", "reasons": reasons, "ub95_b28": ub,
+            "mean_daily": float(primary.mean()) if len(primary) else math.nan}
+
+
+def hypothesis_summary(results: dict[str, dict]) -> dict[str, bool]:
+    """A hypothesis (H1, H2, H5) advances when at least one of its configs is ADVANCE TO FORWARD."""
+    out: dict[str, bool] = {}
+    for cid, v in results.items():
+        h = cid.split("-")[0]
+        out[h] = out.get(h, False) or v["verdict"] == "ADVANCE TO FORWARD"
+    return dict(sorted(out.items()))
+
+
 def evaluate(evidences: dict[str, ConfigEvidence], stage: int, B: int = B, seed: int = SEED,  # noqa: N803
-             prior_go: list[str] | tuple[str, ...] = ()) -> dict[str, dict]:
-    from luna.v4.strategies import is_null
+             prior_go: list[str] | tuple[str, ...] = (),
+             killed: list[str] | tuple[str, ...] = ()) -> dict[str, dict]:
+    """Stage 2: Holm family per look = 7 configs - configs GO at an earlier look; configs KILLed in
+    Stage 1 stay in the family with p = 1 (§7.3). Stage 1: verdict = ADVANCE TO FORWARD / KILL."""
+    from luna.v4.strategies import CONFIGS, is_null
 
     for cid in evidences:
         if is_null(cid):
             raise ValueError(f"{cid} is a null model: nulls can never be GO")
-    fam = {c: e for c, e in evidences.items() if c not in set(prior_go)}
+    fam = {c: e for c, e in evidences.items() if c not in set(prior_go) and c not in set(killed)}
+    dead = [c for c in killed if c not in set(prior_go)]
     alpha = ALPHA_STAGE1 if stage == 1 else ALPHA_FORWARD
     boots = {c: {b: mbb_pvalue(e.primary.to_numpy(), b, B, seed) for b in BLOCKS} for c, e in fam.items()}
-    holms = {f"b{b}": holm({c: boots[c][b].p for c in fam}, alpha) for b in BLOCKS}
+    holms = {f"b{b}": holm({**{c: boots[c][b].p for c in fam}, **{c: 1.0 for c in dead}}, alpha)
+             for b in BLOCKS}
     h2 = {c: e for c, e in fam.items() if e.kind == "h2"}
+    h2_dead = [c for c in dead if CONFIGS[c].account == "h2"]
     cboots = {c: {b: mbb_pvalue(e.carry_net.to_numpy(), b, B, seed) for b in BLOCKS} for c, e in h2.items()}
-    c6_holm = {f"b{b}": holm({c: cboots[c][b].p for c in h2}, alpha) for b in BLOCKS}
+    c6_holm = {f"b{b}": holm({**{c: cboots[c][b].p for c in h2}, **{c: 1.0 for c in h2_dead}}, alpha)
+               for b in BLOCKS}
     out = {}
     for c, e in fam.items():
         r = e.primary
@@ -201,8 +245,13 @@ def evaluate(evidences: dict[str, ConfigEvidence], stage: int, B: int = B, seed:
             "C7": c7["pass"],
         }
         crit = {k: bool(v) for k, v in crit.items()}
+        s1 = stage1_decision(e.kind, r, e.carry_value, e.carry_net,
+                             e.active_days if e.active_days is not None else (None if e.had_entries else 0),
+                             B, seed) if stage == 1 else None
         out[c] = {
-            "verdict": verdict(c, crit, stage),
+            "verdict": s1["decision"] if s1 else verdict(c, crit, stage),
+            "stage1": s1,
+            "headline_block": 28,
             "criteria": crit,
             "criteria_pass": all(crit.values()),
             "m": dict(e.m),

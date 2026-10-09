@@ -277,6 +277,9 @@ def research_v4(
     prior_go: Annotated[
         str | None, typer.Option(help="Stage 2: comma-separated configs already GO at an earlier look")
     ] = None,
+    killed: Annotated[
+        str | None, typer.Option(help="Stage 2: comma-separated configs KILLed in Stage 1 (p = 1 in Holm)")
+    ] = None,
 ) -> None:
     """Research V4 (funding / basis carry). Refuses (exit 2) unless git tag research-v4-spec-frozen
     exists, is an ancestor of HEAD and the work tree is clean; Stage 2 also refuses before
@@ -293,7 +296,8 @@ def research_v4(
             rn.check_stage2_time(now)
         inputs = rn.load_stage_inputs(stage, load_settings().var_dir, now)
         prior = tuple(c.strip() for c in prior_go.split(",") if c.strip()) if prior_go else ()
-        summary = rn.run_stage(inputs, out, prior_go=prior, now=now)
+        dead = tuple(c.strip() for c in killed.split(",") if c.strip()) if killed else ()
+        summary = rn.run_stage(inputs, out, prior_go=prior, killed=dead, now=now)
     except rn.RefuseRun as e:
         typer.echo(f"research-v4 refused: {e}")
         raise typer.Exit(2) from e
@@ -309,7 +313,7 @@ def research_v4(
         rn.write_json(Path(out) / "proxy_diagnostics.json",
                       run_proxy_diagnostics(mark, index, PROXY_START, STAGE1_START))
     for cid, c in summary["configs"].items():
-        typer.echo(f"{cid}: RESEARCH EDGE {c['research_edge']}")
+        typer.echo(f"{cid}: {'Stage 1 decision' if stage == 1 else 'RESEARCH EDGE'} {c['research_edge']}")
     deploy = summary["deployable_now"]["deployable_now"]
     typer.echo(f"DEPLOYABLE NOW: {deploy}; report: {Path(out) / 'report.md'}")
 

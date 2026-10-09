@@ -369,6 +369,7 @@ def run_stage(
     *,
     B: int = stats.B,
     prior_go: tuple[str, ...] = (),  # noqa: N803
+    killed: tuple[str, ...] = (),
     rows: dict[str, CostRow] | None = None,
     now: pd.Timestamp | None = None,
     repo: Path | None = None,
@@ -391,7 +392,14 @@ def run_stage(
     sims: dict[str, dict[str, SimResult]] = {}
     nulls: dict[str, dict[str, SimResult]] = {}
     null_info: dict[str, dict] = {}
-    for cid in CONFIGS:
+    unknown = [c for c in (*killed, *prior_go) if c not in CONFIGS]
+    if unknown:
+        raise ValueError(f"unknown config ids {unknown}")
+    if inp.stage == 1 and (killed or prior_go):
+        raise ValueError("Stage 1 has no killed / prior-GO configs")
+    # Stage 2 simulates only configs ADVANCEd by Stage 1 and not yet GO (§7.3, §7.4)
+    run_ids = [c for c in CONFIGS if c not in set(killed) and c not in set(prior_go)]
+    for cid in run_ids:
         sims[cid] = {name: _simulate(cid, r, inp) for name, r in rows.items()}
         nulls[cid], null_info[cid] = _nulls(cid, sims[cid]["PRIMARY"], rows["PRIMARY"], inp)
         for name, res in sims[cid].items():
@@ -402,7 +410,8 @@ def run_stage(
     window_days = len(inp.days)
     dq_days = sum(1 for d in inp.days if inp.dq_valid.get(d))
     evidences = {}
-    for cid, cfg in CONFIGS.items():
+    for cid in run_ids:
+        cfg = CONFIGS[cid]
         p = sims[cid]["PRIMARY"]
         d = p.daily
         m = stats.evidence_checks(
@@ -433,8 +442,9 @@ def run_stage(
             always_sharpe=always,
             had_entries=bool(p.trades) if cfg.account == "carry" else True,
             m=m,
+            active_days=int(d["active"].sum()),
         )
-    results = stats.evaluate(evidences, inp.stage, B=B, prior_go=prior_go)
+    results = stats.evaluate(evidences, inp.stage, B=B, prior_go=prior_go, killed=killed)
 
     diagnostics = _diagnostics(inp, sims)
     configs_out = {}
@@ -454,8 +464,10 @@ def run_stage(
         "dq_valid_days": dq_days,
         "configs": configs_out,
         "prior_go": list(prior_go),
+        "killed": list(killed),
+        "hypotheses": stats.hypothesis_summary(results) if inp.stage == 1 else None,
         "stage1_candidate": stats.stage1_candidate(results) if inp.stage == 1 else None,
-        "nulls": {cid: {nid: _row_summary(r) for nid, r in nulls[cid].items()} for cid in CONFIGS},
+        "nulls": {cid: {nid: _row_summary(r) for nid, r in nulls[cid].items()} for cid in run_ids},
         "null_draws": null_info,
         "diagnostics": diagnostics,
         "market_counters": dict(getattr(inp.market, "counters", {}) or {}),
@@ -482,6 +494,7 @@ def run_stage(
         "dq_thresholds": DQ_THRESHOLDS if inp.stage == 2 else {"stage1_coverage": STAGE1_COVERAGE},
         "instruments_sha256": inp.instruments_sha256,
         "prior_go": list(prior_go),
+        "killed": list(killed),
         "run_at": pd.Timestamp.now(tz="UTC").isoformat(),
     }
     write_json(out_dir / "manifest.json", manifest)
@@ -502,6 +515,7 @@ def _diagnostics(inp: StageInputs, sims: dict[str, dict[str, SimResult]]) -> dic
         "D-DISP": {
             cid: dg.d_disp(sims[cid]["PRIMARY"].daily["ret"], inp.funding)
             for cid, c in CONFIGS.items()
+            if cid in sims
             if c.account == "h2"
         },
         "H2": {
@@ -515,11 +529,11 @@ def _diagnostics(inp: StageInputs, sims: dict[str, dict[str, SimResult]]) -> dic
                 "asset_pnl": sims[cid]["PRIMARY"].asset_pnl,
             }
             for cid, c in CONFIGS.items()
+            if cid in sims
             if c.account == "h2"
         },
         "H5_vs_H1-Y10_sharpe": {
-            "H5-HFWB": stats.sharpe(sims["H5-HFWB"]["PRIMARY"].daily["ret"]),
-            "H1-Y10": stats.sharpe(sims["H1-Y10"]["PRIMARY"].daily["ret"]),
+            c: stats.sharpe(sims[c]["PRIMARY"].daily["ret"]) for c in ("H5-HFWB", "H1-Y10") if c in sims
         },
     }
     if inp.basis is not None:
