@@ -1,6 +1,6 @@
 # V4 funding semantics verification (S0-F), 2026-10-09
 
-**Verdict: PASS.** One asset (MUBARAK) fails the outcome-free consistency gate and is excluded from the V4 universe, leaving 20 assets.
+**Verdict: PASS.** Universe membership is decided by the general §2a rules U1–U7. MUBARAK fails U3, U4, U6 and U7 and is excluded; the U3/U4 thresholds were written after this S0-F check (see `v4-universe.md`).
 
 **What was used:**
 - Official Kraken documentation.
@@ -70,7 +70,7 @@ No strategy return, P&L or Sharpe was computed. No holdout data was read.
 4. **Timestamp.**
    - In 20 of 21 assets the rate stamped T correlates more strongly with the premium of [T−1h, T) than with [T, T+1h).
    - This matches "rate for the next period is calculated over the current hour" and "timestamp = start of the period the rate applies to".
-5. **MUBARAK is anomalous:** implied price error 1.15% and negative correlation in both windows. Under the pre-registered, outcome-free consistency gate (spec §2) it is **excluded**.
+5. **MUBARAK is anomalous:** implied price error 1.15% and negative correlation in both windows. It is excluded by the general §2a rules (U3/U4/U6/U7; thresholds written after this check, see `v4-universe.md`).
 
 ## Locked conventions (code: `luna/v4/funding.py`, tests: `tests/v4/test_funding.py`)
 

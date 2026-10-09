@@ -31,12 +31,12 @@ Tek dönüşüm, V4 evrenine süzmedir. Yalnızca `fut_tickers` ve `fut_instrume
 ## 2. Zaman damgaları: warmup ve evidence
 
 - **`collector_start_ts`:** collector'ın ilk başarılı başlangıcında `var/forward/meta.json` dosyasına bir kez yazılır, **bir daha üzerine yazılmaz**.
-- **`V4_EVIDENCE_START_TS`:** V4 research spec'inin frozen tag zamanıdır. Collector bunu **bilmez ve saklamaz**; research tarafında spec'te sabitlenir.
+- **`V4_EVIDENCE_START_TS`:** Research spec §7.5'te sabittir: **2026-11-10T00:00:00Z** (tag zamanı değildir). Collector bunu bilmez ve saklamaz.
   - `recv_ts < V4_EVIDENCE_START_TS` olan her kayıt **warmup**'tır: yalnızca data-quality ve sinyal lookback girdisi olarak kullanılabilir, kanıt olmaz.
 - Collector tarihsel backfill yapmaz.
 - **İstisna:** `fut_funding` yanıtı API'nin bütün funding geçmişini içerir (2025-10-06'dan itibaren). Bu geçmiş, sealed holdout'u da (2026-07-01 → `collector_start_ts`) kapsar.
   - Ham yanıt değiştirilmeden saklanır.
-  - `forward-dq` ve research yükleyicileri `settle_ts < collector_start_ts` olan satırları **atar**. Bunu testler zorlar.
+  - `forward-dq` ve research yükleyicileri dönem başlangıcı `T < collector_start_ts` olan satırları **atar**. Bunu testler zorlar.
 
 ## 3. Kaynaklar ve sıklık
 
@@ -175,4 +175,4 @@ var/forward/
 12. **`forward-dq`:** Sentetik zarflardan skew, coverage ve gap'ler doğru hesaplanır. Çıktıda fiyat, basis veya getiri alanı yoktur.
 13. **Zamanlama:** Sahte saat ile 10 dakikada `fut_tickers`/`spot_ticker` 10 kez, `fut_book` 2 kez çağrılır. `pair_seq` iki kaynakta eşit.
 14. **Günlük kaynaklar:** `fut_instruments` ve `spot_assetpairs` açılışta ve 00:10/00:12'de çağrılır; 26 saatlik bayatlık uyarısı verilir.
-15. **Holdout satırları:** `forward-dq`, `settle_ts < collector_start_ts` funding satırlarını sayımlara katmaz.
+15. **Holdout satırları:** `forward-dq`, dönem başlangıcı `T < collector_start_ts` olan funding satırlarını sayımlara katmaz.

@@ -1,5 +1,7 @@
 # V4 pre-freeze red-team review (2026-10-09)
 
+> **Superseded by user decisions 2026-10-09** (spec §7.2, §7.5, §10). The 72 h dry-run, the earliest freeze date of 2026-11-09 and the N3 adjustable thresholds no longer apply. The final review is in `v4-final-redteam.md`.
+
 **Kapsam ve yöntem:**
 - **Reviewer:** bağımsız bir agent (spec'i yazmadı), salt okunur çalıştı.
 - **Okumadıkları:** `var/` altındaki dosyalar okunmadı; getiri ya da P&L hesaplanmadı.
