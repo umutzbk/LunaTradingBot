@@ -36,7 +36,8 @@ def test_second_instance_is_rejected(tmp_path):
     CollectorLock(tmp_path / "collector.lock", clock, pid=11, host="a").acquire()
     clock.ns += 299 * S
     with pytest.raises(CollectorLocked):
-        CollectorLock(tmp_path / "collector.lock", clock, pid=12, host="a").acquire()
+        CollectorLock(tmp_path / "collector.lock", clock, pid=12, host="a",
+                      pid_alive=lambda p: True).acquire()
     with pytest.raises(CollectorLocked):  # another container: same pid 1, different hostname
         CollectorLock(tmp_path / "collector.lock", clock, pid=11, host="b").acquire()
 
@@ -98,3 +99,55 @@ def test_reserve_allocates_a_block_of_seqs(tmp_path):
     assert m.reserve("fut_book", 21) == 1
     assert m.reserve("fut_book", 21) == 22
     assert m.next_seq("fut_book") == 43
+
+
+# ---- M5 (same host, dead pid) and M2 (heartbeat refuses a lost lock)
+
+
+def test_same_host_dead_pid_is_taken_over(tmp_path):
+    clock = Clock()
+    CollectorLock(tmp_path / "collector.lock", clock, pid=11, host="luna-collector").acquire()
+    clock.ns += 10 * S
+    CollectorLock(tmp_path / "collector.lock", clock, pid=12, host="luna-collector",
+                  pid_alive=lambda pid: False).acquire()
+    assert json.loads((tmp_path / "collector.lock").read_text(encoding="utf-8"))["pid"] == 12
+
+
+def test_same_host_live_pid_is_refused(tmp_path):
+    clock = Clock()
+    CollectorLock(tmp_path / "collector.lock", clock, pid=11, host="luna-collector").acquire()
+    with pytest.raises(CollectorLocked):
+        CollectorLock(tmp_path / "collector.lock", clock, pid=12, host="luna-collector",
+                      pid_alive=lambda pid: True).acquire()
+
+
+def test_other_host_fresh_is_refused_even_if_pid_looks_dead(tmp_path):
+    clock = Clock()
+    CollectorLock(tmp_path / "collector.lock", clock, pid=11, host="a").acquire()
+    with pytest.raises(CollectorLocked):
+        CollectorLock(tmp_path / "collector.lock", clock, pid=12, host="b",
+                      pid_alive=lambda pid: False).acquire()
+
+
+def test_pid_alive_real_processes():
+    import os
+    import subprocess
+    import sys
+
+    from luna.forward.lock import pid_alive
+
+    assert pid_alive(os.getpid())
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p.wait()
+    assert not pid_alive(p.pid)
+
+
+def test_heartbeat_refuses_a_lost_lock(tmp_path):
+    clock = Clock()
+    mine = CollectorLock(tmp_path / "collector.lock", clock, pid=11, host="a")
+    mine.acquire()
+    clock.ns += 400 * S
+    CollectorLock(tmp_path / "collector.lock", clock, pid=12, host="b").acquire()
+    with pytest.raises(CollectorLocked):
+        mine.heartbeat()
+    assert json.loads((tmp_path / "collector.lock").read_text(encoding="utf-8"))["pid"] == 12

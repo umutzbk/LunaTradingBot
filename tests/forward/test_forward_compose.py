@@ -24,3 +24,8 @@ def test_collector_service():
 
 def test_env_example_documents_backup_host_dir():
     assert "LUNA_FORWARD_BACKUP_HOST_DIR=" in (ROOT / ".env.example").read_text(encoding="utf-8")
+
+
+def test_collector_has_a_stable_hostname():
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    assert compose["services"]["collector"]["hostname"] == "luna-collector"

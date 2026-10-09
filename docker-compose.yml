@@ -62,6 +62,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile
     command: ["collect"]
+    hostname: luna-collector  # stable across recreates: the lock treats it as the same host
     env_file:
       - path: .env
         required: false
