@@ -41,9 +41,15 @@ class Meta:
         if not self.data["collector_start_ts"]:
             self.data["collector_start_ts"] = iso_ns(now_ns)
 
+    def reserve(self, source: str, n: int) -> int:
+        """Reserve ``n`` consecutive seqs for ``source``; returns the first. Saving before the
+        calls means a crash can leave a gap in ``seq`` but never reuse one."""
+        first = int(self.data["seq"].get(source, 0)) + 1
+        self.data["seq"][source] = first + n - 1
+        return first
+
     def next_seq(self, source: str) -> int:
-        self.data["seq"][source] = int(self.data["seq"].get(source, 0)) + 1
-        return self.data["seq"][source]
+        return self.reserve(source, 1)
 
     def next_pair_seq(self) -> int:
         self.data["pair_seq"] = int(self.data["pair_seq"]) + 1

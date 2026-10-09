@@ -91,3 +91,10 @@ def test_seq_counters_resume_after_restart(tmp_path):
     m2 = Meta.load(tmp_path)
     assert m2.next_seq("fut_tickers") == 4 and m2.next_seq("spot_time") == 1
     assert m2.next_pair_seq() == 3
+
+
+def test_reserve_allocates_a_block_of_seqs(tmp_path):
+    m = Meta.load(tmp_path)
+    assert m.reserve("fut_book", 21) == 1
+    assert m.reserve("fut_book", 21) == 22
+    assert m.next_seq("fut_book") == 43
