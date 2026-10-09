@@ -68,7 +68,12 @@ def perp_half_spread_hist(spreads: pd.DataFrame | None, t: pd.Timestamp) -> tupl
     """(half spread, fallback used) for a perp trade at t: mean full spread of the hour containing t."""
     if spreads is not None and len(spreads):
         h = t.floor("1h")
-        w = spreads.loc[(spreads.index >= h) & (spreads.index < h + HOUR), "spread_full"].dropna()
+        idx = spreads.index
+        w = (
+            spreads["spread_full"]
+            .iloc[idx.searchsorted(h, "left") : idx.searchsorted(h + HOUR, "left")]
+            .dropna()
+        )
         if len(w):
             return float(w.mean()) / 2, False
     return PERP_FALLBACK_FULL / 2, True

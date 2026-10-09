@@ -58,26 +58,41 @@ def accrue_funding(
     at a period end or at a position change, whichever comes first. attrs carry `held_hours`
     (hours with a non-zero position) and `unknown_hours` (of those, hours with no rate).
     """
-    rows: list[dict] = []
+    # integer-nanosecond arithmetic (same semantics as Timestamp floor / min, much faster)
+    p_ns = PERIOD.value
+    starts, settles, qtys, fracs, cfs = [], [], [], [], []
     held = unknown = 0.0
-    bounds = [pd.Timestamp(ts) for ts, _ in path] + [pd.Timestamp(until)]
-    for (start, qty), end in zip(path, bounds[1:], strict=True):
+    abs_by_start = {}
+    if len(rates):
+        keys = rates.index.as_unit("ns").asi8.tolist()
+        abs_by_start = dict(zip(keys, rates["funding_abs"].astype(float).tolist(), strict=True))
+    bounds = [pd.Timestamp(ts).value for ts, _ in path] + [pd.Timestamp(until).value]
+    for (_, qty), start, end in zip(path, bounds[:-1], bounds[1:], strict=True):
         if qty == 0 or end <= start:
             continue
         t = start
         while t < end:
-            period_start = t.floor("1h")
-            seg_end = min(end, period_start + PERIOD)
-            frac = (seg_end - t) / PERIOD
+            period_start = t - t % p_ns
+            seg_end = min(end, period_start + p_ns)
+            frac = (seg_end - t) / p_ns
             held += frac
-            if period_start in rates.index:
-                cf = funding_cashflow(qty, float(rates.at[period_start, "funding_abs"]), frac)
-                rows.append({"period_start": period_start, "settle_ts": seg_end, "qty": qty,
-                             "held_fraction": frac, "cashflow": cf})
+            rate = abs_by_start.get(period_start)
+            if rate is not None:
+                starts.append(period_start)
+                settles.append(seg_end)
+                qtys.append(qty)
+                fracs.append(frac)
+                cfs.append(funding_cashflow(qty, rate, frac))
             else:
                 unknown += frac
             t = seg_end
-    out = pd.DataFrame(rows, columns=["period_start", "settle_ts", "qty", "held_fraction", "cashflow"])
+    out = pd.DataFrame({
+        "period_start": pd.to_datetime(starts, unit="ns", utc=True),
+        "settle_ts": pd.to_datetime(settles, unit="ns", utc=True),
+        "qty": pd.Series(qtys, dtype="float64"),
+        "held_fraction": pd.Series(fracs, dtype="float64"),
+        "cashflow": pd.Series(cfs, dtype="float64"),
+    })
     out.attrs["held_hours"] = held
     out.attrs["unknown_hours"] = unknown
     return out

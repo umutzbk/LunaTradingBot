@@ -37,8 +37,12 @@ NAN = float("nan")
 
 def trailing_rel(rates: pd.DataFrame, t: pd.Timestamp, hours: int) -> tuple[float, int]:
     """(mean relative rate, number of periods) over ended periods starting in [t - hours h, t - 1h]."""
-    known = known_rates(rates, t)
-    w = known.loc[known.index >= t - hours * HOUR, "funding_rel"] if len(known) else known
+    idx = rates.index
+    if not idx.is_monotonic_increasing:
+        rates = rates.sort_index()
+        idx = rates.index
+    window = rates.iloc[idx.searchsorted(t - hours * HOUR, "left"): idx.searchsorted(t, "right")]
+    w = known_rates(window, t)["funding_rel"]  # ended periods only: start + 1h <= t
     n = len(w)
     return (float(w.mean()) if n else NAN), n
 

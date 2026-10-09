@@ -42,12 +42,21 @@ class HistoricalMarket:
     def __init__(self, inp: HistoricalInputs) -> None:
         self.inp = inp
         self.counters: Counter = Counter()
+        self._quotes: dict = {}
+        self._values: dict = {}
+        self._extremes: dict = {}
 
     def _bars(self, asset: str, leg: str) -> pd.DataFrame | None:
         df = (self.inp.perp if leg == "perp" else self.inp.spot).get(asset)
         return df if df is not None and len(df) else None
 
     def quote(self, asset: str, leg: str, t: pd.Timestamp, qty: float = 0.0) -> Quote | None:
+        key = (asset, leg, t)
+        if key not in self._quotes:
+            self._quotes[key] = self._quote(asset, leg, t)
+        return self._quotes[key]
+
+    def _quote(self, asset: str, leg: str, t: pd.Timestamp) -> Quote | None:
         df = self._bars(asset, leg)
         if df is None:
             return None
@@ -62,13 +71,20 @@ class HistoricalMarket:
         return Quote(mid, half, ts + BAR, fallback)
 
     def value(self, asset: str, leg: str, day: pd.Timestamp) -> float | None:
-        df = self._bars(asset, leg)
-        if df is None:
-            return None
-        i = df.index.searchsorted(day + DAY - BAR, "right")
-        return float(df["close"].iloc[i - 1]) if i > 0 else None
+        key = (asset, leg, day)
+        if key not in self._values:
+            df = self._bars(asset, leg)
+            i = df.index.searchsorted(day + DAY - BAR, "right") if df is not None else 0
+            self._values[key] = float(df["close"].iloc[i - 1]) if i > 0 else None
+        return self._values[key]
 
     def extremes(self, asset: str, day: pd.Timestamp) -> dict[str, float | None]:
+        key = (asset, day)
+        if key not in self._extremes:
+            self._extremes[key] = self._extreme(asset, day)
+        return dict(self._extremes[key])
+
+    def _extreme(self, asset: str, day: pd.Timestamp) -> dict[str, float | None]:
         lo, hi = day + BAR, day + DAY
 
         def window(df):

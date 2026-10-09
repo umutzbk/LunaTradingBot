@@ -257,7 +257,10 @@ class _Sim:
         held = set(self.book.perp_q) | set(self.paths)
         for a in held:
             path = self.paths.get(a) or [(day, self.book.perp_q.get(a, 0.0))]
-            out = accrue_funding(path, self.m.funding(a), until)
+            rates = self.m.funding(a)
+            idx = rates.index
+            rates = rates.iloc[idx.searchsorted(day - DAY, "left"): idx.searchsorted(until, "left")]
+            out = accrue_funding(path, rates, until)
             cf = float(out["cashflow"].sum()) if len(out) else 0.0
             self.c["funding_unknown_hours"] += out.attrs["unknown_hours"]
             self.c["funding_held_hours"] += out.attrs["held_hours"]
