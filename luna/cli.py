@@ -250,6 +250,53 @@ def research_v2(
     typer.echo(f"report: {path}")
 
 
+@app.command("research-v3")
+def research_v3(
+    account: Annotated[Literal["perp", "spot"], typer.Option(help="Account to run")] = "perp",
+    jobs: Annotated[int, typer.Option(help="Worker processes (each holds one copy of the inputs)")] = 2,
+    out: Annotated[Path | None, typer.Option(help="Report directory (default: timestamped)")] = None,
+    resume: Annotated[bool, typer.Option(help="Resume the interrupted run in --out")] = False,
+) -> None:
+    """Research V3 (frozen spec 2026-10-09): premium / low-vol / vol-managed families on the V2
+    engine, nested train-only selection, family null baselines and the GO/NO-GO report on the
+    reused development walk-forward OOS (2024-09 -> 2026-07). Reads no bar at or after 2026-07-01."""
+    import json
+
+    import pandas as pd
+
+    from luna.config import load_settings
+    from luna.data.store import BarStore
+    from luna.instruments import load_instruments
+    from luna.v3.data import load_v3_inputs
+    from luna.v3.report import write_v3_report
+    from luna.v3.runner import run_v3
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    if resume and out is None:
+        raise typer.BadParameter("--resume needs --out (the interrupted run's directory)")
+    settings = load_settings()
+    other = "spot" if account == "perp" else "perp"
+    inp = load_v3_inputs(
+        settings,
+        BarStore(settings.var_dir),
+        account,
+        load_instruments(settings, account),
+        load_instruments(settings, other),
+    )
+    ts = pd.Timestamp.now(tz="UTC").strftime("%Y%m%dT%H%M%S")
+    out_dir = Path(out) if out is not None else settings.var_dir / "reports" / f"research_v3_{account}_{ts}"
+    res, null = run_v3(settings, account, inp, out_dir, jobs=jobs, resume=resume)
+    path = write_v3_report(res, null, inp, settings, out_dir)
+    s = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+    typer.echo(
+        f"research v3 {account}: {len(res.configs)} configurations, span {res.span[0]:%Y-%m-%d} .. "
+        f"{res.span[1]:%Y-%m-%d}"
+    )
+    typer.echo(f"verdict: {s['verdict']} ({s['headline']}); candidate: {s['candidate']}")
+    typer.echo(f"null expectancy R: {s['v3']['null_expectancy_r']}; report: {path}")
+
+
 @app.command()
 def paper(
     account: Annotated[Literal["perp", "spot"], typer.Option(help="Account to run")] = "perp",
