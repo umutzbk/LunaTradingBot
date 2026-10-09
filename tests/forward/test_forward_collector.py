@@ -243,3 +243,23 @@ def test_failed_start_releases_the_lock(tmp_path, fake_kraken):
     with pytest.raises(ValueError):
         c.start()
     assert not (root / "collector.lock").exists()
+
+
+def test_status_lists_days_that_failed_to_close(tmp_path, fake_kraken, monkeypatch):
+    clock, kraken = fake_kraken(T0)
+    root = tmp_path / "forward"
+    old = RawWriter(root).path_for("spot_time", T0 - 3 * 86400 * S)
+    old.parent.mkdir(parents=True)
+    old.write_bytes(b'{"x":1}\n')
+
+    def broken(self, day, *a, **k):
+        raise ValueError("cannot close")
+
+    monkeypatch.setattr(RawWriter, "_close_day", broken)
+    (root / "meta.json").write_text(json.dumps({"collector_start_ts": "2026-10-06T00:00:00.000000000Z"}),
+                                    encoding="utf-8")
+    c = _collector(root, clock, kraken)
+    c.start()
+    c.close()
+    st = json.loads((root / "status.json").read_text(encoding="utf-8"))
+    assert st["unclosed_days"] == ["2026-10-06"]

@@ -229,6 +229,10 @@ class Collector:
             closed = self.writer.close_days(now, self.meta.collector_start_ns)
         except (OSError, ValueError) as e:
             log.error("hour/day close failed (retried next round): %s", e)
+        try:
+            self.status.unclosed_days = self.writer.overdue_unclosed_days(now)
+        except OSError as e:
+            log.error("scanning for unclosed days failed: %s", e)
         hour = now // (3600 * NS)
         if force_backup or closed or hour != self._backup_hour:
             self._backup_hour = hour

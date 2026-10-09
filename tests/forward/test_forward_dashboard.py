@@ -63,3 +63,15 @@ def test_dashboard_forward_page_backup_ok(tmp_path, monkeypatch):
     at = AppTest.from_file(APP, default_timeout=60).run()
     at.sidebar.radio[0].set_value("Forward data").run()
     assert not at.exception and not at.error
+
+
+def test_unclosed_days_in_view_and_red_on_page(tmp_path, monkeypatch):
+    _seed(tmp_path / "forward", backup_ok=True)
+    st = json.loads((tmp_path / "forward" / "status.json").read_text(encoding="utf-8"))
+    st["unclosed_days"] = ["2026-10-07"]
+    (tmp_path / "forward" / "status.json").write_text(json.dumps(st), encoding="utf-8")
+    assert forward_view(tmp_path / "forward", NOW)["unclosed_days"] == ["2026-10-07"]
+    monkeypatch.setenv("LUNA_VAR_DIR", str(tmp_path))
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    at.sidebar.radio[0].set_value("Forward data").run()
+    assert any("2026-10-07" in e.value for e in at.error)

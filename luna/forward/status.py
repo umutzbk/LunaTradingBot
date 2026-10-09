@@ -41,6 +41,7 @@ class StatusTracker:
                 if (old.get("today") or {}).get("date") == today:
                     entry["today"] = dict(old["today"])
             self.sources[s] = entry
+        self.unclosed_days: list[str] = []
         self.backup: dict[str, Any] = {"backup_ok": False, "backup_reason": "backup not run yet",
                                        "backup_warnings": [], "backup_last_run_ts": None}
 
@@ -79,6 +80,7 @@ class StatusTracker:
             "sources": self.sources,
             "open_hours": open_hours,
             "closed_days": closed_days[-7:],
+            "unclosed_days": list(self.unclosed_days),
             **self.backup,
         }
         atomic_write_text(self.root / STATUS_FILE, json.dumps(body, indent=1))
@@ -122,10 +124,13 @@ def check_health(status: dict[str, Any] | None, now_ns: int, strict: bool = Fals
         backup_warnings.append(status.get("backup_reason") or "backup not ok")
     backup_warnings += [w for w in status.get("backup_warnings") or [] if w not in backup_warnings]
     lines += [f"WARNING backup: {w}" for w in backup_warnings]
+    unclosed = list(status.get("unclosed_days") or [])
+    lines += [f"WARNING day {d} has raw data but no manifest > 4h after its end (close failing)"
+              for d in unclosed]
     if not healthy:
         return 1, ["collector-health: unhealthy", *lines]
-    if strict and backup_warnings:
-        return 2, ["collector-health: ok, but backup warning (--strict)", *lines]
+    if strict and (backup_warnings or unclosed):
+        return 2, ["collector-health: ok, but backup/day-close warning (--strict)", *lines]
     return 0, ["collector-health: ok", *lines]
 
 
@@ -165,6 +170,7 @@ def forward_view(root: Path, now_ns: int) -> dict[str, Any]:
         "backup_ok": bool((st or {}).get("backup_ok")),
         "backup_reason": (st or {}).get("backup_reason"),
         "backup_warnings": list((st or {}).get("backup_warnings") or []),
+        "unclosed_days": list((st or {}).get("unclosed_days") or []),
         "sources": sources,
         "days": days,
     }

@@ -89,3 +89,11 @@ def test_forward_package_imports_nothing_forbidden():
                 if any(n == m or n.startswith(m + ".") for m in FORBIDDEN):
                     bad.append((f.name, n))
     assert bad == []
+
+
+def test_unclosed_days_warn_and_fail_strict():
+    st = _status()
+    st["unclosed_days"] = ["2026-10-07"]
+    code, lines = check_health(st, NOW)
+    assert code == 0 and any(x.startswith("WARNING") and "2026-10-07" in x for x in lines)
+    assert check_health(st, NOW, strict=True)[0] == 2

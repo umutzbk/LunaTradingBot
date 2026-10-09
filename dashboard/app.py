@@ -139,6 +139,8 @@ def _forward() -> None:
         st.error(f"Forward data backup NOT OK: {v['backup_reason'] or 'unknown reason'}")
     for w in v["backup_warnings"]:
         st.error(f"Backup warning: {w}")
+    for d in v["unclosed_days"]:
+        st.error(f"Day {d} has raw data but no manifest > 4h after its end: day close is failing")
     if v["status_found"]:
         st.caption(f"status.json updated {v['updated_ts']}; collector_start_ts {v['collector_start_ts']}; "
                    f"open hours {v['open_hours']}")
