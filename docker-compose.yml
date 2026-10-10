@@ -100,6 +100,10 @@ services:
       - collector
     restart: unless-stopped
     stop_grace_period: 30s
+    # observed on first start: ~160-190 MiB steady, 297 MiB peak (funding bootstrap); the cap only
+    # guards the V4 services on this small host against a runaway, it is ~3x the observed peak
+    mem_limit: 1g
+    mem_reservation: 256m
     healthcheck:
       test: ["CMD", "uv", "run", "luna", "carry-health"]
       interval: 60s
