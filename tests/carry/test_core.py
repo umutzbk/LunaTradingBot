@@ -290,3 +290,26 @@ def test_exit_reasons_do_not_leak_past_the_cycle() -> None:
             ts, parse_tickers(tickers_envelope(ts, rows)), store, SimExecutor(), allow_rebalance=True
         )
     assert "A" in holdings(core) and core.exit_reason == {}
+
+
+def test_unorderable_forced_exit_holds_back_its_dependent_unwind() -> None:
+    """Review N1: a held short suspended past its grace cannot be exited; nothing else may move."""
+    core, store = make()
+    cycle(core, store, T0)
+    rows = [ticker(a, 100.0, 2.0, suspended=(a == "A")) for a in FL]
+    for ts in (T0 + 2 * MIN, T0 + 18 * MIN):
+        res = core.run_cycle(
+            ts, parse_tickers(tickers_envelope(ts, rows)), store, SimExecutor(), allow_rebalance=True
+        )
+    assert holdings(core) == {"A": -1, "B": -1, "E": 1, "F": 1}
+    assert res.orders == []
+    assert any(r.decision == "REJECT" and r.reason.startswith("no_quote:A") for r in res.records)
+
+
+def test_rebalance_to_target_waits_while_entries_are_blocked() -> None:
+    core, store = make(decision_mode="rebalance_to_target", evaluation__trigger="weekly")
+    cycle(core, store, T0)
+    store.merge_envelope(funding_envelope("C", flat_history(3e-4, T0 + 2 * H)))
+    core.risk_state.entries_blocked_day = (T0 + 2 * H).date()
+    res = cycle(core, store, T0 + 2 * H)  # T0 rebalance is done; nothing scheduled, nothing blocked
+    assert res.orders == []

@@ -381,3 +381,32 @@ def test_funding_rows_are_written_with_the_state(tmp_path: Path) -> None:
     assert total == pytest.approx(sum(sum(s.amounts.values()) for s in res.settlements))
     assert total > 0  # shorts in positive and longs in negative funding are paid
     e.close()
+
+
+def test_resume_issued_during_a_cycle_is_not_overwritten(tmp_path: Path) -> None:
+    """Review round 2, Minor 1: an operator clearing the kill flag mid-cycle wins."""
+    from luna.carry.engine import request_resume
+
+    src, clock = FakeSource(), Clock(T0)
+    e = make_engine(tmp_path, src, clock)
+    e.start()
+    e.cycle(T0)
+    e.core.risk_state.peak_equity = 400.0
+    src.set(T0 + MIN)
+    e.cycle(T0 + MIN)  # R4 kill raised by the core
+    assert e.db.get_state("carry", "kill_switch") is True
+    real = e.core.run_cycle
+
+    def resume_mid_cycle(*a, **kw):
+        res = real(*a, **kw)
+        request_resume(e.db, "carry")  # the operator acts while the cycle is running
+        return res
+
+    e.core.run_cycle = resume_mid_cycle
+    src.set(T0 + 2 * MIN)
+    e.cycle(T0 + 2 * MIN)
+    assert e.db.get_state("carry", "kill_switch") is False  # not re-raised by the finishing cycle
+    src.set(T0 + 3 * MIN)
+    e.cycle(T0 + 3 * MIN)  # applies the resume
+    assert e.db.get_state("carry", "kill_switch") is False and e.core.risk_state.peak_equity < 300
+    e.close()

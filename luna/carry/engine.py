@@ -376,7 +376,12 @@ class CarryEngine:
             },
             res.records,
         )
-        if res.fills or self.last_equity_ts is None or now - self.last_equity_ts >= EQUITY_EVERY:
+        if (
+            res.fills
+            or res.settlements
+            or self.last_equity_ts is None
+            or now - self.last_equity_ts >= EQUITY_EVERY
+        ):
             self.db.record_equity(
                 self.account,
                 now,
@@ -400,8 +405,11 @@ class CarryEngine:
         """Persist a kill switch / pause the core raised itself (R4 drawdown, R18) as Db flags, which
         are the source of truth reloaded every cycle (also settable from outside)."""
         rs = self.core.risk_state
+        loaded = getattr(self, "_loaded_flags", {})
         for key, on in (("kill_switch", rs.kill_switch), ("paused", rs.paused)):
-            if on and not self.db.get_state(self.account, key, False):
+            # only a flag this cycle raised (loaded off, now on): never re-write one an operator
+            # cleared while the cycle ran
+            if on and not loaded.get(key, False) and not self.db.get_state(self.account, key, False):
                 self.db.set_flag(self.account, key, True)
                 self.db.record_risk_event(self.account, now, key, "raised by the carry core", key)
 
@@ -415,7 +423,12 @@ class CarryEngine:
         rs.peak_equity, rs.day_start_equity, rs.entries_blocked_day = eq, eq, None
         rs.kill_switch = rs.paused = False
         self.core.reconciliation_ok = True
-        self.db.save_snapshot(self.account, {RESUME_KEY: False}, [])
+        with self.db._tx() as c:  # reset state, flags and request in one commit
+            self.db._set_state(c, self.account, STATE_KEY, self._state())
+            self.db._set_state(c, self.account, "kill_switch", False)
+            self.db._set_state(c, self.account, "paused", False)
+            self.db._set_state(c, self.account, RESUME_KEY, False)
+        self._loaded_flags = {"kill_switch": False, "paused": False}
         self.db.record_risk_event(self.account, now, "resume", f"peak reset to {eq:.2f}", "resume")
         log.warning("carry resumed by operator: peak and day start reset to %.2f", eq)
 
@@ -423,6 +436,7 @@ class CarryEngine:
         rs = self.core.risk_state
         rs.kill_switch = bool(self.db.get_state(self.account, "kill_switch", False))
         rs.paused = bool(self.db.get_state(self.account, "paused", False))
+        self._loaded_flags = {"kill_switch": rs.kill_switch, "paused": rs.paused}
 
     def _book_unbooked_fills(self) -> int:
         n = 0

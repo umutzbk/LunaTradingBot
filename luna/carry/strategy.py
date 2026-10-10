@@ -266,7 +266,7 @@ def decide(inp: DecisionInput, cfg: CarryConfig) -> Decision:
             act(exit_action(worst, "neutrality_unwind", forced=True, value=u_value))
 
     if cfg.decision_mode == "rebalance_to_target":
-        if inp.allow_rebalance:
+        if inp.allow_rebalance and inp.opens_allowed:  # a blocked rebalance waits, it is not split
             _rebalance_to_target(x, book, used, inp, act, exit_action)
     elif inp.allow_rebalance:  # exits on funding-edge reversal also while entries are blocked
         _cost_aware(x, book, used, inp, act, records, opens=inp.opens_allowed)

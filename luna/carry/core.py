@@ -307,6 +307,12 @@ class CarryCore:
         for g in groups:
             if g.status == "rejected" and g not in vetoed and g.reason:
                 records.append(_reject(g.action, g.reason))  # no quote / no instrument / below min
+        # a forced exit that could not even be ordered (no quote, suspended, no instrument, below
+        # the minimum) counts as unfilled: what depends on it is held back below
+        forced_failed = any(
+            g.status != "planned" and g.action.forced and not g.action.reason.startswith(_DEPENDENT)
+            for g in groups
+        )
         groups = [g for g in groups if g.status == "planned"]
         if allow_rebalance and opens_allowed:  # a blocked scheduled rebalance is not used up
             self.last_rebalance = now
@@ -318,7 +324,7 @@ class CarryCore:
         batch1 = [s for g in primary for s in g.closes]
         fills1 = self._send(batch1, snap, executor, now)
         filled_close = self._fully_filled(batch1, fills1)
-        if all(filled_close.values()):
+        if all(filled_close.values()) and not forced_failed:
             rest = [s for g in groups if g not in primary for s in g.closes]
             fills1b = self._send(rest, snap, executor, now)
             filled_close |= self._fully_filled(rest, fills1b)
@@ -332,7 +338,7 @@ class CarryCore:
         equity = self.portfolio.equity()
         # any close that did not fill completely (spread beyond the band, no book): no opens this
         # cycle at all, so a failed exit can never leave the book with an extra leg
-        all_closed = all(filled_close.values())
+        all_closed = all(filled_close.values()) and not forced_failed
         ready = [g for g in groups if g.opens and all_closed and g.status == "planned"]
         for g in groups:
             if g.opens and g not in ready and g.status == "planned":
@@ -434,7 +440,7 @@ class CarryCore:
                 g.status, g.reason = "rejected", r.vetoed[0][1]
                 vetoed.append(g)
                 for o, _ in g.opens:
-                    self._drop_empty(o.position_id)
+                    self._drop_empty(o.position_id, report=False)  # never persisted nor ordered
             else:
                 ctx = self._ctx_after(after, g.opens)
             groups.append(g)
