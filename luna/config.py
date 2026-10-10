@@ -92,6 +92,7 @@ class Settings(BaseSettings):
     healthcheck_url: str | None = None
     gbp_usd: float
     forward_backup_dir: str | None = None  # LUNA_FORWARD_BACKUP_DIR; "" = not configured
+    carry: dict[str, Any] | None = None  # V5 adaptive carry (validated by luna.carry.config)
 
 
 class _EnvOverrides(BaseSettings):
@@ -111,6 +112,7 @@ class _EnvOverrides(BaseSettings):
     healthcheck_url: str | None = None
     gbp_usd: float | None = None
     forward_backup_dir: str | None = None
+    carry: dict[str, Any] | None = None
 
 
 def _deep_update(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:

@@ -61,3 +61,68 @@ pairs:
   beta_change_max: 0.25
   max_pairs: 5
   always_watch: ["ETH/BTC"]
+# V5 Adaptive Funding Carry (paper-only, luna/carry; docs/superpowers/specs/luna-v5-adaptive-carry.md).
+# Initial values (V4 H2-L30 economics + V1 risk invariants); none was tuned on a backtest result.
+carry:
+  account: carry
+  capital_usd: 265
+  # the 20 assets that pass the general V4 rules U1-U7 (MUBARAK fails them)
+  universe: [ADA, AVAX, BNB, BTC, DOGE, ENA, ETH, FET, HYPE, LINK, NEAR, PEPE, PUMP, SOL, SUI, TAO, UNI, XLM, XRP, ZEC]
+  k: 2
+  gross: 1.0
+  signal_hours: 720
+  short_signal_hours: 168
+  persistence_hours: 168
+  decision_mode: cost_aware
+  switch_horizon_hours: 168
+  min_carry_improvement_bps: 5
+  switch_cost_multiplier: 1.5
+  safety_buffer_bps: 5
+  min_hold_hours: 24
+  hold_rank_buffer: 0
+  max_actions_per_cycle: 4
+  leg_stop_frac: 0.15
+  stop_cooldown_hours: 24
+  max_net_frac: 0.10
+  slippage_bps: 2
+  order_band: 0.0025
+  funding_unknown_grace_hours: 3
+  eval_retention_days: 30
+  gates:
+    max_quote_age_s: 180
+    max_spread_bps: 15
+    exit_spread_bps: 40
+    min_quote_volume_usd: 1000000
+    min_depth_mult: 1.0
+    max_book_age_s: 600
+    min_funding_coverage: 0.90
+    max_funding_age_hours: 3
+    ineligible_exit_grace_s: 900
+  evaluation:
+    trigger: event
+    max_interval_s: 60
+    poll_s: 5
+    interval_hours: 24
+    at_hour: 0
+    weekday: 0
+  # carry account risk profile for luna.risk.engine.check (R1-R19). V1 values except where the
+  # 2k-leg book needs room: R5/R6 cover the 15% leg stop on 25%-of-equity legs, R7 = 2k legs,
+  # R8 leaves headroom above the 1.0 target for price drift.
+  risk:
+    capital_usd: 265
+    risk_per_trade: 0.0375
+    max_risk_per_trade: 0.04
+    max_open_risk: 0.16
+    max_positions: 4
+    max_gross_leverage: 1.25
+    max_leg_notional_frac: 0.30
+    daily_loss_limit: 0.02
+    max_drawdown: 0.15
+    max_orders_per_day: 30
+    max_price_band: 0.003
+    emergency_stop_frac: 0.02
+    liq_distance_mult: 10
+    allow_short: true
+    live_enabled: false
+    highvol_risk_mult: 1.0
+    corr_bucket_threshold: 0.7
