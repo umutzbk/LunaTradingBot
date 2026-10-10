@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/banner.png" alt="Luna: systematic crypto trading research and paper trading"></p>
+
 # Luna
 
 **A systematic crypto trading research and paper-trading platform, built to say "no edge" when there isn't one.**
@@ -21,6 +23,11 @@ holdout period that has never been touched.
 
 ## Architecture
 
+<p align="center"><img src="assets/architecture.png" alt="Signal lane: market data, features, regime, strategies. Decision lane: ranker, portfolio, risk engine, execution" width="100%"></p>
+
+<details>
+<summary>Same pipeline as text</summary>
+
 ```
 MARKET DATA  Kraken Futures (perp, funding) · Kraken Spot (OHLCVT + trade gap-fill)
    → Feature engine (causal, 15-minute bars, resampled to 1h / 4h / 1d)
@@ -31,6 +38,8 @@ MARKET DATA  Kraken Futures (perp, funding) · Kraken Spot (OHLCVT + trade gap-f
    → Risk engine (pure function, cannot be bypassed)
    → Execution (SimBroker / PaperBroker) → SQLite store → Streamlit dashboard / Telegram
 ```
+
+</details>
 
 | Package | Responsibility |
 |---|---|
@@ -75,6 +84,12 @@ a `risk_event`.
 - **Holdout isolation:** 2026-07 → 2026-10 is reserved; research loaders assert they never read past
   the cut-off, and the holdout command has never been run.
 
+Every research run ends in a generated HTML report whose first section is the verdict. This is
+the real one for Research V2 on perps: five checks pass, including a profit factor of 1.44
+that would make an ordinary backtest look fine, five fail, and the candidate is rejected.
+
+<p align="center"><img src="assets/gonogo-report.png" alt="Generated Research V2 report: INSUFFICIENT DATA verdict with the full check table" width="88%"></p>
+
 ## Results so far
 
 Honest negatives are the main output to date.
@@ -86,6 +101,11 @@ Honest negatives are the main output to date.
 | Research V2, perp (momentum families, 15m → 1d) | **CLOSED — NO CANDIDATE** | 27 trades, +0.27 R, 90% CI [−0.37, +0.96], fragile (ex-top-3 −0.43 R) |
 | Research V2, spot (corrected fee schedule) | **CLOSED — NO CANDIDATE** | 0 configurations accepted on train |
 | Naive momentum baseline (EMA 96/480), same OOS period | benchmark | 287 trades, +1.44 R, which the complex system failed to beat |
+
+<p align="center"><img src="assets/expectancy.png" alt="Expectancy per trade with 90% confidence intervals for Luna candidates and naive baselines" width="100%"></p>
+
+<p align="center"><img src="assets/ranker-value.png" alt="Net P&L on a $265 paper account: random selection loses $224, Luna ranker and risk engine lose $6" width="88%"></p>
+<p align="center"><sub>Numbers from the write-ups in <code>docs/results/</code> on <code>feat/luna-core</code>.</sub></p>
 
 The lesson the platform keeps teaching: at retail cost levels, simple slow momentum beats the
 sophisticated stack, and short-horizon mean reversion and pairs lose money even before costs.
@@ -129,6 +149,9 @@ docker compose up -d --build
 | `collector` | `luna collect` | forward market-data collector |
 | `bot-carry` | `luna carry` | V5 adaptive funding-carry paper engine |
 | `dashboard` | Streamlit on `:8501` | overview, positions, scanner, risk events, research, carry P&L decomposition |
+
+<p align="center"><img src="assets/dashboard.png" alt="Streamlit dashboard, Adaptive Carry page: equity, the latest HOLD decision with its cost arithmetic, and the funding universe" width="80%"></p>
+<p align="center"><sub>The running dashboard on the carry paper account. The engine evaluated a switch into ZEC + TAO and held, because the expected carry did not clear the switching cost plus a safety buffer.</sub></p>
 
 Health checks: `luna health --account perp`, `luna collector-health`, `luna carry-health`.
 Operations, restarts, kill switch and recovery are covered in [`docs/RUNBOOK.md`](../../blob/feat/luna-core/docs/RUNBOOK.md).
