@@ -249,6 +249,7 @@ class CarryEngine:
             self.last_funding_refresh is None
             or now - self.last_funding_refresh >= FUNDING_REFRESH
             or now.floor("h") != self.last_funding_refresh.floor("h")
+            or self.source.funding_changed(now)  # a round landed or was read while being written
         ):
             self.source.refresh_funding(self.funding, now)
             self.funding.prune(now - pd.Timedelta(hours=self.cfg.signal_hours + 24 * 7))

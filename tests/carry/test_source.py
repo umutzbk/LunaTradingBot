@@ -123,3 +123,50 @@ def test_latest_books_keeps_the_newest_book_per_asset(tmp_path: Path) -> None:
     books = CollectorSource(tmp_path).latest_books(now)
     assert set(books) == {"BTC", "ETH"}
     assert books["BTC"][0] == T0 + pd.Timedelta(minutes=10) and books["BTC"][1][0] == [(11.0, 1.0)]
+
+
+def test_funding_changed_detects_a_growing_hour_file(tmp_path: Path) -> None:
+    """2026-10-10: the bot read the open fut_funding file while the collector was still writing it."""
+    now = T0 + pd.Timedelta(minutes=5)
+    path = _path(tmp_path, "fut_funding", now)
+    rows = flat_history(2e-5, T0, hours=48)
+    _write(path, [funding_envelope("BTC", rows)])
+    src, store = CollectorSource(tmp_path), FundingStore()
+    assert src.refresh_funding(store, now) == 48
+    assert not src.funding_changed(now)  # nothing new since the read
+    _write(path, [funding_envelope("BTC", rows), funding_envelope("ETH", rows)])
+    assert src.funding_changed(now + pd.Timedelta(seconds=10))
+    assert src.refresh_funding(store, now + pd.Timedelta(seconds=10)) == 96  # rows read (BTC again + ETH)
+    assert store.assets() == ["BTC", "ETH"]
+    assert not src.funding_changed(now + pd.Timedelta(seconds=20))
+
+
+def test_funding_changed_when_the_hour_file_appears(tmp_path: Path) -> None:
+    now = T0 + pd.Timedelta(minutes=3)  # the :05 round has not landed yet
+    src, store = CollectorSource(tmp_path), FundingStore()
+    assert src.refresh_funding(store, now) == 0
+    assert not src.funding_changed(now)
+    _write(_path(tmp_path, "fut_funding", now), [funding_envelope("BTC", flat_history(2e-5, T0, hours=48))])
+    later = now + pd.Timedelta(minutes=2)
+    assert src.funding_changed(later)
+    assert src.refresh_funding(store, later) == 48 and store.assets() == ["BTC"]
+    assert not src.funding_changed(later)
+
+
+def test_funding_changed_settles_across_the_hour_switch(tmp_path: Path) -> None:
+    """Open file -> (deleted, gz not yet there) -> gz: one re-read per transition, never one per
+    evaluation."""
+    h1 = T0 + pd.Timedelta(hours=1)
+    envs = [funding_envelope("BTC", flat_history(2e-5, T0, hours=48))]
+    _write(_path(tmp_path, "fut_funding", T0), envs)
+    src, store = CollectorSource(tmp_path), FundingStore()
+    src.refresh_funding(store, T0 + pd.Timedelta(minutes=30))
+    assert not src.funding_changed(h1 + pd.Timedelta(seconds=30))  # grace minute: same open file
+    _path(tmp_path, "fut_funding", T0).unlink()  # the collector compresses it at ~:02
+    steps = [(h1 + pd.Timedelta(seconds=90), None), (h1 + pd.Timedelta(minutes=3), "gz")]
+    for t, make in steps:
+        if make:
+            _write(_path(tmp_path, "fut_funding", T0, gz=True), envs, gz=True)
+        assert src.funding_changed(t)
+        src.refresh_funding(store, t)
+        assert not src.funding_changed(t) and not src.funding_changed(t + pd.Timedelta(minutes=1))
