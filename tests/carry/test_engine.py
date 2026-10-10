@@ -410,3 +410,46 @@ def test_resume_issued_during_a_cycle_is_not_overwritten(tmp_path: Path) -> None
     e.cycle(T0 + 3 * MIN)  # applies the resume
     assert e.db.get_state("carry", "kill_switch") is False and e.core.risk_state.peak_equity < 300
     e.close()
+
+
+def test_resume_requested_while_down_does_not_override_a_reconciliation_mismatch(tmp_path: Path) -> None:
+    from luna.carry.engine import request_resume
+
+    src, clock = FakeSource(), Clock(T0)
+    e1 = make_engine(tmp_path, src, clock)
+    e1.start()
+    e1.cycle(T0)
+    e1.close()
+    st = e1.db.get_state("carry", "carry_core")
+    st["holdings"]["A"] = st["holdings"]["A"] * 2
+    e1.db.save_snapshot("carry", {"carry_core": st}, [])
+    request_resume(e1.db, "carry")  # operator resumes while the bot is down
+    e2 = make_engine(tmp_path, src, clock, owner="test-2")
+    e2.start()
+    src.set(T0 + MIN)
+    e2.cycle(T0 + MIN)
+    assert e2.db.get_state("carry", "paused") is True and e2.core.risk_state.paused
+    e2.close()
+
+
+def test_a_long_blocked_forced_exit_raises_one_risk_event(tmp_path: Path) -> None:
+    src, clock = FakeSource(), Clock(T0)
+    e = make_engine(tmp_path, src, clock)
+    e.start()
+    e.cycle(T0)
+    e.core.risk_state.kill_switch = True
+    e.db.set_flag("carry", "kill_switch", True)
+    e.core.instruments = {a: i for a, i in e.core.instruments.items() if a != "A"}  # A cannot be ordered
+    for minute in (1, 20, 40, 60):
+        clock.t = T0 + minute * MIN
+        src.set(clock.t)
+        e.cycle(clock.t)
+        e.core.instruments = {a: i for a, i in e.core.instruments.items() if a != "A"}
+    with e.db.engine.connect() as c:
+        n = c.execute(
+            select(func.count())
+            .select_from(m.risk_events)
+            .where(m.risk_events.c.rule == "forced_exit_blocked")
+        ).scalar()
+    assert n == 1
+    e.close()

@@ -52,6 +52,7 @@ log = logging.getLogger("luna.carry")
 
 STATE_KEY = "carry_core"
 RESUME_KEY = "carry_resume"  # set by `luna carry-resume`, consumed by the engine
+FORCED_BLOCK_ALERT = pd.Timedelta(minutes=30)
 EQUITY_EVERY = pd.Timedelta(minutes=5)  # equity rows: at most this often (and after any fill)
 LOCK_STALE_S = 300
 HEARTBEAT_S = 60
@@ -114,6 +115,8 @@ class CarryEngine:
         self.pending_fill_id = 0
         self.inflight: dict[str, float] = {}  # client id -> reference mid
         self.last_equity_ts: pd.Timestamp | None = None
+        self.forced_blocked_since: pd.Timestamp | None = None
+        self.forced_blocked_alerted = False
         self.last_eval: pd.Timestamp | None = None
         self.last_snapshot_ts: pd.Timestamp | None = None
         self.last_funding_refresh: pd.Timestamp | None = None
@@ -323,6 +326,7 @@ class CarryEngine:
     def _persist(self, now: pd.Timestamp, res: CycleResult, snap: MarketSnapshot | None) -> None:
         self.inflight.clear()
         self._sync_flags(now)
+        self._watch_forced_block(now, res)
         rc = self.core.recent_closed
         closed = [(p, r, rc[p.id][1] if p.id in rc else now) for p, r in res.closed]
         done = {c[0].id for c in closed}
@@ -413,6 +417,25 @@ class CarryEngine:
                 self.db.set_flag(self.account, key, True)
                 self.db.record_risk_event(self.account, now, key, "raised by the carry core", key)
 
+    def _watch_forced_block(self, now: pd.Timestamp, res: CycleResult) -> None:
+        """A forced exit that cannot be ordered holds back every other change; after 30 minutes it
+        becomes a risk event (once per episode) so the operator looks at it."""
+        if not res.forced_blocked:
+            self.forced_blocked_since, self.forced_blocked_alerted = None, False
+            return
+        self.forced_blocked_since = self.forced_blocked_since or now
+        if not self.forced_blocked_alerted and now - self.forced_blocked_since >= FORCED_BLOCK_ALERT:
+            assets = ",".join(sorted(res.forced))
+            self.db.record_risk_event(
+                self.account,
+                now,
+                "forced_exit_blocked",
+                f"forced exit(s) not orderable since {self.forced_blocked_since}: {assets}",
+                "alert",
+            )
+            log.error("carry: forced exit(s) %s not orderable for 30 min; book frozen", assets)
+            self.forced_blocked_alerted = True
+
     def _apply_resume(self, now: pd.Timestamp) -> None:
         """`luna carry-resume`: flags were cleared by the command; reset the drawdown peak (and the
         day's loss reference) to the current equity so R4/R3 do not fire again at once."""
@@ -488,6 +511,9 @@ class CarryEngine:
         }
         if bad or not self.core.reconciliation_ok:
             self.core.reconciliation_ok = False
+            if self.db.get_state(self.account, RESUME_KEY, False):  # never resume onto a bad book
+                self.db.save_snapshot(self.account, {RESUME_KEY: False}, [])
+                log.error("carry: pending resume cancelled by a reconciliation mismatch")
             self.db.set_flag(self.account, "paused", True)
             self.core.risk_state.paused = True
             detail = json.dumps({a: list(v) for a, v in bad.items()})[:500]

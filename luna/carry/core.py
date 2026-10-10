@@ -138,6 +138,7 @@ class CycleResult:
     forced: dict[str, str]
     closed: list[tuple[Position, str]] = field(default_factory=list)
     touched_closed: list[Position] = field(default_factory=list)  # closed positions with new funding
+    forced_blocked: bool = False  # a forced exit could not be ordered: everything else held back
 
 
 def _reject(a: Action, reason: str) -> Record:
@@ -313,6 +314,7 @@ class CarryCore:
             g.status != "planned" and g.action.forced and not g.action.reason.startswith(_DEPENDENT)
             for g in groups
         )
+        res.forced_blocked = forced_failed
         groups = [g for g in groups if g.status == "planned"]
         if allow_rebalance and opens_allowed:  # a blocked scheduled rebalance is not used up
             self.last_rebalance = now
