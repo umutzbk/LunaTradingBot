@@ -95,6 +95,7 @@ services:
         required: false
     volumes:
       - ./var:/app/var
+      - ./var/forward:/app/var/forward:ro  # collector data: read-only for the carry bot
     depends_on:
       - collector
     restart: unless-stopped
