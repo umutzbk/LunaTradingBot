@@ -64,6 +64,9 @@ class FakeSource:
     def latest_books(self, now: pd.Timestamp) -> dict:
         return {}
 
+    def funding_changed(self, now: pd.Timestamp) -> bool:
+        return False
+
 
 class FakeBook:
     """PaperBroker feed: a deep two-sided book around the source's mid (1 bp half spread)."""
@@ -452,4 +455,59 @@ def test_a_long_blocked_forced_exit_raises_one_risk_event(tmp_path: Path) -> Non
             .where(m.risk_events.c.rule == "forced_exit_blocked")
         ).scalar()
     assert n == 1
+    e.close()
+
+
+class FileFundingSource(FakeSource):
+    """Tickers from the fake, hourly funding from real collector files (bootstrap from the fake)."""
+
+    def __init__(self, root: Path) -> None:
+        super().__init__()
+        from luna.carry.source import CollectorSource
+
+        self.files = CollectorSource(root)
+
+    def refresh_funding(self, store: FundingStore, now: pd.Timestamp) -> int:
+        return self.files.refresh_funding(store, now)
+
+    def funding_changed(self, now: pd.Timestamp) -> bool:
+        return self.files.funding_changed(now)
+
+
+def test_funding_file_read_while_being_written_is_reread_before_the_interval(tmp_path: Path) -> None:
+    """2026-10-10 11:05: after an outage the bot read the hourly fut_funding file while the collector
+    was still writing it and only saw the first symbols until the next 5-minute refresh."""
+    import json
+
+    root = tmp_path / "forward"
+    src, clock = FileFundingSource(root), Clock(T0)
+    e = make_engine(tmp_path, src, clock)
+    e.start()
+    e.cycle(T0)
+    assert {a for a, q in e.core.portfolio.holdings.items() if q} == {"A", "B", "E", "F"}
+    hour = T0 + pd.Timedelta(hours=1)
+    path = root / "raw" / "fut_funding" / f"date={hour:%Y-%m-%d}" / f"{hour:%H}.jsonl"
+    path.parent.mkdir(parents=True)
+    envs = [funding_envelope(a, flat_history(r, hour, hours=48)) for a, r in sorted(src.fl.items())]
+    path.write_bytes(json.dumps(envs[0]).encode() + b"\n")  # only A so far
+
+    t1 = hour + 5 * MIN
+    src.set(t1)
+    e.cycle(t1)
+    assert e.funding.rate("A", T0) is not None and e.funding.rate("B", T0) is None
+    path.write_bytes(b"".join(json.dumps(x).encode() + b"\n" for x in envs))  # the round completed
+
+    t2 = t1 + MIN  # well inside the 5-minute refresh interval
+    src.set(t2)
+    e.cycle(t2)
+    assert all(e.funding.rate(a, T0) is not None for a in src.fl)
+    for t3 in (t2 + MIN, t2 + 2 * MIN):  # unchanged file: re-reads add nothing, settle nothing twice
+        src.set(t3)
+        e.cycle(t3)
+    with e.db.engine.connect() as c:
+        rows = c.execute(select(m.funding.c.symbol, m.funding.c.ts, m.funding.c.rate)).all()
+    period = [r for r in rows if pd.Timestamp(r.ts) == T0]
+    assert sorted(r.symbol for r in period) == ["A", "B", "E", "F"], period  # one row per held leg
+    assert all(r.rate is not None for r in period)  # settled at the known rate, not at 0 after grace
+    assert len(rows) == len({(r.symbol, r.ts) for r in rows})
     e.close()

@@ -40,7 +40,9 @@ the executor (PaperBroker vs simulated fills) and the snapshot source differ.
 `CarryEngine.run_forever` (no cron, no Task Scheduler): every `evaluation.poll_s` (5 s) it stats the
 collector's current `fut_tickers` hour file; it evaluates when a new snapshot arrived (collector
 cadence 60 s) or `evaluation.max_interval_s` (60 s) passed. Funding is merged from the collector's
-hourly `fut_funding` round every 5 min (and at start from the daily `fut_funding_full`); order books
+hourly `fut_funding` round every 5 min, and at once when that file appears, grows or is replaced
+(stat check every evaluation: a round is written symbol by symbol, so a read can land mid-round;
+and at start from the daily `fut_funding_full`); order books
 from `fut_book` every 5 min. The Db lock is refreshed every 60 s.
 
 One evaluation (`CarryCore.run_cycle`):

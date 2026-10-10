@@ -33,6 +33,7 @@ class CollectorSource:
     def __init__(self, root: Path) -> None:
         self.root = Path(root)  # var/forward
         self._stat: tuple[str, int, int] | None = None  # (path, size, mtime_ns) of the last tickers read
+        self._funding_stat: tuple[str, int, int] | None = None  # same, for the newest fut_funding file read
         self._last_snap: MarketSnapshot | None = None
 
     # --- paths ---------------------------------------------------------------------------------------
@@ -129,12 +130,28 @@ class CollectorSource:
 
     def refresh_funding(self, store: FundingStore, now: pd.Timestamp) -> int:
         """Merge the newest hourly ``fut_funding`` round (each envelope holds the last 48 h)."""
+        self._funding_stat = self._newest_funding_stat(now)
         for path in self._files("fut_funding", now):
             if path.exists():
                 n = sum(store.merge_envelope(e) for e in self._envs(self._lines(path)))
                 if n:
                     return n
         return 0
+
+    def funding_changed(self, now: pd.Timestamp) -> bool:
+        """Cheap change detection (stat only): the newest ``fut_funding`` file appeared, grew or was
+        replaced since the last ``refresh_funding``. A round is written symbol by symbol over ~15 s,
+        so a read can land mid-round (2026-10-10 11:05); this triggers the re-read."""
+        return self._newest_funding_stat(now) != self._funding_stat
+
+    def _newest_funding_stat(self, now: pd.Timestamp) -> tuple[str, int, int] | None:
+        for path in self._files("fut_funding", now):
+            try:
+                st = path.stat()
+            except OSError:
+                continue
+            return (str(path), st.st_size, st.st_mtime_ns)
+        return None
 
     def bootstrap_funding(self, store: FundingStore, now: pd.Timestamp, keep_hours: int) -> int:
         """Load the newest daily ``fut_funding_full`` round (full history per perp), then the newest
