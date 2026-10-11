@@ -17,6 +17,7 @@ interpolation. A series that is not on the 5-minute grid (e.g. the 60 s endpoint
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -156,3 +157,157 @@ def load_spread5m(root: Path, asset: str, known_after: pd.Timedelta = KNOWN_AFTE
     prov = json.loads((Path(root) / f"{asset}.provenance.json").read_text(encoding="utf-8"))
     check_5m_provenance(prov, p, asset)
     return Spread5m(pd.read_parquet(p), known_after=known_after)
+
+
+# --- point-in-time funding (protocol §3.1) ---------------------------------------------------------
+
+
+class FundingPIT:
+    """A ``FundingStore`` seen at ``now``: only periods with start + 1h <= now exist. Used for the
+    signals (``trailing``, ``window``, ``newest_end``) and for settlement, which reads a period's
+    rate only after the period ended."""
+
+    def __init__(self, store, now: pd.Timestamp) -> None:
+        self.store, self.now = store, pd.Timestamp(now)
+
+    def _check(self, t: pd.Timestamp) -> None:
+        if pd.Timestamp(t) > self.now:
+            raise ValueError(f"funding view at {self.now} asked about {t}")
+
+    def rate(self, asset: str, period_start: pd.Timestamp):
+        if pd.Timestamp(period_start) + HOUR > self.now:
+            return None
+        return self.store.rate(asset, period_start)
+
+    def window(self, asset: str, now: pd.Timestamp, hours: int):
+        self._check(now)
+        return self.store.window(asset, now, hours)
+
+    def trailing(self, asset: str, now: pd.Timestamp, hours: int):
+        self._check(now)
+        return self.store.trailing(asset, now, hours)
+
+    def newest_end(self, asset: str) -> pd.Timestamp | None:
+        keys, _ = self.store._arrays(asset)
+        i = int(np.searchsorted(keys, (self.now - HOUR).value, "right"))
+        return pd.Timestamp(int(keys[i - 1]), tz="UTC") + HOUR if i else None
+
+
+# --- historical snapshots (protocol §3.1, §3.2) ----------------------------------------------------
+
+LOOKBACK = (pd.Timestamp("2025-10-06T00:00Z"), pd.Timestamp("2025-11-10T00:00Z"))
+VOLUME_BARS = 96
+
+
+@dataclass
+class HistoricalData:
+    """Point-in-time inputs: 15m mark and trade bars (by open_ts), 5-minute spread snapshots and
+    the realized funding store. ``real`` is set only by the frozen-copy loader (outcome guard)."""
+
+    mark: dict[str, pd.DataFrame]
+    perp: dict[str, pd.DataFrame]
+    spreads: dict[str, pd.DataFrame]
+    store: object
+    real: bool = False
+
+
+@dataclass(frozen=True)
+class QuoteInfo:
+    mid_source: str | None  # "mark" | "trade" | None
+    dec_fallback: bool
+    dec_n: int
+
+
+@dataclass(frozen=True)
+class FillQuote:
+    mid: float
+    half: float
+    ts: pd.Timestamp
+    fallback: bool
+    n_valid: int
+    mid_source: str
+
+
+def lookback_p90(spreads: dict[str, pd.DataFrame]) -> dict[str, float]:
+    """S-FB-CONS: per asset the p90 of the valid snapshots in the lookback [2025-10-06, 2025-11-10)."""
+    out = {}
+    lo, hi = LOOKBACK
+    for a, df in spreads.items():
+        v = df["spread_full"]
+        v = v[(v.index >= lo) & (v.index < hi)].to_numpy(dtype=float)
+        with np.errstate(invalid="ignore"):
+            v = v[np.isfinite(v) & (v > 0) & (v <= MAX_VALID_FULL)]
+        if len(v):
+            out[a] = float(np.quantile(v, 0.9))
+    return out
+
+
+class SnapshotBuilder:
+    """§3.1 snapshot at t and §3.2 fill quote for the order decided at t (fill at t + 15m).
+
+    ``known_after``: 5m primary, 10m S-PIT10. ``spread_mode="fixed"``: S-SPREAD-FIX (10 bps for gate
+    and fill). ``fallback_full``: S-FB-CONS per-asset value used instead of 10 bps when a window
+    falls back."""
+
+    def __init__(self, data: HistoricalData, *, known_after: pd.Timedelta = KNOWN_AFTER,
+                 spread_mode: str = "primary", fallback_full: dict[str, float] | None = None) -> None:
+        if spread_mode not in ("primary", "fixed"):
+            raise ValueError(spread_mode)
+        self.data, self.mode = data, spread_mode
+        self.fallback_full = fallback_full or {}
+        self.assets = sorted(set(data.mark) | set(data.perp))
+        self.spread = {a: Spread5m(data.spreads.get(a), known_after=known_after) for a in self.assets}
+        self._mark = {a: data.mark[a]["close"] for a in data.mark}
+        self._trade = {}
+        self._vol = {}
+        for a, df in data.perp.items():
+            real = df[~df["filled"].astype(bool)]
+            self._trade[a] = real["close"]
+            usd = (df["volume"] * df["close"]).fillna(0.0)
+            self._vol[a] = usd.rolling(VOLUME_BARS, min_periods=1).sum()
+
+    def mid(self, a: str, t: pd.Timestamp) -> tuple[float, str | None]:
+        """Close of the bar that opened at t - 15m (closed at t): mark, else a real trade bar."""
+        bar = t - BAR
+        for src, name in ((self._mark.get(a), "mark"), (self._trade.get(a), "trade")):
+            if src is not None and bar in src.index:
+                v = float(src.at[bar])
+                if math.isfinite(v) and v > 0:
+                    return v, name
+        return math.nan, None
+
+    def _full(self, a: str, obs: SpreadObs) -> float:
+        if self.mode == "fixed":
+            return FALLBACK_FULL
+        if obs.fallback:
+            return self.fallback_full.get(a, FALLBACK_FULL)
+        return obs.full
+
+    def snapshot(self, t: pd.Timestamp):
+        from luna.carry.market import MarketSnapshot, Quote
+
+        quotes, info = {}, {}
+        for a in self.assets:
+            mid, src = self.mid(a, t)
+            obs = self.spread[a].decision(t)
+            info[a] = QuoteInfo(src, obs.fallback and self.mode == "primary", obs.n_valid)
+            if src is None:
+                continue
+            full = self._full(a, obs)
+            vol = self._vol.get(a)
+            v = vol.asof(t - BAR) if vol is not None and len(vol) and vol.index[0] <= t - BAR else math.nan
+            nan = math.nan
+            quotes[a] = Quote(a, mid * (1 - full / 2), mid * (1 + full / 2), math.inf, math.inf, mid, nan,
+                              nan, nan, nan, float(v), nan, False, False)
+        return MarketSnapshot(t, quotes), info
+
+    def fill_quote(self, a: str, t: pd.Timestamp) -> FillQuote | None:
+        """Fill of the order decided at t: mid of the snapshot at t + 15m, half spread of the
+        non-overlapping fill window [t, t + 15m) known at t + 15m."""
+        ft = t + FILL_DELAY
+        mid, src = self.mid(a, ft)
+        if src is None:
+            return None
+        obs = self.spread[a].fill(t)
+        return FillQuote(mid, self._full(a, obs) / 2, ft, obs.fallback and self.mode == "primary",
+                         obs.n_valid, src)
