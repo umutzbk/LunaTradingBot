@@ -46,8 +46,10 @@ FROZEN_DEFAULTS = {
     "capital_usd": 265.0, "k": 2, "gross": 1.0, "signal_hours": 720, "switch_horizon_hours": 168.0,
     "min_carry_improvement_bps": 5.0, "switch_cost_multiplier": 1.5, "safety_buffer_bps": 5.0,
     "min_hold_hours": 24.0, "slippage_bps": 2.0, "max_net_frac": 0.10, "leg_stop_frac": 0.15,
-    "stop_cooldown_hours": 24.0,
+    "stop_cooldown_hours": 24.0, "funding_unknown_grace_hours": 3.0,
 }
+FROZEN_GATES = {"max_spread_bps": 15.0, "exit_spread_bps": 40.0, "min_quote_volume_usd": 1_000_000.0,
+                "min_funding_coverage": 0.90, "max_funding_age_hours": 3.0, "ineligible_exit_grace_s": 900.0}
 FROZEN_RISK = {"daily_loss_limit": 0.02, "max_drawdown": 0.15, "live_enabled": False}
 UNIVERSE = ["ADA", "AVAX", "BNB", "BTC", "DOGE", "ENA", "ETH", "FET", "HYPE", "LINK", "NEAR", "PEPE", "PUMP", "SOL",
             "SUI", "TAO", "UNI", "XLM", "XRP", "ZEC"]
@@ -71,6 +73,7 @@ def frozen_carry_config(path: Path | None = None) -> tuple[CarryConfig, str]:
     cfg = CarryConfig(**(yaml.safe_load(raw.decode("utf-8")) or {})["carry"])
     bad = {k: (getattr(cfg, k), v) for k, v in FROZEN_DEFAULTS.items() if getattr(cfg, k) != v}
     bad |= {f"risk.{k}": (getattr(cfg.risk, k), v) for k, v in FROZEN_RISK.items() if getattr(cfg.risk, k) != v}
+    bad |= {f"gates.{k}": (getattr(cfg.gates, k), v) for k, v in FROZEN_GATES.items() if getattr(cfg.gates, k) != v}
     if list(cfg.universe) != UNIVERSE:
         bad["universe"] = (cfg.universe, UNIVERSE)
     if bad:

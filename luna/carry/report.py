@@ -20,7 +20,7 @@ TABLES = ("daily", "fills", "records", "settlements", "schedule")
 DECLARATIONS = [
     "Depth: no historical order book; the builder uses infinite book sizes, so the depth gate passes (§3.1).",
     "Instruments: frozen V4 file (qty step, tick, min qty, min cost); maintenance margin is not in that file "
-    "and is 0 (the liquidation-distance pre-check sees the stop distance only).",
+    "and is 0, so the liquidation-distance pre-check (equity / leg) effectively always passes.",
     "S-NOKILL: R4 disabled by setting risk.max_drawdown = 1.0 (it can only fire at equity <= 0); leg stop and "
     "R3 unchanged.",
     "G6 when KILL-AFFECTED: read from an S-COST2X/NOKILL row (S-COST2X with the R4 kill off), because §10 moves "

@@ -85,12 +85,17 @@ def test_m2_frozen_config_ignores_environment_overrides(monkeypatch):
     assert cfg.switch_horizon_hours == 168 and len(sha) == 64
 
 
-def test_m2_frozen_config_refuses_values_other_than_the_protocol_defaults(tmp_path):
+@pytest.mark.parametrize("old,new", [("min_hold_hours: 24", "min_hold_hours: 12"),
+                                     ("max_spread_bps: 15", "max_spread_bps: 30"),
+                                     ("min_funding_coverage: 0.90", "min_funding_coverage: 0.50"),
+                                     ("funding_unknown_grace_hours: 3", "funding_unknown_grace_hours: 9")])
+def test_m2_frozen_config_refuses_values_other_than_the_protocol_defaults(tmp_path, old, new):
     from pathlib import Path
 
     y = (Path(og.__file__).resolve().parents[2] / "config" / "default.yaml").read_text(encoding="utf-8")
+    assert old in y
     bad = tmp_path / "default.yaml"
-    bad.write_text(y.replace("min_hold_hours: 24", "min_hold_hours: 12"), encoding="utf-8")
+    bad.write_text(y.replace(old, new), encoding="utf-8")
     with pytest.raises(bt.OutcomeBlocked):
         og.frozen_carry_config(bad)
 
@@ -193,8 +198,10 @@ def test_bootstrap_reference_values_pinned_without_the_v4_worktree():
     test can never silently skip."""
     rng = np.random.default_rng(1)
     x = 1e-4 + 1e-3 * rng.standard_normal(233)
-    r = stats.mbb(x, 28, B=2000, seed=stats.SEED)
-    assert (r.p, round(r.lower_bound(0.05), 15), round(r.upper_bound(0.05), 15)) == PINNED
+    for block, pinned in ((28, PINNED), (14, PINNED_14)):
+        r = stats.mbb(x, block, B=2000, seed=stats.SEED)
+        assert (r.p, round(r.lower_bound(0.05), 15), round(r.upper_bound(0.05), 15)) == pinned
 
 
-PINNED = (0.3488255872063968, -4.1650964875e-05, 6.7006397525e-05)  # V4 mbb_pvalue @ b074b69
+PINNED = (0.3488255872063968, -4.1650964875e-05, 6.7006397525e-05)  # V4 mbb_pvalue @ b074b69, b = 28
+PINNED_14 = (0.3168415792103948, -4.2858139022e-05, 7.9277719797e-05)  # b = 14
