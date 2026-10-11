@@ -1,4 +1,46 @@
-# V5 Stage 0 audit (2026-10-11): **BLOCKED — 1M SPREAD UNAVAILABLE**
+# V5 Stage 0 audit (2026-10-11): **PASS (protocol rev 3, 5-minute historical snapshots)**
+
+> Outcome-free. Bu belgede getiri, P&L, sinyal sıralaması veya spread büyüklüğünün strateji etkisi yoktur.
+> Holdout (≥ 2026-07-01) okunmadı. V4 dosyaları değişmedi. Paper config değişmedi. `live_enabled=false`.
+> İlk deneme (aşağıda §1–§4) 1 dakikalık şart yüzünden BLOCKED idi; kullanıcı kararıyla protokol rev 3 gerçek 5 dakikalık snapshot'lara geçti (protokol §15).
+
+## 0. Rev 3 final audit (20 varlık, [2025-10-06, 2026-07-01))
+
+**Kaynak:** Kraken analytics `spreads`, `interval=300`, "5 dakikalık tarihsel snapshot verisi". Çıktı `var/history_v5/spreads/` (+ gün başına checkpoint'ler). Script'ler `scripts/v5_stage0/{backfill_spreads,audit_5m,freeze_final}.py`. Ham audit: `var/ops/v5_stage0/audit_5m.json` (sha256 `9136a1f8…de0c6`).
+
+**Etiket semantiği (yeni probe):** `interval=300`'ün T değeri, 60 s serisinin T+faz … T+4 değerlerine eşit (faz 1, 2, 3, 4 günlerinde birebir). Snapshot [T, T+5m) içinde alınır; bu yüzden primary kural **T + 5m'de bilinir**. S-PIT10 (T + 10m) altyapısı hazır: `Spread5m(known_after=10min)`, `load_spread5m(..., known_after=…)`, testli.
+
+| Kontrol | Sonuç |
+|---|---|
+| Kapsam | 20/20 varlık, her biri 77.184/77.184 etiket (268 gün × 288). Gün, ay ve saat kırılımında mevcudiyet 1,0. |
+| Tekrar / monotonluk / grid | Tekrar 0, monoton, 5 dakikalık grid dışı 0, pencere dışı 0 |
+| Gözlenen kadans, provenance | 20/20 kadans 300 s, etiket "5-minute historical snapshots"; dosya sha'ları provenance ile eşleşiyor; checkpoint sha'ları assemble sırasında doğrulandı |
+| Geçersiz değerler | Toplam 580 snapshot > 500 bps, 15 NaN (PUMP 10, UNI 5), sonsuz 0, ≤ 0 yok. En çok: FET 185, PUMP 131, XLM 59, HYPE 55, ZEC 54, UNI 53. Kullanılmaz ve sayılır. |
+| Etiket boşlukları | ≥ 1 saatlik etiket boşluğu yok (en uzun boşluk 0) |
+| Geçersiz değer serileri (≥ 1 saat) | Çoğu outcome penceresinden önce: 2025-11-01 17:10–21:10 (FET, HYPE, PUMP, UNI, XLM, ZEC; PUMP'ta 66 etiket ≈ 5,5 saat), 2025-10-10/11 (PUMP, UNI). Outcome penceresinde tek seri: FET 2026-03-05 22:15'ten 26 etiket (≈ 2 saat 10 dk). |
+| Tekrarlayan ardışık değer | Oran 0,28 % – 3,8 % (en yüksek PUMP); en uzun seri 28 etiket (PUMP 66, BNB 42). Kural değişmez; raporlanır. |
+| Karar fallback'i (< 6/12) | Bütün 15m noktaları: %0,029. **Outcome penceresi: %0,0031**; yalnızca FET (%0,063). 00:00'da outcome: %0,0215 (yalnızca FET, %0,43). Ay: yalnızca 2026-03. Saat: yalnızca 22, 23, 00. |
+| Fill fallback'i (< 2/3) | Bütün noktalar: %0,036. **Outcome penceresi: %0,0092**; FET %0,157, PUMP %0,027. Ay: 2025-11, 2026-02 … 2026-05. Saat: en yüksek 22:00 (%0,086). |
+| %90 kapsam bayrağı (varlık ve varlık × saat hücresi, outcome) | Bayrak yok. En düşük varlık: karar 99,94 %, fill 99,84 %. En düşük hücre: karar 99,25 %, fill 98,50 %. |
+| V4 23:00–00:00 tutarlılığı (5 dakikalık değer parity'si) | **PASS: 64.320/64.320** etiket (20 × 3.216), T değeri = V4 T+4m satırı (1e-12; PUMP'ın NaN'ları iki tarafta da NaN). Kadans: 321.600 V4 dakikasının 321.500'ü gün başına tek bir fazla açıklanıyor; kalan 100 dakika her varlıkta yalnızca 2025-10-10'daki gün içi faz kaymasında (§2.1'e göre FAIL değil, listelenir). |
+| Holdout | Max ts 2026-06-30T23:55 (spread), kopyada 23:59 (V4 60 s). Kesim sonrası düşürülen satır 0. **PASS.** |
+
+**Frozen kopya (nihai):** `var/history_v5/frozen/`, 161 dosya (V4 düzeni + `history_v5/spreads/<asset>.parquet` ve `.provenance.json`), manifest sha256 **`eecdc6a21626ccd5e2677cce2503f304a5730845de552554281a6ea54cc53f14`**.
+- 121 ortak dosya `frozen_parity` ile bayt bayt aynı; spread dosyaları kaynakla bayt bayt aynı (provenance sha'sı geçerli kalır).
+- İkinci bir freeze 161 dosyanın sha'sını birebir yeniden üretti.
+- `open_frozen` + `load_spread5m` 20 varlığı provenance kontrolüyle yükledi; S-PIT10 yükleyicisi de çalışıyor.
+
+**Stage 0 çıkış koşulu (protokol §2.1):** Holdout PASS, V4 tutarlılığı PASS, gerçek 5 dakikalık snapshot'lar alındı (kadans 300 s), audit sunuldu → **PASS.**
+
+**Guard'ların durumu:**
+- Primary T + 5m, karar 6/12 ve fill 2/3: `luna/carry/history.py` `Spread5m`, testli.
+- S-PIT10: altyapı hazır ve testli; satırın kendisi outcome replay'inde koşar.
+- PIT-SENSITIVE / FALLBACK-AFFECTED / S-FB-CONS birleştirmesi: `luna/carry/verdict.py`, 8 kombinasyonluk matris testi.
+- **Açık zorunlu kapı:** fallback sayaçlarının arm, varlık ve saat bazında dolan notional'a atanması ve FALLBACK-AFFECTED tetikleyicisinin sentetik regression testi (protokol §12). Outcome replay henüz yazılmadığı için bu test yok. Replay yazılırken eklenmeli ve outcome koşusundan önce yeşil olmalı. S-FB-CONS'un lookback p90 hesabı da replay ile birlikte yazılacak.
+
+---
+
+# Önceki deneme (2026-10-11 gece): BLOCKED — 1M SPREAD UNAVAILABLE
 
 > Outcome-free. Bu belgede getiri, P&L, sinyal sıralaması veya spread büyüklüğünün strateji etkisi yoktur.
 > Holdout (≥ 2026-07-01) okunmadı. V4 dosyaları değişmedi. Paper config değişmedi. `live_enabled=false`.

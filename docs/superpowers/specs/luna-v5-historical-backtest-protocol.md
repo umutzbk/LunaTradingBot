@@ -9,7 +9,8 @@
   - Bağımsız metodolojik red-team (2026-10-11) NOT READY dedi: 2 Critical, 10 Major, 7 Minor.
   - Bu metin bütün Critical ve Major bulguları ve Minor'ları işler. Bulgu ↔ değişiklik eşlemesi §13'te.
   - Freeze'den önce **yeniden red-team** zorunludur.
-  - **2026-10-11 gece bulguları §14'te:** Stage 0 BLOCKED (protokol penceresinde gerçek 1 dakikalık spread yok; yalnızca ~2025-02 öncesinde var), W parity PASS. Metodoloji değişmedi; spread çözünürlüğü kararı kullanıcıda.
+  - **2026-10-11 gece bulguları §14'te:** Stage 0 BLOCKED (protokol penceresinde gerçek 1 dakikalık spread yok; yalnızca ~2025-02 öncesinde var), W parity PASS.
+  - **rev 3 sonrası (2026-10-11):** Stage 0 PASS (5 dakikalık snapshot'lar, `docs/results/v5-stage0-audit.md` §0); nihai frozen kopya `var/history_v5/frozen/` manifest sha256 `eecdc6a2…c53f14`; bu kopyada W parity yeniden PASS; rev 3 red-team READY FOR FREEZE (§16). Açık zorunlu kapı: fallback sayaç testi (§12), outcome koşusundan önce.
 
 **Sıra (kullanıcı kararı, değişmez):**
 1. Stage 0 spread/veri backfill + audit
