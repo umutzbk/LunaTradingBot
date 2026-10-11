@@ -1,7 +1,7 @@
-# V5 Adaptive Carry: Historical Backtest Protocol (draft rev 3)
+# V5 Adaptive Carry: Historical Backtest Protocol (rev 3, FROZEN)
 
 **Durum:**
-- Draft rev 3, 2026-10-11. **Frozen değil.**
+- **rev 3, FROZEN 2026-10-11** (kullanıcı onayı). Annotated tag `v5-backtest-protocol-frozen`. Freeze kaydı (commit, sha256, girdi manifest'i): `docs/results/v5-protocol-freeze-record.md`. Bu metin freeze'den sonra değişmez.
 - Bu protokol için hiçbir tarihsel V5 getirisi, P&L'i veya arm karşılaştırması hesaplanmadı.
 - **Revizyon geçmişi:**
   - rev 1 → rev 2: kullanıcı kararları (2026-10-11), Stage 0 audit planı (§2.1), W parity planı (§5).
