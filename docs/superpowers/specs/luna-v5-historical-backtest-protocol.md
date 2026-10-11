@@ -1,10 +1,11 @@
-# V5 Adaptive Carry: Historical Backtest Protocol (draft rev 2)
+# V5 Adaptive Carry: Historical Backtest Protocol (draft rev 3)
 
 **Durum:**
-- Draft rev 2, 2026-10-11. **Frozen değil.**
+- Draft rev 3, 2026-10-11. **Frozen değil.**
 - Bu protokol için hiçbir tarihsel V5 getirisi, P&L'i veya arm karşılaştırması hesaplanmadı.
 - **Revizyon geçmişi:**
   - rev 1 → rev 2: kullanıcı kararları (2026-10-11), Stage 0 audit planı (§2.1), W parity planı (§5).
+  - **rev 2 → rev 3 (pre-freeze, outcome görülmeden):** spread çözünürlüğü kullanıcı kararıyla gerçek 5 dakikalık Kraken snapshot'ları. §2.1, §3.1, §3.2 ve §13 M2 buna göre yeniden yazıldı. Kayıt §15'te.
   - Bağımsız metodolojik red-team (2026-10-11) NOT READY dedi: 2 Critical, 10 Major, 7 Minor.
   - Bu metin bütün Critical ve Major bulguları ve Minor'ları işler. Bulgu ↔ değişiklik eşlemesi §13'te.
   - Freeze'den önce **yeniden red-team** zorunludur.
@@ -60,7 +61,7 @@
 | Funding | `var/history_v4/funding` | Gerçek, saatlik, known-only |
 | Mark | `var/history_v4/mark` 15m | Mid, değerleme, stop, margin |
 | Perp trade barları | `var/bars/kraken_futures` 15m (canlı olarak büyüyen dosya) | Hacim; parity'de V4 fiyatı |
-| Perp spread (sürekli) | Stage 0: `var/history_v5/spreads` (§2.1) | `history_v4/spreads` yalnızca 23:00–00:00 saatini kapsar |
+| Perp spread (sürekli) | Stage 0: `var/history_v5/spreads` (§2.1), **5 dakikalık tarihsel snapshot verisi** (`interval=300`) | `history_v4/spreads` yalnızca 23:00–00:00 saatini kapsar |
 | V4 spread pencereleri | `var/history_v4/spreads` | Yalnızca parity ve tutarlılık kontrolü |
 | Enstrüman | `config/v4_instruments.json` (sha `d14a82bb…`) | Bilinen anakronizm |
 | Evren | V4 §2a'nın 20 varlığı | Paper evreniyle aynı |
@@ -75,32 +76,48 @@
 ### 2.1 Stage 0: spread backfill ve audit planı (getiri hesaplanmaz)
 
 **Amaç:** Her karar ve fill anı için point-in-time perp spread'i sağlamak.
+- **Primary kaynak: Kraken analytics `spreads`, `interval=300`. Adı: "5 dakikalık tarihsel snapshot verisi" (5-minute historical snapshot data).** Her satır, etiketli 5 dakikalık aralık içinde alınmış tek bir bid/ask snapshot'ıdır.
+- `interval=60` endpoint'i primary'de **kullanılmaz** ve hiçbir yerde 1 dakikalık veri gibi gösterilmez. Protokol penceresinde 60 s serisi, 5 dakikalık snapshot'ların ileri taşınmış halidir (§14). Yalnızca V4 parity'sinde (V4'ün saklı pencereleri) ve V4 tutarlılık kontrolünde okunur.
+- Interpolasyon ve forward-fill ile yeni gözlem üretilmez. Eksik snapshot eksik kalır.
 - Sabit 10 bps **primary değildir**; yalnızca fallback (kayıtlı ve sayılır) ve S-SPREAD-FIX sensitivity'sidir.
-- Primary için **1 dakika çözünürlük zorunludur.** 1 dakika alınamazsa Stage 0 durur ve karar kullanıcıya gelir. Sessizce 5 dakikaya geçilmez.
 
-**S0.1 API semantik probe'u (2025-10 içinde tek bir gün, BTC ve bir altcoin):**
-- Kraken `api/charts/v1/analytics/<PF_sym>/spreads`, `interval` ∈ {60, 300}.
-- Belirlenecekler: zaman damgası etiketi (aralık başı mı, sonu mu), değer ortalama mı nokta mı, istek başına azami nokta, rate limit, interval'ler arası tutarlılık.
-- Çıktı `var/ops/v5_spreads_probe.json`. Spread büyüklüğü veya P&L etkisi incelenmez.
+**Point-in-time kuralı (muhafazakâr bilinme zamanı):**
+- Kraken etiket semantiği dakika düzeyinde kesin doğrulanamadığı için, **etiketi T olan snapshot ancak T + 5 dakikadan itibaren bilinir** sayılır.
+- Gerekçe (S0.1 probe): `interval=300`'ün T değeri, 60 s serisinin T+faz … T+4 dakikalarındaki değerine eşittir; faz 0–4 dakika arasında günden güne kayar. Snapshot bu yüzden [T, T+5m) içinde bir anda alınır; T anında bilinmez.
 
-**S0.2 Backfill (`luna backfill-v5-spreads`, V5 kodu, V4'ü import etmez):**
-- 20 varlık, [2025-10-06T00:00Z, 2026-07-01T00:00Z), 1 dakika, `to = cutoff − 60 s`. Dönen `ts ≥ cutoff` satırları yazılmadan atılır ve sayılır.
-- Dosya başına `provenance.json`: endpoint, parametreler, satırlar, ilk/son, düşürülen satır sayısı, sha256.
-- Task Scheduler'da tek seferlik çalışır; paper servislerine dokunmaz.
+**Karar ve fill pencereleri:**
+
+| Pencere | Etiketler | Bilinme koşulu | Azami gözlem | Primary geçerlilik | Altında |
+|---|---|---|---|---|---|
+| Karar (t) | T ∈ [t−1h, t) | T + 5m ≤ t | 12 (t−60m … t−5m) | ≥ 6/12 geçerli | 10 bps fallback, sayılır |
+| Fill (t kararı, fill t+15m) | T ∈ [t, t+15m) | T + 5m ≤ t + 15m | 3 (t, t+5m, t+10m) | ≥ 2/3 geçerli | 10 bps fallback, sayılır |
+
+- İki pencere örtüşmez ([t−1h, t) ve [t, t+15m)), test ile.
+- Spread değeri: geçerli snapshot'ların `spread_full` ortalaması; yarım spread bunun yarısı.
+- Geçerli snapshot: sonlu, > 0 ve ≤ 500 bps.
+- 5 dakikalık grid dışında etiket taşıyan bir seri (örneğin 60 s) primary yükleyici tarafından reddedilir (test ile).
+
+**S0.1 API semantik probe'u:** Yapıldı (`docs/results/v5-stage0-audit.md` §1). Ham çıktılar `var/ops/v5_stage0/`.
+
+**S0.2 Backfill (`scripts/v5_stage0/backfill_spreads.py`, V5 kodu, V4'ü import etmez):**
+- 20 varlık, [2025-10-06T00:00Z, 2026-07-01T00:00Z), `interval=300`, `to ≤ cutoff − 300 s`. Dönen `ts ≥ cutoff` satırları yazılmadan atılır ve sayılır.
+- Resume-safe, idempotent, gün başına checkpoint (sha256), sınırlı yeniden deneme.
+- Dosya başına `provenance.json`: endpoint, parametreler, satırlar, ilk/son, düşürülen satır sayısı, gözlenen kadans, çözünürlük etiketi, sha256.
+- Paper servislerine dokunmaz.
 
 **S0.3 Audit raporu (`docs/results/v5-stage0-audit.md`, P&L ve sinyal sıralaması yok):**
 
 | Kontrol | Ölçü | Eşik / aksiyon |
 |---|---|---|
-| Kapsam | Varlık × gün mevcut dakika oranı. 15m noktalarında karar penceresi [t−1h, t) içinde ≥ 30/60 geçerli örnek bulunan nokta oranı ve fill penceresi [t, t+15m) içinde ≥ 8/15 bulunan nokta oranı. | Raporlanır. Varlık genelinde nokta kapsamı < %90 ise "spread coverage insufficient" işaretlenir ve kullanıcıya gelir. Eşik sonradan gevşetilmez. |
-| Boşluklar | En uzun boşluk, > 1 saatlik boşlukların listesi | Raporlanır |
-| Zaman hizası | (a) Grid: dakika sınırı, tekrar, monotonluk. (b) **V4 tutarlılığı:** yeni serinin her gün [23:00, 00:00) değerleri `history_v4/spreads` ile birebir aynı (1e-12). (c) Etiket semantiğine göre point-in-time kuralı: bir örnek, kapsadığı aralığın **sonu** ≤ kullanım anı ise kullanılabilir. | (b) FAIL ise Stage 0 FAIL; kök neden bulunmadan devam edilmez. |
-| Fallback oranı | Bütün noktalarda; varlık, ay ve **günün saati** kırılımı (W, D ve C yalnızca 00:00'da işlem yapar) | Raporlanır; ayrıca outcome raporunda **dolan emirler** üzerinden arm başına fallback payı |
+| Kapsam | Varlık × gün, ay ve günün saati kırılımında mevcut 5 dakikalık snapshot oranı. 15m noktalarında karar penceresinde ≥ 6/12 ve fill penceresinde ≥ 2/3 geçerli snapshot bulunan nokta oranı. | Raporlanır. Varlık genelinde nokta kapsamı < %90 ise "spread coverage insufficient" işaretlenir ve kullanıcıya gelir. Eşik sonradan gevşetilmez. |
+| Boşluklar | En uzun boşluk, ≥ 1 saatlik boşlukların listesi | Raporlanır |
+| Zaman hizası | (a) Grid: 5 dakika sınırı, tekrar, monotonluk, grid sapması. (b) **V4 tutarlılığı (5 dakikalık snapshot değer ve kadans parity'si; 1 dakikalık satır parity'si değil):** V4'ün her gün [23:00, 00:00) 60 s serisi, ileri taşınmış 5 dakikalık snapshot'lardır. Yeni serinin T etiketli değeri, V4 serisinin T+4m satırına eşit olmalıdır (1e-12); V4 serisindeki değer değişimleri yeni serinin 5 dakikalık snapshot'larıyla aynı kadansta olmalıdır. (c) Point-in-time kuralı: T etiketli snapshot T + 5m'de bilinir. | (b) FAIL ise Stage 0 FAIL; kök neden bulunmadan devam edilmez. |
+| Fallback oranı | Bütün 15m noktalarında karar ve fill pencereleri için; varlık, ay ve **günün saati** kırılımı (W, D ve C yalnızca 00:00'da işlem yapar) | Raporlanır; ayrıca outcome raporunda **dolan emirler** üzerinden arm başına fallback payı |
 | Değer geçerliliği | ≤ 0, NaN, sonsuz, > 500 bps | Kullanılmaz ve sayılır |
 | Mark ve trade | Mark kapanışı ile trade kapanışı arasındaki sapma dağılımı (fiyat seviyesi değil, göreli fark); mark ve bar kapsamı | Raporlanır |
 | Holdout | Kopyada max ts < 2026-07-01; guard testleri | Değilse FAIL |
 
-**Stage 0 çıkış koşulu:** Holdout PASS, V4 tutarlılığı PASS, 1 dakika alındı ve audit kullanıcıya sunuldu.
+**Stage 0 çıkış koşulu:** Holdout PASS, V4 tutarlılığı PASS, gerçek 5 dakikalık snapshot'lar alındı (gözlenen kadans 300 s), audit kullanıcıya sunuldu.
 
 ### 2.2 Dondurulmuş girdi kopyası
 
@@ -120,7 +137,7 @@ Parity ve outcome run yalnızca bu kopyayı okur ve sha'ları doğrular. V4 Stag
 ### 3.1 Snapshot (t, 15 dakikalık grid)
 
 - `mid_t` = `open_ts = t − 15m` mark barının kapanışı (t'de kapanmış bar). Yoksa trade kapanışı kullanılır ve sayılır; ikisi de yoksa quote geçersizdir.
-- `dec_spread_t` = [t−1h, t) içinde, aralık sonu ≤ t olan geçerli örneklerin ortalaması. En az 30 örnek gerekir; yoksa 10 bps fallback, sayılır. **Yalnızca gate'ler ve karar maliyeti için** kullanılır.
+- `dec_spread_t` = etiketi [t−1h, t) içinde olan ve T + 5m ≤ t ile t'de bilinen geçerli 5 dakikalık snapshot'ların ortalaması (azami 12). En az 6 geçerli snapshot gerekir; yoksa 10 bps fallback, sayılır. **Yalnızca gate'ler ve karar maliyeti için** kullanılır.
 - `bid/ask_t = mid_t × (1 ∓ dec_spread_t / 2)`. Karar katmanı (`decide`, gate'ler) bunları görür.
 - `volumeQuote_t` = t'de kapanmış son 96 trade barının Σ volume·close değeri.
 - **Derinlik:** Tarihsel book yok. Builder, book boyutlarını sonsuz kabul eder; böylece derinlik gate'i NaN yüzünden düşmez, geçer. Beyan edilir.
@@ -133,7 +150,7 @@ Parity ve outcome run yalnızca bu kopyayı okur ve sha'ları doğrular. V4 Stag
 
 - t'de gönderilen emir **t + 15m**'de dolar.
   - Fill fiyatı = `mid_{t+15m} × (1 ± fill_half_{t+15m})`, ardından × (1 ± 2 bps slip), taker ücreti %0,05.
-  - `fill_half_{t+15m}`, karar penceresiyle **örtüşmeyen** [t, t+15m) içindeki örneklerin ortalamasının yarısıdır (en az 8 örnek). Yoksa 10 bps fallback'in yarısı kullanılır ve sayılır.
+  - `fill_half_{t+15m}`, karar penceresiyle **örtüşmeyen**, etiketi [t, t+15m) içinde olan ve T + 5m ≤ t + 15m ile fill anında bilinen geçerli 5 dakikalık snapshot'ların (azami 3: t, t+5m, t+10m) ortalamasının yarısıdır. En az 2 geçerli snapshot gerekir; yoksa 10 bps fallback'in yarısı kullanılır ve sayılır.
   - Fill zaman damgası t + 15m'dir.
 - **IOC bandı replay'de uygulanmaz.** Gecikmeli fill piyasa emri gibi dolar. Gerekçe: Band, canlı fiyat korumasıdır; 15 dakika eski mid'e göre bant uygulamak, zamanlanmış arm'ları sistematik olarak cezalandırır (red-team C1). Bunun dışında fill gerçekleşmeyen tek durum t + 15m snapshot'ının olmamasıdır; sayılır.
 - **Zamanlanmış rebalance ancak tamamlanınca tüketilir; yeniden deneme penceresi sınırlıdır.**
@@ -430,7 +447,7 @@ Gerekçe: kill sonrası flat kalan arm, Δcarry'yi mekanik olarak belirler.
 | C1 | Gecikmeli fill + IOC bandı zamanlanmış arm'ları sakatlar, E yeniden dener | §3.2: replay'de bant yok; zamanlanmış rebalance tamamlanınca tüketilir; yeniden deneme sayaçları |
 | C2 | 15m fiyat kayması `spread_slip` üzerinden primary metriğe sızar | §3.2: `spread_slip` fill mid'ine göre; `delay_drift` price P&L alt kalemi; §6 primary tanımı |
 | M1 | Fill spread'i karar penceresiyle örtüşür | §3.2: fill spread'i [t, t+15m), örtüşmesiz |
-| M2 | 5 dakikalık fallback kapsam kurallarını bozar | §2.1: 1 dakika zorunlu, yoksa durup kullanıcıya sorulur; fill penceresi eşiği 8/15 |
+| M2 | 5 dakikalık fallback kapsam kurallarını bozar | rev 2: §2.1 1 dakika zorunlu, eşikler 30/60 ve 8/15. **rev 3 (§15):** gerçek 1 dakika yok; kullanıcı kararıyla açıkça etiketlenmiş 5 dakikalık snapshot'lar, eşikler 6/12 ve 2/3, bilinme T + 5m. Sessiz geçiş yok. |
 | M3 | Parity ayrı bir kod yolunu doğrular | §5.3: bileşen parity'si B1–B3 |
 | M4 | Köprü artımlı kurulamaz, fark listesi eksik | §5.5: adımlar ve motor değişimi (a)–(h), sıra sabit, ters sıra raporu |
 | M5 | V4 referans koşusu tanımsız, girdiler kaymış olabilir | §5.1 harness + S-COST2X; §2.2 frozen kopya ve sha karşılaştırması |
@@ -467,7 +484,7 @@ Gerekçe: kill sonrası flat kalan arm, Δcarry'yi mekanik olarak belirler.
 **Stage 0: BLOCKED — 1M SPREAD UNAVAILABLE** (`docs/results/v5-stage0-audit.md`)
 - Kraken analytics `spreads` 60 s serisi, ~2025-02 sonrasında (protokol penceresinin tamamı), ortak bir saatin 5 dakikalık snapshot'larının ileri taşınmış halidir. Değer bir noktadır, ortalama değildir.
 - Bu yüzden §2.1'deki 1 dakika şartı karşılanamıyor. Backfill yapılmadı. 5 dakikaya geçiş kullanıcı kararıdır (seçenekler audit belgesinde).
-- §2.1 ve §3'teki kapsam eşikleri (30/60, 8/15) ve "1 dakikalık" ifadeleri bu karara bağlı olarak yeniden yazılacak, ardından red-team'e girecek.
+- §2.1 ve §3'teki kapsam eşikleri (30/60, 8/15) ve "1 dakikalık" ifadeleri rev 3'te kullanıcı kararıyla yeniden yazıldı (§15).
 
 **§2.2 düzeltmesi**
 - V4 Stage 1 `manifest.json` girdi sha'sı içermiyor. Girdi tutarlılığının kanıtı, frozen kopya üzerinde V4 referansının yayımlanmış sonucu birebir (71 kontrol, Δ = 0) üretmesidir.
@@ -482,3 +499,23 @@ Gerekçe: kill sonrası flat kalan arm, Δcarry'yi mekanik olarak belirler.
   Gerçek veride ikisi de oluşmuyor.
 
 **§5.4 a-priori MDE:** Δcarry için b = 28 → 6,6e-5/gün; b = 14 → 6,3e-5/gün. Alt sınırdır.
+
+## 15. rev 3: spread çözünürlüğü değişikliği (pre-freeze, outcome görülmeden)
+
+**Karar (kullanıcı, 2026-10-11):** Primary tarihsel spread kaynağı gerçek 5 dakikalık Kraken analytics snapshot'larıdır (`interval=300`).
+
+**Kayıt:**
+- Bu bir **metodoloji değişikliğidir.** Freeze'den önce, hiçbir tarihsel V5 getirisi, P&L'i, arm karşılaştırması veya spread'in strateji etkisi görülmeden yapılmıştır (R1).
+- Tetikleyici yalnızca veri semantiğidir (§14): protokol penceresinde gerçek 1 dakikalık spread yok.
+
+| Kural | rev 2 | rev 3 |
+|---|---|---|
+| Kaynak çözünürlüğü | 1 dakika (zorunlu) | 5 dakikalık tarihsel snapshot (`interval=300`) |
+| Karar kapsamı | ≥ 30/60 örnek, [t−1h, t) | ≥ 6/12 snapshot, [t−1h, t) |
+| Fill kapsamı | ≥ 8/15 örnek, [t, t+15m) | ≥ 2/3 snapshot, [t, t+15m) |
+| Bilinme zamanı | aralık sonu ≤ kullanım anı | muhafazakâr: T etiketli snapshot T + 5m'de bilinir |
+| V4 tutarlılığı | 1 dakikalık satırlar birebir | 5 dakikalık snapshot değer ve kadans parity'si |
+| 60 s endpoint | primary | primary'de kullanılmaz |
+
+- **Değişmeyenler:** 10 bps fallback ve S-SPREAD-FIX, geçerlilik tanımı (≤ 0, NaN, sonsuz, > 500 bps), %90 kapsam bayrağı, örtüşmeyen pencereler, 15 dakikalık gecikme, W parity (V4 semantiği, V4'ün kendi 60 s pencereleri).
+- Freeze'den önce bağımsız metodolojik red-team zorunludur.
