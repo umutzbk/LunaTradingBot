@@ -57,6 +57,25 @@ COUNTERS = (
 )
 
 
+@dataclass(frozen=True)
+class BridgeFlags:
+    """§5.5 bridge steps 1-4, each one rule of the V4 engine replaced (all off = W-V4):
+    1 ``exec_v5``: §3 snapshot (mark mid at t) and §3.2 executor (fill at t + 15m on the mid of the
+      snapshot at t + 15m, non-overlapping 5-minute fill window, fallback 10 bps);
+    2 ``slip2``: 2 bps slippage on every fill;
+    3 ``gates_v5``: V5 gates instead of ``elig_h2_30``; k = min(2, eligible // 2) instead of a flat week;
+    4 ``no_resize``: held legs keep their size (R10)."""
+
+    exec_v5: bool = False
+    slip2: bool = False
+    gates_v5: bool = False
+    no_resize: bool = False
+
+
+BRIDGE_STEPS = ("exec_v5", "slip2", "gates_v5", "no_resize")
+SLIP_BPS = 2.0
+
+
 class ParityUnsupported(RuntimeError):
     """An input or ordering whose V4 semantics W-V4 does not reproduce: stop, never guess."""
 
@@ -213,8 +232,19 @@ class WV4Result:
 
 
 class _WV4:
-    def __init__(self, inp: ParityInputs, fee_rate: float, spread_mult: float, k: int, gross: float) -> None:
+    def __init__(self, inp: ParityInputs, fee_rate: float, spread_mult: float, k: int, gross: float,
+                 bridge: BridgeFlags | None = None, hist=None, cfg=None) -> None:
         self.inp, self.fee_rate, self.spread_mult, self.k, self.gross = inp, fee_rate, spread_mult, k, gross
+        self.bridge = bridge or BridgeFlags()
+        self.cfg = cfg
+        self.builder = None
+        if self.bridge.exec_v5 or self.bridge.gates_v5:
+            from luna.carry.history import SnapshotBuilder
+
+            if hist is None or cfg is None:
+                raise ValueError("bridge steps 1 / 3 need the historical data and the carry config")
+            self.builder = SnapshotBuilder(hist)
+            self.hist = hist
         self.pf = Portfolio("perp", E0)
         self.ledger = FundingLedger()
         self.store = funding_store(inp)
@@ -245,6 +275,14 @@ class _WV4:
             self.last_px[a] = q.mid
             self.last_obs[a] = q.half
         return q
+
+    def dmid(self, a: str, t: pd.Timestamp) -> float | None:
+        """Decision price: V4 quote mid, or (bridge step 1) the §3 snapshot mid at t."""
+        if self.bridge.exec_v5:
+            m, src = self.builder.mid(a, t)
+            return m if src is not None else None
+        q = self.quote(a, t)
+        return q.mid if q is not None else None
 
     def half(self, a: str, obs: float | None) -> float:
         if obs is None:
@@ -290,6 +328,8 @@ class _WV4:
         fee = (self.fee_rate if fee_rate is None else fee_rate) * abs(dq) * px
         pen = penalty * abs(dq) * px
         price = px * (1 + s * h)
+        if self.bridge.slip2:
+            price *= 1 + s * SLIP_BPS * 1e-4
         pid = self.pos_of.get(a)
         if pid is None:
             self.n_pos += 1
@@ -325,6 +365,8 @@ class _WV4:
         })
 
     def execute(self, orders: list[tuple[str, float, bool]], t: pd.Timestamp, source: str) -> list | None:
+        if self.bridge.exec_v5:
+            return self._execute_v5(orders, t, source)
         fills = []
         for a, dq, full_close in orders:
             q = self.quote(a, t)
@@ -342,6 +384,42 @@ class _WV4:
                 self.c["perp_spread_fallbacks"] += 1
             self.fill(a, qty, q.mid, q.ts, q.half, source)
         return fills
+
+    def _execute_v5(self, orders: list[tuple[str, float, bool]], t: pd.Timestamp, source: str) -> list | None:
+        """Bridge step 1: all-or-nothing as V4, filled at t + 15m (§3.2)."""
+        planned = []
+        for a, dq, full_close in orders:
+            m = self.dmid(a, t)
+            fq = self.builder.fill_quote(a, t)
+            if m is None or fq is None:
+                self.c["skipped_actions"] += 1
+                return None
+            rule = self.inp.instruments.get(a)
+            qty = dq if full_close else round_qty_v4(dq, rule)
+            if not full_close and not order_ok_v4(qty, m, rule):
+                self.c["min_order_skips"] += 1
+                return None
+            planned.append((a, qty, fq))
+        for a, qty, fq in planned:
+            if fq.fallback:
+                self.c["perp_spread_fallbacks"] += 1
+            self.last_obs[a] = fq.half
+            self.fill(a, qty, fq.mid, fq.ts, fq.half, source)
+        return planned
+
+    def sides_v5(self, t: pd.Timestamp) -> dict[str, int] | None:
+        """Bridge step 3: V5 gates and ideal book at t; k = min(2, eligible // 2)."""
+        from luna.carry.history import FundingPIT
+        from luna.carry.signals import compute_signals
+        from luna.carry.strategy import DecisionInput, decide
+
+        snap, _ = self.builder.snapshot(t)
+        eq = self.pf.equity()
+        sig = compute_signals(snap, FundingPIT(self.store, t), t, self.cfg, self.cfg.leg_frac * eq, self.fee_rate)
+        dec = decide(DecisionInput(t, eq, sig, (), {}, frozenset(), True, True), self.cfg)
+        if not dec.ideal_long:
+            return None
+        return {**{a: 1 for a in dec.ideal_long}, **{a: -1 for a in dec.ideal_short}}
 
     # daily steps -----------------------------------------------------------------------------------
     def margin_check(self, t: pd.Timestamp) -> None:
@@ -392,11 +470,11 @@ class _WV4:
         names = sorted(set(held) | set(sides))
         px = {}
         for a in names:
-            q = self.quote(a, t)
-            if q is None:
+            m = self.dmid(a, t)
+            if m is None:
                 self.c["skipped_actions"] += 1
                 return None
-            px[a] = q.mid
+            px[a] = m
         k = sum(1 for s in sides.values() if s > 0)
         eq = self.equity_at(px)
         leg = self.gross * 0.5 / k * eq if k else 0.0
@@ -411,6 +489,8 @@ class _WV4:
                 orders.append((a, dq, True))
             elif cur == 0:
                 orders.append((a, dq, False))
+            elif self.bridge.no_resize and (target > 0) == (cur > 0):
+                continue  # bridge step 4: a held leg keeps its size
             else:
                 r = round_qty_v4(dq, self.inp.instruments.get(a))
                 if order_ok_v4(r, px[a], self.inp.instruments.get(a)):
@@ -472,7 +552,7 @@ class _WV4:
         self.margin_check(t)
         if t.weekday() == 0:
             sig = v4_signals(self.inp, self.store, t, self.static)
-            sides = v4_h2_sides(sig, self.k)
+            sides = self.sides_v5(t) if self.bridge.gates_v5 else v4_h2_sides(sig, self.k)
             self.c["decisions"] += 1
             if sides is None:
                 self.c["flat_weeks"] += 1
@@ -487,12 +567,28 @@ class _WV4:
 
 
 def run_w_v4(inp: ParityInputs, days: list[pd.Timestamp], *, fee_rate: float = PERP_FEE, spread_mult: float = 1.0,
-             k: int = 2, gross: float = 1.0) -> WV4Result:
-    sim = _WV4(inp, fee_rate, spread_mult, k, gross)
+             k: int = 2, gross: float = 1.0, bridge: BridgeFlags | None = None, hist=None, cfg=None) -> WV4Result:
+    sim = _WV4(inp, fee_rate, spread_mult, k, gross, bridge, hist, cfg)
     for t in days:
         sim.step(t)
     daily = pd.DataFrame(sim.rows).set_index("day")
     return WV4Result(daily, sim.fills, dict(sim.c), sim.decisions, sim.valuations)
+
+
+def run_bridge(inp: ParityInputs, hist, cfg, days: list[pd.Timestamp], *, order: tuple[str, ...] = BRIDGE_STEPS,
+               auth=None) -> list[tuple[str, WV4Result]]:
+    """§5.5: W-V4, then the steps switched on cumulatively in ``order`` (forward or reverse)."""
+    from luna.carry.backtest import _require_authorization
+
+    _require_authorization(hist, auth)
+    if sorted(order) != sorted(BRIDGE_STEPS):
+        raise ValueError(f"order must be a permutation of {BRIDGE_STEPS}")
+    out = [("W-V4", run_w_v4(inp, days))]
+    on: dict[str, bool] = {}
+    for step in order:
+        on[step] = True
+        out.append((f"+{step}", run_w_v4(inp, days, bridge=BridgeFlags(**on), hist=hist, cfg=cfg)))
+    return out
 
 
 def replay_fill_log(log: list[dict], valuations: dict[str, dict[str, float]], store: FundingStore,
