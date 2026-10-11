@@ -278,3 +278,46 @@ def test_replay_fill_log_books_the_penalty_separately():
     got = parity.replay_fill_log(log, {}, store, [MON])
     assert got.loc[MON, "liquidation_penalty"] == pytest.approx(0.5)
     assert got.loc[MON, "equity"] == pytest.approx(265.0 - 0.5 - 1e-5 * 100)
+
+
+# --- review fixes (2026-10-11): NaN never passes, unsupported V4 orderings fail loudly -------------------
+
+
+def test_compare_daily_flags_nan_against_a_number():
+    idx = pd.date_range(MON, periods=2, freq="D")
+    ref = pd.DataFrame({"fees": [0.1, 0.2]}, index=idx)
+    got = ref.copy()
+    got.loc[idx[1], "fees"] = np.nan
+    rep = parity.compare_daily(ref, got, {"fees": 1e-9})
+    assert not rep["pass"]
+    assert rep["first"]["day"] == idx[1].isoformat()
+
+
+def test_compare_daily_flags_a_missing_column():
+    idx = pd.date_range(MON, periods=1, freq="D")
+    rep = parity.compare_daily(pd.DataFrame({"fees": [0.1]}, index=idx), pd.DataFrame({"x": [0.1]}, index=idx),
+                               {"fees": 1e-9})
+    assert not rep["pass"]
+
+
+def test_compare_fills_flags_nan():
+    a = [{"ts": "t1", "asset": "A", "dq": 1.0, "px": 10.0}]
+    b = [{"ts": "t1", "asset": "A", "dq": 1.0, "px": float("nan")}]
+    assert not parity.compare_fills(a, b, rel_tol=1e-9)["pass"]
+
+
+def test_funding_store_refuses_nan_rows_whose_v4_semantics_differ():
+    inp = _inputs({"A": 1e-5})
+    inp.funding["A"].iloc[5, inp.funding["A"].columns.get_loc("funding_rel")] = np.nan
+    with pytest.raises(parity.ParityUnsupported, match="NaN"):
+        parity.funding_store(inp)
+
+
+def test_out_of_order_fill_timestamps_fail_loudly():
+    """V4 appends an earlier-stamped fill after a later one and double-counts the overlap in its
+    funding path; W-V4 does not imitate that silently."""
+    inp = _inputs({"A": 1e-5})
+    sim = parity._WV4(inp, 0.0005, 1.0, 2, 1.0)
+    sim.fill("A", 1.0, 100.0, MON + 3 * BAR, 0.0, "rebalance")
+    with pytest.raises(parity.ParityUnsupported, match="before"):
+        sim.fill("A", -1.0, 100.0, MON + BAR, 0.0, "liquidation")

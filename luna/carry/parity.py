@@ -57,6 +57,10 @@ COUNTERS = (
 )
 
 
+class ParityUnsupported(RuntimeError):
+    """An input or ordering whose V4 semantics W-V4 does not reproduce: stop, never guess."""
+
+
 # --- inputs -----------------------------------------------------------------------------------------
 
 
@@ -112,8 +116,13 @@ def load_parity_inputs(root: Path, expected_manifest_sha256: str | None = None) 
 
 
 def funding_store(inp: ParityInputs) -> FundingStore:
+    """V5 store of the frozen funding. A NaN row is refused: V4 keeps it (counts it in FL30_n, pays
+    a finite abs) while ``FundingStore.merge_rows`` drops it, so parity would silently diverge."""
     store = FundingStore()
     for a, df in inp.funding.items():
+        nan = df[["funding_abs", "funding_rel"]].isna().any(axis=1)
+        if nan.any():
+            raise ParityUnsupported(f"{a}: {int(nan.sum())} NaN funding rows (first {df.index[nan][0]})")
         store.merge_rows(a, [
             {"timestamp": ts.isoformat(), "fundingRate": fa, "relativeFundingRate": fr}
             for ts, fa, fr in zip(df.index, df["funding_abs"].to_numpy(), df["funding_rel"].to_numpy(), strict=True)
@@ -292,6 +301,10 @@ class _WV4:
             )
             self.pf.open_position(pos)
             self.pos_of[a], self.all_pos[pid] = pid, pos
+        segs = self.ledger.path.get(a)
+        if segs and ts.value < segs[-1][0]:
+            raise ParityUnsupported(f"{a}: fill at {ts} before the last recorded change; V4 would "
+                                    "double-count the overlap in its funding path")
         q0 = self.pf.holdings.get(a, 0.0)
         self.pf.apply_fill(Fill(f"{pid}:{len(self.fills)}", ts, a, "buy" if s > 0 else "sell", abs(dq), price,
                                 fee, "taker"), pid, px)
@@ -541,9 +554,17 @@ def compare_daily(ref: pd.DataFrame, got: pd.DataFrame, tol: dict[str, float]) -
                                          "expected": len(days), "actual": len(got.index), "delta": None},
                 "by_component": {}}
     for c, t in tol.items():
-        d = (got[c].astype(float) - ref[c].astype(float)).abs()
-        bad = d[d > t]
-        by[c] = {"max_abs_delta": float(d.max()) if len(d) else 0.0, "tol": t, "n_bad": int(len(bad)),
+        if c not in ref or c not in got:
+            first = first or {"day": None, "component": c, "expected": c in ref, "actual": c in got,
+                              "delta": None, "note": "column missing"}
+            by[c] = {"max_abs_delta": math.inf, "tol": t, "n_bad": -1, "first_day": None}
+            continue
+        r, g = ref[c].astype(float), got[c].astype(float)
+        d = (g - r).abs()
+        nan_bad = r.isna() != g.isna()
+        d = d.where(~(r.isna() & g.isna()), 0.0)  # both NaN: same value
+        bad = d[(d > t) | nan_bad]
+        by[c] = {"max_abs_delta": float(np.fmax.reduce(d.fillna(np.inf).to_numpy())) if len(d) else 0.0, "tol": t, "n_bad": int(len(bad)),
                  "first_day": _iso(bad.index[0]) if len(bad) else None}
         if len(bad):
             day = bad.index[0]
@@ -559,7 +580,8 @@ def compare_daily(ref: pd.DataFrame, got: pd.DataFrame, tol: dict[str, float]) -
                                        "actual_equity": float(got.at[day, "equity"])}
             if "held" in ref and "held" in got:
                 cand["held_expected"], cand["held_actual"] = str(ref.at[day, "held"]), str(got.at[day, "held"])
-            if first is None or (cand["day"], list(tol).index(c)) < (first["day"], list(tol).index(first["component"])):
+            if first is None or (first["day"] is not None
+                                 and (cand["day"], list(tol).index(c)) < (first["day"], list(tol).index(first["component"]))):
                 first = cand
     return {"pass": first is None, "first": first, "by_component": by}
 
@@ -581,6 +603,10 @@ def compare_fills(expected: list[dict], actual: list[dict], rel_tol: float,
         for f in numeric:
             den = max(abs(e[f]), EPS)
             rel = abs(a[f] - e[f]) / den
+            if math.isnan(e[f]) and math.isnan(a[f]):
+                rel = 0.0
+            elif math.isnan(rel):
+                rel = math.inf
             max_rel = max(max_rel, rel)
             if rel > rel_tol and first is None:
                 first = {"index": i, "field": f, "expected": e[f], "actual": a[f], "delta": a[f] - e[f]}

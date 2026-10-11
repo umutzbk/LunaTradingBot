@@ -13,7 +13,7 @@ ref_fills = json.loads((REF / "fills.json").read_text())
 ref_sum = json.loads((REF / "reference_summary.json").read_text())
 report = {}
 TOL = {"funding_cf": 1e-9, "fees": 1e-9, "spread_slippage": 1e-9, "perp_price_pnl": 1e-9,
-       "liquidation_penalty": 1e-9, "ret": 1e-10, "carry_net": 1e-10, "equity": 1e-6}
+       "liquidation_penalty": 1e-9, "ret": 1e-10, "carry_net": 1e-10, "equity": 1e-6, "gross": 1e-9, "active": 0.0, "n_positions": 0.0}
 for name, (fee, mult) in rows.items():
     res = parity.run_w_v4(inp, days, fee_rate=fee, spread_mult=mult)
     res.daily.to_parquet(OUT / f"wv4__{name}.daily.parquet")
@@ -26,7 +26,9 @@ for name, (fee, mult) in rows.items():
     d = parity.compare_daily(ref, res.daily, TOL)
     held = (ref["held"].fillna("").astype(str) != res.daily["held"].fillna("").astype(str))
     rf = [f for f in ref_fills if f["row"] == name]
-    fl = parity.compare_fills(rf, res.fills, 1e-9, numeric=("dq", "px", "half_spread"))
+    mine = [{**f, "penalty": f["penalty_rate"]} for f in res.fills]  # V4 log: penalty = rate
+    fl = parity.compare_fills(rf, mine, 1e-9, exact=("ts", "asset", "source"),
+                              numeric=("dq", "px", "half_spread", "penalty", "q_before", "q_after"))
     notional = parity.compare_fills(
         [{**f, "notional": abs(f["dq"]) * f["px"]} for f in rf],
         [{**f, "notional": abs(f["dq"]) * f["px"]} for f in res.fills], 1e-9, numeric=("notional",))
