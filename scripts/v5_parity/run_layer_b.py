@@ -58,13 +58,16 @@ print("B2", "PASS" if not bad else "FAIL", n, "quotes", len(bad), "mismatch;", o
 # B3
 tab = pd.read_parquet(REF / "signal_table_mondays.parquet")
 static = {a: parity._AssetStatic(b) for a, b in inp.perp.items()}
-bad3, maxrel, cache = [], 0.0, {}
+bad3, maxrel, cache, skipped3 = [], 0.0, {}, 0
 for _, r in tab.iterrows():
     t = pd.Timestamp(r["day"])
     if t.tzinfo is None:
         t = t.tz_localize("UTC")
     if t not in cache:
         cache[t] = parity.v4_signals(inp, store, t, static)
+    if r["asset"] not in cache[t]:  # asset without any input file (synthetic data only); counted
+        skipped3 += 1
+        continue
     s = cache[t][r["asset"]]
     fl_ok = (math.isnan(s.fl_annual) and math.isnan(r["FL30"])) or abs(s.fl_annual - r["FL30"]) <= 1e-12 * max(1.0, abs(r["FL30"]))
     if not math.isnan(r["FL30"]) and r["FL30"] != 0:
@@ -81,6 +84,6 @@ for t, sig in cache.items():
     if parity.v4_h2_sides(sig, 2) != exp:
         sides_bad.append({"t": str(t), "expected": exp, "actual": parity.v4_h2_sides(sig, 2)})
 out["B3"] = {"pass": not bad3 and not sides_bad, "rows": int(len(tab)), "mondays": len(cache), "n_mismatch": len(bad3),
-             "first": bad3[0] if bad3 else None, "fl30_max_rel_delta": maxrel, "sides_mismatch": sides_bad[:3]}
-print("B3", "PASS" if out["B3"]["pass"] else "FAIL", len(tab), "rows", len(bad3), "mismatch; FL30 max rel", f"{maxrel:.2e}", "sides mismatch", len(sides_bad))
+             "first": bad3[0] if bad3 else None, "rows_skipped_no_input": skipped3, "fl30_max_rel_delta": maxrel, "sides_mismatch": sides_bad[:3]}
+print("B3", "PASS" if out["B3"]["pass"] else "FAIL", len(tab), "rows", skipped3, "skipped,", len(bad3), "mismatch; FL30 max rel", f"{maxrel:.2e}", "sides mismatch", len(sides_bad))
 (OUT / "layer_b_report.json").write_text(json.dumps(out, indent=1, default=str))
