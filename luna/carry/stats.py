@@ -127,6 +127,8 @@ def delta_carry(w: RowSeries, e: RowSeries, B: int = B, seed: int = SEED) -> dic
     if not w.carry_net.index.equals(e.carry_net.index):
         raise ValueError("W and E daily series must be paired on the same days")
     d = (e.carry_net - w.carry_net).to_numpy()
+    if not np.isfinite(d).all():
+        raise ValueError("non-finite daily carry_net: a verdict on it would be meaningless")
     boots = {b: mbb(d, b, B, seed) for b in BLOCKS}
     lb = {b: boots[b].lower_bound(ALPHA) for b in BLOCKS}
     ub = {b: boots[b].upper_bound(ALPHA) for b in BLOCKS}

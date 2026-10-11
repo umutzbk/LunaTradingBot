@@ -250,7 +250,10 @@ class SnapshotBuilder:
     falls back."""
 
     def __init__(self, data: HistoricalData, *, known_after: pd.Timedelta = KNOWN_AFTER,
-                 spread_mode: str = "primary", fallback_full: dict[str, float] | None = None) -> None:
+                 spread_mode: str = "primary", fallback_full: dict[str, float] | None = None, auth=None) -> None:
+        from luna.carry.authz import require_authorization
+
+        require_authorization(data, auth)  # every outcome path builds its snapshots here
         if spread_mode not in ("primary", "fixed"):
             raise ValueError(spread_mode)
         self.data, self.mode = data, spread_mode

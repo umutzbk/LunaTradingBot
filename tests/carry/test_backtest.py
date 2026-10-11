@@ -95,7 +95,7 @@ def test_decision_at_t_does_not_depend_on_data_after_t():
             src.loc[src.index >= T, "close"] = 55.0  # every bar that closes after t
         data.spreads[a].loc[data.spreads[a].index >= T, "spread_full"] = 0.03
         data.store.merge_rows(a, [{"timestamp": h.isoformat(), "fundingRate": 9.0, "relativeFundingRate": 0.09}
-                                  for h in pd.date_range(T - pd.Timedelta("30min"), T + pd.Timedelta("1D"), freq="1h")])
+                                  for h in pd.date_range(T, T + pd.Timedelta("1D"), freq="1h")])  # every period not ended at t
     other = run("W", data, days=1)
     pick = ["asset", "side", "qty", "mid_t"]
     a = base.fills[base.fills["decision_ts"] == T][pick].reset_index(drop=True)

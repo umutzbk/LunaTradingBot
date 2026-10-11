@@ -15,6 +15,31 @@ from luna.carry.frozen import sha256_file
 
 LABEL = "EXPLORATORY — reused development period"
 MDE_A_PRIORI = {"b28": 6.6e-5, "b14": 6.3e-5, "note": "lower bound, W-side distribution only (protocol §5.4)"}
+TABLES = ("daily", "fills", "records", "settlements", "schedule")
+
+DECLARATIONS = [
+    "Depth: no historical order book; the builder uses infinite book sizes, so the depth gate passes (§3.1).",
+    "Instruments: frozen V4 file (qty step, tick, min qty, min cost); maintenance margin is not in that file "
+    "and is 0 (the liquidation-distance pre-check sees the stop distance only).",
+    "S-NOKILL: R4 disabled by setting risk.max_drawdown = 1.0 (it can only fire at equity <= 0); leg stop and "
+    "R3 unchanged.",
+    "G6 when KILL-AFFECTED: read from an S-COST2X/NOKILL row (S-COST2X with the R4 kill off), because §10 moves "
+    "every guardrail to the kill-off rows; it is not a trial (§7).",
+    "G6 for the S-PIT10 and S-FB-CONS row verdicts: the same S-COST2X delta-carry as the base row.",
+    "FALLBACK-AFFECTED: fallback shares from the base row's fills (S-NOKILL when KILL-AFFECTED).",
+    "P-C8 'interval 8 h': scheduled slots at 00:00, 08:00, 16:00 UTC with the §3.2 completion / 4-attempt rule "
+    "(the paper Trigger's 'since the last rebalance' is not used in replay).",
+    "Valid snapshot for the 4-attempt counter: at least one asset has a quote at t.",
+    "Terminal unwind (S-UNWIND): |q| x mark x row cost multiplier x (fee + decision-window half spread at the end "
+    "+ 2 bps slip).",
+    "Secondary comparisons: Holm over D-W, C-W, E-C separately for carry and net and for b = 28 and b = 14, on "
+    "the bootstrap one-sided p-values.",
+    "Switch ledger: hit = realized incremental funding over the actual holding > realized cost (fees + spread/slip "
+    "of the new leg's fills); bias = expected incremental scaled to the holding duration - realized.",
+    "Fallback hour-of-day: the hour of the decision that sent the order.",
+    "Outcome authorization: a guard against accidental runs inside this codebase (tag, clean tree, protocol and "
+    "manifest sha, frozen config, approval phrase, exclusive markers), not a security boundary.",
+]
 
 
 def _clean(x):
@@ -45,7 +70,10 @@ def _metrics(d: pd.DataFrame, e0: float, counters: dict, ideal_funding: float | 
         "worst_day": stats.worst_day(d["ret"]), "es975": stats.es975(d["ret"]),
         "mean_gross_frac": float(d["gross_frac"].mean()), "mean_net_frac": float(d["net_frac"].mean()),
         "flat_days": int((d["n_legs"] == 0).sum()), "counters": counters,
+        "decisions": counters.get("decisions", {}), "stops": counters.get("stops", 0),
     }
+    meq = float(d["equity"].mean())
+    out["turnover_per_year_over_mean_equity"] = out["turnover"] / meq * 365 / len(d) if meq > 0 and len(d) else None
     turn = out["turnover"]
     out["carry_per_turnover_bps"] = {"funding": out["funding"] / turn * 1e4 if turn else None,
                                      "carry_net": (out["funding"] - out["fees"] - out["spread_slip"]) / turn * 1e4
@@ -109,7 +137,8 @@ def write_report(study: dict, bridge: list | None, out_dir: Path, meta: dict) ->
     }
     sp = out_dir / "summary.json"
     sp.write_text(json.dumps(_clean(summary), indent=1, ensure_ascii=False), encoding="utf-8")
-    manifest = {**meta, "summary_sha256": sha256_file(sp)}
+    tables = write_tables(res, out_dir / "tables")
+    manifest = {**meta, "summary_sha256": sha256_file(sp), "tables": tables}
     (out_dir / "manifest.json").write_text(json.dumps(_clean(manifest), indent=1), encoding="utf-8")
     lines = [
         "# V5 historical backtest", "", f"**{LABEL}**", "",
@@ -124,8 +153,38 @@ def write_report(study: dict, bridge: list | None, out_dir: Path, meta: dict) ->
             lines.append(f"| {arm} | {row} | {m['net_pnl']:.4f} | {m['funding']:.4f} | {m['fees']:.4f} | "
                          f"{m['spread_slip']:.4f} | {m['price']:.4f} | {m['carry_net_mean']:.3e} | "
                          f"{m['sharpe']:.3f} | {m['max_drawdown']:.4f} |")
+    lines += ["", "## Declared interpretations", ""] + [f"- {x}" for x in DECLARATIONS]
     (out_dir / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return manifest
+
+
+def _table(r, kind: str) -> pd.DataFrame:
+    if kind == "daily":
+        return r.daily.reset_index()
+    if kind == "schedule":
+        return pd.DataFrame(r.schedule)
+    df = getattr(r, kind).copy()
+    for c in df.columns:
+        if df[c].dtype == object:
+            df[c] = df[c].map(lambda v: None if v is None or (isinstance(v, float) and math.isnan(v)) else str(v))
+    return df
+
+
+def write_tables(res: dict, root: Path) -> dict:
+    """Every arm x row table (the single run cannot be repeated, R9), sha256-pinned in the manifest."""
+    root.mkdir(parents=True, exist_ok=True)
+    out = {}
+    for (arm, row), r in res.items():
+        for kind in TABLES:
+            df = _table(r, kind)
+            if kind == "schedule":
+                for c in df.columns:
+                    if df[c].dtype == object:
+                        df[c] = df[c].map(str)
+            name = f"{arm}_{row.replace('/', '_')}_{kind}.parquet"
+            df.to_parquet(root / name)
+            out[f"{arm}:{row}:{kind}"] = {"path": f"tables/{name}", "sha256": sha256_file(root / name)}
+    return out
 
 
 def assemble_bridge(forward: list, reverse: list, w) -> list:

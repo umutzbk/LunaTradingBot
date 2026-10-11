@@ -97,6 +97,7 @@ class ParityInputs:
     funding: dict[str, pd.DataFrame]
     spreads: dict[str, pd.DataFrame]
     instruments: dict[str, LegRule]
+    real: bool = False  # loaded from the frozen copy: any bridge step needs the outcome authorization
 
     @property
     def assets(self) -> list[str]:
@@ -116,7 +117,7 @@ def load_parity_inputs(root: Path, expected_manifest_sha256: str | None = None) 
     root = frozen.open_frozen(root, expected_manifest_sha256)
     man = json.loads((root / frozen.MANIFEST).read_text(encoding="utf-8"))
     inst_raw = json.loads((root / frozen.INSTRUMENTS_REL).read_text(encoding="utf-8"))
-    out = ParityInputs({}, {}, {}, {}, {})
+    out = ParityInputs({}, {}, {}, {}, {}, real=True)
     for a in man["assets"]:
         perp = _read(root, f"bars/kraken_futures/{a}.parquet", True)
         if perp is None:
@@ -233,9 +234,15 @@ class WV4Result:
 
 class _WV4:
     def __init__(self, inp: ParityInputs, fee_rate: float, spread_mult: float, k: int, gross: float,
-                 bridge: BridgeFlags | None = None, hist=None, cfg=None) -> None:
+                 bridge: BridgeFlags | None = None, hist=None, cfg=None, auth=None) -> None:
         self.inp, self.fee_rate, self.spread_mult, self.k, self.gross = inp, fee_rate, spread_mult, k, gross
         self.bridge = bridge or BridgeFlags()
+        if self.bridge != BridgeFlags():  # a bridge step is new V5 outcome information (R1)
+            from luna.carry.authz import require_authorization
+
+            require_authorization(inp, auth)
+            if hist is not None:
+                require_authorization(hist, auth)
         self.cfg = cfg
         self.builder = None
         if self.bridge.exec_v5 or self.bridge.gates_v5:
@@ -243,7 +250,7 @@ class _WV4:
 
             if hist is None or cfg is None:
                 raise ValueError("bridge steps 1 / 3 need the historical data and the carry config")
-            self.builder = SnapshotBuilder(hist)
+            self.builder = SnapshotBuilder(hist, auth=auth)
             self.hist = hist
         self.pf = Portfolio("perp", E0)
         self.ledger = FundingLedger()
@@ -567,8 +574,9 @@ class _WV4:
 
 
 def run_w_v4(inp: ParityInputs, days: list[pd.Timestamp], *, fee_rate: float = PERP_FEE, spread_mult: float = 1.0,
-             k: int = 2, gross: float = 1.0, bridge: BridgeFlags | None = None, hist=None, cfg=None) -> WV4Result:
-    sim = _WV4(inp, fee_rate, spread_mult, k, gross, bridge, hist, cfg)
+             k: int = 2, gross: float = 1.0, bridge: BridgeFlags | None = None, hist=None, cfg=None,
+             auth=None) -> WV4Result:
+    sim = _WV4(inp, fee_rate, spread_mult, k, gross, bridge, hist, cfg, auth)
     for t in days:
         sim.step(t)
     daily = pd.DataFrame(sim.rows).set_index("day")
@@ -587,7 +595,7 @@ def run_bridge(inp: ParityInputs, hist, cfg, days: list[pd.Timestamp], *, order:
     on: dict[str, bool] = {}
     for step in order:
         on[step] = True
-        out.append((f"+{step}", run_w_v4(inp, days, bridge=BridgeFlags(**on), hist=hist, cfg=cfg)))
+        out.append((f"+{step}", run_w_v4(inp, days, bridge=BridgeFlags(**on), hist=hist, cfg=cfg, auth=auth)))
     return out
 
 

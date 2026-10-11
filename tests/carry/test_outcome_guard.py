@@ -34,6 +34,7 @@ def env(tmp_path):
     _git(repo, "config", "user.name", "t")
     (repo / "docs").mkdir()
     (repo / PROTO).write_text("frozen protocol\n", encoding="utf-8")
+    (repo / ".gitignore").write_text("var/\n", encoding="utf-8")
     _git(repo, "add", ".")
     _git(repo, "commit", "-q", "-m", "freeze")
     _git(repo, "tag", "-a", TAG, "-m", "frozen")
@@ -45,12 +46,12 @@ def env(tmp_path):
     _series("2026-06-30T20:00Z", 3, "1h", "funding_rel").to_parquet(d / "AAA.parquet")
     inst = tmp_path / "inst.json"
     inst.write_text('{"assets": {}}', encoding="utf-8")
-    fz = tmp_path / "frozen"
+    fz = tmp_path / "data" / "history_v5" / "frozen"
     frozen.freeze_inputs(var, inst, fz, assets=["AAA"])
     kw = {"protocol_rel": PROTO, "tag": TAG,
           "protocol_sha": hashlib.sha256(b"frozen protocol\n").hexdigest(),
           "manifest_sha": frozen.sha256_file(fz / "manifest.json")}
-    return repo, fz, tmp_path / "ops", kw
+    return repo, fz, tmp_path / "data" / "ops" / "v5_backtest", kw
 
 
 def test_preflight_passes_on_a_clean_tagged_tree(env):
@@ -89,17 +90,21 @@ def test_authorize_needs_the_explicit_approval_phrase(env):
     repo, fz, ops, kw = env
     for bad in (None, "", "yes", og.approval_phrase("0" * 64)):
         with pytest.raises(bt.OutcomeBlocked):
-            og.authorize(repo, fz, ops, bad, **kw)
-    assert not (ops / og.MARKER).exists()
+            og.authorize(repo, fz, bad, **kw)
+    assert not (ops / og.MARKER).exists() and not (repo / "var").exists()
 
 
 def test_authorize_is_single_use_and_its_token_unlocks_real_inputs(env):
     repo, fz, ops, kw = env
-    auth = og.authorize(repo, fz, ops, og.approval_phrase(kw["protocol_sha"]), **kw)
+    auth = og.authorize(repo, fz, og.approval_phrase(kw["protocol_sha"]), **kw)
     rec = json.loads((ops / og.MARKER).read_text(encoding="utf-8"))
-    assert rec["head"] == auth.record["head"] and rec["approved"] is True
+    assert rec["head"] == auth.record["head"] and rec["approved"] is True and len(rec["config_sha256"]) == 64
+    assert (repo / "var" / "ops" / "v5_backtest" / og.MARKER).exists()
     with pytest.raises(bt.OutcomeBlocked):  # R9: a second outcome run is never automatic
-        og.authorize(repo, fz, ops, og.approval_phrase(kw["protocol_sha"]), **kw)
+        og.authorize(repo, fz, og.approval_phrase(kw["protocol_sha"]), **kw)
+    (repo / "var" / "ops" / "v5_backtest" / og.MARKER).unlink()  # one marker removed: still refused
+    with pytest.raises(bt.OutcomeBlocked):
+        og.authorize(repo, fz, og.approval_phrase(kw["protocol_sha"]), **kw)
     data = make_data(2)
     data.real = True  # fabricated stand-in: only the authorization path is exercised here
     r = bt.run_arm(data, bt.arm_config(base_cfg(), "W"), instruments(), start=T, end=T + pd.Timedelta("1D"),

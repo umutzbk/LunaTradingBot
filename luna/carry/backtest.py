@@ -111,35 +111,17 @@ def arm_config(base: CarryConfig, arm: str, *, variant: str | None = None, nokil
     return CarryConfig(**data)
 
 
-def builder_for(data: HistoricalData, row: RowSpec) -> SnapshotBuilder:
+def builder_for(data: HistoricalData, row: RowSpec, auth=None) -> SnapshotBuilder:
     fb = lookback_p90(data.spreads) if row.fb_cons else None
-    return SnapshotBuilder(data, known_after=row.known_after, spread_mode=row.spread_mode, fallback_full=fb)
+    return SnapshotBuilder(data, known_after=row.known_after, spread_mode=row.spread_mode, fallback_full=fb,
+                           auth=auth)
 
 
 # --- outcome guard -----------------------------------------------------------------------------------
 
 
-class OutcomeBlocked(RuntimeError):
-    """A run on the real frozen inputs without the outcome authorization."""
-
-
-class OutcomeAuthorization:
-    """Produced only by ``luna.carry.outcome_guard.authorize`` (all §12 checks passed)."""
-
-    _secret = object()
-
-    def __init__(self, key: object, record: dict) -> None:
-        if key is not OutcomeAuthorization._secret:
-            raise OutcomeBlocked("an OutcomeAuthorization can only come from outcome_guard.authorize")
-        self.record = record
-
-
-def _require_authorization(data: HistoricalData, auth: OutcomeAuthorization | None) -> None:
-    if data.real and not isinstance(auth, OutcomeAuthorization):
-        raise OutcomeBlocked(
-            "real frozen inputs: the single historical outcome run needs the user's explicit approval "
-            "(outcome_guard.authorize); dry runs use synthetic data"
-        )
+from luna.carry.authz import OutcomeAuthorization, OutcomeBlocked  # noqa: E402, F401 - re-exported
+from luna.carry.authz import require_authorization as _require_authorization  # noqa: E402
 
 
 # --- execution ---------------------------------------------------------------------------------------
@@ -205,6 +187,16 @@ def completed(res: CycleResult) -> bool:
     return all(got.get(o.client_id, 0.0) >= o.qty * (1 - 1e-9) for o, _ in res.orders)
 
 
+def failure_reason(res: CycleResult) -> str:
+    """Why a scheduled attempt did not complete (reported by reason, §3.2)."""
+    if res.forced_blocked:
+        return "forced_exit_not_ordered"
+    for r in res.records:
+        if r.decision == "REJECT":
+            return r.reason.split(":")[0]
+    return "not_filled"
+
+
 class Schedule:
     """Scheduled-rebalance permission of W / D / C (§3.2)."""
 
@@ -215,6 +207,8 @@ class Schedule:
         self.attempts = 0
         self.opened_at: pd.Timestamp | None = None
         self.log: list[dict] = []
+        self.blocked_cycles = 0
+        self.fail_reasons: list[str] = []
 
     def allow(self, t: pd.Timestamp) -> bool:
         if self.ev.trigger == "event":
@@ -224,21 +218,27 @@ class Schedule:
             if self.open:  # a new slot supersedes the old permission
                 self.log.append({"slot": self.last_slot, "outcome": "superseded", "attempts": self.attempts})
             self.last_slot, self.open, self.attempts, self.opened_at = s, True, 0, t
+            self.fail_reasons = []
         return self.open
 
     def after(self, t: pd.Timestamp, res: CycleResult, allowed: bool, valid_snapshot: bool) -> None:
         if self.ev.trigger == "event" or not allowed:
             return
+        if not res.opens_allowed:  # entries blocked (R3, pause, outage, kill): stays open, not counted
+            self.blocked_cycles += 1
+            return
         if completed(res):
             self.log.append({"slot": self.last_slot, "outcome": "completed", "attempts": self.attempts + 1,
-                             "done_at": t, "late": t - self.opened_at >= pd.Timedelta("1h")})
+                             "done_at": t, "late": t - self.opened_at >= pd.Timedelta("1h"),
+                             "fail_reasons": list(self.fail_reasons)})
             self.open = False
             return
-        if res.opens_allowed and valid_snapshot:
+        if valid_snapshot:
             self.attempts += 1
+            self.fail_reasons.append(failure_reason(res))
         if self.attempts >= MAX_SCHEDULED_ATTEMPTS:
             self.log.append({"slot": self.last_slot, "outcome": "exhausted", "attempts": self.attempts, "done_at": t,
-                             "late": True})
+                             "late": True, "fail_reasons": list(self.fail_reasons)})
             self.open = False
 
 
@@ -284,7 +284,7 @@ def run_arm(
         raise ValueError("start / end must be UTC midnights, start < end")
     if end > CUTOFF:
         raise HoldoutLeak(f"end {end} after the holdout start {CUTOFF}")
-    builder = builder if builder is not None else builder_for(data, row)
+    builder = builder if builder is not None else builder_for(data, row, auth)
     core = CarryCore(cfg, instruments, fee_rate, mode="backtest")
     ex = DelayedExecutor(builder, fee_rate, cfg.slippage_bps, row.cost_mult)
     sched = Schedule(cfg.evaluation)
@@ -293,7 +293,9 @@ def run_arm(
     vals: dict[pd.Timestamp, dict] = {}
     blocked_days: set = set()
     kill_ts = None
-    ctr = {"cycles": 0, "snapshot_assets": 0, "mid_trade_fallback": 0, "no_quote": 0, "decision_fallback_points": 0}
+    ctr = {"cycles": 0, "snapshot_assets": 0, "mid_trade_fallback": 0, "no_quote": 0, "decision_fallback_points": 0,
+           "funding_stale_asset_cycles": 0}
+    decisions: dict[str, int] = {}
 
     def settle_rows(res_settlements):
         for s in res_settlements:
@@ -329,8 +331,12 @@ def run_arm(
         settle_rows(res.settlements)
         if t > start and t.value % DAY.value == 0:
             vals[t - DAY] = valuation(t, res.equity_start, snap)
+        ctr["funding_stale_asset_cycles"] += sum(1 for s in res.signals.values() if "funding_stale" in s.reasons)
         for r in res.records:
             recs.append({"ts": t, **r.__dict__})
+            if r.decision != "HOLD":
+                key = r.decision if r.decision in ("ENTER", "SWITCH") else f"{r.decision}:{r.reason.split(':')[0]}"
+                decisions[key] = decisions.get(key, 0) + 1
         st = core.risk_state
         if st.entries_blocked_day is not None:
             blocked_days.add(st.entries_blocked_day)
@@ -352,9 +358,8 @@ def run_arm(
     unwind = 0.0
     for a, q in hold.items():
         mid = snap.quotes[a].mark if a in snap.quotes else core.portfolio.marks.get(a, math.nan)
-        half = builder.spread[a].decision(end)
-        h = (half.full if not half.fallback else builder.fallback_full.get(a, 0.0010)) / 2
-        unwind += abs(q) * mid * (fee_rate + h + cfg.slippage_bps * 1e-4)
+        h = builder._full(a, builder.spread[a].decision(end)) / 2
+        unwind += abs(q) * mid * row.cost_mult * (fee_rate + h + cfg.slippage_bps * 1e-4)
     terminal = {"holdings": hold, "unwind_cost": unwind}
 
     fills = _fills_frame(ex.log)
@@ -367,6 +372,8 @@ def run_arm(
         "scheduled_retries": sum(max(0, x["attempts"] - 1) for x in sched.log),
         "scheduled_exhausted": sum(1 for x in sched.log if x["outcome"] == "exhausted"),
         "scheduled_late_1h": sum(1 for x in sched.log if x.get("late")),
+        "scheduled_blocked_cycles": sched.blocked_cycles,
+        "decisions": decisions, "stops": decisions.get("EXIT:stop", 0),
     })
     return ArmResult(name, daily, fills, pd.DataFrame(recs), sett, ctr, sched.log, kill_ts, terminal)
 
@@ -466,10 +473,12 @@ def unwind_daily(res: ArmResult, e0: float) -> pd.DataFrame:
     return d
 
 
-def ideal_reference(data: HistoricalData, cfg: CarryConfig, builder: SnapshotBuilder, start: pd.Timestamp,
-                    end: pd.Timestamp, e0: float) -> pd.DataFrame:
+def ideal_reference(data: HistoricalData, cfg: CarryConfig, builder: SnapshotBuilder | None, start: pd.Timestamp,
+                    end: pd.Timestamp, e0: float, auth: OutcomeAuthorization | None = None) -> pd.DataFrame:
     """I (§4): at every 15m snapshot the ideal FL30 book (same signals and ideal-book rule as the arms)
     at a fixed 0.25 x E0 per leg; no cost, no delay; the realized funding of that quarter hour."""
+    _require_authorization(data, auth)
+    builder = builder if builder is not None else builder_for(data, ROWS["PRIMARY"], auth)
     leg = cfg.leg_frac * e0
     rows = []
     for t in pd.date_range(start, end, freq="15min", inclusive="left"):
@@ -613,7 +622,7 @@ def run_study(data: HistoricalData, base: CarryConfig, instruments: dict, *, sta
     builders: dict[str, SnapshotBuilder] = {}
     for row in rows:
         spec = ROWS[row]
-        b = builders[row] = builder_for(data, spec)
+        b = builders[row] = builder_for(data, spec, auth)
         for arm in "WDCE":
             cfg = arm_config(base, arm, nokill=spec.nokill)
             results[(arm, row)] = run_arm(data, cfg, instruments, name=f"{arm}:{row}", row=spec, start=start,
@@ -629,7 +638,7 @@ def run_study(data: HistoricalData, base: CarryConfig, instruments: dict, *, sta
     return {
         "results": results,
         "unwind": {a: unwind_daily(results[(a, "PRIMARY")], e0) for a in "WDCE"},
-        "ideal": ideal_reference(data, base, builders["PRIMARY"], start, end, e0) if with_ideal else None,
+        "ideal": ideal_reference(data, base, builders["PRIMARY"], start, end, e0, auth) if with_ideal else None,
         "evaluation": ev,
         "attribution": attribution({a: results[(a, base_row)] for a in "WDCE"}),
         "switch_ledgers": {a: switch_ledger(results[(a, base_row)], data, end,
@@ -652,7 +661,10 @@ def load_historical(root, manifest_sha256: str) -> tuple[HistoricalData, dict]:
 
     inp = parity.load_parity_inputs(Path(root), manifest_sha256)
     sp_root = Path(root) / "history_v5" / "spreads"
-    spreads = {a: load_spread5m(sp_root, a).frame for a in inp.assets if (sp_root / f"{a}.parquet").exists()}
+    missing = [a for a in inp.assets if not (sp_root / f"{a}.parquet").exists()]
+    if missing:
+        raise ValueError(f"no 5-minute spread file for {missing}: every decision would silently fall back")
+    spreads = {a: load_spread5m(sp_root, a).frame for a in inp.assets}
     raw = json.loads((Path(root) / "config" / "v4_instruments.json").read_text(encoding="utf-8"))
     inst = {}
     for a in inp.assets:
@@ -662,4 +674,5 @@ def load_historical(root, manifest_sha256: str) -> tuple[HistoricalData, dict]:
                                  float(leg.get("tick", 0.0)), float(leg.get("min_qty", 0.0)),
                                  float(leg.get("min_cost", 0.0)), 0.0002, FEE_RATE, 0.0, 0.0)
     data = HistoricalData(mark=inp.mark, perp=inp.perp, spreads=spreads, store=parity.funding_store(inp), real=True)
+    inp.real = True
     return data, inst

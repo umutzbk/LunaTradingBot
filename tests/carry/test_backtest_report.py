@@ -56,10 +56,13 @@ def test_report_files_and_summary(tmp_path):
 
 
 def test_cli_refuses_without_the_approval_and_writes_no_marker(tmp_path):
-    r = CliRunner().invoke(app, ["v5-backtest", "--ops-dir", str(tmp_path / "ops"), "--frozen", str(tmp_path / "nofrozen"),
-                                 "--out", str(tmp_path / "out")])
+    from luna.carry import outcome_guard as og
+
+    fz = tmp_path / "v" / "history_v5" / "nofrozen"
+    before = [m.exists() for m in og.marker_paths(og.code_repo(), fz)]
+    r = CliRunner().invoke(app, ["v5-backtest", "--frozen", str(fz), "--out", str(tmp_path / "out")])
     assert r.exit_code != 0 and "refused" in r.output
-    assert not (tmp_path / "ops").exists() or not any((tmp_path / "ops").iterdir())
+    assert [m.exists() for m in og.marker_paths(og.code_repo(), fz)] == before
     assert not (tmp_path / "out").exists()
 
 

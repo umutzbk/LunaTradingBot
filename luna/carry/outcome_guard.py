@@ -9,8 +9,13 @@
 - the frozen input copy verifies against the pinned manifest sha256 (every file re-hashed, no row at
   or after the cut);
 - the user's explicit approval phrase is given;
-- no outcome run was ever started (an exclusive marker file is created; R9: a later corrected run is
-  a separate, explicitly approved decision, never automatic).
+- no outcome run was ever started: exclusive marker files under ``<code repo>/var/ops/v5_backtest`` and
+  next to the frozen copy (``var/ops/v5_backtest``), both pinned, never user-chosen (R9: a later
+  corrected run is a separate, explicitly approved decision, never automatic);
+- the strategy configuration is the committed ``config/default.yaml`` carry section (no environment or
+  ``.env`` override) and equals the protocol DEFAULT values (R3, §4, §7); its sha256 is recorded.
+
+The repo checked is the checkout whose code is running (``code_repo``), never a user-supplied path.
 """
 
 from __future__ import annotations
@@ -23,14 +28,54 @@ from pathlib import Path
 
 import pandas as pd
 
+import yaml
+
+import luna
 from luna.carry import frozen
-from luna.carry.backtest import OutcomeAuthorization, OutcomeBlocked
+from luna.carry.authz import OutcomeAuthorization, OutcomeBlocked
+from luna.carry.config import CarryConfig
 
 PROTOCOL = "docs/superpowers/specs/luna-v5-historical-backtest-protocol.md"
 TAG = "v5-backtest-protocol-frozen"
 PROTOCOL_SHA = "4bd90f5a169025e0483d13c636964a937d01f10fce3355ced1c81058dfcaba54"
 FROZEN_MANIFEST_SHA = "eecdc6a21626ccd5e2677cce2503f304a5730845de552554281a6ea54cc53f14"
 MARKER = "OUTCOME_RUN_STARTED.json"
+
+# R3 / §4 / §7 DEFAULT profile (the arms' shared parameters) and the carry.risk values the protocol names
+FROZEN_DEFAULTS = {
+    "capital_usd": 265.0, "k": 2, "gross": 1.0, "signal_hours": 720, "switch_horizon_hours": 168.0,
+    "min_carry_improvement_bps": 5.0, "switch_cost_multiplier": 1.5, "safety_buffer_bps": 5.0,
+    "min_hold_hours": 24.0, "slippage_bps": 2.0, "max_net_frac": 0.10, "leg_stop_frac": 0.15,
+    "stop_cooldown_hours": 24.0,
+}
+FROZEN_RISK = {"daily_loss_limit": 0.02, "max_drawdown": 0.15, "live_enabled": False}
+UNIVERSE = ["ADA", "AVAX", "BNB", "BTC", "DOGE", "ENA", "ETH", "FET", "HYPE", "LINK", "NEAR", "PEPE", "PUMP", "SOL",
+            "SUI", "TAO", "UNI", "XLM", "XRP", "ZEC"]
+
+
+def code_repo() -> Path:
+    """The git checkout whose ``luna`` package is running."""
+    return Path(luna.__file__).resolve().parents[1]
+
+
+def marker_paths(repo: Path, frozen_root: Path) -> list[Path]:
+    return [Path(repo) / "var" / "ops" / "v5_backtest" / MARKER,
+            Path(frozen_root).parent.parent / "ops" / "v5_backtest" / MARKER]
+
+
+def frozen_carry_config(path: Path | None = None) -> tuple[CarryConfig, str]:
+    """The committed YAML carry section only (environment and .env ignored), checked against the
+    protocol DEFAULT values; returns the config and the YAML file's sha256."""
+    path = Path(path) if path is not None else code_repo() / "config" / "default.yaml"
+    raw = path.read_bytes()
+    cfg = CarryConfig(**(yaml.safe_load(raw.decode("utf-8")) or {})["carry"])
+    bad = {k: (getattr(cfg, k), v) for k, v in FROZEN_DEFAULTS.items() if getattr(cfg, k) != v}
+    bad |= {f"risk.{k}": (getattr(cfg.risk, k), v) for k, v in FROZEN_RISK.items() if getattr(cfg.risk, k) != v}
+    if list(cfg.universe) != UNIVERSE:
+        bad["universe"] = (cfg.universe, UNIVERSE)
+    if bad:
+        raise OutcomeBlocked(f"outcome run refused: configuration differs from the frozen protocol: {bad}")
+    return cfg, hashlib.sha256(raw).hexdigest()
 
 
 def approval_phrase(protocol_sha: str = PROTOCOL_SHA) -> str:
@@ -71,20 +116,29 @@ def preflight(repo: Path, frozen_root: Path, *, protocol_rel: str = PROTOCOL, ta
     return {"head": head, "tag": tag, "protocol_sha256": protocol_sha, "manifest_sha256": manifest_sha}
 
 
-def authorize(repo: Path, frozen_root: Path, ops_dir: Path, approval: str | None, **kw) -> OutcomeAuthorization:
-    """Checks, the explicit approval, then the exclusive single-run marker (created before any run)."""
+def authorize(repo: Path, frozen_root: Path, approval: str | None, *, config_path: Path | None = None,
+              **kw) -> OutcomeAuthorization:
+    """Checks, the explicit approval, the frozen configuration, then the exclusive single-run markers
+    (created before any run)."""
     psha = kw.get("protocol_sha", PROTOCOL_SHA)
     if approval != approval_phrase(psha):
         raise OutcomeBlocked("outcome run refused: the user's explicit approval phrase was not given")
+    markers = marker_paths(repo, frozen_root)
+    done = [str(m) for m in markers if m.exists()]
+    if done:
+        raise OutcomeBlocked(f"outcome run refused: an outcome run was already started ({done}); "
+                             "R9: a corrected run is a separate explicit decision")
     rec = preflight(repo, frozen_root, **kw)
-    ops = Path(ops_dir)
-    ops.mkdir(parents=True, exist_ok=True)
-    rec = {**rec, "approved": True, "started_at": pd.Timestamp.now(tz="UTC").isoformat()}
-    try:
-        fd = os.open(ops / MARKER, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
-        raise OutcomeBlocked(f"outcome run refused: an outcome run was already started ({ops / MARKER}); "
-                             "R9: a corrected run is a separate explicit decision") from None
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(rec, f, indent=1)
+    _, cfg_sha = frozen_carry_config(config_path)
+    rec = {**rec, "config_sha256": cfg_sha, "approved": True, "started_at": pd.Timestamp.now(tz="UTC").isoformat()}
+    created = []
+    for m in markers:
+        m.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fd = os.open(m, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            raise OutcomeBlocked(f"outcome run refused: {m} appeared concurrently") from None
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(rec, f, indent=1)
+        created.append(m)
     return OutcomeAuthorization(OutcomeAuthorization._secret, rec)
