@@ -8,7 +8,7 @@
   - Bağımsız metodolojik red-team (2026-10-11) NOT READY dedi: 2 Critical, 10 Major, 7 Minor.
   - Bu metin bütün Critical ve Major bulguları ve Minor'ları işler. Bulgu ↔ değişiklik eşlemesi §13'te.
   - Freeze'den önce **yeniden red-team** zorunludur.
-  - **2026-10-11 gece bulguları §14'te:** Stage 0 BLOCKED (gerçek 1 dakikalık spread yok), W parity PASS. Metodoloji değişmedi; spread çözünürlüğü kararı kullanıcıda.
+  - **2026-10-11 gece bulguları §14'te:** Stage 0 BLOCKED (protokol penceresinde gerçek 1 dakikalık spread yok; yalnızca ~2025-02 öncesinde var), W parity PASS. Metodoloji değişmedi; spread çözünürlüğü kararı kullanıcıda.
 
 **Sıra (kullanıcı kararı, değişmez):**
 1. Stage 0 spread/veri backfill + audit
@@ -465,7 +465,7 @@ Gerekçe: kill sonrası flat kalan arm, Δcarry'yi mekanik olarak belirler.
 ## 14. Stage 0 ve parity bulguları (2026-10-11, outcome-free; metodoloji değiştirilmedi)
 
 **Stage 0: BLOCKED — 1M SPREAD UNAVAILABLE** (`docs/results/v5-stage0-audit.md`)
-- Kraken analytics `spreads` 60 s serisi, ortak bir saatin 5 dakikalık snapshot'larının ileri taşınmış halidir. Değer bir noktadır, ortalama değildir.
+- Kraken analytics `spreads` 60 s serisi, ~2025-02 sonrasında (protokol penceresinin tamamı), ortak bir saatin 5 dakikalık snapshot'larının ileri taşınmış halidir. Değer bir noktadır, ortalama değildir.
 - Bu yüzden §2.1'deki 1 dakika şartı karşılanamıyor. Backfill yapılmadı. 5 dakikaya geçiş kullanıcı kararıdır (seçenekler audit belgesinde).
 - §2.1 ve §3'teki kapsam eşikleri (30/60, 8/15) ve "1 dakikalık" ifadeleri bu karara bağlı olarak yeniden yazılacak, ardından red-team'e girecek.
 
