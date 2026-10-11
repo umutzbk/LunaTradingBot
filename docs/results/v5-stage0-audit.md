@@ -11,14 +11,14 @@
 |---|---|
 | İzinli `interval` | 60, 300, 900 kabul ediliyor. 1, 10, 30 ve 120 "Invalid arguments" döndürüyor. |
 | Yanıt şekli | `result.timestamp` (epoch s, aralık grid'inde), `data.bid.best_price` / `data.ask.best_price` (string). `more` alanı sayfalama için. |
-| **60 s serisi gerçek 1 dakikalık gözlem mi?** | **Hayır.** Değerler 5 dakika boyunca birebir aynı kalıyor ve 5 dakikada bir değişiyor. 20 varlık × 268 gün V4 penceresinde 57.765 değişim aralığının 57.725'i 5'in katı. Kalan 40'ı gün sınırı ya da faz kaymasıyla açıklanıyor. |
+| **60 s serisi gerçek 1 dakikalık gözlem mi?** | **Protokol penceresinde [2025-10-06, 2026-07-01) hayır.** Değerler 5 dakika boyunca aynı kalıp 5 dakikada bir değişiyor. 20 varlık × 268 gün V4 penceresinde değişimler arası boşluklar şöyle dağılıyor: 5 dk ×57.296, 10 dk ×404 (değer bir snapshot boyunca değişmemiş), 15 dk ×23, 6 dk ×39 ve 35 dk ×1. Bunlara 31 NaN satırı eşlik ediyor. 6 dakikalık boşlukların hepsi 2025-10-10'daki faz kaymalarından geliyor. 35 dakikalık boşluk ve NaN'lar PUMP'ta, 2025-10-10 23:03–23:33 arasında. **Gerçek 1 dakikalık veri yalnızca yaklaşık Şubat 2025'ten öncesinde var:** PF_XBTUSD için 2025-01-15'te 120 dakikada 116 değişim görüldü; 2025-02-15'te yalnızca 24 değişim var (5 dakikalık kadans). Bu bulgu bağımsız reviewer'dan geldi ve yeniden doğrulandı. O dönemde gerçek funding yok (gerçek funding 2025-10-06'da başlıyor), bu yüzden outcome penceresi için kullanılamaz. |
 | Değer ortalama mı, nokta mı? | Nokta (snapshot). Bid ve ask tick değerli tam sayılar, 5 dakika boyunca birebir aynı. Bir ortalama tick dışı değerler üretirdi. |
-| Snapshot saati | Ortak bir 5 dakikalık saat; fazı günden güne kayıyor. İlk değişimin dakika mod 5 değeri 268 günde {3: 115, 4: 60, 2: 41, 0: 31, 1: 21}, 20 varlıkta aynı. 1 dakikalık trade barlarıyla en iyi eşleşme, etiket T'deki değerin [T, T+1m] civarında gözlendiğini gösteriyor (BTC'de medyan sapma 16 USD). Dakika düzeyinde kesin etiket semantiği **güvenilir biçimde doğrulanamadı**. |
+| Snapshot saati | Ortak bir 5 dakikalık saat; fazı günden güne ve zaman zaman gün içinde kayıyor (örneğin 2025-10-10'da iki kez). İlk değişimin dakika mod 5 değeri 268 günde {3: 115, 4: 60, 2: 41, 0: 31, 1: 21}, 20 varlıkta aynı. 1 dakikalık trade barlarıyla en iyi eşleşme, etiket T'deki değerin [T, T+1m] civarında gözlendiğini gösteriyor (BTC'de medyan sapma 16 USD). Dakika düzeyinde kesin etiket semantiği **güvenilir biçimde doğrulanamadı**. |
 | 300 s ile 60 s arasındaki ilişki | 300 s'deki T değeri, 60 s serisinin T..T+4 değerleriyle aynı. |
 | Diğer analytics endpoint'leri | `orderbook` (bestPrice, liquidity, slippage) ve `liquidity` aynı 5 dakikalık kadansa sahip. |
 | Rate limit / tekrar | Rate-limit başlığı yok. Probe'da tekrar eden zaman damgası görülmedi. |
 
-**Sonuç:** Kraken analytics geçmişi gerçek 1 dakikalık spread vermiyor; 60 s serisi, 5 dakikalık snapshot'ların ileri taşınmış hali. Protokol §2.1'e ve kullanıcı kararına göre Stage 0 durur. 5 dakikaya sessizce geçilmedi ve backfill yapılmadı.
+**Sonuç:** Kraken analytics geçmişi, protokol penceresi için gerçek 1 dakikalık spread vermiyor (yaklaşık Şubat 2025'ten beri); 60 s serisi, 5 dakikalık snapshot'ların ileri taşınmış hali. Protokol §2.1'e ve kullanıcı kararına göre Stage 0 durur. 5 dakikaya sessizce geçilmedi ve backfill yapılmadı.
 
 **Reddedilen alternatifler:**
 
@@ -57,3 +57,11 @@
 - **Manifest sha256:** `88633d835f6f3d93d982702dc319e3d899f619c17a76a06080a0c892768abc94`
 - **Enstrüman sha'sı:** `d14a82bb…4128`, V4 ile aynı.
 - Dosyalar salt-okunur. Yükleyici manifest'i ve kesimi doğrulamadan açmıyor.
+
+## 4. Düzeltmeler ve ikinci görüş (2026-10-11)
+
+- Bağımsız ikinci reviewer'ın hükmü **PARTIAL**: protokol penceresinde 5 dakikalık kadans **doğrulandı**, ancak "endpoint hiç gerçek 1 dakika vermiyor" genellemesi yanlış (Ocak 2025 ve öncesi gerçek 1 dakika). Metin buna göre düzeltildi.
+- İstek hizalaması (`since` +150 s), sembol (`PF_BTCUSD` boş döndü) ve `interval=180` (reddedildi) denemeleri ileri taşımanın istekten değil, saklanan veriden geldiğini doğruladı.
+- `var/ops/v5_stage0/v4_cadence.json` içindeki `nonregular_days: 268` değeri `p8.py`'deki bir birim hatasından kaynaklanıyor (ms indeksi ns sanılmış). Veri aslında düzenli. Kadans, `luna.carry.spread_backfill.observed_cadence_s` ile ayrıca ölçüldü: BTC, TAO ve PUMP V4 pencerelerinde 300 s.
+- "Nokta snapshot" bulgusu güçlü bir çıkarımdır, kanıt değildir. Dakika düzeyinde etiket zamanlaması belirsizdir. Önerilen muhafazakâr kural (etiket T, T+5m'de bilinir) bu yüzden önerildi.
+- Frozen parity kopyası ana repodadır: `LunaTradingBot/var/history_v5/frozen_parity/`.
