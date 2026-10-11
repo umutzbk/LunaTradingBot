@@ -255,6 +255,14 @@ class SnapshotBuilder:
             raise ValueError(spread_mode)
         self.data, self.mode = data, spread_mode
         self.fallback_full = fallback_full or {}
+        for kind, frames in (("mark", data.mark), ("perp", data.perp)):
+            for a, df in frames.items():
+                if len(df) and df.index.max() > CUTOFF - BAR:  # a bar closing after the cut
+                    raise HoldoutLeak(f"{kind} {a}: bar {df.index.max()} closes after {CUTOFF}")
+        for a in data.store.assets():
+            end = data.store.newest_end(a)
+            if end is not None and end > CUTOFF:
+                raise HoldoutLeak(f"funding {a}: period ending {end} after {CUTOFF}")
         self.assets = sorted(set(data.mark) | set(data.perp))
         self.spread = {a: Spread5m(data.spreads.get(a), known_after=known_after) for a in self.assets}
         self._mark = {a: data.mark[a]["close"] for a in data.mark}

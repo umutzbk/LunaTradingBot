@@ -218,3 +218,69 @@ def test_no_decision_at_the_last_quarter_hour_and_no_fill_at_or_after_the_end():
     end = T + pd.Timedelta("2D")
     assert r.records["ts"].max() == end - 2 * M15  # 23:30 is the last decision
     assert (r.fills["ts"] < end).all()
+
+
+# --- §12 mandatory scenarios -----------------------------------------------------------------------
+
+
+def test_runner_refuses_rows_at_or_after_the_cut_and_an_end_beyond_it():
+    from luna.carry.frozen import CUTOFF
+    from luna.v2.data import HoldoutLeak
+
+    data = make_data(2)
+    with pytest.raises(HoldoutLeak):
+        bt.run_arm(data, bt.arm_config(base_cfg(), "W"), instruments(), start=T, end=CUTOFF + pd.Timedelta("1D"))
+    for kind in ("mark", "perp"):
+        d = make_data(2)
+        src = getattr(d, kind)["A"]
+        src.loc[CUTOFF] = src.iloc[-1]  # a bar opening at the cut (closes after it)
+        with pytest.raises(HoldoutLeak):
+            bt.run_arm(d, bt.arm_config(base_cfg(), "W"), instruments(), start=T, end=T + pd.Timedelta("1D"))
+    d = make_data(2)
+    d.store.merge_rows("A", [{"timestamp": CUTOFF.isoformat(), "fundingRate": 1e-3, "relativeFundingRate": 1e-5}])
+    with pytest.raises(HoldoutLeak):
+        bt.run_arm(d, bt.arm_config(base_cfg(), "W"), instruments(), start=T, end=T + pd.Timedelta("1D"))
+
+
+def test_funding_api_gap_makes_the_book_wait_and_the_scheduled_rebalance_stays_open():
+    from luna.carry.funding import FundingStore
+
+    data = make_data(3)
+    store = FundingStore()
+    for a in ASSETS:  # no realized rate for the 6 periods before t: funding_stale everywhere
+        rows = [{"timestamp": t.isoformat(), "fundingRate": r[0], "relativeFundingRate": r[1]}
+                for t, r in ((pd.Timestamp(k, tz="UTC"), v) for k, v in data.store._rates[a].items())
+                if not (T - pd.Timedelta("6h") <= t < T)]
+        store.merge_rows(a, rows)
+    data.store = store
+    r = run("W", data, days=1)
+    assert r.fills["decision_ts"].min() == T + pd.Timedelta("1h")  # first period after the gap ends at 01:00
+    assert (r.records.loc[r.records["ts"] == T, "reason"] == "global_data_outage").any()
+    assert r.schedule[0]["outcome"] == "completed"
+
+
+def test_w_reproduces_a_hand_computed_week_start():
+    r = run("W", make_data(3), days=2)
+    q = 0.6625  # 0.25 x 265 / 100 on the 0.0001 step
+    px_b, px_s = 100 * 1.0002 ** 2, 100 * 0.9998 ** 2
+    fees = 0.0005 * q * (2 * px_b + 2 * px_s)
+    slip = 2 * q * (px_b - 100) + 2 * q * (100 - px_s)
+    per_hour = q * 100 * (3e-5 + 2e-5 + 2e-5 + 3e-5)
+    d0, d1 = r.daily.loc[T], r.daily.loc[T + pd.Timedelta("1D")]
+    assert d0["fees"] == pytest.approx(fees, rel=1e-12) and d0["spread_slip"] == pytest.approx(slip, rel=1e-9)
+    assert d0["funding"] == pytest.approx(per_hour * 23.75, rel=1e-12)
+    assert d0["equity"] == pytest.approx(265 + per_hour * 23.75 - fees - slip, rel=1e-12)
+    assert abs(d0["price"]) < 1e-9 and d0["delay_drift"] == 0.0
+    assert d1["funding"] == pytest.approx(per_hour * 24, rel=1e-12) and d1["fees"] == 0.0
+
+
+def test_with_a_fixed_ranking_all_four_arms_hold_the_same_book():
+    rels = {a: 3 * v for a, v in __import__("tests.carry.backtest_fixtures", fromlist=["RELS"]).RELS.items()}
+    data = make_data(3, rels=rels)
+    books = {}
+    for arm in "WDCE":
+        f = run(arm, data, days=2).fills
+        net = f.groupby("asset")["dq"].sum()
+        books[arm] = {a: int(v > 0) - int(v < 0) for a, v in net.items() if abs(v) > 1e-12}
+    assert books["W"] == {"A": -1, "B": -1, "E": 1, "F": 1}
+    assert books["W"] == books["D"] == books["C"] == books["E"]

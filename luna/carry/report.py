@@ -126,3 +126,10 @@ def write_report(study: dict, bridge: list | None, out_dir: Path, meta: dict) ->
                          f"{m['sharpe']:.3f} | {m['max_drawdown']:.4f} |")
     (out_dir / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return manifest
+
+
+def assemble_bridge(forward: list, reverse: list, w) -> list:
+    """§5.5 table: steps 1-4 (forward and reverse order), each ending with the engine change -> W, so
+    the last value of either order is W itself."""
+    return ([(f"forward:{n}", r) for n, r in forward] + [("forward:engine->W", w)]
+            + [(f"reverse:{n}", r) for n, r in reverse] + [("reverse:engine->W", w)])

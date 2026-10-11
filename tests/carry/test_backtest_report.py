@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -60,3 +61,25 @@ def test_cli_refuses_without_the_approval_and_writes_no_marker(tmp_path):
     assert r.exit_code != 0 and "refused" in r.output
     assert not (tmp_path / "ops").exists() or not any((tmp_path / "ops").iterdir())
     assert not (tmp_path / "out").exists()
+
+
+def test_bridge_table_ends_at_w_in_both_orders():
+    w = SimpleNamespace(daily=pd.DataFrame({"equity": [266.0], "carry_net": [1e-4]}), counters={})
+    s1 = SimpleNamespace(daily=pd.DataFrame({"equity": [265.5], "carry_net": [2e-4]}), counters={})
+    rows = report.assemble_bridge([("W-V4", s1), ("+exec_v5", s1)], [("W-V4", s1), ("+no_resize", s1)], w)
+    names = [n for n, _ in rows]
+    assert names == ["forward:W-V4", "forward:+exec_v5", "forward:engine->W", "reverse:W-V4", "reverse:+no_resize",
+                     "reverse:engine->W"]
+    assert rows[2][1] is w and rows[-1][1] is w
+
+
+def test_paper_engine_never_loads_the_backtest_modules():
+    import subprocess
+    import sys
+
+    code = ("import sys; import luna.carry.engine, luna.cli; "
+            "bad = [m for m in ('luna.carry.backtest', 'luna.carry.stats', 'luna.carry.outcome_guard', "
+            "'luna.carry.report', 'luna.carry.parity', 'luna.carry.history', 'luna.carry.verdict') "
+            "if m in sys.modules]; print(bad); sys.exit(1 if bad else 0)")
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr

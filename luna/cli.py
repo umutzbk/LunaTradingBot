@@ -734,6 +734,7 @@ def v5_backtest(
     wcfg = bt.arm_config(base, "W")
     fwd = parity.run_bridge(pinp, data, wcfg, days, auth=auth)
     rev = parity.run_bridge(pinp, data, wcfg, days, order=tuple(reversed(parity.BRIDGE_STEPS)), auth=auth)
-    bridge = [(f"forward:{n}", r) for n, r in fwd] + [(f"reverse:{n}", r) for n, r in rev]
+    base_row = "S-NOKILL" if study["evaluation"]["kill"]["kill_affected"] else "PRIMARY"
+    bridge = report.assemble_bridge(fwd, rev, study["results"][("W", base_row)])
     m = report.write_report(study, bridge, out, auth.record)
     typer.echo(f"verdict {study['evaluation']['verdict']} {study['evaluation']['tags']}; summary {m['summary_sha256']}")

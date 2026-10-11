@@ -42,6 +42,7 @@ from luna.carry.history import (
     lookback_p90,
 )
 from luna.types import Fill
+from luna.v2.data import HoldoutLeak
 
 OUTCOME_START = pd.Timestamp("2025-11-10T00:00Z")
 M15 = pd.Timedelta("15min")
@@ -281,6 +282,8 @@ def run_arm(
     _require_authorization(data, auth)
     if start.tzinfo is None or start.value % DAY.value or end.value % DAY.value or end <= start:
         raise ValueError("start / end must be UTC midnights, start < end")
+    if end > CUTOFF:
+        raise HoldoutLeak(f"end {end} after the holdout start {CUTOFF}")
     builder = builder if builder is not None else builder_for(data, row)
     core = CarryCore(cfg, instruments, fee_rate, mode="backtest")
     ex = DelayedExecutor(builder, fee_rate, cfg.slippage_bps, row.cost_mult)
