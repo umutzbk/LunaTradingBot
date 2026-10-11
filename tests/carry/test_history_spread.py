@@ -104,3 +104,51 @@ def test_no_series_means_fallback():
     s = Spread5m(None)
     assert s.decision(T).fallback and s.fill(T).fallback
     assert s.decision(T).n_valid == 0 and s.decision(T).full == FALLBACK_FULL
+
+
+def test_s_pit10_sensitivity_ignores_the_label_t_minus_5():
+    """Red-team F1: under knowledge time T + 10m the label t - 5 is not yet known at t."""
+    base = _grid(T - pd.Timedelta("2h"), T + pd.Timedelta("1h"))
+    o = Spread5m(base, known_after=pd.Timedelta("10min")).decision(T)
+    moved = base.copy()
+    moved.loc[T - M5, "spread_full"] = 0.04
+    assert Spread5m(moved, known_after=pd.Timedelta("10min")).decision(T) == o
+    assert o.n_valid == 11 and o.n_expected == 11
+    assert Spread5m(moved).decision(T) != Spread5m(base).decision(T)  # primary T+5m does see it
+
+
+def test_known_after_shorter_than_5_minutes_is_refused():
+    with pytest.raises(ValueError):
+        Spread5m(None, known_after=pd.Timedelta("4min"))
+
+
+def test_decision_time_must_be_tz_aware_and_on_the_15_minute_grid():
+    """Red-team F5: a shifted t would silently change the windows."""
+    s = Spread5m(_grid(T - pd.Timedelta("2h"), T + pd.Timedelta("1h")))
+    for bad in (T + pd.Timedelta("1s"), T + M5):
+        with pytest.raises(ValueError):
+            s.decision(bad)
+        with pytest.raises(ValueError):
+            s.fill(bad)
+    with pytest.raises(ValueError):
+        s.decision(pd.Timestamp("2026-01-05T00:00"))
+
+
+def test_primary_loader_requires_real_300s_provenance(tmp_path):
+    """Red-team F6: a 900 s or 60 s file must not silently become the primary series."""
+    import json
+
+    from luna.carry.history import load_spread5m
+
+    df = _grid(T - pd.Timedelta("1D"), T)
+    df.to_parquet(tmp_path / "BTC.parquet")
+    from luna.carry.frozen import sha256_file
+    prov = {"requested_interval_s": 300, "observed_cadence_s": 300, "real_resolution_matches_interval": True,
+            "sha256": sha256_file(tmp_path / "BTC.parquet")}
+    (tmp_path / "BTC.provenance.json").write_text(json.dumps(prov), encoding="utf-8")
+    assert load_spread5m(tmp_path, "BTC").decision(T).n_valid == 12
+    for bad in ({"requested_interval_s": 900, "observed_cadence_s": 900}, {"observed_cadence_s": 60},
+                {"real_resolution_matches_interval": False}, {"sha256": "0" * 64}):
+        (tmp_path / "BTC.provenance.json").write_text(json.dumps(prov | bad), encoding="utf-8")
+        with pytest.raises(ValueError):
+            load_spread5m(tmp_path, "BTC")

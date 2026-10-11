@@ -109,9 +109,10 @@
 
 | Kontrol | Ölçü | Eşik / aksiyon |
 |---|---|---|
-| Kapsam | Varlık × gün, ay ve günün saati kırılımında mevcut 5 dakikalık snapshot oranı. 15m noktalarında karar penceresinde ≥ 6/12 ve fill penceresinde ≥ 2/3 geçerli snapshot bulunan nokta oranı. | Raporlanır. Varlık genelinde nokta kapsamı < %90 ise "spread coverage insufficient" işaretlenir ve kullanıcıya gelir. Eşik sonradan gevşetilmez. |
+| Kapsam | Varlık × gün, ay ve günün saati kırılımında mevcut 5 dakikalık snapshot oranı. 15m noktalarında karar penceresinde ≥ 6/12 ve fill penceresinde ≥ 2/3 geçerli snapshot bulunan nokta oranı. | Raporlanır. Outcome penceresinde **herhangi bir varlıkta veya herhangi bir varlık × günün saati hücresinde** (karar veya fill) nokta kapsamı < %90 ise "spread coverage insufficient" işaretlenir ve kullanıcıya gelir. Havuzlanmış oran kullanılmaz. Eşik sonradan gevşetilmez. |
+| Tekrarlayan değer | Ardışık iki snapshot'ın birebir aynı olma oranı ve en uzun seri (kaynağın kendi ileri taşıması olabilir) | Raporlanır; kural değişmez |
 | Boşluklar | En uzun boşluk, ≥ 1 saatlik boşlukların listesi | Raporlanır |
-| Zaman hizası | (a) Grid: 5 dakika sınırı, tekrar, monotonluk, grid sapması. (b) **V4 tutarlılığı (5 dakikalık snapshot değer ve kadans parity'si; 1 dakikalık satır parity'si değil):** V4'ün her gün [23:00, 00:00) 60 s serisi, ileri taşınmış 5 dakikalık snapshot'lardır. Yeni serinin T etiketli değeri, V4 serisinin T+4m satırına eşit olmalıdır (1e-12); V4 serisindeki değer değişimleri yeni serinin 5 dakikalık snapshot'larıyla aynı kadansta olmalıdır. (c) Point-in-time kuralı: T etiketli snapshot T + 5m'de bilinir. | (b) FAIL ise Stage 0 FAIL; kök neden bulunmadan devam edilmez. |
+| Zaman hizası | (a) Grid: 5 dakika sınırı, tekrar, monotonluk, grid sapması. (b) **V4 tutarlılığı (5 dakikalık snapshot değer ve kadans parity'si; 1 dakikalık satır parity'si değil):** V4'ün her gün [23:00, 00:00) 60 s serisi, ileri taşınmış 5 dakikalık snapshot'lardır. Yeni serinin T etiketli değeri, V4 serisinin T+4m satırına eşit olmalıdır (1e-12); V4 serisindeki değer değişimleri yeni serinin 5 dakikalık snapshot'larıyla aynı kadansta olmalıdır. FAIL ölçütü değer parity'sidir. Gün içinde faz kayması olan günlerde tek bir fazla açıklanamayan V4 dakikaları gün listesiyle raporlanır, FAIL sayılmaz. (c) Point-in-time kuralı: T etiketli snapshot T + 5m'de bilinir. | (b) FAIL ise Stage 0 FAIL; kök neden bulunmadan devam edilmez. |
 | Fallback oranı | Bütün 15m noktalarında karar ve fill pencereleri için; varlık, ay ve **günün saati** kırılımı (W, D ve C yalnızca 00:00'da işlem yapar) | Raporlanır; ayrıca outcome raporunda **dolan emirler** üzerinden arm başına fallback payı |
 | Değer geçerliliği | ≤ 0, NaN, sonsuz, > 500 bps | Kullanılmaz ve sayılır |
 | Mark ve trade | Mark kapanışı ile trade kapanışı arasındaki sapma dağılımı (fiyat seviyesi değil, göreli fark); mark ve bar kapsamı | Raporlanır |
@@ -320,7 +321,7 @@ Köprü, freeze'den önce yalnızca sentetik veriyle test edilir. W'nin P&L'i ye
 
 - Profiller beş parametreyi aynı yönde yaklaşık ×2 / ÷2 hareket ettirir. `m = 1,0` başa baş noktasıdır.
 - Hükme girmez.
-- **Deneme kaydı:** 4 arm + 3 varyant = 7. W-V4, köprü, I ve sensitivity satırları deneme sayılmaz.
+- **Deneme kaydı:** 4 arm + 3 varyant = 7. W-V4, köprü, I ve sensitivity satırları (S-PIT10 ve S-FB-CONS dahil) deneme sayılmaz.
 
 ## 8. Attribution: E − W
 
@@ -345,6 +346,8 @@ E − W = (D − W)   günlük hedef takibi (yalnızca karar sıklığı; kural 
 | **PRIMARY** | §3 |
 | S-COST2X | Fill tarafında 2× ücret, 2× yarım spread, 2× slip. Karar kuralı default maliyetle hesaplar. |
 | S-SPREAD-FIX | Sabit 10 bps full spread, hem gate hem fill |
+| **S-PIT10** | Bilinme zamanı T + 5m yerine **T + 10m**, karar ve fill pencerelerinde, bütün arm'larda (karar azami 11, fill azami 2 snapshot; eşikler 6 ve 2 aynı) |
+| **S-FB-CONS** | Fallback kullanan karar ve fill'ler, bütün arm'larda, 10 bps yerine varlık başına muhafazakâr bir spread ile fiyatlanır: lookback penceresindeki [2025-10-06, 2025-11-10) geçerli snapshot'ların p90'ı (outcome penceresinden önce, sabit) |
 | S-NOKILL | R4 drawdown kill-switch kapalı; leg stop ve R3 aynen |
 | S-UNWIND | Terminal unwind maliyeti net'e eklenir |
 
@@ -365,6 +368,11 @@ E − W = (D − W)   günlük hedef takibi (yalnızca karar sıklığı; kural 
 - PRIMARY satırı da yanında raporlanır.
 
 Gerekçe: kill sonrası flat kalan arm, Δcarry'yi mekanik olarak belirler.
+
+**Spread veri kuralları (rev 3 red-team F1/F2, önceden kayıtlı):**
+- **PIT-SENSITIVE:** S-PIT10 satırının hükmü PRIMARY'den farklıysa hüküm "PIT-SENSITIVE" etiketi alır ve iki hükümden **daha muhafazakâr olanı** raporlanır (sıra: WORSE < NO ADVANTAGE SHOWN < CARRY ONLY < ADVANTAGE).
+- **FALLBACK-AFFECTED:** Herhangi bir arm'ın dolan notional içindeki fallback payı (karar veya fill fallback'i) W'ninkinden **1 yüzde puanından fazla** farklıysa hüküm "FALLBACK-AFFECTED" etiketi alır. S-FB-CONS satırı yanında verilir ve iki hükümden daha muhafazakâr olanı raporlanır.
+- Arm başına fallback payı, dolan notional üzerinden karar ve fill fallback'i ayrı, varlık ve günün saati kırılımıyla raporlanır.
 
 **G5 her zaman PRIMARY satırında değerlendirilir.** Yalnızca E'de olan bir kill, hükmü hangi satır kullanılırsa kullanılsın en fazla **CARRY ONLY** yapar.
 
@@ -435,6 +443,9 @@ Gerekçe: kill sonrası flat kalan arm, Δcarry'yi mekanik olarak belirler.
 - Bootstrap V4 `stats` ile eşit çıkar.
 - Paper engine parity ve backtest modlarını reddeder.
 - Depth gate, book olmayan snapshot'ta geçer.
+- Spread (rev 3): bilinme T + 5m (S-PIT10'da T + 10m); karar ≥ 6/12, fill ≥ 2/3; pencereler örtüşmez; forward-fill yok; 5 dakikalık grid dışı seri ve provenance'ı 300 s gerçek snapshot olmayan dosya reddedilir; karar zamanı 15m grid'inde ve tz'li olmalıdır.
+- Aynı t'de bütün arm'lar aynı spread'i görür (tek builder örneği).
+- Fallback sayaçları arm, varlık, saat ve karar/fill ayrımıyla dolan notional'a atanır; sentetik 1 saatlik veri boşluğunda yalnızca o saatte işlem yapan arm'a yazılır ve FALLBACK-AFFECTED tetiklenir.
 
 **Kalite kapısı:** Code review'da Critical = 0 ve Major = 0 olmadan outcome koşusu yok.
 
@@ -519,3 +530,19 @@ Gerekçe: kill sonrası flat kalan arm, Δcarry'yi mekanik olarak belirler.
 
 - **Değişmeyenler:** 10 bps fallback ve S-SPREAD-FIX, geçerlilik tanımı (≤ 0, NaN, sonsuz, > 500 bps), %90 kapsam bayrağı, örtüşmeyen pencereler, 15 dakikalık gecikme, W parity (V4 semantiği, V4'ün kendi 60 s pencereleri).
 - Freeze'den önce bağımsız metodolojik red-team zorunludur.
+
+## 16. rev 3 bağımsız metodolojik red-team (2026-10-11)
+
+**Hüküm:** NOT READY (2 Major), ikisi de ucuz düzeltme. `Spread5m` yazılı kurala birebir uyuyor (sınırlar, eşikler, geçerlilik, forward-fill yok, grid reddi, holdout guard).
+
+| ID | Sev | Bulgu | Karşılık |
+|---|---|---|---|
+| F1 | Major | T + 5m kuralı sınırda: faz-4 günlerinde (≈ %22) t−5 etiketli snapshot ≈ [t−1m, t] içinde alınır; 60 s etiketinin [m, m+1m] gözlem çıkarımı kesin doğrulanmadığı için birkaç saniyelik look-ahead dışlanamaz | Primary T + 5m (kullanıcı kararı) korunur. **S-PIT10** sensitivity satırı ve PIT-SENSITIVE kuralı (§9, §10). `Spread5m(known_after=10m)` + test (t−5 etiketi değişince karar değişmez). |
+| F2 | Major | Sabit 10 bps fallback yalnızca E'nin kullanabileceği bir opsiyon: E boşluk saatlerinde yapay ucuz maliyetle işlem yapabilir; W/D/C 00:00'a bağlı | Kural değişmez. Arm başına fallback payı raporu, **FALLBACK-AFFECTED** tetikleyicisi (> 1 puan) ve **S-FB-CONS** satırı (§9, §10); sayaç testi §12'de |
+| F3 | Minor | %90 kapsam bayrağı havuzlanmış mı varlık başına mı belirsiz | §2.1: varlık ve varlık × saat hücresi; audit script'i buna göre |
+| F4 | Minor | Kaynağın kendi ileri taşıması geçerli snapshot sayılır | §2.1: tekrarlayan değer oranı raporlanır |
+| F5 | Minor | `decision(t)` grid dışı t'yi sessizce kabul ediyor | `Spread5m` tz'siz veya 15m grid dışı t'yi reddeder (test) |
+| F6 | Minor | 900 s veya inceltilmiş 60 s seri grid kontrolünü geçebilir | `load_spread5m` provenance'ta 300 s istenen + 300 s gözlenen kadans + sha şartı (test) |
+| F7 | OK | Arm'lar aynı t'de aynı spread'i görür | §12 testi (tek builder) |
+| F8 | OK | 15m fill modeli 5m snapshot'larla tutarlı; fill penceresi karar penceresinden ayrı | — |
+| F9 | Minor | Gün içi faz kayması V4 kontrolü (b)'yi düşürebilir | §2.1: FAIL ölçütü değer parity'si; kadans istisnaları gün listesiyle raporlanır |
