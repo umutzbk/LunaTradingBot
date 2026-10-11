@@ -73,3 +73,17 @@ V4 H2 kuralları V5 `Portfolio` + `FundingLedger` + `FundingStore` üzerinde. `C
 | b = 14 | 2,53e-5 / gün | 6,3e-5 / gün |
 
 Bu bir **alt sınırdır**: yalnızca W tarafının dağılımına dayanır.
+
+## 7. Yeniden üretim (runbook)
+
+```
+cd LunaTradingBot-v5
+.venv/Scripts/python scripts/v5_parity/run_parity.py ../LunaTradingBot/var/history_v5/frozen_parity \
+    88633d835f6f3d93d982702dc319e3d899f619c17a76a06080a0c892768abc94 ../LunaTradingBot/var/ops/v5_parity/<run>
+```
+
+- **Adımlar:** pinned manifest doğrulaması → geçici detached `b074b69` worktree → V4 harness → worktree silinir → referans kapısı → Katman A → Katman B → `parity_verdict.json`.
+- Çıkış kodu yalnızca her kapı PASS olduğunda 0. Süre ≈ 75 s.
+- **Doğrulama koşusu (2026-10-11 04:35Z):** PARITY PASS.
+- **Not:** Referans kapısındaki max |Δ| koşudan koşuya 0 ile 1,8e-15 arasında değişiyor. V4'ün set iterasyon sırası hash seed'e bağlı ve toplama sırasını değiştiriyor. Fark tolerans (1e-12) içinde.
+- **Stres çapraz kontrolü:** `make_stress.py <dir> 450` (stress_A) ve `make_stress.py <dir> 700 nomissing` (stress_B).
