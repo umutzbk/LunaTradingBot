@@ -142,3 +142,16 @@ def test_observed_cadence_of_true_1_minute_data():
     idx = pd.date_range("2026-06-01", periods=600, freq="1min", tz="UTC")
     df = pd.DataFrame({"spread_full": np.linspace(1e-4, 2e-4, 600)}, index=idx)
     assert sb.observed_cadence_s(df) == 60
+
+
+def test_assembled_provenance_records_endpoint_params_and_dropped_rows(tmp_path):
+    days = list(pd.date_range("2026-06-29", "2026-06-30", freq="D", tz="UTC"))
+    sb.backfill(FakeClient(), tmp_path, ["BTC"], days, 300, sleep=_no_sleep)
+    out = sb.assemble(tmp_path, "BTC", 300)
+    prov = json.loads(out.with_name("BTC.provenance.json").read_text(encoding="utf-8"))
+    assert prov["endpoint"].endswith("/PF_XBTUSD/spreads")
+    assert prov["params"] == {"interval": 300, "to_max": "2026-06-30T23:55:00+00:00"}
+    assert prov["rows_dropped_at_or_after_cutoff"] == 0 and prov["pages"] == 2
+    assert prov["observed_cadence_s"] == 300 and prov["real_resolution_matches_interval"] is True
+    assert prov["resolution_label"] == "5-minute historical snapshots"
+    assert len(prov["checkpoint_sha256"]) == 2

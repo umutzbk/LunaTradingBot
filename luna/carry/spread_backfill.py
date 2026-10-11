@@ -186,9 +186,22 @@ def assemble(root: Path, asset: str, interval_s: int, cutoff: pd.Timestamp = CUT
     df.to_parquet(tmp)
     os.replace(tmp, out)
     cad = observed_cadence_s(df)
+    metas = [json.loads(p.with_suffix(".json").read_text(encoding="utf-8")) for p in parts]
+    endpoints = sorted({m["endpoint"] for m in metas})
+    if len(endpoints) > 1 or any(m["interval_s"] != interval_s for m in metas):
+        raise ValueError(f"{asset}: checkpoints mix endpoints or intervals")
+    match = cad == interval_s
     prov = {
-        "asset": asset, "requested_interval_s": interval_s, "observed_cadence_s": cad,
-        "real_resolution_matches_interval": cad == interval_s,
+        "asset": asset, "endpoint": endpoints[0] if endpoints else None,
+        "params": {"interval": interval_s, "to_max": (cutoff - pd.Timedelta(seconds=interval_s)).isoformat()},
+        "requested_interval_s": interval_s, "observed_cadence_s": cad,
+        "real_resolution_matches_interval": match,
+        "resolution_label": f"{interval_s // 60}-minute historical snapshots" if match
+        else f"UNVERIFIED: requested {interval_s} s, observed cadence {cad} s",
+        "pages": sum(m["pages"] for m in metas),
+        "rows_dropped_at_or_after_cutoff": sum(m["rows_dropped_at_or_after_cutoff"] for m in metas),
+        "rows_dropped_outside_day": sum(m["rows_dropped_outside_day"] for m in metas),
+        "checkpoint_sha256": {p.name: m["sha256"] for p, m in zip(parts, metas, strict=True)},
         "rows": len(df), "first": df.index.min().isoformat() if len(df) else None,
         "last": df.index.max().isoformat() if len(df) else None, "cutoff": cutoff.isoformat(),
         "checkpoints": len(parts), "sha256": sha256_file(out),
