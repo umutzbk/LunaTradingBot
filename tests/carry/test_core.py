@@ -313,3 +313,11 @@ def test_rebalance_to_target_waits_while_entries_are_blocked() -> None:
     core.risk_state.entries_blocked_day = (T0 + 2 * H).date()
     res = cycle(core, store, T0 + 2 * H)  # T0 rebalance is done; nothing scheduled, nothing blocked
     assert res.orders == []
+
+
+def test_cycle_result_keeps_the_equity_before_its_orders() -> None:
+    """Replay valuation (protocol §3.2) needs the equity after mark + settlement, before fills."""
+    core, store = make()
+    res = cycle(core, store, T0)
+    assert res.equity_start == pytest.approx(265.0)
+    assert res.equity < res.equity_start

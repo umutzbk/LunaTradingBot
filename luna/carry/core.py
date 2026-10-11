@@ -139,6 +139,7 @@ class CycleResult:
     closed: list[tuple[Position, str]] = field(default_factory=list)
     touched_closed: list[Position] = field(default_factory=list)  # closed positions with new funding
     forced_blocked: bool = False  # a forced exit could not be ordered: everything else held back
+    equity_start: float = math.nan  # after mark + settlement, before this cycle's orders
 
 
 def _reject(a: Action, reason: str) -> Record:
@@ -252,6 +253,7 @@ class CarryCore:
             False,
             {},
             touched_closed=touched,
+            equity_start=equity,
         )
 
         fresh = snap is not None and snap.age_s(now) <= cfg.gates.max_quote_age_s
