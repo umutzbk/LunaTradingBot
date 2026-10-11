@@ -8,6 +8,7 @@
   - Bağımsız metodolojik red-team (2026-10-11) NOT READY dedi: 2 Critical, 10 Major, 7 Minor.
   - Bu metin bütün Critical ve Major bulguları ve Minor'ları işler. Bulgu ↔ değişiklik eşlemesi §13'te.
   - Freeze'den önce **yeniden red-team** zorunludur.
+  - **2026-10-11 gece bulguları §14'te:** Stage 0 BLOCKED (gerçek 1 dakikalık spread yok), W parity PASS. Metodoloji değişmedi; spread çözünürlüğü kararı kullanıcıda.
 
 **Sıra (kullanıcı kararı, değişmez):**
 1. Stage 0 spread/veri backfill + audit
@@ -460,3 +461,24 @@ Gerekçe: kill sonrası flat kalan arm, Δcarry'yi mekanik olarak belirler.
 | N5 | 4 snapshot sınırı, girişlerin bloklu olduğu döngüleri de sayarsa W'nin haftalık rebalance'ı R3 gününde tükenir | §3.2: sayaç yalnızca `opens_allowed` ve geçerli snapshot olan döngüleri sayar; bloklu günler raporlanır |
 
 **Doğrulama turu sonucu:** N1–N4 kapandı. N5, reviewer'ın önerdiği tek satırla kapatıldı. Reviewer'ın hükmü: bu düzeltmeden sonra **READY FOR FREEZE AFTER STAGE 0 + PARITY**, yeni bir red-team turu gerekmez.
+
+## 14. Stage 0 ve parity bulguları (2026-10-11, outcome-free; metodoloji değiştirilmedi)
+
+**Stage 0: BLOCKED — 1M SPREAD UNAVAILABLE** (`docs/results/v5-stage0-audit.md`)
+- Kraken analytics `spreads` 60 s serisi, ortak bir saatin 5 dakikalık snapshot'larının ileri taşınmış halidir. Değer bir noktadır, ortalama değildir.
+- Bu yüzden §2.1'deki 1 dakika şartı karşılanamıyor. Backfill yapılmadı. 5 dakikaya geçiş kullanıcı kararıdır (seçenekler audit belgesinde).
+- §2.1 ve §3'teki kapsam eşikleri (30/60, 8/15) ve "1 dakikalık" ifadeleri bu karara bağlı olarak yeniden yazılacak, ardından red-team'e girecek.
+
+**§2.2 düzeltmesi**
+- V4 Stage 1 `manifest.json` girdi sha'sı içermiyor. Girdi tutarlılığının kanıtı, frozen kopya üzerinde V4 referansının yayımlanmış sonucu birebir (71 kontrol, Δ = 0) üretmesidir.
+- Parity için kullanılan kopya `var/history_v5/frozen_parity/` (manifest sha `88633d83…abc94`). Spread kararından sonra bütün outcome girdilerini içeren ayrı bir `frozen/` kopyası oluşturulacak.
+
+**§5 sonucu: PARITY PASS** (`docs/results/v5-parity-report.md`)
+- Referans, Katman A ve B1/B2/B3 bütün §5.4 toleranslarında.
+- Gerçek veride tetiklenmeyen yollar sentetik stres verisinde V4'e karşı PASS: margin, likidasyon, işaret değişimi, eksik bar, atlanan aksiyon, min-emir.
+- W-V4, V4'ün iki durumu taklit etmez; ikisi de açık hata verir (`ParityUnsupported`):
+  - sıra dışı fill zamanı (V4 funding yolunda örtüşmeyi çift sayar);
+  - NaN funding satırı.
+  Gerçek veride ikisi de oluşmuyor.
+
+**§5.4 a-priori MDE:** Δcarry için b = 28 → 6,6e-5/gün; b = 14 → 6,3e-5/gün. Alt sınırdır.

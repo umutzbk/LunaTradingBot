@@ -321,3 +321,17 @@ def test_out_of_order_fill_timestamps_fail_loudly():
     sim.fill("A", 1.0, 100.0, MON + 3 * BAR, 0.0, "rebalance")
     with pytest.raises(parity.ParityUnsupported, match="before"):
         sim.fill("A", -1.0, 100.0, MON + BAR, 0.0, "liquidation")
+
+
+def test_paper_engine_never_loads_replay_only_modules():
+    """Protocol R10 / §5.2: the paper engine cannot reach W-V4, the parity tooling or the frozen copy."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, luna.carry.engine, luna.cli\n"
+        "bad = [m for m in ('luna.carry.parity', 'luna.carry.history', 'luna.carry.frozen') if m in sys.modules]\n"
+        "print(','.join(bad))\n"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == ""
