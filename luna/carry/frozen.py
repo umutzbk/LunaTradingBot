@@ -73,6 +73,18 @@ def _read_bars_before(path: Path, cutoff: pd.Timestamp) -> tuple[pd.DataFrame, i
     return df, total - len(df)
 
 
+def _read_series_before(path: Path, cutoff: pd.Timestamp, bars: bool, name: str) -> pd.DataFrame:
+    """History file rows before the cut, filtered inside the parquet reader. A file that holds any
+    row past the bound raises ``HoldoutLeak`` (detected from the row count, never materialised):
+    downloaders write these files already cut."""
+    bound, op = (cutoff - BAR, "<=") if bars else (cutoff, "<")
+    total = pq.ParquetFile(path).metadata.num_rows
+    df = _utc(pd.read_parquet(path, filters=[(_index_column(path), op, bound)]))
+    if len(df) != total:
+        raise HoldoutLeak(f"{name}: {total - len(df)} rows at or after the cut {cutoff}")
+    return df
+
+
 def assert_bars_before(df: pd.DataFrame, name: str, cutoff: pd.Timestamp = CUTOFF) -> pd.DataFrame:
     if len(df) and df.index.max() > cutoff - BAR:
         raise HoldoutLeak(f"{name}: bar {df.index.max()} closes after {cutoff}")
@@ -154,11 +166,7 @@ def freeze_inputs(
             if not src.exists():
                 missing.append(rel)
                 continue
-            df = _utc(pd.read_parquet(src))
-            if kind in HISTORY_BAR_KINDS:
-                assert_bars_before(df, rel, cutoff)
-            else:
-                assert_series_before(df, rel, cutoff)
+            df = _read_series_before(src, cutoff, kind in HISTORY_BAR_KINDS, rel)
             _write_frame(df, stage / rel)
             files[rel] = _entry(stage / rel, df, src, 0, kind)
 
@@ -169,7 +177,7 @@ def freeze_inputs(
             if not src.exists():
                 missing.append(rel)
                 continue
-            df = assert_series_before(_utc(pd.read_parquet(src)), rel, cutoff)
+            df = _read_series_before(src, cutoff, False, rel)
             _write_frame(df, stage / rel)
             files[rel] = _entry(stage / rel, df, src, 0, "spreads_v5")
 

@@ -198,3 +198,22 @@ def test_bar_kinds_drop_bars_that_close_after_the_cut(src, tmp_path):
     assert spot.index.max() == pd.Timestamp("2026-06-30T22:45Z")
     mark = pd.read_parquet(dst / "history_v4" / "mark" / "AAA.parquet")
     assert mark.index.max() == CUT - pd.Timedelta("15min")
+
+
+def test_freeze_never_materialises_history_rows_at_or_after_the_cut(src, tmp_path, monkeypatch):
+    """Review m5: history series are read with a parquet filter too; the leaked row is detected from
+    metadata (row count), so it raises without being loaded."""
+    var, inst = src
+    _series("2026-06-30T23:00Z", 2, "1h", "funding_rel").to_parquet(var / "history_v4" / "funding" / "AAA.parquet")
+    seen = []
+    real = pd.read_parquet
+
+    def spy(path, *a, **k):
+        df = real(path, *a, **k)
+        seen.append(df.index.max() if len(df) else None)
+        return df
+
+    monkeypatch.setattr(frozen.pd, "read_parquet", spy)
+    with pytest.raises(HoldoutLeak):
+        frozen.freeze_inputs(var, inst, tmp_path / "frozen", assets=["AAA"])
+    assert all(m is None or m < CUT for m in seen)
