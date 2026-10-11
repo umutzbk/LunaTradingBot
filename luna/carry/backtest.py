@@ -633,3 +633,30 @@ def run_study(data: HistoricalData, base: CarryConfig, instruments: dict, *, sta
                                             arm_config(base, a).switch_horizon_hours) for a in "CE"},
         "window": (start, end),
     }
+
+
+def load_historical(root, manifest_sha256: str) -> tuple[HistoricalData, dict]:
+    """The real frozen copy (verified against its pinned manifest first), flagged ``real``: no arm,
+    study or bridge runs on it without the outcome authorization. Instruments from the frozen V4
+    instrument file (protocol §2; maintenance margin not in that file: 0, declared)."""
+    import json
+    from pathlib import Path
+
+    from luna.carry import parity
+    from luna.carry.history import load_spread5m
+    from luna.instruments import perp_symbol
+    from luna.types import Instrument
+
+    inp = parity.load_parity_inputs(Path(root), manifest_sha256)
+    sp_root = Path(root) / "history_v5" / "spreads"
+    spreads = {a: load_spread5m(sp_root, a).frame for a in inp.assets if (sp_root / f"{a}.parquet").exists()}
+    raw = json.loads((Path(root) / "config" / "v4_instruments.json").read_text(encoding="utf-8"))
+    inst = {}
+    for a in inp.assets:
+        leg = ((raw.get("assets") or {}).get(a) or {}).get("perp")
+        if leg:
+            inst[a] = Instrument(a, perp_symbol(a), "kraken_futures", "perp", float(leg.get("step", 0.0)),
+                                 float(leg.get("tick", 0.0)), float(leg.get("min_qty", 0.0)),
+                                 float(leg.get("min_cost", 0.0)), 0.0002, FEE_RATE, 0.0, 0.0)
+    data = HistoricalData(mark=inp.mark, perp=inp.perp, spreads=spreads, store=parity.funding_store(inp), real=True)
+    return data, inst

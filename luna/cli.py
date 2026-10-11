@@ -702,3 +702,38 @@ def migrate_db(
 
 if __name__ == "__main__":
     app()
+
+
+@app.command("v5-backtest")
+def v5_backtest(
+    frozen_dir: Annotated[Path, typer.Option("--frozen", help="Frozen input copy")] = Path("var/history_v5/frozen"),
+    out: Annotated[Path, typer.Option("--out", help="Result directory")] = Path("docs/results/v5-backtest"),
+    ops_dir: Annotated[Path, typer.Option("--ops-dir", help="Single-run marker directory")] = Path("var/ops/v5_backtest"),
+    approve: Annotated[str | None, typer.Option("--approve", help="The user's explicit approval phrase")] = None,
+    repo: Annotated[Path, typer.Option("--repo", help="Git worktree of the frozen protocol")] = Path("."),
+) -> None:
+    """THE single V5 historical outcome run (frozen protocol rev 3). Refused unless every guard passes."""
+    import pandas as pd
+
+    from luna.carry import backtest as bt
+    from luna.carry import outcome_guard as og
+    from luna.carry import parity, report
+    from luna.carry.config import load_carry_config
+    from luna.carry.frozen import CUTOFF
+
+    try:
+        auth = og.authorize(repo, frozen_dir, ops_dir, approve)
+    except bt.OutcomeBlocked as e:
+        typer.echo(str(e))
+        raise typer.Exit(2) from None
+    data, inst = bt.load_historical(frozen_dir, og.FROZEN_MANIFEST_SHA)
+    base = load_carry_config()
+    study = bt.run_study(data, base, inst, auth=auth)
+    pinp = parity.load_parity_inputs(frozen_dir, og.FROZEN_MANIFEST_SHA)
+    days = list(pd.date_range(bt.OUTCOME_START, CUTOFF, freq="D", inclusive="left"))
+    wcfg = bt.arm_config(base, "W")
+    fwd = parity.run_bridge(pinp, data, wcfg, days, auth=auth)
+    rev = parity.run_bridge(pinp, data, wcfg, days, order=tuple(reversed(parity.BRIDGE_STEPS)), auth=auth)
+    bridge = [(f"forward:{n}", r) for n, r in fwd] + [(f"reverse:{n}", r) for n, r in rev]
+    m = report.write_report(study, bridge, out, auth.record)
+    typer.echo(f"verdict {study['evaluation']['verdict']} {study['evaluation']['tags']}; summary {m['summary_sha256']}")
