@@ -17,8 +17,8 @@
 | Gözlenen kadans, provenance | 20/20 kadans 300 s, etiket "5-minute historical snapshots"; dosya sha'ları provenance ile eşleşiyor; checkpoint sha'ları assemble sırasında doğrulandı |
 | Geçersiz değerler | Toplam 580 snapshot > 500 bps, 15 NaN (PUMP 10, UNI 5), sonsuz 0, ≤ 0 yok. En çok: FET 185, PUMP 131, XLM 59, HYPE 55, ZEC 54, UNI 53. Kullanılmaz ve sayılır. |
 | Etiket boşlukları | ≥ 1 saatlik etiket boşluğu yok (en uzun boşluk 0) |
-| Geçersiz değer serileri (≥ 1 saat) | Çoğu outcome penceresinden önce: 2025-11-01 17:10–21:10 (FET, HYPE, PUMP, UNI, XLM, ZEC; PUMP'ta 66 etiket ≈ 5,5 saat), 2025-10-10/11 (PUMP, UNI). Outcome penceresinde tek seri: FET 2026-03-05 22:15'ten 26 etiket (≈ 2 saat 10 dk). |
-| Tekrarlayan ardışık değer | Oran 0,28 % – 3,8 % (en yüksek PUMP); en uzun seri 28 etiket (PUMP 66, BNB 42). Kural değişmez; raporlanır. |
+| Geçersiz değer serileri (≥ 1 saat) | Çoğu outcome penceresinden önce: 2025-11-01 yaklaşık 17:15–21:10 (FET, HYPE, UNI, XLM, ZEC; iki seri halinde) ve PUMP'ta 17:15–22:40 (66 etiket); 2025-10-10/11 (PUMP, UNI). Outcome penceresinde tek seri: FET 2026-03-05 22:20 – 03-06 00:25, 26 etiket (≈ 2 saat 10 dk). |
+| Tekrarlayan ardışık değer | Oran 0,28 % – 3,8 % (en yüksek PUMP); varlık başına en uzun seri 28–66 etiket (PUMP 66, BNB 42, diğerleri 28–30). Kural değişmez; raporlanır. |
 | Karar fallback'i (< 6/12) | Bütün 15m noktaları: %0,029. **Outcome penceresi: %0,0031**; yalnızca FET (%0,063). 00:00'da outcome: %0,0215 (yalnızca FET, %0,43). Ay: yalnızca 2026-03. Saat: yalnızca 22, 23, 00. |
 | Fill fallback'i (< 2/3) | Bütün noktalar: %0,036. **Outcome penceresi: %0,0092**; FET %0,157, PUMP %0,027. Ay: 2025-11, 2026-02 … 2026-05. Saat: en yüksek 22:00 (%0,086). |
 | %90 kapsam bayrağı (varlık ve varlık × saat hücresi, outcome) | Bayrak yok. En düşük varlık: karar 99,94 %, fill 99,84 %. En düşük hücre: karar 99,25 %, fill 98,50 %. |
