@@ -217,3 +217,35 @@ def test_freeze_never_materialises_history_rows_at_or_after_the_cut(src, tmp_pat
     with pytest.raises(HoldoutLeak):
         frozen.freeze_inputs(var, inst, tmp_path / "frozen", assets=["AAA"])
     assert all(m is None or m < CUT for m in seen)
+
+
+def _v5_spreads(tmp_path, cadence=300):
+    d = tmp_path / "v5spreads"
+    d.mkdir()
+    (_series("2026-06-30T22:00Z", 24, "5min", "spread_full") / 1000).to_parquet(d / "AAA.parquet")  # 1-2 bps
+    prov = {"requested_interval_s": 300, "observed_cadence_s": cadence,
+            "real_resolution_matches_interval": cadence == 300, "sha256": frozen.sha256_file(d / "AAA.parquet")}
+    (d / "AAA.provenance.json").write_text(json.dumps(prov), encoding="utf-8")
+    return d
+
+
+def test_v5_spreads_are_frozen_byte_identical_with_provenance_and_load(src, tmp_path):
+    from luna.carry.history import load_spread5m
+
+    var, inst = src
+    d = _v5_spreads(tmp_path)
+    dst = tmp_path / "frozen"
+    man = frozen.freeze_inputs(var, inst, dst, assets=["AAA"], history_v5_spreads=d)
+    rel = "history_v5/spreads/AAA.parquet"
+    assert (dst / rel).read_bytes() == (d / "AAA.parquet").read_bytes()
+    assert man["files"][rel]["sha256"] == frozen.sha256_file(d / "AAA.parquet")
+    assert "history_v5/spreads/AAA.provenance.json" in man["files"]
+    frozen.verify_frozen(dst)
+    s = load_spread5m(dst / "history_v5" / "spreads", "AAA")
+    assert s.decision(pd.Timestamp("2026-06-30T23:00Z")).n_valid == 12
+
+
+def test_freeze_refuses_v5_spreads_that_are_not_real_5_minute_snapshots(src, tmp_path):
+    var, inst = src
+    with pytest.raises(ValueError):
+        frozen.freeze_inputs(var, inst, tmp_path / "frozen", assets=["AAA"], history_v5_spreads=_v5_spreads(tmp_path, 60))

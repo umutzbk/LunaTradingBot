@@ -346,7 +346,7 @@ E − W = (D − W)   günlük hedef takibi (yalnızca karar sıklığı; kural 
 | **PRIMARY** | §3 |
 | S-COST2X | Fill tarafında 2× ücret, 2× yarım spread, 2× slip. Karar kuralı default maliyetle hesaplar. |
 | S-SPREAD-FIX | Sabit 10 bps full spread, hem gate hem fill |
-| **S-PIT10** | Bilinme zamanı T + 5m yerine **T + 10m**, karar ve fill pencerelerinde, bütün arm'larda (karar azami 11, fill azami 2 snapshot; eşikler 6 ve 2 aynı) |
+| **S-PIT10** | Bilinme zamanı T + 5m yerine **T + 10m**, karar ve fill pencerelerinde, bütün arm'larda (karar azami 11, fill azami 2 snapshot; eşikler 6 ve 2 aynı). Not: fill'de 2/2 gerektiği için bu satır daha katı bilinme zamanını daha katı kapsamla birlikte uygular; fallback payları ayrıca raporlanır. |
 | **S-FB-CONS** | Fallback kullanan karar ve fill'ler, bütün arm'larda, 10 bps yerine varlık başına muhafazakâr bir spread ile fiyatlanır: lookback penceresindeki [2025-10-06, 2025-11-10) geçerli snapshot'ların p90'ı (outcome penceresinden önce, sabit) |
 | S-NOKILL | R4 drawdown kill-switch kapalı; leg stop ve R3 aynen |
 | S-UNWIND | Terminal unwind maliyeti net'e eklenir |
@@ -373,6 +373,11 @@ Gerekçe: kill sonrası flat kalan arm, Δcarry'yi mekanik olarak belirler.
 - **PIT-SENSITIVE:** S-PIT10 satırının hükmü PRIMARY'den farklıysa hüküm "PIT-SENSITIVE" etiketi alır ve iki hükümden **daha muhafazakâr olanı** raporlanır (sıra: WORSE < NO ADVANTAGE SHOWN < CARRY ONLY < ADVANTAGE).
 - **FALLBACK-AFFECTED:** Herhangi bir arm'ın dolan notional içindeki fallback payı (karar veya fill fallback'i) W'ninkinden **1 yüzde puanından fazla** farklıysa hüküm "FALLBACK-AFFECTED" etiketi alır. S-FB-CONS satırı yanında verilir ve iki hükümden daha muhafazakâr olanı raporlanır.
 - Arm başına fallback payı, dolan notional üzerinden karar ve fill fallback'i ayrı, varlık ve günün saati kırılımıyla raporlanır.
+- **Birleştirme (tek yol, `luna/carry/verdict.py`, 8 kombinasyonluk matris testi):**
+  1. Taban satır: PRIMARY; KILL-AFFECTED ise S-NOKILL.
+  2. S-PIT10 her zaman, S-FB-CONS yalnızca FALLBACK-AFFECTED ise değerlendirilir. İkisi de taban satırla **aynı kill ayarıyla** koşar (KILL-AFFECTED ise kill kapalı) ve taban satırla karşılaştırılır.
+  3. Nihai hüküm, kullanılan satırların hükümlerinin en muhafazakârıdır. Bu, NO ADVANTAGE SHOWN'u WORSE'e çevirebilir; bu bilinçli olarak kabul edilmiştir.
+  4. G5 (kill yalnızca E'de, PRIMARY satırında) en sonda uygulanır ve hükmü en fazla CARRY ONLY yapar.
 
 **G5 her zaman PRIMARY satırında değerlendirilir.** Yalnızca E'de olan bir kill, hükmü hangi satır kullanılırsa kullanılsın en fazla **CARRY ONLY** yapar.
 
@@ -546,3 +551,11 @@ Gerekçe: kill sonrası flat kalan arm, Δcarry'yi mekanik olarak belirler.
 | F7 | OK | Arm'lar aynı t'de aynı spread'i görür | §12 testi (tek builder) |
 | F8 | OK | 15m fill modeli 5m snapshot'larla tutarlı; fill penceresi karar penceresinden ayrı | — |
 | F9 | Minor | Gün içi faz kayması V4 kontrolü (b)'yi düşürebilir | §2.1: FAIL ölçütü değer parity'si; kadans istisnaları gün listesiyle raporlanır |
+
+**Doğrulama turu (aynı reviewer):** F1 ve F2 hafifletildi; F3, F4, F5, F6 ve F9 kapandı; `_expected` doğru. Yeni bulgular:
+
+| ID | Sev | Bulgu | Karşılık |
+|---|---|---|---|
+| M-NEW1 | Major | KILL, PIT-SENSITIVE ve FALLBACK-AFFECTED kurallarının birleşimi tanımsız (çatallanan hüküm yolu) | §10 birleştirme kuralı + `luna/carry/verdict.py` + 8 kombinasyonluk matris testi |
+| m-NEW2 | Minor | S-PIT10 fill'de 2/2 gerektirdiği için kapsamı da sıkılaştırır | §9 notu; fallback payları raporlanır |
+| m-NEW3 | Minor | Düz `datetime` ile `AttributeError` | Yeniden üretilemedi (tz'siz değer zaten `ValueError`). `_check_t` girdiyi `pd.Timestamp`'e çevirir; test eklendi. |

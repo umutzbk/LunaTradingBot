@@ -330,7 +330,7 @@ def test_paper_engine_never_loads_replay_only_modules():
 
     code = (
         "import sys, luna.carry.engine, luna.cli\n"
-        "bad = [m for m in ('luna.carry.parity', 'luna.carry.history', 'luna.carry.frozen') if m in sys.modules]\n"
+        "bad = [m for m in ('luna.carry.parity', 'luna.carry.history', 'luna.carry.frozen', 'luna.carry.verdict') if m in sys.modules]\n"
         "print(','.join(bad))\n"
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)

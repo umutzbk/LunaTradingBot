@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from luna.carry.frozen import CUTOFF, sha256_file
+from luna.carry.frozen import CUTOFF, check_5m_provenance
 from luna.v2.data import HoldoutLeak
 
 HOUR = pd.Timedelta("1h")
@@ -117,9 +117,11 @@ class Spread5m:
         return max(0, (last - lo) // SNAPSHOT + 1)
 
     @staticmethod
-    def _check_t(t: pd.Timestamp) -> None:
+    def _check_t(t: pd.Timestamp) -> pd.Timestamp:
+        t = pd.Timestamp(t)
         if t.tzinfo is None or t.value % BAR.value:
             raise ValueError(f"decision time {t} must be tz-aware and on the 15-minute grid")
+        return t
 
     def _obs(self, sl: slice, need: int, expected: int) -> SpreadObs:
         ok = self._valid[sl]
@@ -129,7 +131,7 @@ class Spread5m:
         return SpreadObs(FALLBACK_FULL, n, expected, True)
 
     def _window(self, t: pd.Timestamp, kind: str) -> tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp]:
-        self._check_t(t)
+        t = self._check_t(t)
         return (t - HOUR, t, t) if kind == "decision" else (t, t + FILL_DELAY, t + FILL_DELAY)
 
     def decision_labels(self, t: pd.Timestamp) -> pd.DatetimeIndex:
@@ -152,10 +154,5 @@ def load_spread5m(root: Path, asset: str, known_after: pd.Timedelta = KNOWN_AFTE
     """Primary loader: refuses a file whose provenance is not real 300 s snapshots or whose sha differs."""
     p = Path(root) / f"{asset}.parquet"
     prov = json.loads((Path(root) / f"{asset}.provenance.json").read_text(encoding="utf-8"))
-    sec = int(SNAPSHOT.total_seconds())
-    if (prov.get("requested_interval_s") != sec or prov.get("observed_cadence_s") != sec
-            or prov.get("real_resolution_matches_interval") is not True):
-        raise ValueError(f"{asset}: spread file is not real 5-minute snapshots: {prov}")
-    if prov.get("sha256") != sha256_file(p):
-        raise ValueError(f"{asset}: spread file sha differs from its provenance")
+    check_5m_provenance(prov, p, asset)
     return Spread5m(pd.read_parquet(p), known_after=known_after)

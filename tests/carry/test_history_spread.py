@@ -152,3 +152,11 @@ def test_primary_loader_requires_real_300s_provenance(tmp_path):
         (tmp_path / "BTC.provenance.json").write_text(json.dumps(prov | bad), encoding="utf-8")
         with pytest.raises(ValueError):
             load_spread5m(tmp_path, "BTC")
+
+
+def test_a_plain_datetime_is_refused_with_value_error():
+    import datetime as dt
+
+    s = Spread5m(None)
+    with pytest.raises(ValueError):
+        s.decision(dt.datetime(2026, 1, 5))

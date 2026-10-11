@@ -126,6 +126,15 @@ def _bar_kind(rel: str) -> bool:
     return parts[0] == "bars" or (parts[0] == "history_v4" and parts[1] in HISTORY_BAR_KINDS)
 
 
+def check_5m_provenance(prov: dict, path: Path, asset: str) -> None:
+    """Protocol rev 3: the primary spread file must be real 300 s snapshots matching its provenance sha."""
+    if (prov.get("requested_interval_s") != 300 or prov.get("observed_cadence_s") != 300
+            or prov.get("real_resolution_matches_interval") is not True):
+        raise ValueError(f"{asset}: spread file is not real 5-minute snapshots: {prov}")
+    if prov.get("sha256") != sha256_file(path):
+        raise ValueError(f"{asset}: spread file sha differs from its provenance")
+
+
 def freeze_inputs(
     var_dir: Path,
     instruments: Path,
@@ -177,9 +186,17 @@ def freeze_inputs(
             if not src.exists():
                 missing.append(rel)
                 continue
-            df = _read_series_before(src, cutoff, False, rel)
-            _write_frame(df, stage / rel)
+            psrc = src.with_name(f"{a}.provenance.json")
+            check_5m_provenance(json.loads(psrc.read_text(encoding="utf-8")), src, a)
+            df = _read_series_before(src, cutoff, False, rel)  # raises on any row at or after the cut
+            for s_, r_ in ((src, rel), (psrc, f"history_v5/spreads/{a}.provenance.json")):
+                (stage / r_).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(s_, stage / r_)  # byte-identical: the provenance sha stays valid
+                _make_read_only(stage / r_)
             files[rel] = _entry(stage / rel, df, src, 0, "spreads_v5")
+            files[f"history_v5/spreads/{a}.provenance.json"] = {
+                "kind": "provenance_v5", "source": str(psrc),
+                "sha256": sha256_file(stage / f"history_v5/spreads/{a}.provenance.json")}
 
     inst_dst = stage / INSTRUMENTS_REL
     inst_dst.parent.mkdir(parents=True, exist_ok=True)
