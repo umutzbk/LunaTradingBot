@@ -88,6 +88,7 @@ def main(frozen: Path, out: Path) -> None:
     for name in ("PRIMARY", "S-COST2X"):
         res[name] = run_h2(inp.market, H2Rule(cfg, inp.table), inp.days, rows[name], inp.meta)
         res[name].daily.to_csv(out / f"{CID}__{name}.daily.csv")
+        res[name].daily.to_parquet(out / f"{CID}__{name}.daily.parquet")  # exact floats
         pd.DataFrame(res[name].trades).to_csv(out / f"{CID}__{name}.trades.csv", index=False)
     p = res["PRIMARY"]
     d = p.daily
@@ -127,6 +128,19 @@ def main(frozen: Path, out: Path) -> None:
     tab = inp.table.reset_index()
     tab = tab[pd.to_datetime(tab["day"]).dt.weekday == 0]
     tab.to_csv(out / "signal_table_mondays.csv", index=False)
+    tab.to_parquet(out / "signal_table_mondays.parquet")
+    # B2: V4 execution quotes at every Monday 00:00 for every asset (after the runs: quotes are pure)
+    quotes = []
+    for t in inp.days:
+        if t.weekday() != 0:
+            continue
+        for a in inp.market.inp.assets:
+            q = inp.market.quote(a, "perp", t)
+            quotes.append({"t": t.isoformat(), "asset": a, "mid": None if q is None else q.mid,
+                           "half": None if q is None else q.half_spread_obs,
+                           "ts": None if q is None else q.ts.isoformat(),
+                           "fallback": None if q is None else bool(q.fallback)})
+    (out / "quotes_mondays.json").write_text(json.dumps(quotes), encoding="utf-8")
     print(json.dumps(summary["metrics"]), file=sys.stderr)
 
 
