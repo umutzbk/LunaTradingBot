@@ -23,10 +23,16 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+import numpy as np
 import pandas as pd
 
+from luna.carry import stats
 from luna.carry.config import CarryConfig
 from luna.carry.core import CarryCore, CycleResult
+from luna.carry.funding import carry_per_hour
+from luna.carry.signals import compute_signals
+from luna.carry.strategy import DecisionInput, decide
+from luna.carry.verdict import combine
 from luna.carry.frozen import CUTOFF
 from luna.carry.history import (
     KNOWN_AFTER,
@@ -80,6 +86,9 @@ ROWS: dict[str, RowSpec] = {
     "S-FB-CONS": RowSpec("S-FB-CONS", fb_cons=True),
     "S-PIT10/NOKILL": RowSpec("S-PIT10/NOKILL", known_after=pd.Timedelta("10min"), nokill=True),
     "S-FB-CONS/NOKILL": RowSpec("S-FB-CONS/NOKILL", fb_cons=True, nokill=True),
+    # G6 reads S-COST2X with the base row's kill setting (when KILL-AFFECTED every guardrail comes
+    # from the kill-off rows, §10)
+    "S-COST2X/NOKILL": RowSpec("S-COST2X/NOKILL", cost_mult=2.0, nokill=True),
 }
 
 
@@ -436,3 +445,191 @@ def equity_from_log(fills: pd.DataFrame, sett: pd.DataFrame, e0: float, at: pd.T
     fund = float(sett.loc[sett["period_start"] + pd.Timedelta("1h") <= at, "amount"].sum()) if len(sett) else 0.0
     return e0 + trades + fund
 
+
+# --- study: arms x rows, references, attribution, verdict (§4-§10) ----------------------------------
+
+STUDY_ROWS = tuple(ROWS)  # every pre-registered row is always run; the verdict picks the applicable ones
+
+
+def unwind_daily(res: ArmResult, e0: float) -> pd.DataFrame:
+    """S-UNWIND (§9): the terminal unwind cost booked on the last day."""
+    d = res.daily.copy()
+    last = d.index[-1]
+    prev = float(d["equity"].iloc[-2]) if len(d) > 1 else e0
+    cost = res.terminal.get("unwind_cost", 0.0)
+    d.loc[last, "equity"] -= cost
+    d.loc[last, "price"] -= cost
+    d.loc[last, "ret"] = d.loc[last, "equity"] / prev - 1.0
+    return d
+
+
+def ideal_reference(data: HistoricalData, cfg: CarryConfig, builder: SnapshotBuilder, start: pd.Timestamp,
+                    end: pd.Timestamp, e0: float) -> pd.DataFrame:
+    """I (§4): at every 15m snapshot the ideal FL30 book (same signals and ideal-book rule as the arms)
+    at a fixed 0.25 x E0 per leg; no cost, no delay; the realized funding of that quarter hour."""
+    leg = cfg.leg_frac * e0
+    rows = []
+    for t in pd.date_range(start, end, freq="15min", inclusive="left"):
+        snap, _ = builder.snapshot(t)
+        sig = compute_signals(snap, FundingPIT(data.store, t), t, cfg, leg, FEE_RATE)
+        dec = decide(DecisionInput(t, e0, sig, (), {}, frozenset(), True, True), cfg)
+        hour = t.floor("h")
+        f = 0.0
+        for side, names in ((1, dec.ideal_long), (-1, dec.ideal_short)):
+            for a in names:
+                r = data.store.rate(a, hour)
+                if r is not None:
+                    f += leg * carry_per_hour(side, r[1]) * 0.25
+        rows.append({"t": t, "funding": f, "n_legs": len(dec.ideal_long) + len(dec.ideal_short)})
+    df = pd.DataFrame(rows).set_index("t")
+    return df.groupby(df.index.floor("D")).agg({"funding": "sum", "n_legs": "mean"})
+
+
+COMPONENTS = ("funding", "price", "delay_drift", "fees", "spread_slip")
+
+
+def attribution(arms: dict[str, ArmResult]) -> dict:
+    """§8 telescoping E - W = (D - W) + (C - D) + (E - C), per component, with exposure shares."""
+    tot = {a: {c: float(arms[a].daily[c].sum()) for c in COMPONENTS} for a in "WDCE"}
+    expo = {}
+    for a in "WDCE":
+        d = arms[a].daily
+        act = d[d["gross"] > 0]
+        expo[a] = {
+            "mean_gross_frac": float(d["gross_frac"].mean()),
+            "exposure_normalized_carry": float((act["carry_net"] / act["gross_frac"]).mean()) if len(act) else 0.0,
+        }
+    terms = {}
+    for name, (hi, lo) in {"D-W": ("D", "W"), "C-D": ("C", "D"), "E-C": ("E", "C"), "E-W": ("E", "W")}.items():
+        terms[name] = {c: tot[hi][c] - tot[lo][c] for c in COMPONENTS}
+        for k in ("mean_gross_frac", "exposure_normalized_carry"):
+            terms[name][k] = expo[hi][k] - expo[lo][k]
+    return {"totals": tot, "exposure": expo, "terms": terms}
+
+
+def switch_ledger(res: ArmResult, data: HistoricalData, end: pd.Timestamp, horizon_h: float) -> pd.DataFrame:
+    """§8 switch ledger (C, E): per SWITCH / ENTER the expected incremental carry, the realized
+    incremental funding over the actual holding of the new leg (vs the leg given up) and its cost."""
+    rec, f = res.records, res.fills
+    cols = ["ts", "decision", "asset_in", "asset_out", "side", "expected_incremental", "expected_over_hold",
+            "realized_incremental", "realized_cost", "held_hours"]
+    if not len(rec) or not len(f):
+        return pd.DataFrame(columns=cols)
+    rows = []
+    for _, r in rec[rec["decision"].isin(["SWITCH", "ENTER"])].iterrows():
+        names = [x for x in str(r["asset_in"]).split("+") if x and x not in ("None", "nan")]
+        for a in names:
+            o = f[(f["decision_ts"] == r["ts"]) & (f["asset"] == a) & (f["intent"] == "open")]
+            if not len(o):
+                continue
+            o = o.iloc[0]
+            side = 1 if o["side"] == "buy" else -1
+            c = f[(f["position_id"] == o["position_id"]) & (f["intent"] != "open")]
+            t1 = c["ts"].max() if len(c) else end
+            n = float(o["notional"])
+
+            def realized(asset: str, o=o, t1=t1, n=n, side=side) -> float:
+                tot = 0.0
+                for h in pd.date_range(o["ts"].floor("h"), t1, freq="h", inclusive="left"):
+                    rate = data.store.rate(asset, h)
+                    if rate is None:
+                        continue
+                    lo, hi = max(h, o["ts"]), min(h + pd.Timedelta("1h"), t1)
+                    tot += n * carry_per_hour(side, rate[1]) * max(0.0, (hi - lo) / pd.Timedelta("1h"))
+                return tot
+
+            out = r["asset_out"] if r["decision"] == "SWITCH" and isinstance(r["asset_out"], str) else None
+            held_h = (t1 - o["ts"]) / pd.Timedelta("1h")
+            exp = float(r["incremental_carry"]) / len(names)
+            cost = float(o["fee"] + o["spread_slip"]) + (float(c["fee"].sum() + c["spread_slip"].sum()) if len(c) else 0.0)
+            rows.append({"ts": r["ts"], "decision": r["decision"], "asset_in": a, "asset_out": out, "side": side,
+                         "expected_incremental": exp, "expected_over_hold": exp / horizon_h * held_h,
+                         "realized_incremental": realized(a) - (realized(out) if out else 0.0),
+                         "realized_cost": cost, "held_hours": held_h})
+    return pd.DataFrame(rows, columns=cols)
+
+
+def _row_series(d: pd.DataFrame, e0: float, kill: bool) -> stats.RowSeries:
+    return stats.RowSeries(d["carry_net"], d["ret"], float(d["equity"].iloc[-1] - e0), kill)
+
+
+def evaluate(results: dict, e0: float, B: int = stats.B, seed: int = stats.SEED) -> dict:  # noqa: N803
+    """§10: kill rule, the applicable rows' verdicts, PIT-SENSITIVE / FALLBACK-AFFECTED, G5 cap,
+    secondary comparisons (Holm), the E - W net CI and the post hoc MDE."""
+    kill_w = results[("W", "PRIMARY")].kill_ts is not None
+    kill_e = results[("E", "PRIMARY")].kill_ts is not None
+    kill_affected = kill_w or kill_e
+    e_only_kill = kill_e and not kill_w
+    sfx = "/NOKILL" if kill_affected else ""
+    base = "S-NOKILL" if kill_affected else "PRIMARY"
+    c2 = "S-COST2X" + sfx
+    cost2x_delta = float((results[("E", c2)].daily["carry_net"] - results[("W", c2)].daily["carry_net"]).mean())
+    expo = {a: fallback_exposure(results[(a, base)].fills) for a in "WDCE"}
+    fb_hit, fb_diffs = fallback_affected(expo)
+    verdicts = {}
+    for row in (base, "S-PIT10" + sfx, "S-FB-CONS" + sfx):
+        w, e = results[("W", row)], results[("E", row)]
+        verdicts[row] = stats.row_verdict(_row_series(w.daily, e0, w.kill_ts is not None),
+                                          _row_series(e.daily, e0, e.kill_ts is not None),
+                                          cost2x_delta, e_only_kill, B, seed)
+    final, tags, used = combine({k: v["verdict"] for k, v in verdicts.items()}, kill_affected=kill_affected,
+                                fallback_affected=fb_hit, e_only_kill=e_only_kill)
+    sec = {}
+    for name, (hi, lo) in {"D-W": ("D", "W"), "C-W": ("C", "W"), "E-C": ("E", "C")}.items():
+        a, b = results[(hi, base)].daily, results[(lo, base)].daily
+        dc, dn = (a["carry_net"] - b["carry_net"]).to_numpy(), (a["ret"] - b["ret"]).to_numpy()
+        sec[name] = {"carry_p": {bl: stats.mbb(dc, bl, B, seed).p for bl in stats.BLOCKS},
+                     "net_p": {bl: stats.mbb(dn, bl, B, seed).p for bl in stats.BLOCKS},
+                     "mean_delta_carry": float(dc.mean()), "mean_delta_net": float(dn.mean())}
+    holm = {f"{kind}_b{bl}": stats.holm({n: sec[n][f"{kind}_p"][bl] for n in sec}, stats.ALPHA)
+            for kind in ("carry", "net") for bl in stats.BLOCKS}
+    ew = (results[("E", base)].daily["ret"] - results[("W", base)].daily["ret"]).to_numpy()
+    dnet = {}
+    for bl in stats.BLOCKS:
+        bt_ = stats.mbb(ew, bl, B, seed)
+        dnet[bl] = {"mean": float(ew.mean()), "lb95": bt_.lower_bound(stats.ALPHA), "ub95": bt_.upper_bound(stats.ALPHA)}
+    dcar = (results[("E", base)].daily["carry_net"] - results[("W", base)].daily["carry_net"]).to_numpy()
+    boot = stats.mbb(dcar, 28, B, seed)
+    se = float(np.std(boot.boot_means, ddof=1)) if len(boot.boot_means) else math.nan
+    return {
+        "verdict": final, "tags": tags, "rows_used": used, "row_verdicts": verdicts,
+        "kill": {"W": kill_w, "E": kill_e, "kill_affected": kill_affected, "e_only_kill": e_only_kill},
+        "fallback_exposure": expo, "fallback_affected": fb_hit, "fallback_diffs_vs_W": fb_diffs,
+        "cost2x_mean_delta_carry": cost2x_delta, "secondary": sec, "holm": holm, "delta_net_ci": dnet,
+        "mde_post_hoc_b28": (1.6449 + 0.8416) * se if math.isfinite(se) else math.nan,
+    }
+
+
+def run_study(data: HistoricalData, base: CarryConfig, instruments: dict, *, start: pd.Timestamp = OUTCOME_START,
+              end: pd.Timestamp = CUTOFF, auth: OutcomeAuthorization | None = None, B: int = stats.B,  # noqa: N803
+              rows: tuple[str, ...] = STUDY_ROWS, with_variants: bool = True, with_ideal: bool = True) -> dict:
+    """Every arm x row, the §7 variants, I, S-UNWIND, attribution, switch ledgers and the verdict.
+    One ``SnapshotBuilder`` per row is shared by all arms (same spread information set)."""
+    _require_authorization(data, auth)
+    results: dict[tuple[str, str], ArmResult] = {}
+    builders: dict[str, SnapshotBuilder] = {}
+    for row in rows:
+        spec = ROWS[row]
+        b = builders[row] = builder_for(data, spec)
+        for arm in "WDCE":
+            cfg = arm_config(base, arm, nokill=spec.nokill)
+            results[(arm, row)] = run_arm(data, cfg, instruments, name=f"{arm}:{row}", row=spec, start=start,
+                                          end=end, builder=b, auth=auth)
+    if with_variants:
+        for v, (arm, _) in VARIANTS.items():
+            results[(v, "PRIMARY")] = run_arm(data, arm_config(base, arm, variant=v), instruments, name=v,
+                                              row=ROWS["PRIMARY"], start=start, end=end,
+                                              builder=builders["PRIMARY"], auth=auth)
+    e0 = base.capital_usd
+    ev = evaluate(results, e0, B)
+    base_row = "S-NOKILL" if ev["kill"]["kill_affected"] else "PRIMARY"
+    return {
+        "results": results,
+        "unwind": {a: unwind_daily(results[(a, "PRIMARY")], e0) for a in "WDCE"},
+        "ideal": ideal_reference(data, base, builders["PRIMARY"], start, end, e0) if with_ideal else None,
+        "evaluation": ev,
+        "attribution": attribution({a: results[(a, base_row)] for a in "WDCE"}),
+        "switch_ledgers": {a: switch_ledger(results[(a, base_row)], data, end,
+                                            arm_config(base, a).switch_horizon_hours) for a in "CE"},
+        "window": (start, end),
+    }

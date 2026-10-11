@@ -15,9 +15,11 @@ RELS = {"A": 3e-5, "B": 2e-5, "C": 1e-5, "D": -1e-5, "E": -2e-5, "F": -3e-5}  # 
 LO = T - pd.Timedelta("40D")
 
 
-def make_data(days: int = 4, price: float = 100.0, spread: float = 4e-4, rels: dict | None = None) -> HistoricalData:
-    hi = T + pd.Timedelta(days=days)
-    idx = pd.date_range(LO, hi, freq="15min", inclusive="left")
+def make_data(days: int = 4, price: float = 100.0, spread: float = 4e-4, rels: dict | None = None,
+              t0: pd.Timestamp = T) -> HistoricalData:
+    lo = t0 - pd.Timedelta("40D")
+    hi = t0 + pd.Timedelta(days=days)
+    idx = pd.date_range(lo, hi, freq="15min", inclusive="left")
     mark, perp, spreads = {}, {}, {}
     store = FundingStore()
     rels = rels or RELS
@@ -25,9 +27,9 @@ def make_data(days: int = 4, price: float = 100.0, spread: float = 4e-4, rels: d
         c = np.full(len(idx), price)
         mark[a] = pd.DataFrame({"open": c, "high": c, "low": c, "close": c}, index=idx)
         perp[a] = pd.DataFrame({"open": c, "high": c, "low": c, "close": c, "volume": 1e4, "filled": False}, index=idx)
-        sidx = pd.date_range(LO, hi, freq="5min", inclusive="left")
+        sidx = pd.date_range(lo, hi, freq="5min", inclusive="left")
         spreads[a] = pd.DataFrame({"spread_full": spread}, index=sidx)
-        hrs = pd.date_range(LO, hi, freq="1h", inclusive="left")
+        hrs = pd.date_range(lo, hi, freq="1h", inclusive="left")
         store.merge_rows(a, [{"timestamp": h.isoformat(), "fundingRate": rels[a] * price,
                               "relativeFundingRate": rels[a]} for h in hrs])
     return HistoricalData(mark=mark, perp=perp, spreads=spreads, store=store)
