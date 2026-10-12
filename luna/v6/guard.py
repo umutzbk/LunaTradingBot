@@ -65,20 +65,45 @@ def main_repo(repo: Path | None = None) -> Path:
 
 
 def marker_paths(repo: Path | None = None) -> list[Path]:
+    """Two markers in distinct places: the code checkout and the user's home (shared by every clone and
+    worktree on the machine), so deleting or re-cloning one checkout cannot re-open the holdout."""
     repo = repo or code_repo()
-    return [Path(repo) / "var" / "ops" / "v6_holdout" / MARKER, main_repo(repo) / "var" / "ops" / "v6_holdout" / MARKER]
+    return [Path(repo) / "var" / "ops" / "v6_holdout" / MARKER, Path.home() / ".luna" / "v6_holdout" / MARKER]
+
+
+def _marker_ok(m: Path) -> bool:
+    try:
+        rec = json.loads(m.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(rec, dict) and rec.get("approved") is True and rec.get("spec_sha256") == SPEC_SHA256
 
 
 def holdout_opened(repo: Path | None = None) -> bool:
-    return all(m.exists() for m in marker_paths(repo))
+    """Opened = every marker exists and records the approval under this spec."""
+    return all(m.exists() and _marker_ok(m) for m in marker_paths(repo))
+
+
+def t_f_for(review_pass_at: pd.Timestamp) -> pd.Timestamp:
+    """T_F = the first 00:00 UTC at least 24 h after the independent review PASS."""
+    return (pd.Timestamp(review_pass_at) + pd.Timedelta("24h")).ceil("D")
 
 
 def forward_start(repo: Path | None = None) -> pd.Timestamp | None:
-    """T_F from the committed code-freeze record (None before the code freeze)."""
+    """T_F from the committed code-freeze record (None before the code freeze). The record must carry
+    the review PASS time and T_F must be exactly ``t_f_for`` of it."""
     p = Path(repo or code_repo()) / FREEZE_RECORD_REL
     if not p.exists():
         return None
-    return pd.Timestamp(json.loads(p.read_text(encoding="utf-8"))["T_F"])
+    try:
+        rec = json.loads(p.read_text(encoding="utf-8"))
+        tf, rp = pd.Timestamp(rec["T_F"]), pd.Timestamp(rec["review_pass_at"])
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        raise HoldoutBlocked(f"invalid code-freeze record: {e}") from None
+    if tf.tzinfo is None or rp.tzinfo is None or tf != t_f_for(rp):
+        raise HoldoutBlocked(f"invalid code-freeze record: T_F {tf} is not the first 00:00 UTC >= 24 h after "
+                             f"the review PASS {rp}")
+    return tf
 
 
 def require_window(lo: pd.Timestamp, hi: pd.Timestamp, scope: str, auth: HoldoutAuthorization | None = None,
@@ -142,16 +167,29 @@ def authorize_holdout(approval: str | None, repo: Path | None = None) -> Holdout
     if approval != approval_phrase():
         raise HoldoutBlocked("holdout opening refused: the user's explicit approval phrase was not given")
     markers = marker_paths(repo)
+    if len({os.path.normcase(os.path.abspath(m)) for m in markers}) != len(markers):
+        raise HoldoutBlocked("holdout opening refused: the marker paths are not distinct")
     done = [str(m) for m in markers if m.exists()]
     if done:
         raise HoldoutBlocked(f"holdout opening refused: the holdout was already opened ({done})")
-    rec = {**preflight(repo), "approved": True, "opened_at": pd.Timestamp.now(tz="UTC").isoformat()}
-    for m in markers:
-        m.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            fd = os.open(m, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            raise HoldoutBlocked(f"holdout opening refused: {m} appeared concurrently") from None
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(rec, f, indent=1)
+    rec = {**preflight(repo), "spec_sha256": SPEC_SHA256, "approved": True,
+           "opened_at": pd.Timestamp.now(tz="UTC").isoformat()}
+    written: list[Path] = []
+    try:
+        for m in markers:
+            m.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                fd = os.open(m, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                raise HoldoutBlocked(f"holdout opening refused: {m} appeared concurrently") from None
+            written.append(m)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(rec, f, indent=1)
+    except BaseException:
+        for m in written:  # all or nothing
+            try:
+                os.remove(m)
+            except OSError:
+                pass
+        raise
     return HoldoutAuthorization(HoldoutAuthorization._secret, rec)

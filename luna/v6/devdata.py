@@ -34,6 +34,7 @@ class Inputs:
     spreads: dict
     insts: dict
     prices: pd.DataFrame  # hourly mark mids for the risk model
+    audit: dict | None = None  # holdout only: the Stage 0 audit of the download (S-GUARD-1)
 
 
 def _frame(root: Path, sub: str, col: str, lo: pd.Timestamp, hi: pd.Timestamp, assets: list) -> pd.DataFrame:

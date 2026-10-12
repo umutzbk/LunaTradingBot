@@ -1,0 +1,240 @@
+[
+ {
+  "name": "maker flag dropped from fills",
+  "file": "luna/v6/engine.py",
+  "old": "\"notional\": abs(f.dq) * f.mid, \"maker\": bool(f.maker)}",
+  "new": "\"notional\": abs(f.dq) * f.mid, \"maker\": False}",
+  "tests": "tests/v6/test_review_fixes.py::test_a_maker_fill_keeps_its_flag_in_the_fills_table_and_counts_in_m_a"
+ },
+ {
+  "name": "invariant mode ignored for R4",
+  "file": "luna/v6/engine.py",
+  "old": "if not invariant_mode and not st.killed and E <= (1 - KILL_DD) * st.peak:",
+  "new": "if not st.killed and E <= (1 - KILL_DD) * st.peak:",
+  "tests": "tests/v6/test_review_fixes.py::test_invariant_mode_disables_performance_dependent_risk_exits"
+ },
+ {
+  "name": "stale quarter not skipped",
+  "file": "luna/v6/engine.py",
+  "old": "        fresh = self._fresh(t)\n",
+  "new": "        fresh = True\n",
+  "tests": "tests/v6/test_review_fixes.py::test_a_global_snapshot_gap_is_a_no_op_and_the_midnight_decision_is_deferred"
+ },
+ {
+  "name": "decision gap not bounded",
+  "file": "luna/v6/engine.py",
+  "old": "                if t - st.decision_due > DECISION_GAP:\n                    self.counters[\"skipped_decision_days\"] += 1\n                    st.decision_due = None\n                elif",
+  "new": "                if False:\n                    pass\n                elif",
+  "tests": "tests/v6/test_review_fixes.py::test_the_first_fresh_quarter_after_more_than_six_hours_does_not_decide"
+ },
+ {
+  "name": "covariance on the selection only",
+  "file": "luna/v6/engine.py",
+  "old": "names = list(dict.fromkeys(list(elig) + list(held) + [\"BTC\"]))",
+  "new": "names = list(dict.fromkeys(sel.long + sel.short + list(held) + [\"BTC\"]))",
+  "tests": "tests/v6/test_conformance_fixes.py::test_covariance_is_estimated_on_eligible_plus_held_plus_btc"
+ },
+ {
+  "name": "no gate records after kill",
+  "file": "luna/v6/engine.py",
+  "old": "                    if st.killed:\n                        self._gate_only(t, gates)\n                    else:",
+  "new": "                    if st.killed:\n                        pass\n                    else:",
+  "tests": "tests/v6/test_conformance_fixes.py::test_gate_records_continue_after_the_r4_kill"
+ },
+ {
+  "name": "repair without step allowance",
+  "file": "luna/v6/book.py",
+  "old": "        if checks(n, L, S, cov, E, step_notional)[\"ok\"]:",
+  "new": "        if checks(n, L, S, cov, E, 0.0)[\"ok\"]:",
+  "tests": "tests/v6/test_conformance_fixes.py::test_intraday_repair_checks_with_the_step_notional_allowance"
+ },
+ {
+  "name": "H1 cash rule double counts",
+  "file": "luna/v6/h1.py",
+  "old": "need = q * px * (2 + entry_cost)",
+  "new": "need = 2 * q * px * (1 + entry_cost)",
+  "tests": "tests/v6/test_review_fixes.py::test_h1_third_pair_fits_when_2n_plus_costs_fit"
+ },
+ {
+  "name": "H1 step uses minimums",
+  "file": "luna/v6/h1.py",
+  "old": "return max(i[\"spot\"][\"step\"], i[\"perp\"][\"step\"]), i[\"spot\"][\"min_qty\"], i[\"perp\"][\"min_qty\"]",
+  "new": "return max(i[\"spot\"][\"step\"], i[\"perp\"][\"step\"], i[\"spot\"][\"min_qty\"]), i[\"spot\"][\"min_qty\"], i[\"perp\"][\"min_qty\"]",
+  "tests": "tests/v6/test_conformance_fixes.py::test_h1_quantity_step_is_the_larger_step_with_separate_minimums"
+ },
+ {
+  "name": "H1 cooldown only on stops",
+  "file": "luna/v6/h1.py",
+  "old": "            st.cooldown[a] = t + COOLDOWN\n            ps = st.pos[a]",
+  "new": "            ps = st.pos[a]",
+  "tests": "tests/v6/test_conformance_fixes.py::test_h1_economic_exit_also_starts_the_cooldown"
+ },
+ {
+  "name": "risk exit perp waits for spot",
+  "file": "luna/v6/forward_exec.py",
+  "old": "            fp = self.fill(a, math.copysign(pq, -q), t, leg=\"perp\")",
+  "new": "            fp = self.fill(a, math.copysign(pq, -q), fs.ts if fs else t, leg=\"perp\")",
+  "tests": "tests/v6/test_conformance_fixes.py::test_risk_exit_perp_leg_does_not_wait_for_the_spot_leg"
+ },
+ {
+  "name": "exit fallback stops after one snapshot",
+  "file": "luna/v6/forward_exec.py",
+  "old": "            if buy:\n                break  # entry",
+  "new": "            if True:\n                break  # entry",
+  "tests": "tests/v6/test_conformance_fixes.py::test_spot_exit_taker_fallback_continues_until_flat"
+ },
+ {
+  "name": "entry fallback continues",
+  "file": "luna/v6/forward_exec.py",
+  "old": "            if buy:\n                break  # entry",
+  "new": "            if False:\n                break  # entry",
+  "tests": "tests/v6/test_conformance_fixes.py::test_spot_entry_taker_fallback_cancels_the_rest"
+ },
+ {
+  "name": "evidence not clamped to T_F",
+  "file": "luna/v6/forward_exec.py",
+  "old": "        lo = max(lo, guard.forward_start(repo))",
+  "new": "        lo = lo",
+  "tests": "tests/v6/test_review_fixes.py::test_evidence_streams_are_clamped_to_t_f"
+ },
+ {
+  "name": "forward loader unguarded",
+  "file": "luna/v6/forward_exec.py",
+  "old": "    guard.require_window(lo, hi, \"forward\", repo=repo)\n",
+  "new": "",
+  "tests": "tests/v6/test_review_fixes.py::test_forward_loaders_refuse_before_the_code_freeze"
+ },
+ {
+  "name": "PIT10 lag ignored",
+  "file": "luna/v6/forward_exec.py",
+  "old": "        tq = t - self.pit_lag\n",
+  "new": "        tq = t\n",
+  "tests": "tests/v6/test_review_fixes.py::test_forward_pit10_market_uses_snapshots_received_five_minutes_earlier"
+ },
+ {
+  "name": "freshness from the first asset only",
+  "file": "luna/v6/forward_exec.py",
+  "old": "        fresh = any((x := st.latest(t)) is not None and t - x.ts <= FRESH for st in streams.fut_ticks.values())",
+  "new": "        fresh = any((x := st.latest(t)) is not None and t - x.ts <= FRESH for st in list(streams.fut_ticks.values())[:1])",
+  "tests": "tests/v6/test_conformance_fixes.py::test_a_fresh_snapshot_of_any_asset_makes_the_quarter_evaluable"
+ },
+ {
+  "name": "NW against the raw alpha",
+  "file": "luna/v6/verdict.py",
+  "old": "if c in (nw_p or {}) and max(nw_p[c]) <= h[c][\"alpha\"]}",
+  "new": "if c in (nw_p or {}) and max(nw_p[c]) <= alpha}",
+  "tests": "tests/v6/test_review_fixes.py::test_nw_threshold_ignores_closed_slots"
+ },
+ {
+  "name": "forward P7/P11 missing allowed",
+  "file": "luna/v6/verdict.py",
+  "old": "    if ev.env == \"forward\":\n        for k in (\"P7\", \"P11\"):",
+  "new": "    if False:\n        for k in (\"P7\", \"P11\"):",
+  "tests": "tests/v6/test_review_fixes.py::test_forward_without_p7_or_p11_rows_is_an_invalid_run"
+ },
+ {
+  "name": "FEAS not laddered at 180",
+  "file": "luna/v6/verdict.py",
+  "old": "            if c in self.feas and day == 90:\n",
+  "new": "            if c in self.feas and day != 365:\n",
+  "tests": "tests/v6/test_conformance_fixes.py::test_feas_slot_closes_at_day_180_on_model_invalid_in_the_confirmation_window"
+ },
+ {
+  "name": "FEAS closes on any failure at 180",
+  "file": "luna/v6/verdict.py",
+  "old": "            elif any(r.startswith(\"MODEL INVALID\") or \"P10\" in r for r in v.reasons):",
+  "new": "            elif True:",
+  "tests": "tests/v6/test_conformance_fixes.py::test_feas_slot_stays_pending_at_day_180_on_a_point_failure"
+ },
+ {
+  "name": "unknown funding not invalid",
+  "file": "luna/v6/criteria.py",
+  "old": "    if primary.counters.get(\"funding_unknown\", 0) > 0:",
+  "new": "    if False:",
+  "tests": "tests/v6/test_review_fixes.py::test_unknown_funding_for_a_held_period_is_an_invalid_run"
+ },
+ {
+  "name": "entries merged per asset",
+  "file": "luna/v6/criteria.py",
+  "old": "            if not was and any(abs(v) > 1e-12 for v in q.values()):",
+  "new": "            if not was and not out:",
+  "tests": "tests/v6/test_conformance_fixes.py::test_entries_lists_every_opening_from_flat_including_reentries"
+ },
+ {
+  "name": "markers not checked distinct",
+  "file": "luna/v6/guard.py",
+  "old": "    if len({os.path.normcase(os.path.abspath(m)) for m in markers}) != len(markers):",
+  "new": "    if False:",
+  "tests": "tests/v6/test_review_fixes.py::test_identical_marker_paths_are_refused_without_writing"
+ },
+ {
+  "name": "no rollback",
+  "file": "luna/v6/guard.py",
+  "old": "        for m in written:  # all or nothing",
+  "new": "        for m in []:  # all or nothing",
+  "tests": "tests/v6/test_review_fixes.py::test_a_failing_second_marker_rolls_back_the_first"
+ },
+ {
+  "name": "marker content unchecked",
+  "file": "luna/v6/guard.py",
+  "old": "    return all(m.exists() and _marker_ok(m) for m in marker_paths(repo))",
+  "new": "    return all(m.exists() for m in marker_paths(repo))",
+  "tests": "tests/v6/test_review_fixes.py::test_holdout_opened_checks_marker_content"
+ },
+ {
+  "name": "T_F not validated",
+  "file": "luna/v6/guard.py",
+  "old": "    if tf.tzinfo is None or rp.tzinfo is None or tf != t_f_for(rp):",
+  "new": "    if tf.tzinfo is None:",
+  "tests": "tests/v6/test_review_fixes.py -k t_f_is"
+ },
+ {
+  "name": "T_F 12h instead of 24h",
+  "file": "luna/v6/guard.py",
+  "old": "    return (pd.Timestamp(review_pass_at) + pd.Timedelta(\"24h\")).ceil(\"D\")",
+  "new": "    return (pd.Timestamp(review_pass_at) + pd.Timedelta(\"12h\")).ceil(\"D\")",
+  "tests": "tests/v6/test_review_fixes.py -k t_f_is"
+ },
+ {
+  "name": "audit hour cells pooled",
+  "file": "luna/v6/holdout_data.py",
+  "old": "                if m.any() and float(arr[m].mean()) < MIN_POINT_COVERAGE:",
+  "new": "                if False:",
+  "tests": "tests/v6/test_review_fixes.py::test_stage0_audit_fails_an_hour_of_day_cell_below_ninety_percent"
+ },
+ {
+  "name": "audit ignores the window",
+  "file": "luna/v6/holdout_data.py",
+  "old": "        if len(idx) and (idx.min() < lo or idx.max() >= hi):",
+  "new": "        if len(idx) and (idx.min() < lo or idx.max() > hi):",
+  "tests": "tests/v6/test_review_fixes.py::test_stage0_audit_fails_off_grid_labels_and_rows_outside_the_window"
+ },
+ {
+  "name": "audit failure not applied",
+  "file": "luna/v6/runner.py",
+  "old": "    for ev in evals.values():\n        ev.invalid_run.extend(msg)",
+  "new": "    for ev in evals.values():\n        pass",
+  "tests": "tests/v6/test_review_fixes.py::test_a_failed_stage0_audit_makes_every_holdout_config_an_invalid_run"
+ },
+ {
+  "name": "blind not in invariant mode",
+  "file": "luna/v6/blind.py",
+  "old": "models=models, invariant_mode=True)",
+  "new": "models=models, invariant_mode=False)",
+  "tests": "tests/v6/test_review_fixes.py::test_blind_runs_use_invariant_mode_and_report_no_cash_counter"
+ },
+ {
+  "name": "report not claimed",
+  "file": "luna/v6/report.py",
+  "old": "        _write_excl(out / \"CLAIM\", pd.Timestamp.now(tz=\"UTC\").isoformat())",
+  "new": "        pass",
+  "tests": "tests/v6/test_review_fixes.py::test_holdout_report_directory_is_claimed_exclusively_before_anything_is_written"
+ },
+ {
+  "name": "dropped replicates not counted",
+  "file": "luna/v6/forecast.py",
+  "old": "        n_drop = int(np.isnan(Rb).sum())",
+  "new": "        n_drop = 0",
+  "tests": "tests/v6/test_h2_gate.py::test_bootstrap_replicates_with_an_undefined_ratio_are_dropped_and_counted"
+ }
+]

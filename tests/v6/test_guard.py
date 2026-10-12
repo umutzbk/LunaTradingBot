@@ -28,13 +28,19 @@ def test_forward_scope_refused_before_the_code_freeze(tmp_path):
 def test_forward_scope_refused_before_the_holdout_opening(tmp_path, monkeypatch):
     rec = tmp_path / guard.FREEZE_RECORD_REL
     rec.parent.mkdir(parents=True)
-    rec.write_text('{"T_F": "2026-11-20T00:00:00Z"}', encoding="utf-8")
+    rec.write_text('{"review_pass_at": "2026-11-18T12:00:00Z", "T_F": "2026-11-20T00:00:00Z"}', encoding="utf-8")
     monkeypatch.setattr(guard, "marker_paths", lambda repo=None: [tmp_path / "m1", tmp_path / "m2"])
     with pytest.raises(guard.HoldoutBlocked, match="holdout opening"):
         guard.require_window(pd.Timestamp("2026-11-20T00:00Z"), pd.Timestamp("2026-12-01T00:00Z"), "forward",
                              repo=tmp_path)
     (tmp_path / "m1").write_text("{}")
     (tmp_path / "m2").write_text("{}")
+    with pytest.raises(guard.HoldoutBlocked, match="holdout opening"):  # markers without the approval record
+        guard.require_window(pd.Timestamp("2026-11-20T00:00Z"), pd.Timestamp("2026-12-01T00:00Z"), "forward",
+                             repo=tmp_path)
+    ok = '{"spec_sha256": "%s", "approved": true}' % guard.SPEC_SHA256
+    (tmp_path / "m1").write_text(ok)
+    (tmp_path / "m2").write_text(ok)
     guard.require_window(pd.Timestamp("2026-11-20T00:00Z"), pd.Timestamp("2026-12-01T00:00Z"), "forward",
                          repo=tmp_path)
 

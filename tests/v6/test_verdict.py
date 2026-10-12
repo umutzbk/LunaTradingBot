@@ -123,17 +123,17 @@ def ladder_stub(final_go_if_rejected=True):
 def test_family_is_always_four_and_closed_or_untested_slots_get_p1():
     f = make_family()
     assert f.size == 4 and f.status["H1-m2.5"] == "CLOSED"
-    r = f.look(90, {"H3-k4": 0.5, "H3-k6": 0.5}, ladder_stub(), nw_ok={}, feasibility={"H1-m1.5": True})
+    r = f.look(90, {"H3-k4": 0.5, "H3-k6": 0.5}, ladder_stub(), nw_p={}, feasibility={"H1-m1.5": True})
     assert r["p"]["H1-m2.5"] == 1.0 and r["p"]["H1-m1.5"] == 1.0  # FEAS untested before 365
     assert all(len(r["holm"]) == 4 for _ in [0])
 
 
 def test_denominator_never_shrinks_and_look_alphas():
     f = make_family()
-    r = f.look(90, {"H3-k4": 0.0002, "H3-k6": 0.9}, ladder_stub(), nw_ok={"H3-k4": True}, feasibility={})
+    r = f.look(90, {"H3-k4": 0.0002, "H3-k6": 0.9}, ladder_stub(), nw_p={"H3-k4": (0.0, 0.0)}, feasibility={})
     assert r["alpha"] == 0.001 and r["holm"]["H3-k4"]["alpha"] == pytest.approx(0.001 / 4)
     assert f.status["H3-k4"] == "FINAL GO"
-    r2 = f.look(180, {"H3-k6": 0.0004}, ladder_stub(), nw_ok={"H3-k6": True})
+    r2 = f.look(180, {"H3-k6": 0.0004}, ladder_stub(), nw_p={"H3-k6": (0.0, 0.0)})
     assert r2["alpha"] == 0.001 and r2["p"]["H3-k4"] == 1.0  # already GO: p = 1, still in the family
     # sorted p: k6 0.0004 first -> threshold 0.001/4 = 0.00025 -> not rejected
     assert not r2["holm"]["H3-k6"]["reject"] and f.status["H3-k6"] == "PENDING"
@@ -144,9 +144,9 @@ def test_denominator_never_shrinks_and_look_alphas():
 
 def test_interim_rejection_needs_newey_west_and_final_look_does_not():
     f = make_family(cand=("H3-k4",), feas=())
-    f.look(90, {"H3-k4": 0.0001}, ladder_stub(), nw_ok={"H3-k4": False})
+    f.look(90, {"H3-k4": 0.0001}, ladder_stub(), nw_p={"H3-k4": (1.0, 1.0)})
     assert f.status["H3-k4"] == "PENDING"
-    f.look(180, {"H3-k4": 0.0001}, ladder_stub(), nw_ok={})
+    f.look(180, {"H3-k4": 0.0001}, ladder_stub(), nw_p={})
     assert f.status["H3-k4"] == "PENDING"
     f.look(365, {"H3-k4": 0.0001}, ladder_stub())
     assert f.status["H3-k4"] == "FINAL GO"
@@ -154,8 +154,8 @@ def test_interim_rejection_needs_newey_west_and_final_look_does_not():
 
 def test_early_final_go_is_permanent_and_terminal_closure_at_365():
     f = make_family(cand=("H3-k4", "H3-k6"), feas=())
-    f.look(90, {"H3-k4": 0.0001, "H3-k6": 0.9}, ladder_stub(), nw_ok={"H3-k4": True})
-    f.look(180, {"H3-k6": 0.9}, ladder_stub(), nw_ok={})
+    f.look(90, {"H3-k4": 0.0001, "H3-k6": 0.9}, ladder_stub(), nw_p={"H3-k4": (0.0, 0.0)})
+    f.look(180, {"H3-k6": 0.9}, ladder_stub(), nw_p={})
     f.look(365, {"H3-k6": 0.9}, ladder_stub())
     assert f.status["H3-k4"] == "FINAL GO" and f.status["H3-k6"] == "INCONCLUSIVE"
     with pytest.raises(vd.LookError):
@@ -166,9 +166,9 @@ def test_early_final_go_is_permanent_and_terminal_closure_at_365():
 
 def test_feasibility_not_established_closes_the_slot_and_established_is_tested_only_at_365():
     f = make_family(cand=(), feas=("H1-m1.5", "H1-m2.5"))
-    f.look(90, {}, ladder_stub(), nw_ok={}, feasibility={"H1-m1.5": True, "H1-m2.5": False})
+    f.look(90, {}, ladder_stub(), nw_p={}, feasibility={"H1-m1.5": True, "H1-m2.5": False})
     assert f.status["H1-m2.5"] == "CLOSED" and f.status["H1-m1.5"] == "PENDING"
-    r = f.look(180, {}, ladder_stub(), nw_ok={})
+    r = f.look(180, {}, ladder_stub(), nw_p={})
     assert r["p"]["H1-m1.5"] == 1.0
     r3 = f.look(365, {"H1-m1.5": 0.001}, ladder_stub())
     assert r3["p"]["H1-m1.5"] == 0.001 and f.status["H1-m1.5"] == "FINAL GO"
@@ -187,12 +187,12 @@ def test_model_invalid_or_kill_closes_at_an_interim_look_but_point_failures_do_n
         if c == "H3-k4":
             return vd.Verdict(c, "MODEL INVALID", "MODEL INVALID", ["MODEL INVALID: H2a gate INVALID"])
         return vd.Verdict(c, "NO-GO", "NO-GO", ["NO-GO: P1/P3 <= 0"])
-    f.look(90, {"H3-k4": 0.5, "H3-k6": 0.5}, fn, nw_ok={})
+    f.look(90, {"H3-k4": 0.5, "H3-k6": 0.5}, fn, nw_p={})
     assert f.status["H3-k4"] == "CLOSED" and f.status["H3-k6"] == "PENDING"
 
 
 def test_feasibility_slot_is_never_tested_before_day_365_even_with_a_tiny_p():
     f = make_family(cand=(), feas=("H1-m1.5",))
-    f.look(90, {"H1-m1.5": 1e-9}, ladder_stub(), nw_ok={"H1-m1.5": True}, feasibility={"H1-m1.5": True})
-    r = f.look(180, {"H1-m1.5": 1e-9}, ladder_stub(), nw_ok={"H1-m1.5": True})
+    f.look(90, {"H1-m1.5": 1e-9}, ladder_stub(), nw_p={"H1-m1.5": (0.0, 0.0)}, feasibility={"H1-m1.5": True})
+    r = f.look(180, {"H1-m1.5": 1e-9}, ladder_stub(), nw_p={"H1-m1.5": (0.0, 0.0)})
     assert r["p"]["H1-m1.5"] == 1.0 and f.status["H1-m1.5"] == "PENDING"

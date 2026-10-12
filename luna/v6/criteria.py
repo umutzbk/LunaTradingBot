@@ -74,6 +74,19 @@ def episodes(fills: pd.DataFrame, settlements: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["asset", "start", "end", "net", "closed"])
 
 
+def entries(fills: pd.DataFrame) -> list:
+    """Every opening of a position from flat (per asset, both legs of H1 together), not merged."""
+    out = []
+    for _a, g in fills.sort_values(["ts"]).groupby("asset"):
+        q = {}
+        for _, r in g.iterrows():
+            was = any(abs(v) > 1e-12 for v in q.values())
+            q[r["leg"]] = q.get(r["leg"], 0.0) + r["dq"]
+            if not was and any(abs(v) > 1e-12 for v in q.values()):
+                out.append(r["ts"])
+    return out
+
+
 def clusters(entry_times: list) -> int:
     n, first = 0, None
     for t in sorted(entry_times):
@@ -111,7 +124,7 @@ def evidence(run, kind: str) -> dict:
     eps = episodes(run.fills, run.settlements)
     active = int(run.daily["active"].sum())
     n_eps = len(eps)
-    n_cl = clusters(list(eps["start"])) if n_eps else 0
+    n_cl = clusters(entries(run.fills)) if n_eps else 0
     und = int(eps["asset"].nunique()) if n_eps else 0
     ok = active >= th["active_days"] and n_eps >= th["episodes"] and n_cl >= th["clusters"] and und >= th["underlyings"]
     return {"active_days": active, "episodes": n_eps, "clusters": n_cl, "underlyings": und, "ok": ok,
@@ -170,6 +183,8 @@ def evaluate(config: str, kind: str, env: str, primary, rows: dict, gate_cls: st
     carry = float(d["carry"].sum())
     r = d["ret"].to_numpy(float)
     ev = Evaluation(config, kind, env, net, carry, gate=gate_cls)
+    if primary.counters.get("funding_unknown", 0) > 0:
+        ev.invalid_run.append(f"funding unknown for {primary.counters['funding_unknown']} held periods (S-DATA-1)")
     P = ev.P
     P["P1"] = {"evaluable": True, "pass": net > 0, "value": net}
     P["P3"] = {"evaluable": True, "pass": carry > 0, "value": carry}

@@ -177,6 +177,7 @@ class GateResult:
     fs: list
     rs: list
     c_demeaned: float
+    n_boot_dropped: int = 0  # replicates with an undefined ratio, dropped from the percentile (D-G3)
 
 
 def min_evidence_720(dates: list) -> bool:
@@ -275,6 +276,7 @@ def gate(panel: FundingPanel, records: list[GateRecord], *, kind: str, k: int | 
     c_dm = float((xd * yd).sum() / (xd * xd).sum()) if len(xd) and (xd * xd).sum() > 0 else math.nan
     min_ev = (n >= MIN_DATES_168) if h == 168 else min_evidence_720(dates)
     idx = _block_index(n, GATE_BLOCK[h], B, seed)
+    n_drop = 0
     if idx is None or not math.isfinite(R):
         ci_R = ci_c = (math.nan, math.nan)
     else:
@@ -282,7 +284,8 @@ def gate(panel: FundingPanel, records: list[GateRecord], *, kind: str, k: int | 
         with np.errstate(invalid="ignore", divide="ignore"):
             Rb = np.where(fsb > FS_EPS, rsb / fsb, np.nan)
         cb = slope(S[idx].sum(axis=1))
+        n_drop = int(np.isnan(Rb).sum())
         ci_R = tuple(float(v) for v in np.nanquantile(Rb, [0.025, 0.975]))
         ci_c = tuple(float(v) for v in np.nanquantile(cb, [0.025, 0.975]))
     cls = classify(min_ev, R, ci_R, c, ci_c) if math.isfinite(R) else "INCONCLUSIVE"
-    return GateResult(cls, R, c, ci_R, ci_c, n, min_ev, n_imp, dates, fs, rs, c_dm)
+    return GateResult(cls, R, c, ci_R, ci_c, n, min_ev, n_imp, dates, fs, rs, c_dm, n_drop)

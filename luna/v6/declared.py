@@ -58,4 +58,41 @@ DECLARED = {
             "(no mid, decision-window spread > 40 bps, 24 h volume < 1M USD, funding coverage < 90 %, "
             "newest funding older than 3 h) at two consecutive 15-minute ticks (>= 900 s) is exited; "
             "values from the V5 config at fabd419 (exit_spread_bps 40, ineligible_exit_grace_s 900).",
+    "D-E7": "Pending orders: a decision sizes from the position after the orders already sent (pending fills "
+            "included); a leg with an exit in flight is neither resized nor re-entered until it is flat.",
+    "D-E8": "S-H3-10 repair runs after any booked intraday exit (stop, ineligibility, missing forecast); after "
+            "a kill the strategy stops but the 00:00 H2a gate records continue (the gate sample is PIT and "
+            "does not depend on positions).",
+    "D-E9": "Terminal unwind without a mid at the end: valued at the last known mid with the taker fee, the "
+            "10 bps fallback spread (spot: max(10 bps, spot rule)) and the slip.",
+    "D-E10": "invariant_mode (blind development runs only): R3, R4, leg/combined stops and hedge resets are off "
+             "so that no reported mechanical invariant depends on performance; never used for an evaluation.",
+    "D-X4": "S-DATA-5: a quarter is fresh when any asset's fut ticker snapshot is <= 180 s old (the collector "
+            "polls all tickers in one request); a stale quarter is a no-op for risk and decisions; the 00:00 "
+            "decision is made at the first fresh quarter within 6 h, else the day's decision is skipped.",
+    "D-X5": "S-H1-X risk exits: both legs taker from the first snapshot after t, independently (neither waits for "
+            "the other); 00:00 economic orders: maker-first spot, then the perp for the filled share on the "
+            "first fut book after the spot leg completed.",
+    "D-X6": "S-H1-X t_sub = max(t, receive time of the reference ticker); the reference is the latest ticker "
+            "<= 180 s old at t, else the first one within 6 h (else skipped). A depth snapshot is used only if "
+            "received at or before the ticker that triggers the fill; each level's volume is used once.",
+    "D-X7": "Forward decision cost of H3/H1 = the same formula as historical (half spread + fee + 2 bps slip), "
+            "with the half spread from the latest fresh ticker.",
+    "D-X8": "Forward inputs: decision funding = history up to the holdout end, collector rounds from the holdout "
+            "end on (no hole before T_F); evidence (fills, P&L) only from snapshots received at or after T_F.",
+    "D-A1": "S-GUARD-1 'V5 Stage 0 audit; failure = INVALID RUN' on the holdout spread download: FAIL = labels off "
+            "the 5-minute grid, duplicated or unordered; labels outside the window; observed cadence != 300 s; "
+            "decision-window (>= 6/12) or fill-window (>= 2/3) point coverage < 90 % for any asset or any asset x "
+            "hour-of-day cell. V5 flagged coverage for the user; V6 maps it to FAIL (the spec's failure rule). "
+            "Repeats, gaps and invalid values are reported, not FAIL (V5).",
+    "D-G1": "Holdout markers: one in the code checkout, one in the user's home (~/.luna/v6_holdout), written "
+            "exclusively, all-or-nothing; 'opened' = both present with approved = true and this spec's sha256.",
+    "D-G2": "T_F = the first 00:00 UTC at least 24 h after the independent review PASS; the freeze record holds "
+            "both times and is rejected when T_F does not equal that derivation.",
+    "D-G3": "Gate bootstrap: a replicate whose ratio is undefined (zero denominator) is dropped from the "
+            "percentile (nanquantile); the number dropped is reported.",
+    "D-B4": "An asset is never moved from one side to the other in the same decision: a held leg whose side "
+            "flips is exited at 00:00 and may enter the other side at the next decision.",
+    "D-P1": "P8/P9 entry clusters are built from every opening from flat (per asset, both H1 legs together), "
+            "not from merged episodes.",
 }

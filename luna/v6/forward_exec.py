@@ -118,11 +118,18 @@ class FwdMarket:
     """The same interface as ``HistMarket`` on forward snapshots (S-H3-11 / S-H1-X)."""
 
     def __init__(self, streams: Streams, funding: FundingPanel, assets: list,
-                 settlement: FundingPanel | None = None) -> None:
+                 settlement: FundingPanel | None = None, pit_lag: pd.Timedelta = pd.Timedelta(0)) -> None:
         """``funding``: what decisions see (collector receive times); ``settlement``: the same plus
-        the periods the collector missed, from the official API (S-DATA-1), used only to settle."""
+        the periods the collector missed, from the official API (S-DATA-1), used only to settle.
+        ``pit_lag``: forward S-PIT10 (decisions only on snapshots received by t - 5 min)."""
         self.s, self.funding, self._assets = streams, funding, list(assets)
         self.settlement = settlement
+        self.pit_lag = pd.Timedelta(pit_lag)
+
+    def has_fresh(self, t: pd.Timestamp) -> bool:
+        """S-DATA-5: a fresh (<= 180 s) fut ticker snapshot exists at t (any asset: the collector polls
+        all tickers in one request)."""
+        return any((x := st.latest(t)) is not None and t - x.ts <= FRESH for st in self.s.fut_ticks.values())
 
     @property
     def assets(self) -> list:
@@ -131,8 +138,9 @@ class FwdMarket:
     # --- quotes ------------------------------------------------------------------------------------
     def _tick(self, a: str, t: pd.Timestamp, spot: bool = False) -> Tick | None:
         st = (self.s.spot_ticks if spot else self.s.fut_ticks).get(a)
-        x = st.latest(t) if st else None
-        return x if x is not None and t - x.ts <= FRESH else None
+        tq = t - self.pit_lag
+        x = st.latest(tq) if st else None
+        return x if x is not None and tq - x.ts <= FRESH else None
 
     def mid(self, a: str, t: pd.Timestamp) -> float:
         x = self._tick(a, t)
@@ -210,18 +218,22 @@ class FwdMarket:
         return mid, fee, abs(q) * abs(px - mid)
 
     # --- H1 pair execution (S-H1-X) ----------------------------------------------------------------
-    def pair_fill(self, a: str, q: float, t: pd.Timestamp, economic: bool = True):
+    def pair_fill(self, a: str, q: float, t: pd.Timestamp, economic: bool = True, perp_q: float | None = None):
+        """S-H1-X. Risk exits (economic=False): both legs taker on the first snapshots after t, neither
+        waits for the other. 00:00 economic orders: maker-first spot, then the perp on the first
+        fut_book after the spot leg completed, for the filled share."""
+        pq = abs(q) if perp_q is None else abs(perp_q)
         if not economic:
             fs = self.fill(a, q, t, leg="spot")
-            if fs is None:
+            fp = self.fill(a, math.copysign(pq, -q), t, leg="perp")
+            if fs is None and fp is None:
                 return None
-            fp = self.fill(a, -fs.dq, fs.ts, leg="perp")
-            return ([fs], [fp] if fp else [])
+            return ([fs] if fs else [], [fp] if fp else [])
         spot = maker_first_spot(self.s, a, q, t)
         if spot is None or not spot.fills:
             return None
         filled = sum(f.dq for f in spot.fills)
-        fp = self.fill(a, -filled, spot.done_ts, leg="perp")
+        fp = self.fill(a, math.copysign(pq * abs(filled) / abs(q), -q), spot.done_ts, leg="perp")
         return (spot.fills, [fp] if fp else [])
 
 
@@ -275,7 +287,7 @@ def maker_first_spot(s: Streams, a: str, q: float, t: pd.Timestamp) -> SpotResul
         d = depth.latest(done)
         if d is None or d.ts <= t_sub - FRESH:
             d = depth.first_after(done)
-        if d is not None:
+        while d is not None and got < need - 1e-12:
             qq, px = walk(d.asks if buy else d.bids, need - got, side="buy" if buy else "sell", used=used,
                           key=d.ts.value)
             if qq > 0:
@@ -284,6 +296,9 @@ def maker_first_spot(s: Streams, a: str, q: float, t: pd.Timestamp) -> SpotResul
                 fills.append(_fill(a, "spot", t, max(d.ts, done), math.copysign(qq, q), px, mid, SPOT_TAKER))
                 got += qq
             done = max(d.ts, done)
+            if buy:
+                break  # entry: the remainder is cancelled (S-H1-X)
+            d = depth.first_after(d.ts)  # exit: continue on the next snapshots (D-X1)
     elif fills:
         done = max(f.ts for f in fills)
     return SpotResult(fills, done, "ok" if got >= need - 1e-12 else "partial")
@@ -312,10 +327,20 @@ def _read(raw: Path, source: str, start: pd.Timestamp, end: pd.Timestamp):
                 break
 
 
-def read_streams(raw: Path, start: pd.Timestamp, end: pd.Timestamp, assets: list) -> Streams:
-    """Snapshots with start <= recv_ts <= end (ok envelopes only)."""
+def read_streams(raw: Path, start: pd.Timestamp, end: pd.Timestamp, assets: list, repo: Path | None = None,
+                 purpose: str = "evidence") -> Streams:
+    """Snapshots with start <= recv_ts <= end (ok envelopes only). Forward-guarded (T_F and the holdout
+    opening); ``purpose="evidence"`` clamps the start to T_F (S-DATA-4), ``"inputs"`` may read earlier
+    snapshots as model inputs (after the opening)."""
+    from luna.v6 import guard
+
     s = Streams()
     lo, hi = pd.Timestamp(start), pd.Timestamp(end)
+    guard.require_window(lo, hi, "forward", repo=repo)
+    if purpose == "evidence":
+        lo = max(lo, guard.forward_start(repo))
+    elif purpose != "inputs":
+        raise ValueError(purpose)
     want = set(assets)
     acc = {"ft": {}, "fb": {}, "st": {}, "sd": {}}
     for env in _read(raw, "fut_tickers", lo, hi):
@@ -368,12 +393,11 @@ def read_streams(raw: Path, start: pd.Timestamp, end: pd.Timestamp, assets: list
 
 def coverage(streams: Streams, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
     """S-DATA-5: per day the share of 15-minute ticks with a fresh (<= 180 s) fut ticker."""
-    any_asset = next(iter(streams.fut_ticks.values()), None)
     rows = []
     t = pd.Timestamp(start)
     while t <= end:
-        x = any_asset.latest(t) if any_asset else None
-        rows.append({"t": t, "fresh": bool(x is not None and t - x.ts <= FRESH)})
+        fresh = any((x := st.latest(t)) is not None and t - x.ts <= FRESH for st in streams.fut_ticks.values())
+        rows.append({"t": t, "fresh": bool(fresh)})
         t += BAR
     df = pd.DataFrame(rows)
     df["day"] = df["t"].dt.floor("D")
@@ -382,9 +406,13 @@ def coverage(streams: Streams, start: pd.Timestamp, end: pd.Timestamp) -> pd.Dat
     return out
 
 
-def funding_from_collector(raw: Path, start: pd.Timestamp, end: pd.Timestamp, assets: list) -> FundingPanel:
+def funding_from_collector(raw: Path, start: pd.Timestamp, end: pd.Timestamp, assets: list,
+                           repo: Path | None = None) -> FundingPanel:
     """Forward funding (S-DATA-1): rel/abs per period start; known_at = the receive time of the first
     collector round that carried the period (a later revision of the same period is ignored)."""
+    from luna.v6 import guard
+
+    guard.require_window(pd.Timestamp(start), pd.Timestamp(end), "forward", repo=repo)
     rel, ab, known = {}, {}, {}
     for env in _read(Path(raw), "fut_funding", pd.Timestamp(start), pd.Timestamp(end)):
         if not env.get("ok"):
@@ -416,10 +444,11 @@ def funding_from_collector(raw: Path, start: pd.Timestamp, end: pd.Timestamp, as
     return FundingPanel(R, abs_=A, known_at=K)
 
 
-def merge_funding(hist: FundingPanel, fwd: FundingPanel, tf: pd.Timestamp) -> FundingPanel:
-    """Decision panel: periods before T_F from history (known at p + 1h), periods from T_F on as
-    received by the collector (known_at = receive time)."""
-    tf = pd.Timestamp(tf)
+def merge_funding(hist: FundingPanel, fwd: FundingPanel, boundary: pd.Timestamp) -> FundingPanel:
+    """Decision panel: periods before ``boundary`` (the holdout end) from the history (known at p + 1h),
+    periods from it on as received by the collector (known_at = receive time) — no hole between the
+    holdout end and T_F."""
+    tf = pd.Timestamp(boundary)
     cols = list(dict.fromkeys(list(hist.rel.columns) + list(fwd.rel.columns)))
     hr = hist.rel[hist.rel.index < tf].reindex(columns=cols)
     ha = (hist.abs[hist.abs.index < tf] if hist.abs is not None else hr * np.nan).reindex(columns=cols)

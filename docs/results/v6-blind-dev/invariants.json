@@ -240,7 +240,6 @@
     "model_warmup": 0.351931330472103
    },
    "entries": 0,
-   "skipped_for_cash": 0,
    "skipped_below_min_qty": 0,
    "unmatched_hedge_qty_entries": 0,
    "pairs_held_per_tick": {
@@ -262,7 +261,6 @@
     "model_warmup": 0.351931330472103
    },
    "entries": 0,
-   "skipped_for_cash": 0,
    "skipped_below_min_qty": 0,
    "unmatched_hedge_qty_entries": 0,
    "pairs_held_per_tick": {

@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 
 import numpy as np
@@ -36,11 +37,25 @@ def _sha(p: Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()
 
 
+def _write_excl(p: Path, text: str) -> None:
+    fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
 def write_holdout(result: dict, out: Path, meta: dict) -> dict:
+    """Claims ``out`` exclusively first (``CLAIM``): the holdout report is written once; a crashed
+    write is not retried over (the directory stays claimed and the failure is visible)."""
     out = Path(out)
-    if (out / "summary.json").exists():
-        raise FileExistsError(f"{out} already holds a summary (the holdout runs once)")
     out.mkdir(parents=True, exist_ok=True)
+    try:
+        _write_excl(out / "CLAIM", pd.Timestamp.now(tz="UTC").isoformat())
+    except FileExistsError:
+        raise FileExistsError(f"{out} is already claimed (the holdout report is written once)") from None
+    return _summary(result, out, meta)
+
+
+def _summary(result: dict, out: Path, meta: dict) -> dict:
     d = result["decision"]
     summary = {
         "meta": {**meta, "spec_sha256": SPEC_SHA256, "constants_sha256": CONSTANTS_SHA256},
@@ -57,7 +72,8 @@ def write_holdout(result: dict, out: Path, meta: dict) -> dict:
                                     "maker_bound": ev.maker_bound, "stats": {k: v for k, v in (ev.stats or {}).items()},
                                     "gate": {"class": g.cls, "R": g.R, "slope": g.c, "ci_R": g.ci_R, "ci_slope": g.ci_c,
                                              "n_dates": g.n_dates, "imputed": g.n_imputed,
-                                             "slope_demeaned": g.c_demeaned}}
+                                             "slope_demeaned": g.c_demeaned,
+                                             "bootstrap_replicates_dropped": g.n_boot_dropped}}
         for row, r in result["runs"][name].items():
             for kind in ("daily", "fills", "settlements"):
                 df = getattr(r, kind)
@@ -73,7 +89,7 @@ def write_holdout(result: dict, out: Path, meta: dict) -> dict:
                     df.reset_index().astype(str).to_parquet(p)
                     tables[f"reference:{k}:{arm}"] = {"path": str(p.relative_to(out)).replace("\\", "/"), "sha256": _sha(p)}
     sp = out / "summary.json"
-    sp.write_text(json.dumps(_clean(summary), indent=1, default=str), encoding="utf-8")
+    _write_excl(sp, json.dumps(_clean(summary), indent=1, default=str))
     manifest = {"summary_sha256": _sha(sp), "tables": tables}
-    (out / "manifest.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
+    _write_excl(out / "manifest.json", json.dumps(manifest, indent=1))
     return manifest

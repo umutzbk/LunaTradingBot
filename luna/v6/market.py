@@ -216,11 +216,12 @@ class HistMarket:
         px = mid * (1 + s * half) * (1 + s * slip)
         return mid, fr * abs(q) * px, abs(q) * abs(px - mid)
 
-    def pair_fill(self, a: str, q: float, t: pd.Timestamp, economic: bool = True):
+    def pair_fill(self, a: str, q: float, t: pd.Timestamp, economic: bool = True, perp_q: float | None = None):
         """H1 historical execution (S-H1-5): both legs taker at t + 15m, atomic (both or neither).
-        Returns ([spot fills], [perp fills]) or None."""
+        ``perp_q``: the perp short quantity to close (default: matched, -q). Returns
+        ([spot fills], [perp fills]) or None."""
         fs = self.fill(a, q, t, leg="spot")
-        fp = self.fill(a, -q, t, leg="perp")
+        fp = self.fill(a, (-q if perp_q is None else math.copysign(perp_q, -q)), t, leg="perp")
         if fs is None or fp is None:
             return None
         return [fs], [fp]

@@ -1,25 +1,163 @@
 [
- {"name": "no risk parity (equal side split)", "file": "luna/v6/book.py", "old": "        phL, phS = sS / (sL + sS), sL / (sL + sS)", "new": "        phL, phS = 0.5, 0.5", "tests": "tests/v6/test_book.py"},
- {"name": "no dollar cap", "file": "luna/v6/book.py", "old": "        cap = abs(phL - phS) > DOLLAR_CAP", "new": "        cap = False", "tests": "tests/v6/test_book.py"},
- {"name": "no side-ratio rule", "file": "luna/v6/book.py", "old": "        if q > RATIO_MAX:\n            phL, ratio_bound = phL * RATIO_MAX / q, True", "new": "        if False:\n            phL, ratio_bound = phL * RATIO_MAX / q, True", "tests": "tests/v6/test_book.py"},
- {"name": "no dollar INFEASIBLE after ratio", "file": "luna/v6/book.py", "old": "        if abs(phL - phS) > DOLLAR_CAP * (phL + phS) + TOL:", "new": "        if False:", "tests": "tests/v6/test_book.py"},
- {"name": "no beta scale-down", "file": "luna/v6/book.py", "old": "        if abs(bn) > BETA_LIMIT:\n            w = w * BETA_LIMIT / abs(bn)", "new": "        if False:\n            w = w * BETA_LIMIT / abs(bn)", "tests": "tests/v6/test_book.py"},
- {"name": "no sigma* scaling", "file": "luna/v6/book.py", "old": "        G = min(GROSS_CAP / (phL + phS), SIGMA_STAR / bv) if bv > 0 else GROSS_CAP / (phL + phS)", "new": "        G = GROSS_CAP / (phL + phS)", "tests": "tests/v6/test_book.py"},
- {"name": "drop largest instead of smallest", "file": "luna/v6/book.py", "old": "        drop = min(small, key=lambda a: (abs(n[a]), a))", "new": "        drop = max(small, key=lambda a: (abs(n[a]), a))", "tests": "tests/v6/test_book.py"},
- {"name": "k' min 3 -> 2", "file": "luna/v6/book.py", "old": "        if len(L) < K_MIN or len(S) < K_MIN:\n            return _infeasible(\"fewer than 3 legs on a side\", diag)", "new": "        if len(L) < 2 or len(S) < 2:\n            return _infeasible(\"fewer than 3 legs on a side\", diag)", "tests": "tests/v6/test_book.py"},
- {"name": "band 25% -> 50%", "file": "luna/v6/book.py", "old": "        out[a] = nh if nh and abs(nt - nh) <= BAND * abs(nt) else nt", "new": "        out[a] = nh if nh and abs(nt - nh) <= 0.5 * abs(nt) else nt", "tests": "tests/v6/test_book.py"},
- {"name": "band repair missing", "file": "luna/v6/book.py", "old": "    if checks(live, L, S, cov, E, step_notional)[\"ok\"]:\n        return BandResult(\"OK\", out)", "new": "    if True:\n        return BandResult(\"OK\", out)", "tests": "tests/v6/test_book.py"},
- {"name": "intraday repair grows a side", "file": "luna/v6/book.py", "old": "            elif a_ > 1:\n                n = {a: (v / a_ if v < 0 else v) for a, v in n.items()}", "new": "            elif a_ > 1:\n                n = {a: (v * a_ if v > 0 else v) for a, v in n.items()}\n            if a_ < 1:\n                n = {a: (v / a_ if v < 0 else v) for a, v in n.items()}", "tests": "tests/v6/test_book.py"},
- {"name": "entry ignores cost", "file": "luna/v6/book.py", "old": "            if carry(a, side) * HORIZON > 2 * float(cost[a]):", "new": "            if True:", "tests": "tests/v6/test_book.py"},
- {"name": "hold zone without buffer", "file": "luna/v6/book.py", "old": "    hold_short, hold_long = set(order[: kp + sel.r]), set(order[-(kp + sel.r):])", "new": "    hold_short, hold_long = set(order[: kp]), set(order[-(kp):])", "tests": "tests/v6/test_book.py"},
- {"name": "fill booked at decision time", "file": "luna/v6/market.py", "old": "        ft = t + BAR\n        if leg == \"spot\":", "new": "        ft = t\n        if leg == \"spot\":", "tests": "tests/v6/test_engine_h3.py"},
- {"name": "funding sign flipped", "file": "luna/v6/engine.py", "old": "                            amt = -st.acc[key] * rate", "new": "                            amt = st.acc[key] * rate", "tests": "tests/v6/test_engine_h3.py"},
- {"name": "no kill", "file": "luna/v6/engine.py", "old": "            if not st.killed and E <= (1 - KILL_DD) * st.peak:", "new": "            if False:", "tests": "tests/v6/test_engine_h3.py"},
- {"name": "no terminal unwind costs", "file": "luna/v6/engine.py", "old": "            st.cash += q * mid - fee - ss", "new": "            st.cash += q * mid\n            fee = ss = 0.0", "tests": "tests/v6/test_engine_h3.py"},
- {"name": "infeasible clock >= instead of >", "file": "luna/v6/engine.py", "old": "if st.infeasible_since is not None and t - st.infeasible_since > GRACE and not st.infeasible_exited:", "new": "if st.infeasible_since is not None and t - st.infeasible_since >= GRACE and not st.infeasible_exited:", "tests": "tests/v6/test_engine_h3.py"},
- {"name": "infeasible opens anyway", "file": "luna/v6/engine.py", "old": "        if b.status != \"OK\":\n            return infeasible(f\"build: {b.reason}\")", "new": "        if b.status != \"OK\":\n            b = bk.BuildResult(\"OK\", {a: (100.0 if a in sel.long else -100.0) for a in sel.long + sel.short}, {}, \"\", {})", "tests": "tests/v6/test_engine_h3.py"},
- {"name": "no stop cooldown", "file": "luna/v6/engine.py", "old": "                        st.cooldown[a] = t + COOLDOWN", "new": "                        pass", "tests": "tests/v6/test_engine_h3.py"},
- {"name": "no repair after stop", "file": "luna/v6/engine.py", "old": "                if intent in (\"stop\", \"inelig\"):\n                    intraday_exit_booked = True", "new": "                pass", "tests": "tests/v6/test_engine_h3.py"},
- {"name": "missing forecast never exits", "file": "luna/v6/engine.py", "old": "                    if st.pos.get(a) and a not in st.exiting and t - since > MISSING_FC:", "new": "                    if False:", "tests": "tests/v6/test_engine_h3.py"},
- {"name": "daily table day boundary post-event", "file": "luna/v6/engine.py", "old": "        eq = float(T[\"equity\"].iloc[-1]) if last else float(T.loc[hi, \"equity_pre\"])", "new": "        eq = float(T[\"equity\"].iloc[-1]) if last else float(T.loc[hi, \"equity\"])", "tests": "tests/v6/test_engine_h3.py"}
+ {
+  "name": "no risk parity (equal side split)",
+  "file": "luna/v6/book.py",
+  "old": "        phL, phS = sS / (sL + sS), sL / (sL + sS)",
+  "new": "        phL, phS = 0.5, 0.5",
+  "tests": "tests/v6/test_book.py"
+ },
+ {
+  "name": "no dollar cap",
+  "file": "luna/v6/book.py",
+  "old": "        cap = abs(phL - phS) > DOLLAR_CAP",
+  "new": "        cap = False",
+  "tests": "tests/v6/test_book.py"
+ },
+ {
+  "name": "no side-ratio rule",
+  "file": "luna/v6/book.py",
+  "old": "        if q > RATIO_MAX:\n            phL, ratio_bound = phL * RATIO_MAX / q, True",
+  "new": "        if False:\n            phL, ratio_bound = phL * RATIO_MAX / q, True",
+  "tests": "tests/v6/test_book.py"
+ },
+ {
+  "name": "no dollar INFEASIBLE after ratio",
+  "file": "luna/v6/book.py",
+  "old": "        if abs(phL - phS) > DOLLAR_CAP * (phL + phS) + TOL:",
+  "new": "        if False:",
+  "tests": "tests/v6/test_book.py"
+ },
+ {
+  "name": "no beta scale-down",
+  "file": "luna/v6/book.py",
+  "old": "        if abs(bn) > BETA_LIMIT:\n            w = w * BETA_LIMIT / abs(bn)",
+  "new": "        if False:\n            w = w * BETA_LIMIT / abs(bn)",
+  "tests": "tests/v6/test_book.py"
+ },
+ {
+  "name": "no sigma* scaling",
+  "file": "luna/v6/book.py",
+  "old": "        G = min(GROSS_CAP / (phL + phS), SIGMA_STAR / bv) if bv > 0 else GROSS_CAP / (phL + phS)",
+  "new": "        G = GROSS_CAP / (phL + phS)",
+  "tests": "tests/v6/test_book.py"
+ },
+ {
+  "name": "drop largest instead of smallest",
+  "file": "luna/v6/book.py",
+  "old": "        drop = min(small, key=lambda a: (abs(n[a]), a))",
+  "new": "        drop = max(small, key=lambda a: (abs(n[a]), a))",
+  "tests": "tests/v6/test_book.py"
+ },
+ {
+  "name": "k' min 3 -> 2",
+  "file": "luna/v6/book.py",
+  "old": "        if len(L) < K_MIN or len(S) < K_MIN:\n            return _infeasible(\"fewer than 3 legs on a side\", diag)",
+  "new": "        if len(L) < 2 or len(S) < 2:\n            return _infeasible(\"fewer than 3 legs on a side\", diag)",
+  "tests": "tests/v6/test_book.py"
+ },
+ {
+  "name": "band 25% -> 50%",
+  "file": "luna/v6/book.py",
+  "old": "        out[a] = nh if nh and abs(nt - nh) <= BAND * abs(nt) else nt",
+  "new": "        out[a] = nh if nh and abs(nt - nh) <= 0.5 * abs(nt) else nt",
+  "tests": "tests/v6/test_book.py"
+ },
+ {
+  "name": "band repair missing",
+  "file": "luna/v6/book.py",
+  "old": "    if checks(live, L, S, cov, E, step_notional)[\"ok\"]:\n        return BandResult(\"OK\", out)",
+  "new": "    if True:\n        return BandResult(\"OK\", out)",
+  "tests": "tests/v6/test_book.py"
+ },
+ {
+  "name": "intraday repair grows a side",
+  "file": "luna/v6/book.py",
+  "old": "            elif a_ > 1:\n                n = {a: (v / a_ if v < 0 else v) for a, v in n.items()}",
+  "new": "            elif a_ > 1:\n                n = {a: (v * a_ if v > 0 else v) for a, v in n.items()}\n            if a_ < 1:\n                n = {a: (v / a_ if v < 0 else v) for a, v in n.items()}",
+  "tests": "tests/v6/test_book.py"
+ },
+ {
+  "name": "entry ignores cost",
+  "file": "luna/v6/book.py",
+  "old": "            if carry(a, side) * HORIZON > 2 * float(cost[a]):",
+  "new": "            if True:",
+  "tests": "tests/v6/test_book.py"
+ },
+ {
+  "name": "hold zone without buffer",
+  "file": "luna/v6/book.py",
+  "old": "    hold_short, hold_long = set(order[: kp + sel.r]), set(order[-(kp + sel.r):])",
+  "new": "    hold_short, hold_long = set(order[: kp]), set(order[-(kp):])",
+  "tests": "tests/v6/test_book.py"
+ },
+ {
+  "name": "fill booked at decision time",
+  "file": "luna/v6/market.py",
+  "old": "        ft = t + BAR\n        if leg == \"spot\":",
+  "new": "        ft = t\n        if leg == \"spot\":",
+  "tests": "tests/v6/test_engine_h3.py"
+ },
+ {
+  "name": "funding sign flipped",
+  "file": "luna/v6/engine.py",
+  "old": "                            amt = -st.acc[key] * rate",
+  "new": "                            amt = st.acc[key] * rate",
+  "tests": "tests/v6/test_engine_h3.py"
+ },
+ {
+  "name": "no kill",
+  "file": "luna/v6/engine.py",
+  "old": "            if not invariant_mode and not st.killed and E <= (1 - KILL_DD) * st.peak:",
+  "new": "            if False:",
+  "tests": "tests/v6/test_engine_h3.py"
+ },
+ {
+  "name": "no terminal unwind costs",
+  "file": "luna/v6/engine.py",
+  "old": "            st.cash += q * mid - fee - ss",
+  "new": "            st.cash += q * mid\n            fee = ss = 0.0",
+  "tests": "tests/v6/test_engine_h3.py"
+ },
+ {
+  "name": "infeasible clock >= instead of >",
+  "file": "luna/v6/engine.py",
+  "old": "if st.infeasible_since is not None and t - st.infeasible_since > GRACE and not st.infeasible_exited:",
+  "new": "if st.infeasible_since is not None and t - st.infeasible_since >= GRACE and not st.infeasible_exited:",
+  "tests": "tests/v6/test_engine_h3.py"
+ },
+ {
+  "name": "infeasible opens anyway",
+  "file": "luna/v6/engine.py",
+  "old": "        if b.status != \"OK\":\n            return infeasible(f\"build: {b.reason}\")",
+  "new": "        if b.status != \"OK\":\n            b = bk.BuildResult(\"OK\", {a: (100.0 if a in sel.long else -100.0) for a in sel.long + sel.short}, {}, \"\", {})",
+  "tests": "tests/v6/test_engine_h3.py"
+ },
+ {
+  "name": "no stop cooldown",
+  "file": "luna/v6/engine.py",
+  "old": "                        st.cooldown[a] = t + COOLDOWN",
+  "new": "                        pass",
+  "tests": "tests/v6/test_engine_h3.py"
+ },
+ {
+  "name": "no repair after stop",
+  "file": "luna/v6/engine.py",
+  "old": "                if intent in INTRADAY_EXITS:\n                    st.repair_due = True",
+  "new": "                if False:\n                    st.repair_due = True",
+  "tests": "tests/v6/test_engine_h3.py"
+ },
+ {
+  "name": "missing forecast never exits",
+  "file": "luna/v6/engine.py",
+  "old": "                    if st.pos.get(a) and a not in st.exiting and t - since > MISSING_FC:",
+  "new": "                    if False:",
+  "tests": "tests/v6/test_engine_h3.py"
+ },
+ {
+  "name": "daily table day boundary post-event",
+  "file": "luna/v6/engine.py",
+  "old": "        eq = float(T[\"equity\"].iloc[-1]) if last else float(T.loc[hi, \"equity_pre\"])",
+  "new": "        eq = float(T[\"equity\"].iloc[-1]) if last else float(T.loc[hi, \"equity\"])",
+  "tests": "tests/v6/test_engine_h3.py"
+ }
 ]

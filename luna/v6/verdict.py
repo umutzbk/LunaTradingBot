@@ -40,6 +40,10 @@ def ladder(ev: Evaluation, *, stat_reject: bool, coverage_ok: bool = True,
         reasons += [("INVALID RUN", r) for r in ev.invalid_run]
     if ev.kind == "H1" and ev.env == "forward" and execution != "S-H1-X":
         reasons.append(("INVALID RUN", "H1 forward needs the S-H1-X execution model"))
+    if ev.env == "forward":
+        for k in ("P7", "P11"):
+            if not ev.P.get(k, {}).get("evaluable"):
+                reasons.append(("INVALID RUN", f"forward {k} row missing"))
     if ev.gate == "INVALID":
         reasons.append(("MODEL INVALID", "H2a gate INVALID"))
     P = ev.P
@@ -147,12 +151,13 @@ class ForwardFamily:
     def size(self) -> int:
         return len(FAMILY)
 
-    def look(self, day: int, p_go: dict, ladder_fn, nw_ok: dict | None = None,
+    def look(self, day: int, p_go: dict, ladder_fn, nw_p: dict | None = None,
              feasibility: dict | None = None) -> dict:
         """One scheduled look. ``p_go``: config -> p_GO on its window (only used where the spec says
-        it is tested); ``ladder_fn(config, stat_reject) -> Verdict`` for the configs still PENDING;
-        ``nw_ok``: config -> Newey-West condition at interim looks; ``feasibility``: config -> bool
-        (ESTABLISHED) at day 90."""
+        it is tested); ``ladder_fn(config, stat_reject) -> Verdict`` for the configs still PENDING (for
+        a FEAS slot: on its confirmation replay C); ``nw_p``: config -> (Newey-West p net, p carry),
+        tested at interim looks against the config's own Holm threshold in this look's p vector;
+        ``feasibility``: config -> bool (ESTABLISHED) at day 90."""
         expected = LOOKS[len(self.looks_done)][0] if len(self.looks_done) < len(LOOKS) else None
         if day != expected:
             raise LookError(f"look {day} is not the next scheduled look ({expected})")
@@ -176,14 +181,15 @@ class ForwardFamily:
         h = stats6.holm(p, alpha)  # denominator = 4 always
         rejected = {c for c in FAMILY if h[c]["reject"]}
         if day != 365:
-            rejected = {c for c in rejected if (nw_ok or {}).get(c, False)}
+            rejected = {c for c in rejected
+                        if c in (nw_p or {}) and max(nw_p[c]) <= h[c]["alpha"]}
         out = {}
         for c in FAMILY:
             if self.status[c] != "PENDING":
                 continue
-            if c in self.feas and day != 365:
-                continue
-            v = ladder_fn(c, c in rejected)
+            if c in self.feas and day == 90:
+                continue  # day 90: only the M feasibility measurement; C is laddered from day 180 on
+            v = ladder_fn(c, c in rejected)  # a FEAS slot is never rejected before 365 (p = 1)
             out[c] = v
             if v.cls == "FINAL GO":
                 self.status[c] = "FINAL GO"

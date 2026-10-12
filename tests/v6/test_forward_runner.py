@@ -16,10 +16,10 @@ from luna.v6.verdict import LookError
 def repo(tmp_path, monkeypatch):
     rec = tmp_path / guard.FREEZE_RECORD_REL
     rec.parent.mkdir(parents=True)
-    rec.write_text(json.dumps({"T_F": "2026-11-20T00:00:00Z"}), encoding="utf-8")
+    rec.write_text(json.dumps({"review_pass_at": "2026-11-18T12:00:00Z", "T_F": "2026-11-20T00:00:00Z"}), encoding="utf-8")
     ms = [tmp_path / "m1", tmp_path / "m2"]
     for m in ms:
-        m.write_text("{}")
+        m.write_text(json.dumps({"spec_sha256": guard.SPEC_SHA256, "approved": True}))
     monkeypatch.setattr(guard, "marker_paths", lambda repo=None: ms)
     return tmp_path
 
@@ -57,9 +57,3 @@ def test_feasibility_thresholds():
         assert not bad.established
 
 
-def test_nw_threshold_uses_the_rank_among_four():
-    def e(p, nw):
-        return (SimpleNamespace(stats={"p_go": p}), True, {"net": nw, "carry": nw})
-    evals = {"H3-k4": e(0.0001, 0.0002), "H3-k6": e(0.5, 0.0001)}
-    assert fw.nw_pass(evals, "H3-k4", 0.001)  # rank 1: 0.001 / 4 = 0.00025
-    assert not fw.nw_pass({"H3-k4": e(0.0001, 0.0003)}, "H3-k4", 0.001)

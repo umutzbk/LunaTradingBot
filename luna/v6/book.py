@@ -273,24 +273,45 @@ def _drop_small(n: dict, insts: dict[str, Inst]) -> dict:
     return {a: v for a, v in n.items() if abs(v) >= insts[a].min_notional}
 
 
-def intraday_repair(n: dict, cov: Cov, E: float, insts: dict[str, Inst]) -> RepairResult:
+def intraday_repair(n: dict, cov: Cov, E: float, insts: dict[str, Inst], step_notional: float = 0.0) -> RepairResult:
+    """S-H3-10 after an intraday exit, reduce-only: (1) beta scale; (2) net-dollar / q via the
+    a_L/a_S closest to 1 in the intersection of both intervals, applied by shrinking only (empty ->
+    exit all); (3) beta again; after every step sub-minimum legs are exited; repeated at most #legs
+    times; still failing or < 3 legs on a side -> exit all. The checks are the post-rounding checks
+    with the same step-notional allowance."""
     n = {a: v for a, v in n.items() if v}
+
+    def tidy(x: dict) -> dict | None:
+        r = _drop_small(_round(x, insts), insts)
+        L_ = [a for a in r if r[a] > 0]
+        S_ = [a for a in r if r[a] < 0]
+        return r if len(L_) >= K_MIN and len(S_) >= K_MIN else None
+
     for _ in range(len(n) + 1):
+        n = tidy(n)
+        if n is None:
+            return RepairResult("EXIT_ALL", {})
         L = [a for a in n if n[a] > 0]
         S = [a for a in n if n[a] < 0]
-        if len(L) < K_MIN or len(S) < K_MIN:
-            return RepairResult("EXIT_ALL", {})
+        if checks(n, L, S, cov, E, step_notional)["ok"]:
+            return RepairResult("OK", n)
         # (1) beta
         bn = sum(v * float(cov.beta[a]) for a, v in n.items())
         if abs(bn) > BETA_LIMIT * E:
-            n = {a: v * BETA_LIMIT * E / abs(bn) for a, v in n.items()}
+            n = tidy({a: v * BETA_LIMIT * E / abs(bn) for a, v in n.items()})
+            if n is None:
+                return RepairResult("EXIT_ALL", {})
+            L = [a for a in n if n[a] > 0]
+            S = [a for a in n if n[a] < 0]
         # (2) net dollar or q
-        c = checks(n, L, S, cov, E, 0.0)
+        c = checks(n, L, S, cov, E, step_notional)
         if not (c["dollar_ok"] and c["q_ok"]):
             dl = sum(n[a] for a in L)
             ds = sum(-n[a] for a in S)
-            rl = math.sqrt(np.array([n[a] for a in L]) @ _sub(cov, L) @ np.array([n[a] for a in L]))
-            rs = math.sqrt(np.array([-n[a] for a in S]) @ _sub(cov, S) @ np.array([-n[a] for a in S]))
+            vl = np.array([n[a] for a in L])
+            vs = np.array([-n[a] for a in S])
+            rl = math.sqrt(vl @ _sub(cov, L) @ vl)
+            rs = math.sqrt(vs @ _sub(cov, S) @ vs)
             lo = max(DOLLAR_LO * ds / dl, (1 / RATIO_MAX) * rs / rl)
             hi = min(DOLLAR_HI * ds / dl, RATIO_MAX * rs / rl)
             if lo > hi:
@@ -300,17 +321,11 @@ def intraday_repair(n: dict, cov: Cov, E: float, insts: dict[str, Inst]) -> Repa
                 n = {a: (v * a_ if v > 0 else v) for a, v in n.items()}
             elif a_ > 1:
                 n = {a: (v / a_ if v < 0 else v) for a, v in n.items()}
+            n = tidy(n)
+            if n is None:
+                return RepairResult("EXIT_ALL", {})
         # (3) beta again
         bn = sum(v * float(cov.beta[a]) for a, v in n.items())
         if abs(bn) > BETA_LIMIT * E:
             n = {a: v * BETA_LIMIT * E / abs(bn) for a, v in n.items()}
-        # (4) rounding and sub-minimum exits; repeat until stable
-        rn = _drop_small(_round(n, insts), insts)
-        L = [a for a in rn if rn[a] > 0]
-        S = [a for a in rn if rn[a] < 0]
-        if len(L) < K_MIN or len(S) < K_MIN:
-            return RepairResult("EXIT_ALL", {})
-        if len(rn) == len(n) and checks(rn, L, S, cov, E, 0.0)["ok"]:
-            return RepairResult("OK", rn)
-        n = rn
     return RepairResult("EXIT_ALL", {})

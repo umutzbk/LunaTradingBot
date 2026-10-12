@@ -125,7 +125,20 @@ def test_h3_forward_fill_walks_the_first_book_after_the_decision():
     assert f.ts == T + 5 * M and f.px == pytest.approx((100.1 + 100.3) / 2)  # not the book before t
 
 
-def test_reader_parses_collector_envelopes(tmp_path):
+@pytest.fixture
+def fwd_repo(tmp_path, monkeypatch):
+    """A code repo whose freeze record has T_F <= T and whose holdout is opened (forward reads allowed)."""
+    from luna.v6 import guard
+
+    repo = tmp_path / "repo"
+    rec = repo / guard.FREEZE_RECORD_REL
+    rec.parent.mkdir(parents=True)
+    rec.write_text(json.dumps({"review_pass_at": "2026-11-29T12:00:00Z", "T_F": "2026-12-01T00:00:00Z"}), encoding="utf-8")
+    monkeypatch.setattr(guard, "holdout_opened", lambda repo=None: True)
+    return repo
+
+
+def test_reader_parses_collector_envelopes(tmp_path, fwd_repo):
     raw = tmp_path / "raw"
     def put(source, recs):
         d = raw / source / "date=2026-12-01"
@@ -142,7 +155,7 @@ def test_reader_parses_collector_envelopes(tmp_path):
         "a": ["100.2", "1", "1.0"], "b": ["100.0", "1", "1.0"], "v": ["10", "200"], "p": ["100", "101"]}}}}])
     put("spot_depth", [{"recv_ts": rt, "ok": True, "params": {"pair": "ETHUSD"}, "payload": {"result": {"ETHUSD": {
         "asks": [["100.2", "5", 1]], "bids": [["100.0", "6", 1]]}}}}])
-    s = fx.read_streams(raw, T, T + pd.Timedelta("1h"), ["ETH"])
+    s = fx.read_streams(raw, T, T + pd.Timedelta("1h"), ["ETH"], repo=fwd_repo)
     assert s.fut_ticks["ETH"].latest(T + M).mid == pytest.approx(100.0)
     assert s.fut_book["ETH"].latest(T + M).asks == ((100.1, 4.0),)
     assert s.spot_ticks["ETH"].latest(T + M).vol_quote == pytest.approx(200 * 101)
@@ -158,7 +171,7 @@ def test_coverage_marks_days_below_ninety_percent():
     assert cov["share"].iloc[0] == pytest.approx(81 / 96) and not cov["evaluable"].iloc[0]
 
 
-def test_forward_funding_known_at_is_the_first_receive_time(tmp_path):
+def test_forward_funding_known_at_is_the_first_receive_time(tmp_path, fwd_repo):
     raw = tmp_path / "raw"
     d = raw / "fut_funding" / "date=2026-12-01"
     d.mkdir(parents=True)
@@ -168,7 +181,7 @@ def test_forward_funding_known_at_is_the_first_receive_time(tmp_path):
                              "payload": {"rates": rows}}) + "\n")
         fh.write(json.dumps({"recv_ts": "2026-12-01T01:10:00Z", "ok": True, "params": {"symbol": "PF_ETHUSD"},
                              "payload": {"rates": [{**rows[0], "relativeFundingRate": 9.0}]}}) + "\n")
-    p = fx.funding_from_collector(raw, T, T + pd.Timedelta("2h"), ["ETH"])
+    p = fx.funding_from_collector(raw, T, T + pd.Timedelta("2h"), ["ETH"], repo=fwd_repo)
     assert p.abs_rate("ETH", T, T + pd.Timedelta("1h")) != p.abs_rate("ETH", T, T + pd.Timedelta("1h"))  # NaN: not received
     assert p.abs_rate("ETH", T, T + pd.Timedelta("65min")) == pytest.approx(0.01)
     assert p.rel.loc[T, "ETH"] == pytest.approx(1e-5)  # the later revision is ignored

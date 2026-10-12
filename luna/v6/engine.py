@@ -1,21 +1,26 @@
 """V6 replay engine for H3 (spec §3 accounting, §5 H3). One engine for historical and forward
 markets: the market prices a fill at the decision and the engine books it at the fill's own
-timestamp (historical: t + 15m).
+timestamp (historical: t + 15m; forward: the first book snapshot after the decision).
 
 Per 15-minute tick t, in this order:
  1. accrue funding for the quarter [t - 15m, t) with the position held during it;
- 2. settle the hourly period that ended at t (USD per unit visible at t; missing -> 0, counted);
- 3. book the fills whose timestamp is t;
+ 2. settle the hourly period that ended at t (USD per unit visible at t; missing -> 0, counted:
+    unknown funding for a held period makes the run an INVALID RUN, S-DATA-1);
+ 3. book the fills whose timestamp is <= t;
  4. mark equity E_t = cash + sum q * mid(t);
  5. at 00:00 close the previous day and reset the R3 day start;
+ -- the rest only when the market has a fresh snapshot at t (S-DATA-5; historical: always) --
  6. R4: E_t <= 0.85 * peak -> exit everything, no re-entry for the rest of the run;
  7. R3: E_t <= 0.98 * day start -> no entries or growth until the next 00:00;
  8. leg stop (15 % adverse from the position's average entry mid, 24 h cooldown) and V5
     ineligibility exits (two consecutive ineligible ticks);
- 9. S-H3-10 repair after an intraday exit was booked;
-10. at 00:00 (t <= end - 15m): the daily H3 decision (S-H3-1 ... S-H3-9, S-H3-12);
+ 9. S-H3-10 repair after any intraday exit was booked;
+10. the daily decision: due at 00:00, made at the first fresh tick within 6 h, else skipped;
 11. the 24 h infeasible clock and the 24 h missing-forecast exit.
 At the end: terminal unwind (S-ACC-4) at mid(end) with the decision-window spread.
+
+``invariant_mode`` (blind development runs only, S-GUARD-2): R4, R3 and leg stops are off so that
+no reported mechanical invariant depends on performance; never used for an evaluation.
 """
 
 from __future__ import annotations
@@ -29,7 +34,7 @@ import pandas as pd
 from luna.v6 import book as bk
 from luna.v6 import riskmodel as rm
 from luna.v6.forecast import GateRecord, H2a, ModelWarmup
-from luna.v6.market import Fill, HistMarket
+from luna.v6.market import FALLBACK_FULL, FUT_TAKER, SLIP, HistMarket
 from luna.v6.spec import constants
 
 BAR = pd.Timedelta("15min")
@@ -48,11 +53,41 @@ LEG_STOP = _H3["leg_stop_frac"]
 COOLDOWN = pd.Timedelta(hours=_H3["stop_cooldown_hours"])
 GRACE = pd.Timedelta(hours=_H3["infeasible_grace_hours"])
 MISSING_FC = pd.Timedelta(hours=_K["h2a"]["missing_forecast_exit_hours"])
-
+DECISION_GAP = pd.Timedelta(hours=_H3["forward_rebalance_gap_hours"])
+INTRADAY_EXITS = ("stop", "inelig", "missing_fc")
 
 FILL_COLS = ["decision_ts", "ts", "asset", "leg", "dq", "px", "mid", "mid_decision", "half", "fee", "spread_slip",
-             "fallback", "intent", "notional"]
+             "fallback", "intent", "notional", "maker"]
 SETT_COLS = ["period_start", "ts", "asset", "amount", "known", "qty_hours"]
+
+
+def fill_row(f, intent: str) -> dict:
+    return {"decision_ts": f.decision_ts, "ts": f.ts, "asset": f.asset, "leg": f.leg, "dq": f.dq, "px": f.px,
+            "mid": f.mid, "mid_decision": f.mid_decision, "half": f.half, "fee": f.fee, "spread_slip": f.spread_slip,
+            "fallback": f.fallback, "intent": intent, "notional": abs(f.dq) * f.mid, "maker": bool(f.maker)}
+
+
+def fills_frame(rows: list) -> pd.DataFrame:
+    F = pd.DataFrame(rows, columns=FILL_COLS)
+    F["maker"] = F["maker"].astype(bool)
+    return F
+
+
+def terminal_cost(m, a: str, q: float, end: pd.Timestamp, last_mid: float, leg: str = "perp") -> tuple[float, float, float]:
+    """(mid, fee, spread_slip) of the terminal unwind; without a mid at the end the last mid is used and
+    the costs are priced on it (taker fee, 10 bps fallback spread, slip)."""
+    mid, fee, ss = m.unwind_cost(a, q, end, leg=leg)
+    if math.isfinite(mid):
+        return mid, fee, ss
+    mid = last_mid
+    if not math.isfinite(mid) or q == 0:
+        return mid, 0.0, 0.0
+    from luna.v6.market import SPOT_TAKER
+
+    rate = SPOT_TAKER if leg == "spot" else FUT_TAKER
+    half = FALLBACK_FULL / 2 if leg == "perp" else max(FALLBACK_FULL, 0.0010)
+    px = mid * (1 - math.copysign(1, q) * half) * (1 - math.copysign(1, q) * SLIP)
+    return mid, rate * abs(q) * px, abs(q) * abs(px - mid)
 
 
 @dataclass
@@ -97,9 +132,10 @@ class _State:
     peak: float = -math.inf
     day_start: float = math.nan
     last_cov: rm.Cov | None = None
-    repair_due: bool = False
     last_mid: dict = field(default_factory=dict)
     retry: list = field(default_factory=list)
+    decision_due: pd.Timestamp | None = None
+    repair_due: bool = False
 
 
 class H3Engine:
@@ -109,8 +145,13 @@ class H3Engine:
             raise ValueError("H3 uses the 168 h H2a model")
         self.m, self.model, self.prices, self.vol, self.insts, self.cfg = market, model, prices, vol, insts, cfg
         self.E0 = equity0
+        self._fl_cache: tuple | None = None
 
     # --- helpers -----------------------------------------------------------------------------------
+    def _fresh(self, t: pd.Timestamp) -> bool:
+        f = getattr(self.m, "has_fresh", None)
+        return True if f is None else bool(f(t))
+
     def _mid(self, st: _State, a: str, t: pd.Timestamp) -> float:
         v = self.m.mid(a, t)
         if math.isfinite(v):
@@ -125,6 +166,11 @@ class H3Engine:
         i = self.insts[a]
         return bk.Inst(self.m.mid(a, t), float(i["step"]), float(i["min_qty"]))
 
+    def _fl(self, t: pd.Timestamp) -> pd.Series:
+        if self._fl_cache is None or self._fl_cache[0] != t:
+            self._fl_cache = (t, self.m.funding.fl(t, 720, 648))
+        return self._fl_cache[1]
+
     def _holding_ineligible(self, a: str, t: pd.Timestamp) -> bool:
         mid = self.m.mid(a, t)
         if not math.isfinite(mid):
@@ -132,7 +178,7 @@ class H3Engine:
         half, _ = self.m.decision_half(a, t)
         vol = self.m.volume24(a, t)
         newest = self.m.funding.newest_end(a, t) if a in self.m.funding.assets else None
-        fl = self.m.funding.fl(t, 720, 648).get(a, np.nan) if a in self.m.funding.assets else np.nan
+        fl = self._fl(t).get(a, np.nan) if a in self.m.funding.assets else np.nan
         return (2 * half > EXIT_SPREAD or not (vol >= MIN_VOLUME) or newest is None
                 or t - newest > MAX_FUNDING_AGE or not math.isfinite(fl))
 
@@ -150,6 +196,10 @@ class H3Engine:
         if newest is None or t - newest > MAX_FUNDING_AGE:
             return False
         return rm.has_history(self.prices, a, t)
+
+    def _target_pos(self, st: _State, a: str) -> float:
+        """Position after the orders already sent (pending fills included)."""
+        return st.pos.get(a, 0.0) + sum(f.dq for f, _ in st.pending if f.asset == a)
 
     def _order(self, st: _State, a: str, dq: float, t: pd.Timestamp, intent: str) -> None:
         if not dq:
@@ -170,20 +220,19 @@ class H3Engine:
                 self._order(st, a, -q, t, intent)
 
     # --- run ---------------------------------------------------------------------------------------
-    def run(self, start: pd.Timestamp, end: pd.Timestamp) -> RunResult:
+    def run(self, start: pd.Timestamp, end: pd.Timestamp, invariant_mode: bool = False) -> RunResult:
         start, end = pd.Timestamp(start), pd.Timestamp(end).floor("15min")
         st = _State(cash=self.E0)
         self.counters = {"unfilled": 0, "funding_unknown": 0, "kill": 0, "liquidation": 0, "r3_days": 0,
                          "stops": 0, "inelig_exits": 0, "infeasible_decisions": 0, "infeasible_exit_all": 0,
                          "repairs": 0, "repair_exit_all": 0, "warmup_decisions": 0, "decisions": 0,
-                         "band_repaired": 0, "missing_fc_exits": 0}
+                         "band_repaired": 0, "missing_fc_exits": 0, "stale_ticks": 0, "deferred_decisions": 0,
+                         "skipped_decision_days": 0}
         fills, sett, ticks, decisions, events, gates = [], [], [], [], [], []
         st.day_start = self.E0
         t = start
         while t <= end:
-            # equity before any event stamped t (the day-end valuation, S-ACC-3)
             E_pre = self._equity(st, t)
-            # 1-2 funding
             if t > start:
                 p = (t - BAR).floor("h")
                 for a, q in st.pos.items():
@@ -191,9 +240,9 @@ class H3Engine:
                         st.acc[(a, p)] = st.acc.get((a, p), 0.0) + q * 0.25
                 if t.minute == 0:
                     pe = t - HOUR
+                    sp = getattr(self.m, "settlement", None) or self.m.funding
                     for key in [k for k in st.acc if k[1] == pe]:
                         a = key[0]
-                        sp = getattr(self.m, "settlement", None) or self.m.funding
                         rate = sp.abs_rate(a, pe, t) if a in sp.assets else math.nan
                         if not math.isfinite(rate):
                             self.counters["funding_unknown"] += 1
@@ -204,8 +253,6 @@ class H3Engine:
                         sett.append({"period_start": pe, "ts": t, "asset": a, "amount": amt,
                                      "known": math.isfinite(rate), "qty_hours": st.acc[key]})
                         del st.acc[key]
-            # 3 fills
-            intraday_exit_booked = False
             due = [x for x in st.pending if x[0].ts <= t]
             st.pending = [x for x in st.pending if x[0].ts > t]
             for f, intent in due:
@@ -222,14 +269,11 @@ class H3Engine:
                 if q1 == 0:
                     st.pos.pop(f.asset, None)
                     st.entry.pop(f.asset, None)
-                st.exiting.discard(f.asset)
-                fills.append({"decision_ts": f.decision_ts, "ts": f.ts, "asset": f.asset, "leg": f.leg, "dq": f.dq,
-                              "px": f.px, "mid": f.mid, "mid_decision": f.mid_decision, "half": f.half, "fee": f.fee,
-                              "spread_slip": f.spread_slip, "fallback": f.fallback, "intent": intent,
-                              "notional": abs(f.dq) * f.mid})
-                if intent in ("stop", "inelig"):
-                    intraday_exit_booked = True
-            # 4 equity
+                if not any(x[0].asset == f.asset for x in st.pending):
+                    st.exiting.discard(f.asset)
+                fills.append(fill_row(f, intent))
+                if intent in INTRADAY_EXITS:
+                    st.repair_due = True
             E = self._equity(st, t)
             gross = sum(abs(q * self._mid(st, a, t)) for a, q in st.pos.items())
             ticks.append({"t": t, "equity_pre": E_pre, "equity": E, "gross": gross,
@@ -237,28 +281,33 @@ class H3Engine:
                           "n_short": sum(q < 0 for q in st.pos.values())})
             if E <= 0:
                 self.counters["liquidation"] += 1
-            # 5 day roll
             if t.hour == 0 and t.minute == 0 and t > start:
                 st.r3_blocked = False
                 st.day_start = E
-            # 6 R4
+            if t.hour == 0 and t.minute == 0 and t <= end - BAR:
+                st.decision_due = t
+            fresh = self._fresh(t)
+            if not fresh:
+                self.counters["stale_ticks"] += 1
+                if st.decision_due is not None and t - st.decision_due > DECISION_GAP:
+                    self.counters["skipped_decision_days"] += 1
+                    st.decision_due = None
+                t += BAR
+                continue
             st.peak = max(st.peak, E)
-            if not st.killed and E <= (1 - KILL_DD) * st.peak:
+            if not invariant_mode and not st.killed and E <= (1 - KILL_DD) * st.peak:
                 st.killed = True
                 self.counters["kill"] += 1
                 events.append({"t": t, "event": "kill", "equity": E, "peak": st.peak})
                 if t < end:
                     self._exit_all(st, t, "kill")
-            # 7 R3
-            if not st.r3_blocked and E <= (1 - DAILY_LOSS) * st.day_start:
+            if not invariant_mode and not st.r3_blocked and E <= (1 - DAILY_LOSS) * st.day_start:
                 st.r3_blocked = True
                 self.counters["r3_days"] += 1
-            # retries of exits that found no fill
             retry, st.retry = st.retry, []
             for a, dq, intent in retry:
-                if st.pos.get(a):
+                if st.pos.get(a) and a not in st.exiting:
                     self._order(st, a, -st.pos[a], t, intent)
-            # 8 stops and ineligibility
             inelig_now = set()
             if t < end:
                 for a, q in list(st.pos.items()):
@@ -266,7 +315,8 @@ class H3Engine:
                         continue
                     mid = self.m.mid(a, t)
                     e = st.entry.get(a)
-                    if math.isfinite(mid) and e and (1 if q > 0 else -1) * (mid - e) / e <= -LEG_STOP:
+                    if (not invariant_mode and math.isfinite(mid) and e
+                            and (1 if q > 0 else -1) * (mid - e) / e <= -LEG_STOP):
                         self.counters["stops"] += 1
                         st.cooldown[a] = t + COOLDOWN
                         events.append({"t": t, "event": "stop", "asset": a})
@@ -279,13 +329,21 @@ class H3Engine:
                             events.append({"t": t, "event": "ineligible_exit", "asset": a})
                             self._order(st, a, -q, t, "inelig")
             st.inelig_prev = inelig_now
-            # 9 intraday repair
-            if intraday_exit_booked and not st.killed and t < end and st.last_cov is not None and st.pos:
+            if st.repair_due and not st.killed and t < end and st.last_cov is not None and st.pos:
+                st.repair_due = False
                 self._repair(st, t, E, events)
-            # 10 daily decision
-            if t.hour == 0 and t.minute == 0 and t <= end - BAR and not st.killed:
-                self._decide(st, t, E, decisions, events, gates)
-            # 11 clocks
+            if st.decision_due is not None:
+                if t - st.decision_due > DECISION_GAP:
+                    self.counters["skipped_decision_days"] += 1
+                    st.decision_due = None
+                elif t <= end - BAR:
+                    if t != st.decision_due:
+                        self.counters["deferred_decisions"] += 1
+                    if st.killed:
+                        self._gate_only(t, gates)
+                    else:
+                        self._decide(st, t, E, decisions, events, gates)
+                    st.decision_due = None
             if t < end and not st.killed:
                 if st.infeasible_since is not None and t - st.infeasible_since > GRACE and not st.infeasible_exited:
                     st.infeasible_exited = True
@@ -297,23 +355,20 @@ class H3Engine:
                         self.counters["missing_fc_exits"] += 1
                         self._order(st, a, -st.pos[a], t, "missing_fc")
             t += BAR
-        # terminal unwind at the end (S-ACC-4)
         for a, q in list(st.pos.items()):
             if not q:
                 continue
-            mid, fee, ss = self.m.unwind_cost(a, q, end)
-            if not math.isfinite(mid):
-                mid = st.last_mid.get(a, math.nan)
+            mid, fee, ss = terminal_cost(self.m, a, q, end, st.last_mid.get(a, math.nan))
             st.cash += q * mid - fee - ss
-            fills.append({"decision_ts": end, "ts": end, "asset": a, "leg": "perp", "dq": -q, "px": mid - math.copysign(ss / abs(q), q),
-                          "mid": mid, "mid_decision": mid, "half": math.nan, "fee": fee, "spread_slip": ss,
-                          "fallback": False, "intent": "terminal", "notional": abs(q) * mid})
-            st.pos[a] = 0.0
+            fills.append({"decision_ts": end, "ts": end, "asset": a, "leg": "perp", "dq": -q,
+                          "px": mid - math.copysign(ss / abs(q), q), "mid": mid, "mid_decision": mid, "half": math.nan,
+                          "fee": fee, "spread_slip": ss, "fallback": False, "intent": "terminal",
+                          "notional": abs(q) * mid, "maker": False})
         st.pos = {}
         E_end = st.cash
         ticks.append({"t": end, "equity_pre": E_end, "equity": E_end, "gross": 0.0, "n_long": 0, "n_short": 0,
                       "terminal": True})
-        F = pd.DataFrame(fills, columns=FILL_COLS)
+        F = fills_frame(fills)
         S = pd.DataFrame(sett, columns=SETT_COLS)
         T = pd.DataFrame(ticks)
         daily = daily_table(F, S, T, start, end, self.E0)
@@ -323,11 +378,14 @@ class H3Engine:
     # --- intraday repair (S-H3-10) -----------------------------------------------------------------
     def _repair(self, st: _State, t: pd.Timestamp, E: float, events: list) -> None:
         n = {a: q * self._mid(st, a, t) for a, q in st.pos.items() if q and a not in st.exiting}
+        if not n:
+            return
         insts = {a: self._inst(a, t) for a in n}
         if any(not math.isfinite(i.mid) for i in insts.values()):
             return
         self.counters["repairs"] += 1
-        r = bk.intraday_repair(n, st.last_cov, E, insts)
+        step_n = max(i.qty_step * i.mid for i in insts.values())
+        r = bk.intraday_repair(n, st.last_cov, E, insts, step_n)
         if r.status == "EXIT_ALL":
             self.counters["repair_exit_all"] += 1
             events.append({"t": t, "event": "repair_exit_all"})
@@ -342,6 +400,15 @@ class H3Engine:
                 self._order(st, a, -st.pos[a], t, "repair")
 
     # --- daily decision (S-H3-1 ... S-H3-9, S-H3-12) -----------------------------------------------
+    def _gate_only(self, t: pd.Timestamp, gates: list) -> None:
+        """After a kill the strategy stops, but the H2a gate sample keeps its PIT records."""
+        try:
+            fc = self.model.forecast(t)
+        except ModelWarmup:
+            return
+        elig = [a for a in self.m.assets if a in fc.index and self.eligible(a, t, fc)]
+        gates.append(GateRecord(t, elig, fc.copy()))
+
     def _decide(self, st: _State, t: pd.Timestamp, E: float, decisions: list, events: list, gates: list) -> None:
         self.counters["decisions"] += 1
         try:
@@ -365,7 +432,7 @@ class H3Engine:
         gates.append(GateRecord(t, elig, fc.copy()))
         s = fc[elig]
         cost = pd.Series({a: self.m.decision_cost(a, t) for a in set(elig) | set(held)})
-        blocked = {a for a, until in st.cooldown.items() if until > t}
+        blocked = {a for a, until in st.cooldown.items() if until > t} | set(st.exiting)
         if st.r3_blocked:
             blocked |= set(elig)
         sel = bk.select(s, held, cost, self.cfg.k, blocked)
@@ -383,7 +450,7 @@ class H3Engine:
             return infeasible("k' < 3")
         if len(sel.long) < bk.K_MIN or len(sel.short) < bk.K_MIN:
             return infeasible("entry rule left fewer than 3 legs on a side")
-        names = list(dict.fromkeys(sel.long + sel.short + list(held) + ["BTC"]))
+        names = list(dict.fromkeys(list(elig) + list(held) + ["BTC"]))  # S-H3-6: eligible + held + BTC
         try:
             cov = rm.covariance(self.prices, self.vol, names, t)
         except rm.CovarianceUnavailable as e:
@@ -395,7 +462,7 @@ class H3Engine:
         rec["build"] = {k: v for k, v in b.diag.items() if k != "post"}
         if b.status != "OK":
             return infeasible(f"build: {b.reason}")
-        held_n = {a: st.pos[a] * insts[a].mid for a in held if a in insts}
+        held_n = {a: self._target_pos(st, a) * insts[a].mid for a in held if a in insts}
         step_n = max(insts[a].qty_step * insts[a].mid for a in b.n)
         band = bk.apply_band(b.n, held_n, sel.long, sel.short, cov, E, step_n)
         if band.status != "OK":
@@ -403,7 +470,9 @@ class H3Engine:
         self.counters["band_repaired"] += int(band.repaired)
         st.infeasible_since, st.infeasible_exited, st.last_cov = None, False, cov
         for a, v in band.n.items():
-            q0 = st.pos.get(a, 0.0)
+            if a in st.exiting:
+                continue
+            q0 = self._target_pos(st, a)
             q1 = insts[a].round_qty(v) if v else 0.0
             if st.r3_blocked and abs(q1) > abs(q0):
                 q1 = q0  # R3: no entry, no growth

@@ -123,3 +123,12 @@ def test_invalid_wins_over_valid_conditions():
     assert fc.classify(True, 1.3, (1.26, 1.4), 1.0, (0.2, 2.0)) == "INVALID"
     assert fc.classify(True, 1.3, (0.7, 1.9), 1.0, (0.2, 2.0)) == "INCONCLUSIVE"
     assert fc.classify(False, 1.0, (0.9, 1.1), 1.0, (0.2, 2.0)) == "INCONCLUSIVE"
+
+
+def test_bootstrap_replicates_with_an_undefined_ratio_are_dropped_and_counted():
+    panel, recs, cols, levels = constant_world(ratio=1.0)
+    end = T0 + 130 * DAY
+    assert fc.gate(panel, recs, kind="H3", k=4, h=168, window_end=end, B=500).n_boot_dropped == 0
+    sparse = [fc.GateRecord(r.s, r.eligible, r.fhat if i < 3 else r.fhat * 0.0) for i, r in enumerate(recs)]
+    g = fc.gate(panel, sparse, kind="H3", k=4, h=168, window_end=end, B=500)
+    assert 0 < g.n_boot_dropped < 500

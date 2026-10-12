@@ -37,7 +37,9 @@ def market(inp: Inputs, row: str, start: pd.Timestamp) -> HistMarket:
                       spreads=inp.spreads, spot=inp.spot, spot_volume_usd=inp.spot_volume_usd, **kw)
 
 
-def run_config(inp: Inputs, name: str, start: pd.Timestamp, end: pd.Timestamp, rows=None, models=None) -> dict:
+def run_config(inp: Inputs, name: str, start: pd.Timestamp, end: pd.Timestamp, rows=None, models=None,
+               invariant_mode: bool = False) -> dict:
+    """``invariant_mode`` only for blind development runs (risk exits off; never evaluated)."""
     kind, param = CONFIGS[name]
     models = models or {}
     out = {}
@@ -46,14 +48,14 @@ def run_config(inp: Inputs, name: str, start: pd.Timestamp, end: pd.Timestamp, r
         vol = ewma_vol(inp.prices)
         for row in rows or H3_ROWS:
             eng = H3Engine(market(inp, row, start), model, inp.prices, vol, inp.insts, H3Config(name, param, row))
-            out[row] = eng.run(start, end)
+            out[row] = eng.run(start, end, invariant_mode=invariant_mode)
     else:
         model = models.get(720) or H2a(inp.funding, 720)
         for row in rows or H1_ROWS:
             if row == "S-MAKER-BOUND":
                 continue
             eng = H1Engine(market(inp, row, start), model, inp.insts, H1Config(name, param, row))
-            out[row] = eng.run(start, end)
+            out[row] = eng.run(start, end, invariant_mode=invariant_mode)
         if (rows is None or "S-MAKER-BOUND" in rows) and "PRIMARY" in out:
             out["S-MAKER-BOUND"] = reprice_maker_bound(out["PRIMARY"])
     return out
@@ -69,6 +71,18 @@ def evaluate_config(inp: Inputs, name: str, runs: dict, env: str, window_end: pd
     return ev, g
 
 
+def apply_audit(evals: dict, audit: dict | None) -> None:
+    """A failed (or missing) holdout Stage 0 audit makes every config an INVALID RUN (S-GUARD-1)."""
+    if audit is None:
+        msg = ["Stage 0 audit missing"]
+    elif not audit.get("pass"):
+        msg = [f"Stage 0 audit FAIL: {f}" for f in audit.get("failures", [])] or ["Stage 0 audit FAIL"]
+    else:
+        return
+    for ev in evals.values():
+        ev.invalid_run.extend(msg)
+
+
 def run_holdout(inp: Inputs, auth: guard.HoldoutAuthorization) -> dict:
     """The single holdout run (S-STAT-O). Not executed before the user's explicit approval."""
     if not isinstance(auth, guard.HoldoutAuthorization):
@@ -80,6 +94,7 @@ def run_holdout(inp: Inputs, auth: guard.HoldoutAuthorization) -> dict:
     for name in CONFIGS:
         runs[name] = run_config(inp, name, start, end, models=models)
         evals[name], gates[name] = evaluate_config(inp, name, runs[name], "holdout", end, stats6.B_HOLDOUT)
+    apply_audit(evals, getattr(inp, "audit", None))
     from luna.v6.v5ref import v5_reference
 
     refs = {"cash": {"net": 0.0, "verdict_free": True}, "V5": v5_reference(inp, auth)}

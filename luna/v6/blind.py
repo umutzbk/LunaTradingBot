@@ -91,7 +91,6 @@ def _h1_invariants(r) -> dict:
     return {
         "decision_share": {"model_warmup": warm / n},
         "entries": int(r.counters.get("entries", 0)),
-        "skipped_for_cash": int(r.counters.get("skipped_cash", 0)),
         "skipped_below_min_qty": int(r.counters.get("skipped_size", 0)),
         "unmatched_hedge_qty_entries": mism,
         "pairs_held_per_tick": _q(r.ticks["n_pairs"].to_numpy(float)) if "n_pairs" in r.ticks else {"n": 0},
@@ -147,7 +146,7 @@ def blind_dev_run(frozen_root: Path, start: pd.Timestamp = DEV_START, end: pd.Ti
               "pit_checks": _pit_checks(inp, start, end), "configs": {}}
     models = {168: H2a(inp.funding, 168), 720: H2a(inp.funding, 720)}
     for name, (kind, _) in CONFIGS.items():
-        r = run_config(inp, name, start, end, rows=("PRIMARY",), models=models)["PRIMARY"]
+        r = run_config(inp, name, start, end, rows=("PRIMARY",), models=models, invariant_mode=True)["PRIMARY"]
         inv = _h3_invariants(r) if kind == "H3" else _h1_invariants(r)
         inv["accounting_identities"] = _identities(r)
         report["configs"][name] = inv

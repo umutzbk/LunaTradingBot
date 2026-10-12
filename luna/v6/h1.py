@@ -1,11 +1,16 @@
-"""H1 historical replay (spec §6): qty-matched spot long + perp short, taker both legs at t + 15m
-(S-H1-5), Kraken public Tier 1 fees, PIT perp spread, the frozen spot-spread assumption.
+"""H1 replay (spec §6): qty-matched spot long + perp short. Historical: taker both legs at t + 15m
+(S-H1-5), Kraken public Tier 1 fees, PIT perp spread, the frozen spot-spread assumption. Forward:
+the market's S-H1-X pair execution.
 
 Accounts: ``usd`` (real USD: spot purchases/sales, fees of both legs, funding), the spot inventory
 (valued at the spot mid) and the perp ledger (``pvc`` = -sum dq * px; perp P&L = pvc + q * mid).
-E = usd + sum spot_q * spot_mid + pvc + sum perp_q * perp_mid. Perp collateral = perp notional at
-entry (1x), reserved from usd; a new entry needs 2N + entry costs <= usd - reserved (S-H1-2).
+E = usd + sum spot_q * spot_mid + pvc - sum perp_short_q * perp_mid. Perp collateral = perp notional
+at entry (1x), reserved from usd; a new entry needs 2N + N * entry_cost <= usd - reserved (S-H1-2).
+The perp short quantity is kept separately (a forward partial hedge can differ from the spot qty).
 Historical H1 can never be FINAL GO (the ladder caps the holdout at ADVANCE; forward needs S-H1-X).
+
+``invariant_mode`` (blind development runs only): R4, R3, the combined stop and the hedge reset are
+off so that no reported mechanical invariant depends on performance.
 """
 
 from __future__ import annotations
@@ -16,9 +21,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from luna.v6 import riskmodel as rm
-from luna.v6.engine import FILL_COLS, SETT_COLS, RunResult, daily_table
-from luna.v6.forecast import ModelWarmup
+from luna.v6.engine import SETT_COLS, RunResult, daily_table, fill_row, fills_frame, terminal_cost
+from luna.v6.forecast import GateRecord, ModelWarmup
 from luna.v6.market import HistMarket
 from luna.v6.spec import constants
 
@@ -41,6 +45,7 @@ KILL_DD = _COMMON["risk_max_drawdown_kill"]
 DAILY_LOSS = 0.02
 EXIT_SPREAD = 0.0040
 MISSING_FC = pd.Timedelta(hours=_K["h2a"]["missing_forecast_exit_hours"])
+DECISION_GAP = pd.Timedelta(hours=_K["h3"]["forward_rebalance_gap_hours"])
 H = 720
 
 
@@ -53,7 +58,8 @@ class H1Config:
 
 @dataclass
 class _Pos:
-    q: float  # spot qty (> 0); perp qty = -q
+    q: float  # spot qty (> 0)
+    pq: float  # perp short qty (> 0); the perp position is -pq
     spot_entry: float
     perp_entry: float
     collateral: float
@@ -65,7 +71,7 @@ class _St:
     pvc: float = 0.0
     pos: dict = field(default_factory=dict)
     acc: dict = field(default_factory=dict)
-    pending: list = field(default_factory=list)  # (fills tuple, intent)
+    pending: list = field(default_factory=list)  # ((spot fills, perp fills), intent)
     exiting: set = field(default_factory=set)
     cooldown: dict = field(default_factory=dict)
     inelig_prev: set = field(default_factory=set)
@@ -76,6 +82,7 @@ class _St:
     peak: float = -math.inf
     day_start: float = math.nan
     last: dict = field(default_factory=dict)
+    decision_due: pd.Timestamp | None = None
 
 
 class H1Engine:
@@ -83,11 +90,15 @@ class H1Engine:
                  equity0: float = float(_COMMON["capital_usd"])) -> None:
         if model.h != H:
             raise ValueError("H1 uses the 720 h H2a model")
-        if market.spot is None:
-            raise ValueError("H1 needs spot bars")
+        if getattr(market, "spot", None) is None and not hasattr(market, "pair_fill"):
+            raise ValueError("H1 needs spot prices")
         self.m, self.model, self.insts, self.cfg, self.E0 = market, model, insts, cfg, equity0
 
     # --- valuation ---------------------------------------------------------------------------------
+    def _fresh(self, t: pd.Timestamp) -> bool:
+        f = getattr(self.m, "has_fresh", None)
+        return True if f is None else bool(f(t))
+
     def _px(self, st: _St, a: str, t: pd.Timestamp, leg: str) -> float:
         v = self.m.spot_mid(a, t) if leg == "spot" else self.m.mid(a, t)
         if math.isfinite(v):
@@ -98,17 +109,17 @@ class H1Engine:
     def equity(self, st: _St, t: pd.Timestamp) -> float:
         e = st.usd + st.pvc
         for a, p in st.pos.items():
-            e += p.q * self._px(st, a, t, "spot") - p.q * self._px(st, a, t, "perp")
+            e += p.q * self._px(st, a, t, "spot") - p.pq * self._px(st, a, t, "perp")
         return e
 
     def rt(self, a: str, t: pd.Timestamp) -> float:
         """All-in taker round trip per unit of hedged notional known at t (two legs, in and out)."""
         return 2 * (self.m.decision_cost(a, t, "spot") + self.m.decision_cost(a, t, "perp"))
 
-    def _qty_step(self, a: str) -> tuple[float, float]:
+    def _qty_step(self, a: str) -> tuple[float, float, float]:
+        """(step = max(spot step, perp step), spot minimum, perp minimum) (S-H1-2)."""
         i = self.insts[a]
-        step = max(i["perp"]["step"], i["perp"]["min_qty"], i["spot"]["step"], i["spot"]["min_qty"])
-        return step, max(i["perp"]["min_qty"], i["spot"]["min_qty"])
+        return max(i["spot"]["step"], i["perp"]["step"]), i["spot"]["min_qty"], i["perp"]["min_qty"]
 
     # --- eligibility -------------------------------------------------------------------------------
     def eligible(self, a: str, t: pd.Timestamp, fc: pd.Series | None) -> bool:
@@ -133,11 +144,11 @@ class H1Engine:
         return (2 * half > EXIT_SPREAD or not (self.m.volume24(a, t) >= MIN_VOLUME) or newest is None
                 or t - newest > MAX_FUNDING_AGE or not math.isfinite(fl))
 
-    # --- orders (atomic two-leg) -------------------------------------------------------------------
-    def _pair(self, st: _St, a: str, q: float, t: pd.Timestamp, intent: str) -> bool:
-        """Open (q > 0) or close (q < 0) the pair through the market's pair execution: historical =
-        atomic taker at t + 15m; forward = S-H1-X (maker-first only for the 00:00 economic orders)."""
-        res = self.m.pair_fill(a, q, t, economic=intent in ("open", "exit"))
+    # --- orders --------------------------------------------------------------------------------------
+    def _pair(self, st: _St, a: str, q: float, t: pd.Timestamp, intent: str, perp_q: float | None = None) -> bool:
+        """Open (q > 0) or close (q < 0) through the market's pair execution: historical = atomic taker
+        at t + 15m; forward = S-H1-X (maker-first only for the 00:00 economic orders)."""
+        res = self.m.pair_fill(a, q, t, economic=intent in ("open", "exit"), perp_q=perp_q)
         if res is None or not res[0]:
             self.counters["unfilled_pairs"] += 1
             if intent != "open":
@@ -149,17 +160,21 @@ class H1Engine:
         return True
 
     def _close(self, st: _St, a: str, t: pd.Timestamp, intent: str) -> None:
+        """Any exit closes both legs and starts the 24 h cooldown (S-H1-4)."""
         if a in st.pos and a not in st.exiting:
-            self._pair(st, a, -st.pos[a].q, t, intent)
+            st.cooldown[a] = t + COOLDOWN
+            ps = st.pos[a]
+            self._pair(st, a, -ps.q, t, intent, perp_q=ps.pq)
 
     # --- run ---------------------------------------------------------------------------------------
-    def run(self, start: pd.Timestamp, end: pd.Timestamp) -> RunResult:
+    def run(self, start: pd.Timestamp, end: pd.Timestamp, invariant_mode: bool = False) -> RunResult:
         start, end = pd.Timestamp(start), pd.Timestamp(end).floor("15min")
         st = _St(usd=self.E0)
         st.day_start = self.E0
         self.counters = {"unfilled_pairs": 0, "funding_unknown": 0, "kill": 0, "liquidation": 0, "r3_days": 0,
                          "stops": 0, "hedge_resets": 0, "inelig_exits": 0, "decisions": 0, "warmup_decisions": 0,
-                         "entries": 0, "economic_exits": 0, "missing_fc_exits": 0, "skipped_cash": 0, "skipped_size": 0}
+                         "entries": 0, "economic_exits": 0, "missing_fc_exits": 0, "skipped_cash": 0,
+                         "skipped_size": 0, "stale_ticks": 0, "deferred_decisions": 0, "skipped_decision_days": 0}
         fills, sett, ticks, decisions, events, gates = [], [], [], [], [], []
         t = start
         while t <= end:
@@ -167,11 +182,11 @@ class H1Engine:
             if t > start:
                 p = (t - BAR).floor("h")
                 for a, ps in st.pos.items():
-                    st.acc[(a, p)] = st.acc.get((a, p), 0.0) - ps.q * 0.25  # perp qty = -q
+                    st.acc[(a, p)] = st.acc.get((a, p), 0.0) - ps.pq * 0.25  # perp qty = -pq
                 if t.minute == 0:
                     pe = t - HOUR
+                    sp = getattr(self.m, "settlement", None) or self.m.funding
                     for key in [k for k in st.acc if k[1] == pe]:
-                        sp = getattr(self.m, "settlement", None) or self.m.funding
                         rate = sp.abs_rate(key[0], pe, t)
                         amt = -st.acc[key] * rate if math.isfinite(rate) else 0.0
                         if not math.isfinite(rate):
@@ -180,6 +195,7 @@ class H1Engine:
                         sett.append({"period_start": pe, "ts": t, "asset": key[0], "amount": amt,
                                      "known": math.isfinite(rate), "qty_hours": st.acc[key]})
                         del st.acc[key]
+
             def last_ts(x):
                 return max(f.ts for f in x[0][0] + x[0][1])
 
@@ -188,6 +204,7 @@ class H1Engine:
             for (sfs, pfs), intent in due:
                 a = sfs[0].asset
                 dq = sum(f.dq for f in sfs)
+                dp = sum(f.dq for f in pfs)  # perp: negative opens a short, positive buys back
                 for f in sfs:
                     st.usd -= f.dq * f.px + f.fee
                 for f in pfs:
@@ -196,40 +213,45 @@ class H1Engine:
                 ps = st.pos.get(a)
                 if ps is None and dq > 0:
                     smid = sum(f.mid * f.dq for f in sfs) / dq
-                    pq = -sum(f.dq for f in pfs)
-                    pmid = sum(f.mid * abs(f.dq) for f in pfs) / pq if pq else math.nan
-                    st.pos[a] = _Pos(dq, smid, pmid, pq * pmid)
+                    pq = -dp
+                    pmid = sum(f.mid * abs(f.dq) for f in pfs) / pq if pq > 0 else math.nan
+                    st.pos[a] = _Pos(dq, pq, smid, pmid, pq * pmid if pq > 0 else 0.0)
                 elif ps is not None:
-                    q1 = ps.q + dq
-                    if q1 <= 1e-12:
+                    q1, pq1 = ps.q + dq, ps.pq - dp
+                    if q1 <= 1e-12 and pq1 <= 1e-12:
                         st.pos.pop(a, None)
                     else:
-                        ps.collateral *= q1 / ps.q
-                        ps.q = q1
+                        ps.collateral *= (pq1 / ps.pq) if ps.pq > 0 else 0.0
+                        ps.q, ps.pq = max(q1, 0.0), max(pq1, 0.0)
                 st.exiting.discard(a)
                 for f in sfs + pfs:
-                    fills.append({"decision_ts": f.decision_ts, "ts": f.ts, "asset": a, "leg": f.leg, "dq": f.dq,
-                                  "px": f.px, "mid": f.mid, "mid_decision": f.mid_decision, "half": f.half,
-                                  "fee": f.fee, "spread_slip": f.spread_slip, "fallback": f.fallback,
-                                  "intent": intent, "notional": abs(f.dq) * f.mid})
+                    fills.append(fill_row(f, intent))
             E = self.equity(st, t)
-            hedged = sum(ps.q * self._px(st, a, t, "perp") for a, ps in st.pos.items())
+            hedged = sum(ps.pq * self._px(st, a, t, "perp") for a, ps in st.pos.items())
             ticks.append({"t": t, "equity_pre": E_pre, "equity": E, "gross": hedged, "n_pairs": len(st.pos)})
             for a, ps in st.pos.items():
-                perp_pnl = -ps.q * (self._px(st, a, t, "perp") - ps.perp_entry)
-                if ps.collateral + perp_pnl <= 0:
+                if ps.pq > 0 and ps.collateral - ps.pq * (self._px(st, a, t, "perp") - ps.perp_entry) <= 0:
                     self.counters["liquidation"] += 1
             if t.hour == 0 and t.minute == 0 and t > start:
                 st.r3, st.day_start = False, E
+            if t.hour == 0 and t.minute == 0 and t <= end - BAR:
+                st.decision_due = t
+            if not self._fresh(t):
+                self.counters["stale_ticks"] += 1
+                if st.decision_due is not None and t - st.decision_due > DECISION_GAP:
+                    self.counters["skipped_decision_days"] += 1
+                    st.decision_due = None
+                t += BAR
+                continue
             st.peak = max(st.peak, E)
-            if not st.killed and E <= (1 - KILL_DD) * st.peak:
+            if not invariant_mode and not st.killed and E <= (1 - KILL_DD) * st.peak:
                 st.killed = True
                 self.counters["kill"] += 1
                 events.append({"t": t, "event": "kill"})
                 if t < end:
                     for a in list(st.pos):
                         self._close(st, a, t, "kill")
-            if not st.r3 and E <= (1 - DAILY_LOSS) * st.day_start:
+            if not invariant_mode and not st.r3 and E <= (1 - DAILY_LOSS) * st.day_start:
                 st.r3 = True
                 self.counters["r3_days"] += 1
             retry, st.retry = st.retry, []
@@ -241,17 +263,15 @@ class H1Engine:
                     if a in st.exiting:
                         continue
                     sm, pm = self.m.spot_mid(a, t), self.m.mid(a, t)
-                    if math.isfinite(sm) and math.isfinite(pm):
-                        pnl = ps.q * (sm - ps.spot_entry) - ps.q * (pm - ps.perp_entry)
-                        if pnl <= -STOP * ps.q * ps.perp_entry:
+                    if not invariant_mode and math.isfinite(sm) and math.isfinite(pm):
+                        pnl = ps.q * (sm - ps.spot_entry) - ps.pq * (pm - ps.perp_entry)
+                        if pnl <= -STOP * ps.pq * ps.perp_entry:
                             self.counters["stops"] += 1
-                            st.cooldown[a] = t + COOLDOWN
                             events.append({"t": t, "event": "combined_stop", "asset": a})
                             self._close(st, a, t, "stop")
                             continue
                         if abs(sm / ps.spot_entry - 1) >= RESET:
                             self.counters["hedge_resets"] += 1
-                            st.cooldown[a] = t + COOLDOWN
                             events.append({"t": t, "event": "hedge_reset", "asset": a})
                             self._close(st, a, t, "reset")
                             continue
@@ -259,11 +279,17 @@ class H1Engine:
                         inelig_now.add(a)
                         if a in st.inelig_prev:
                             self.counters["inelig_exits"] += 1
-                            st.cooldown[a] = t + COOLDOWN
                             self._close(st, a, t, "inelig")
             st.inelig_prev = inelig_now
-            if t.hour == 0 and t.minute == 0 and t <= end - BAR and not st.killed:
-                self._decide(st, t, E, decisions, gates)
+            if st.decision_due is not None:
+                if t - st.decision_due > DECISION_GAP:
+                    self.counters["skipped_decision_days"] += 1
+                    st.decision_due = None
+                elif t <= end - BAR:
+                    if t != st.decision_due:
+                        self.counters["deferred_decisions"] += 1
+                    self._decide(st, t, E, decisions, gates, gate_only=st.killed)
+                    st.decision_due = None
             if t < end and not st.killed:
                 for a, since in list(st.missing_fc.items()):
                     if a in st.pos and a not in st.exiting and t - since > MISSING_FC:
@@ -271,10 +297,10 @@ class H1Engine:
                         self._close(st, a, t, "missing_fc")
             t += BAR
         for a, ps in list(st.pos.items()):
-            for leg, q in (("spot", -ps.q), ("perp", ps.q)):
-                mid, fee, ss = self.m.unwind_cost(a, -q, end, leg=leg)
-                if not math.isfinite(mid):
-                    mid = st.last.get((a, leg), math.nan)
+            for leg, q in (("spot", -ps.q), ("perp", ps.pq)):
+                if q == 0:
+                    continue
+                mid, fee, ss = terminal_cost(self.m, a, -q, end, st.last.get((a, leg), math.nan), leg=leg)
                 px = mid + math.copysign(ss / abs(q), q)
                 if leg == "spot":
                     st.usd -= q * px + fee
@@ -283,25 +309,29 @@ class H1Engine:
                     st.usd -= fee
                 fills.append({"decision_ts": end, "ts": end, "asset": a, "leg": leg, "dq": q, "px": px, "mid": mid,
                               "mid_decision": mid, "half": math.nan, "fee": fee, "spread_slip": ss,
-                              "fallback": False, "intent": "terminal", "notional": abs(q) * mid})
+                              "fallback": False, "intent": "terminal", "notional": abs(q) * mid, "maker": False})
         st.pos = {}
         E_end = st.usd + st.pvc
         ticks.append({"t": end, "equity_pre": E_end, "equity": E_end, "gross": 0.0, "n_pairs": 0, "terminal": True})
-        F = pd.DataFrame(fills, columns=FILL_COLS)
+        F = fills_frame(fills)
         S = pd.DataFrame(sett, columns=SETT_COLS)
         T = pd.DataFrame(ticks)
         return RunResult(self.cfg.name, self.cfg.row, start, end, self.E0, F, S, T, daily_table(F, S, T, start, end, self.E0),
                          decisions, events, gates, dict(self.counters))
 
     # --- daily decision (S-H1-3 / S-H1-4) ----------------------------------------------------------
-    def _decide(self, st: _St, t: pd.Timestamp, E: float, decisions: list, gates: list) -> None:
-        from luna.v6.forecast import GateRecord
-
-        self.counters["decisions"] += 1
+    def _decide(self, st: _St, t: pd.Timestamp, E: float, decisions: list, gates: list, gate_only: bool = False) -> None:
         try:
             fc = self.model.forecast(t)
         except ModelWarmup:
             fc = None
+        if gate_only:
+            if fc is not None:
+                elig = [a for a in self.m.assets if a in fc.index and a in self.insts and self.eligible(a, t, fc)]
+                gates.append(GateRecord(t, elig, fc.copy()))
+            return
+        self.counters["decisions"] += 1
+        if fc is None:
             self.counters["warmup_decisions"] += 1
         for a in list(st.pos):
             if a in st.exiting:
@@ -333,7 +363,7 @@ class H1Engine:
                         and float(fc[a]) * H >= self.cfg.m * self.rt(a, t)), key=lambda a: (-float(fc[a]), a))
         if st.r3:
             cands = []
-        hedged = sum(abs(st.pos[a].q) * self._px(st, a, t, "perp") for a in held)
+        hedged = sum(st.pos[a].pq * self._px(st, a, t, "perp") for a in held)
         for a in cands:
             if len(held) >= MAX_ASSETS:
                 break
@@ -341,12 +371,13 @@ class H1Engine:
             n_cap = min(PER_ASSET * E, TOTAL * E - hedged)
             n = min(n_cap, max(0.0, free) / (2 + entry_cost))
             px = self.m.spot_mid(a, t)
-            step, minq = self._qty_step(a)
+            step, smin, pmin = self._qty_step(a)
             q = math.floor(n / px / step + 1e-9) * step
-            if q < minq or q <= 0:
+            if q <= 0 or q < smin or q < pmin:
                 self.counters["skipped_size" if n_cap > 0 and free > 0 else "skipped_cash"] += 1
                 continue
-            if 2 * q * px * (1 + entry_cost) > free:
+            need = q * px * (2 + entry_cost)  # 2N + N * entry cost (S-H1-2)
+            if need > free + 1e-9:
                 self.counters["skipped_cash"] += 1
                 continue
             if self._pair(st, a, q, t, "open"):
@@ -354,7 +385,7 @@ class H1Engine:
                 rec["entries"].append(a)
                 held.append(a)
                 hedged += q * px
-                free -= 2 * q * px * (1 + entry_cost)
+                free -= need
         decisions.append(rec)
 
 

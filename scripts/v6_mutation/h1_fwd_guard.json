@@ -1,25 +1,163 @@
 [
- {"name": "H1 unmatched hedge qty", "file": "luna/v6/market.py", "old": "        fp = self.fill(a, -q, t, leg=\"perp\")\n        if fs is None or fp is None:\n            return None\n        return [fs], [fp]", "new": "        fp = self.fill(a, -q * 0.9, t, leg=\"perp\")\n        if fs is None or fp is None:\n            return None\n        return [fs], [fp]", "tests": "tests/v6/test_h1.py"},
- {"name": "H1 spot fee taker -> maker", "file": "luna/v6/market.py", "old": "            fee_rate = self.cost_mult * (SPOT_TAKER if leg == \"spot\" else FUT_TAKER)", "new": "            fee_rate = self.cost_mult * (SPOT_MAKER if leg == \"spot\" else FUT_TAKER)", "tests": "tests/v6/test_h1.py"},
- {"name": "H1 spot spread floor removed", "file": "luna/v6/market.py", "old": "        return max(2 * perp_half, SPOT_HALF_FLOOR)", "new": "        return 2 * perp_half", "tests": "tests/v6/test_h1.py"},
- {"name": "H1 entry ignores m x RT", "file": "luna/v6/h1.py", "old": "                        and float(fc[a]) * H >= self.cfg.m * self.rt(a, t)), key=lambda a: (-float(fc[a]), a))", "new": "                        ), key=lambda a: (-float(fc[a]), a))", "tests": "tests/v6/test_h1.py"},
- {"name": "H1 no hedge reset", "file": "luna/v6/h1.py", "old": "                        if abs(sm / ps.spot_entry - 1) >= RESET:", "new": "                        if False:", "tests": "tests/v6/test_h1.py"},
- {"name": "H1 no combined stop", "file": "luna/v6/h1.py", "old": "                        if pnl <= -STOP * ps.q * ps.perp_entry:", "new": "                        if False:", "tests": "tests/v6/test_h1.py"},
- {"name": "H1 collateral ignored", "file": "luna/v6/h1.py", "old": "            if 2 * q * px * (1 + entry_cost) > free:", "new": "            if q * px * (1 + entry_cost) > free:", "tests": "tests/v6/test_h1.py"},
- {"name": "H1 max assets 3 -> 4", "file": "luna/v6/h1.py", "old": "            if len(held) >= MAX_ASSETS:", "new": "            if len(held) >= MAX_ASSETS + 1:", "tests": "tests/v6/test_h1.py"},
- {"name": "maker-bound keeps spread", "file": "luna/v6/h1.py", "old": "    F[\"px\"], F[\"fee\"], F[\"spread_slip\"] = F[\"mid\"], new_fee, 0.0", "new": "    F[\"fee\"] = new_fee", "tests": "tests/v6/test_h1.py"},
- {"name": "H1 terminal unwind spot leg missing", "file": "luna/v6/h1.py", "old": "            for leg, q in ((\"spot\", -ps.q), (\"perp\", ps.q)):", "new": "            for leg, q in ((\"perp\", ps.q),):", "tests": "tests/v6/test_h1.py"},
- {"name": "fwd: depth after ticker allowed", "file": "luna/v6/forward_exec.py", "old": "        d = depth.latest(tk.ts)\n        if d is None:\n            continue", "new": "        d = depth.latest(tk.ts + pd.Timedelta(\"10min\"))\n        if d is None:\n            continue", "tests": "tests/v6/test_forward_exec.py"},
- {"name": "fwd: depth reused", "file": "luna/v6/forward_exec.py", "old": "        qq, _ = walk(d.asks if buy else d.bids, need - got, limit=limit, side=\"buy\" if buy else \"sell\",\n                     used=used, key=d.ts.value)", "new": "        qq, _ = walk(d.asks if buy else d.bids, need - got, limit=limit, side=\"buy\" if buy else \"sell\",\n                     used=None, key=d.ts.value)", "tests": "tests/v6/test_forward_exec.py"},
- {"name": "fwd: no 60m timeout", "file": "luna/v6/forward_exec.py", "old": "    for tk in ticks.between(first.ts if first is not None else t_sub, t_sub + MAKER_WINDOW):", "new": "    for tk in ticks.between(first.ts if first is not None else t_sub, t_sub + 100 * MAKER_WINDOW):", "tests": "tests/v6/test_forward_exec.py"},
- {"name": "fwd: marketable treated as maker", "file": "luna/v6/forward_exec.py", "old": "                fills.append(_fill(a, \"spot\", t, first.ts, math.copysign(qq, q), px, first.mid, SPOT_TAKER))", "new": "                fills.append(_fill(a, \"spot\", t, first.ts, math.copysign(qq, q), px, first.mid, SPOT_MAKER, maker=True))", "tests": "tests/v6/test_forward_exec.py"},
- {"name": "fwd: book before the order used", "file": "luna/v6/forward_exec.py", "old": "            b = books.first_after(after) if books else None", "new": "            b = (books.latest(after) or books.first_after(after)) if books else None", "tests": "tests/v6/test_forward_exec.py"},
- {"name": "fwd: stale ticker accepted", "file": "luna/v6/forward_exec.py", "old": "        return x if x is not None and t - x.ts <= FRESH else None", "new": "        return x", "tests": "tests/v6/test_forward_exec.py tests/v6/test_forward_glue.py"},
- {"name": "fwd: funding revision overwrites", "file": "luna/v6/forward_exec.py", "old": "            if key in known:\n                continue", "new": "            if False:\n                continue", "tests": "tests/v6/test_forward_exec.py"},
- {"name": "guard: dev window allows holdout", "file": "luna/v6/guard.py", "old": "        if hi >= HOLDOUT_START:", "new": "        if hi > HOLDOUT_START + pd.Timedelta(\"30D\"):", "tests": "tests/v6/test_guard.py tests/v6/test_blind.py"},
- {"name": "guard: forward without holdout opening", "file": "luna/v6/guard.py", "old": "        if not holdout_opened(repo):", "new": "        if False:", "tests": "tests/v6/test_guard.py"},
- {"name": "guard: markers not exclusive", "file": "luna/v6/guard.py", "old": "    done = [str(m) for m in markers if m.exists()]\n    if done:", "new": "    done = []\n    if done:", "tests": "tests/v6/test_guard.py"},
- {"name": "forward look before due date", "file": "luna/v6/forward.py", "old": "    if pd.Timestamp(now) < d:", "new": "    if False:", "tests": "tests/v6/test_forward_runner.py"},
- {"name": "forward family overwritable", "file": "luna/v6/forward.py", "old": "    if p.exists():\n        raise LookError(\"the forward family is already fixed\")", "new": "    if False:\n        raise LookError(\"the forward family is already fixed\")", "tests": "tests/v6/test_forward_runner.py"},
- {"name": "blind mask disabled", "file": "luna/v6/blind.py", "old": "            if any(tok in low for tok in FORBIDDEN) and not low.startswith((\"residual\", \"fills_not\", \"max_open\")):", "new": "            if False:", "tests": "tests/v6/test_blind.py"}
+ {
+  "name": "H1 unmatched hedge qty",
+  "file": "luna/v6/market.py",
+  "old": "        fp = self.fill(a, (-q if perp_q is None else math.copysign(perp_q, -q)), t, leg=\"perp\")",
+  "new": "        fp = self.fill(a, (-q * 0.9 if perp_q is None else math.copysign(perp_q, -q)), t, leg=\"perp\")",
+  "tests": "tests/v6/test_h1.py"
+ },
+ {
+  "name": "H1 spot fee taker -> maker",
+  "file": "luna/v6/market.py",
+  "old": "            fee_rate = self.cost_mult * (SPOT_TAKER if leg == \"spot\" else FUT_TAKER)",
+  "new": "            fee_rate = self.cost_mult * (SPOT_MAKER if leg == \"spot\" else FUT_TAKER)",
+  "tests": "tests/v6/test_h1.py"
+ },
+ {
+  "name": "H1 spot spread floor removed",
+  "file": "luna/v6/market.py",
+  "old": "        return max(2 * perp_half, SPOT_HALF_FLOOR)",
+  "new": "        return 2 * perp_half",
+  "tests": "tests/v6/test_h1.py"
+ },
+ {
+  "name": "H1 entry ignores m x RT",
+  "file": "luna/v6/h1.py",
+  "old": "                        and float(fc[a]) * H >= self.cfg.m * self.rt(a, t)), key=lambda a: (-float(fc[a]), a))",
+  "new": "                        ), key=lambda a: (-float(fc[a]), a))",
+  "tests": "tests/v6/test_h1.py"
+ },
+ {
+  "name": "H1 no hedge reset",
+  "file": "luna/v6/h1.py",
+  "old": "                        if abs(sm / ps.spot_entry - 1) >= RESET:",
+  "new": "                        if False:",
+  "tests": "tests/v6/test_h1.py"
+ },
+ {
+  "name": "H1 no combined stop",
+  "file": "luna/v6/h1.py",
+  "old": "                        if pnl <= -STOP * ps.pq * ps.perp_entry:",
+  "new": "                        if False:",
+  "tests": "tests/v6/test_h1.py"
+ },
+ {
+  "name": "H1 collateral ignored",
+  "file": "luna/v6/h1.py",
+  "old": "            need = q * px * (2 + entry_cost)  # 2N + N * entry cost (S-H1-2)",
+  "new": "            need = q * px * (1 + entry_cost)  # 2N + N * entry cost (S-H1-2)",
+  "tests": "tests/v6/test_h1.py"
+ },
+ {
+  "name": "H1 max assets 3 -> 4",
+  "file": "luna/v6/h1.py",
+  "old": "            if len(held) >= MAX_ASSETS:",
+  "new": "            if len(held) >= MAX_ASSETS + 1:",
+  "tests": "tests/v6/test_h1.py"
+ },
+ {
+  "name": "maker-bound keeps spread",
+  "file": "luna/v6/h1.py",
+  "old": "    F[\"px\"], F[\"fee\"], F[\"spread_slip\"] = F[\"mid\"], new_fee, 0.0",
+  "new": "    F[\"fee\"] = new_fee",
+  "tests": "tests/v6/test_h1.py"
+ },
+ {
+  "name": "H1 terminal unwind spot leg missing",
+  "file": "luna/v6/h1.py",
+  "old": "            for leg, q in ((\"spot\", -ps.q), (\"perp\", ps.pq)):",
+  "new": "            for leg, q in ((\"perp\", ps.pq),):",
+  "tests": "tests/v6/test_h1.py"
+ },
+ {
+  "name": "fwd: depth after ticker allowed",
+  "file": "luna/v6/forward_exec.py",
+  "old": "        d = depth.latest(tk.ts)\n        if d is None:\n            continue",
+  "new": "        d = depth.latest(tk.ts + pd.Timedelta(\"10min\"))\n        if d is None:\n            continue",
+  "tests": "tests/v6/test_forward_exec.py"
+ },
+ {
+  "name": "fwd: depth reused",
+  "file": "luna/v6/forward_exec.py",
+  "old": "        qq, _ = walk(d.asks if buy else d.bids, need - got, limit=limit, side=\"buy\" if buy else \"sell\",\n                     used=used, key=d.ts.value)",
+  "new": "        qq, _ = walk(d.asks if buy else d.bids, need - got, limit=limit, side=\"buy\" if buy else \"sell\",\n                     used=None, key=d.ts.value)",
+  "tests": "tests/v6/test_forward_exec.py"
+ },
+ {
+  "name": "fwd: no 60m timeout",
+  "file": "luna/v6/forward_exec.py",
+  "old": "    for tk in ticks.between(first.ts if first is not None else t_sub, t_sub + MAKER_WINDOW):",
+  "new": "    for tk in ticks.between(first.ts if first is not None else t_sub, t_sub + 100 * MAKER_WINDOW):",
+  "tests": "tests/v6/test_forward_exec.py"
+ },
+ {
+  "name": "fwd: marketable treated as maker",
+  "file": "luna/v6/forward_exec.py",
+  "old": "                fills.append(_fill(a, \"spot\", t, first.ts, math.copysign(qq, q), px, first.mid, SPOT_TAKER))",
+  "new": "                fills.append(_fill(a, \"spot\", t, first.ts, math.copysign(qq, q), px, first.mid, SPOT_MAKER, maker=True))",
+  "tests": "tests/v6/test_forward_exec.py"
+ },
+ {
+  "name": "fwd: book before the order used",
+  "file": "luna/v6/forward_exec.py",
+  "old": "            b = books.first_after(after) if books else None",
+  "new": "            b = (books.latest(after) or books.first_after(after)) if books else None",
+  "tests": "tests/v6/test_forward_exec.py"
+ },
+ {
+  "name": "fwd: stale ticker accepted",
+  "file": "luna/v6/forward_exec.py",
+  "old": "        return x if x is not None and tq - x.ts <= FRESH else None",
+  "new": "        return x",
+  "tests": "tests/v6/test_forward_exec.py tests/v6/test_forward_glue.py"
+ },
+ {
+  "name": "fwd: funding revision overwrites",
+  "file": "luna/v6/forward_exec.py",
+  "old": "            if key in known:\n                continue",
+  "new": "            if False:\n                continue",
+  "tests": "tests/v6/test_forward_exec.py"
+ },
+ {
+  "name": "guard: dev window allows holdout",
+  "file": "luna/v6/guard.py",
+  "old": "        if hi >= HOLDOUT_START:",
+  "new": "        if hi > HOLDOUT_START + pd.Timedelta(\"30D\"):",
+  "tests": "tests/v6/test_guard.py tests/v6/test_blind.py"
+ },
+ {
+  "name": "guard: forward without holdout opening",
+  "file": "luna/v6/guard.py",
+  "old": "        if not holdout_opened(repo):",
+  "new": "        if False:",
+  "tests": "tests/v6/test_guard.py"
+ },
+ {
+  "name": "guard: markers not exclusive",
+  "file": "luna/v6/guard.py",
+  "old": "    done = [str(m) for m in markers if m.exists()]\n    if done:",
+  "new": "    done = []\n    if done:",
+  "tests": "tests/v6/test_guard.py"
+ },
+ {
+  "name": "forward look before due date",
+  "file": "luna/v6/forward.py",
+  "old": "    if pd.Timestamp(now) < d:",
+  "new": "    if False:",
+  "tests": "tests/v6/test_forward_runner.py"
+ },
+ {
+  "name": "forward family overwritable",
+  "file": "luna/v6/forward.py",
+  "old": "        fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY)",
+  "new": "        fd = os.open(p, os.O_CREAT | os.O_WRONLY)",
+  "tests": "tests/v6/test_forward_runner.py"
+ },
+ {
+  "name": "blind mask disabled",
+  "file": "luna/v6/blind.py",
+  "old": "            if any(tok in low for tok in FORBIDDEN) and not low.startswith((\"residual\", \"fills_not\", \"max_open\")):",
+  "new": "            if False:",
+  "tests": "tests/v6/test_blind.py"
+ }
 ]

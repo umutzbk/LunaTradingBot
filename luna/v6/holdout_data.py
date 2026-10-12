@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 
@@ -122,6 +123,73 @@ def fetch_spreads(client, asset: str, auth) -> pd.DataFrame:
     return s.to_frame("spread_full")
 
 
+MIN_POINT_COVERAGE = 0.90  # V5 Stage 0 (protocol §2.1 S0.3), per asset and per asset x hour of day
+MAX_SPREAD_BPS = 500
+
+
+def stage0_audit(spreads: dict, lo: pd.Timestamp, hi: pd.Timestamp) -> dict:
+    """The V5 Stage 0 audit rules on the holdout spread download (spec S-GUARD-1: failure = INVALID
+    RUN). Pure function of the downloaded series ({asset: spread_full series}); no returns, no signals.
+
+    FAIL: a label off the 5-minute grid, duplicated or out of order; a label outside [lo, hi); an
+    observed cadence other than 300 s; at the 15-minute points of the window, the share with >= 6/12
+    valid snapshots in the decision window (labels t-60m ... t-5m) or >= 2/3 in the fill window
+    (t, t+5m, t+10m) below 90 % for any asset or any asset x hour-of-day cell (no pooling). Valid =
+    finite, > 0 and <= 500 bps. Reported, not FAIL: invalid values, repeats, gaps >= 1 h."""
+    lo, hi = pd.Timestamp(lo), pd.Timestamp(hi)
+    fivem = pd.Timedelta("5min")
+    failures, per_asset = [], {}
+    for a, x in spreads.items():
+        x = pd.Series(x).astype(float)
+        idx = pd.DatetimeIndex(x.index).as_unit("ns")
+        rep = {}
+        if (idx.asi8 % fivem.value).any():
+            failures.append(f"{a}: labels off the 5-minute grid")
+        if idx.has_duplicates or not idx.is_monotonic_increasing:
+            failures.append(f"{a}: duplicated or unordered labels (grid)")
+        if len(idx) and (idx.min() < lo or idx.max() >= hi):
+            failures.append(f"{a}: labels outside the holdout window [{lo}, {hi})")
+        d = np.diff(idx.asi8) / 1e9 if len(idx) > 1 else np.array([])
+        cad = float(np.median(d)) if len(d) else math.nan
+        rep["observed_cadence_s"] = cad
+        if not cad == 300.0:
+            failures.append(f"{a}: observed cadence {cad} s is not 300 s")
+        v = x.to_numpy(float)
+        ok = np.isfinite(v) & (v > 0) & (v <= MAX_SPREAD_BPS * 1e-4)
+        rep["invalid_values"] = int((~ok).sum())
+        rep["repeat_share"] = float(np.mean(v[1:] == v[:-1])) if len(v) > 1 else 0.0
+        rep["gaps_ge_1h"] = int((d >= 3600).sum()) if len(d) else 0
+        on = idx[(idx.asi8 % fivem.value == 0) & (idx >= lo) & (idx < hi)]
+        okv = pd.Series(ok, index=idx)
+        okv = okv[~okv.index.duplicated(keep="first")].reindex(on)
+        grid = pd.date_range(lo - pd.Timedelta("1h"), hi, freq="5min", inclusive="left").as_unit("ns")
+        g = okv.reindex(grid).fillna(False).astype(int)
+        pts = pd.date_range(lo + pd.Timedelta("1h"), hi - pd.Timedelta("15min"), freq="15min").as_unit("ns")
+        csum = pd.Series(np.concatenate([[0], np.cumsum(g.to_numpy())]), index=list(grid) + [hi])
+        pos = {t: i for i, t in enumerate(grid)}
+
+        def count(t0, t1):  # labels in [t0, t1)
+            i0 = pos.get(t0, 0 if t0 < grid[0] else len(grid))
+            i1 = pos.get(t1, len(grid))
+            return int(csum.iloc[i1] - csum.iloc[i0])
+
+        dec = np.array([count(t - pd.Timedelta("1h"), t) for t in pts]) >= 6  # labels t-60m ... t-5m (12)
+        fil = np.array([count(t, t + pd.Timedelta("15min")) for t in pts]) >= 2  # t, t+5m, t+10m (3)
+        hours = np.array([t.hour for t in pts])
+        for name, arr in (("decision", dec), ("fill", fil)):
+            share = float(arr.mean()) if len(arr) else 0.0
+            rep[f"{name}_window_coverage"] = share
+            if share < MIN_POINT_COVERAGE:
+                failures.append(f"{a}: {name}-window coverage {share:.3f} < {MIN_POINT_COVERAGE}")
+            for h in range(24):
+                m = hours == h
+                if m.any() and float(arr[m].mean()) < MIN_POINT_COVERAGE:
+                    failures.append(f"{a}: {name}-window coverage in hour {h:02d} UTC "
+                                    f"{float(arr[m].mean()):.3f} < {MIN_POINT_COVERAGE}")
+        per_asset[a] = rep
+    return {"pass": not failures, "failures": failures, "assets": per_asset}
+
+
 def fetch_spot(client, asset: str, auth, sleep=None) -> pd.DataFrame:
     _require(auth)
     lo, hi = _window()
@@ -195,4 +263,6 @@ def load_holdout(frozen_root: Path, root: Path, auth) -> Inputs:
                  cat(dev.spot, "spot", "close"), cat(dev.spot_volume_usd, "spot", "", usd=True),
                  cat(dev.index, "index", "close"), FundingPanel(R, abs_=A), spreads, dev.insts, hourly_prices(mark))
     guard.require_window(guard.HOLDOUT_START, inp.mark.close.index.max(), "holdout", auth)
+    inp.audit = stage0_audit({a: pd.read_parquet(root / "spreads" / f"{a}.parquet")["spread_full"] for a in assets},
+                             guard.HOLDOUT_START, guard.HOLDOUT_END)
     return inp
