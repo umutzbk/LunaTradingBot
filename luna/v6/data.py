@@ -62,6 +62,30 @@ class FundingPanel:
             m = np.where(n >= min_known, np.nansum(v, axis=0) / np.maximum(n, 1), np.nan)
         return pd.Series(m, index=self.assets)
 
+    def newest_end(self, asset: str, t: pd.Timestamp) -> pd.Timestamp | None:
+        """End (p + 1h) of the newest period of ``asset`` visible at t."""
+        t = pd.Timestamp(t)
+        j = self.assets.index(asset)
+        b = np.searchsorted(self._t, (t - HOUR).value, "right")
+        lo = max(0, b - 24 * 7)
+        ok = np.isfinite(self._v[lo:b, j]) & (self._known[lo:b, j] <= t.value)
+        if not ok.any():
+            return None
+        return pd.Timestamp(int(self._t[lo:b][ok][-1]), tz="UTC") + HOUR
+
+    def abs_rate(self, asset: str, p: pd.Timestamp, t: pd.Timestamp) -> float:
+        """USD per unit for period p if visible at t (settlement), else NaN."""
+        p, t = pd.Timestamp(p), pd.Timestamp(t)
+        if self.abs is None or p + HOUR > t:
+            return float("nan")
+        i = np.searchsorted(self._t, p.value, "left")
+        if i >= len(self._t) or self._t[i] != p.value:
+            return float("nan")
+        j = self.assets.index(asset)
+        if self._known[i, j] > t.value:
+            return float("nan")
+        return float(self.abs.iloc[i, j])
+
     def label(self, s: pd.Timestamp, h: int, t: pd.Timestamp) -> tuple[pd.Series, pd.Series]:
         """(mean of the known periods in [s, s + h - 1h], share of the h periods known) as of t.
         Refused unless the whole window ended by t (s + h <= t)."""
