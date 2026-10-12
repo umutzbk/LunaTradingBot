@@ -1,6 +1,6 @@
 # V6 Profitability — Exact Spec
 
-**Durum:** TASLAK r2 (ikinci red-team'in 1. turu sonrası). Freeze edilmedi. Holdout kapalı; V6 backtest ya da outcome yok.
+**Durum:** TASLAK r3 (ikinci red-team'in 2. turu sonrası). Freeze edilmedi. Holdout kapalı; V6 backtest ya da outcome yok.
 
 **Kaynaklar:**
 - Plan rev 2 (`luna-v6-profitability-research-plan.md`, commit `25ee363`). Bu spec onun normatif, tek anlamlı halidir.
@@ -22,7 +22,7 @@ Kurallar `S-` numaralarıyla anılır. "Yapılır" zorunludur.
 | D4 | **H1 feasibility izolasyonu:** gün 91–365 confirmation'ı ayrı bir replay'dir; düz başlar, 265$ taze sermaye, hiçbir state ya da P&L taşınmaz (S-H1-F) | Kullanıcı maddesi D |
 | D5 | **Fee kaynağı:** resmi URL, erişim zamanı, sayfa hash'i | Kullanıcı maddesi A. Sayfadaki 0.38% maker oranı yalnız seçili pariteler için bir "spot rebate" programına aittir; primary değildir |
 | D6 | **Holdout bitişi** tam `collector_start_ts` = 2026-10-09T11:52:48.861565107Z | Rev 2'de yaklaşıktı |
-| D7 | **Forward evidence başlangıcı T_F = kod-freeze tag'inin zamanı.** Bu tag, implementasyon ve bağımsız implementasyon review'u sonrasında atılır; spec freeze'inin zamanı değildir | Spec ile kod arasındaki haftalarda forward veri görülebilir; implementasyon yorumları bu bilgiyle çözülemesin (kullanıcı kararı 2026-10-12) |
+| D7 | **Forward evidence başlangıcı T_F** = bağımsız implementasyon review onayından en az 24 saat sonraki ilk 00:00 UTC; `v6-code-frozen` tag'i o anda atılır. Spec freeze'inin zamanı değildir | Spec ile kod arasındaki haftalarda forward veri görülebilir; implementasyon yorumları bu bilgiyle çözülemesin (kullanıcı kararı 2026-10-12) |
 | D8 | **H3 sermayesi 265$ kalır.** P&L'siz mekanik kontrolde k=4 günlerin %90.4'ünde, k=6 her gün uygulanabilir; medyan bacak ~15$ | Kullanıcı kararı 2026-10-12. Dev'de ya da sonrasında görülen uygulanamazlık R9 kapsamında bug **değildir** ve freeze sonrası düzeltilmez |
 | D9 | **Rev 2 §6.2 referansları** korunur: holdout koşusunda "cash" (0) ve değişmeden koşulan V5 W/E (S-STAT-O); ikisi de hükümsüzdür | Red-team m9 |
 | D10 | **Forward aile** = holdout'taki 4 strateji config'inin tamamı (m_F = 4, sabit). Aday olmayanlar her bakışta p = 1 | Aile, holdout sonuçlarından seçilmez (red-team M4) |
@@ -56,7 +56,7 @@ H1, H2 ve H3'ün geri kalan tasarımı ve profitability kriterleri rev 2 ile ayn
 
 **S-DATA-4 Forward.**
 - Kaynak: collector'ın fut_tickers, fut_book, fut_funding, spot_ticker (60 saniye) ve spot_depth (5 dakika, 10 seviye) verisi.
-- **Evidence başlangıcı:** `T_F` = `v6-code-frozen` tag'inin zamanı (D7). Forward değerlendirmesi yalnız `recv_ts ≥ T_F` olan snapshot'ları kullanır. Forward gün 1, `T_F` anında ya da sonrasındaki ilk 00:00 UTC'dir.
+- **Evidence başlangıcı:** `T_F` = bağımsız implementasyon review'unun onayından **en az 24 saat sonraki ilk 00:00 UTC**. `v6-code-frozen` tag'i o anda atılır (D7). Zamanlama takdire bırakılmaz. Forward değerlendirmesi yalnız `recv_ts ≥ T_F` olan snapshot'ları kullanır. Forward gün 1, `T_F` anında ya da sonrasındaki ilk 00:00 UTC'dir.
 - **Model girdileri:** Funding, mark ve index bar'ları `T_F` öncesinden (holdout penceresi dahil) yalnız girdi olarak okunabilir: H2a fit'i, FL30, vol ve kovaryans. Bu yalnız **tek holdout açılışından sonra** mümkündür; o zamana kadar forward koşusu hesaplanmaz.
 
 **S-DATA-5 Coverage.**
@@ -259,7 +259,7 @@ build(L, S):
     |φ_L − φ_S| > 0.2 ise: büyük = 0.6, küçük = 0.4                       # dolar sınırı
     q = (φ_L σ̃_L)/(φ_S σ̃_S)                                           # standalone taraf oranı
     q > 1.5 ise: φ_L ← φ_L·1.5/q ;  q < 1/1.5 ise: φ_S ← φ_S·1.5·q        # yalnız büyük-risk tarafı küçülür
-    |φ_L − φ_S| > 0.2·(φ_L+φ_S) ise → INFEASIBLE
+    |φ_L − φ_S| > 0.2·(φ_L+φ_S) + 1e−12 ise → INFEASIBLE
     w⁰ = (+φ_L u_L, −φ_S u_S)
     G  = min(1/(φ_L+φ_S), 0.08 / sqrt(w⁰ᵀ Σ w⁰))                        # gross ≤ 1, σ* = %8
     w  = G·w⁰
@@ -268,9 +268,13 @@ build(L, S):
     küçük = {i : |n_i| < max(min_qty_i·mid_i, 10$)}
     küçük boşsa → çık
     küçükte |n_i| en küçük olan (eşitlikte ad) düşer; sıfırdan tekrar
-  yuvarlama sonrası: |Σ n_i β_i| ≤ 0.05·E ve |Σ_L n − Σ_S |n|| ≤ 0.2·Σ|n| + max adım notional'ı ;
+  yuvarlama sonrası kontroller (S-H3-9 ve S-H3-10 aynı üçünü kullanır):
+     |Σ n_i β_i| ≤ 0.05·E ;  |Σ_L n − Σ_S |n|| ≤ 0.2·Σ|n| + max adım notional'ı ;
+     q (gerçekleşen n ile hesaplanır) ∈ [1/1.5, 1.5]
   sağlanmazsa → INFEASIBLE
 ```
+
+**Not (oran kuralının etkisi):** Dolar sınırı bağladığında φ tam 0.6 / 0.4'tür; büyük-risk tarafını daha fazla küçültmek dolar kontrolünü bozar. Bu yüzden oran kuralı pratikte "`σ̃_L/σ̃_S > 2.25` ya da `< 1/2.25` ise INFEASIBLE" anlamına gelir. Dev risk girdilerinde hiç bağlamazdı (en kötü q = 1.28).
 
 **S-H3-8 Risk raporu** (her karar anında; gate değil). Euler katkıları `RC_L` ve `RC_S`; standalone oran `q`; `β_net`; net dolar; dolar sınırının ve oran kuralının bağlayıp bağlamadığı. Bunlar zaman ortalaması, p95 ve maksimumla raporlanır.
 
@@ -281,9 +285,12 @@ build(L, S):
 
 **S-H3-10 Gün içi izleme (15 dakika).**
 - Bacak stop'u: girişe göre %15 ters hareket → çıkış ve 24 saat cooldown. Ayrıca R3/R4 ve V5 ineligibility çıkışları.
-- **Herhangi bir gün içi çıkıştan sonra** bir sonraki 15 dakikalık anda gerçekleşen kitapta yuvarlama sonrası kontroller (β, net dolar, oran `q`) yapılır.
-- Sağlanmazsa bütün kitap reduce-only ve orantılı olarak küçültülür.
-- Hâlâ sağlanmazsa S-H3-12.
+- **Herhangi bir gün içi çıkıştan sonra**, bir sonraki 15 dakikalık anda gerçekleşen kitapta sırasıyla, hepsi reduce-only:
+  1. `|β_net| > 0.05·E` ise her bacak `0.05·E/|β_net|` ile çarpılır.
+  2. Net dolar kontrolü ya da `q` kontrolü başarısızsa yalnız ağır taraf (net dolar için dolarca, `q` için standalone riskçe ağır olan) orantılı küçültülür; kontrol sağlanana kadar. Sonuçta `max(min_qty·mid, 10$)` altına düşen bacaktan çıkılır.
+  3. Sonra (1) bir kez daha uygulanır.
+  4. Herhangi bir tarafta < 3 bacak kalırsa bütün bacaklardan çıkılır.
+- 00:00 inşası (S-H3-7) her gün çalışır; gün içi durumdan etkilenmez. Başarılı bir inşa önceki INFEASIBLE durumunu temizler.
 
 **S-H3-11 Execution.**
 - **Tarihsel:** V5 DelayedExecutor (t + 15 dakika, S-COST).
@@ -291,6 +298,7 @@ build(L, S):
 
 **S-H3-12 Uygulanamaz kitap.** Tetikleyiciler: `k' < 3`, model yok, ya da INFEASIBLE.
 - 24 saate kadar: mevcut bacaklar tutulur; giriş ve büyütme yok; stop, zorunlu çıkışlar ve S-H3-10 küçültmesi aktif.
+- 00:00 inşası yine çalışır; başarılı olursa INFEASIBLE durumu temizlenir ve sayaç sıfırlanır.
 - 24 saatten uzun kesintisiz durumda: bütün bacaklardan çıkılır.
 
 **S-H3-13 Varyantlar.** H3-k4, H3-k6.
@@ -342,10 +350,11 @@ H3 için de S-COST2X, S-PIT10 ve S-FB-CONS aynı tanımlarla karar taşır.
 | Durum | Kural |
 |---|---|
 | Referans | Karar anındaki son spot_ticker; ≤ 180 saniye eski olmalı. Değilse ilk taze ticker beklenir (en fazla 6 saat; aşılırsa giriş atlanır) |
-| Hemen marketable | Referanstan sonraki ilk spot_ticker'da ask ≤ limit (alış) → taker fill: zaman damgası ≤ o ticker olan son spot_depth yürünür |
+| Gönderim zamanı | `t_sub` = taze referans ticker'ın zamanı. Bütün pencereler `t_sub`'dan başlar |
+| Hemen marketable | `t_sub` sonrası ilk spot_ticker'da ask ≤ limit (alış) → taker fill: zaman damgası ≤ o ticker olan son spot_depth'te **yalnız limit ve altındaki** ask seviyeleri yürünür; kalan qty maker emir olarak bekler |
 | Spot giriş (maker) | Referans best bid'ine limit emir |
-| Maker fill | `(t, t + 60 dk]` içinde bir spot_ticker'da best ask ≤ limit **ve** zaman damgası ≤ o ticker olan en son spot_depth'te bu fiyat ve altındaki ask hacmi → o hacim kadar fill, limit fiyattan. **Her depth snapshot'ının bir fiyat seviyesindeki hacmi en fazla bir kez tüketilir** |
-| Taker fallback | `t + 60 dk`'da kalan qty: zaman damgası ≤ `t + 60 dk` olan son spot_depth'in ask'leri yürünür (VWAP + taker fee); derinlik yetmezse kalan iptal edilir |
+| Maker fill | `(t_sub, t_sub + 60 dk]` içinde bir spot_ticker'da best ask ≤ limit **ve** zaman damgası ≤ o ticker olan en son spot_depth'te bu fiyat ve altındaki ask hacmi → o hacim kadar fill, limit fiyattan. **Her depth snapshot'ının bir fiyat seviyesindeki hacmi en fazla bir kez tüketilir** |
+| Taker fallback | `t_sub + 60 dk`'da kalan qty: zaman damgası ≤ `t_sub + 60 dk` olan son spot_depth'in ask'leri yürünür (VWAP + taker fee); derinlik yetmezse kalan iptal edilir |
 | Perp hedge | Spot fill kesinleşince ilk fut_book snapshot'ında taker short; qty = dolan spot qty |
 | Çıkış | **Yalnız 00:00 ekonomik çıkışı maker-first** (simetrik kurallar). Risk çıkışları (birleşik stop, hedge reset, R4, ineligibility) ilk snapshot'ta iki bacak taker |
 | Bacaklar arası gecikme | Hedge'siz P&L episode'a yazılır ve birleşik stop'a sayılır |
@@ -478,7 +487,7 @@ referanslar (hükümsüz): cash (0) ve değişmeden koşulan V5 W/E
 
 ```
 FAMILY_F = [H3-k4, H3-k6, H1-m1.5, H1-m2.5] ; m_F = 4 ; hiçbir zaman değişmez
-CAND = { c : holdout'ta nedenleri arasında NO-GO ya da MODEL INVALID yok ∧ P1 > 0 ∧ P3 > 0 }
+CAND = { c : holdout'ta nedenleri arasında INVALID RUN, NO-GO ya da MODEL INVALID yok ∧ P1 > 0 ∧ P3 > 0 }
 FEAS = S-H1-F tanımı
 c ∉ CAND ∪ FEAS → her bakışta p[c] = 1 (status = CLOSED)
 FAMILY_F'nin üyelik durumu holdout kararında bir kez belirlenir.
@@ -492,15 +501,17 @@ bakış tarihine kadarki veriyle hesaplanır.
 LOOKS = [(90, 0.001), (180, 0.001), (365, 0.048)]
 her (gün, α) ∈ LOOKS:
     her c ∈ FAMILY_F:
-        status[c] ∈ {CLOSED, FINAL GO}           → p[c] = 1   (yalnız Holm için; FINAL GO'nun p'si raporlanır)
-        c ∈ FEAS:
-            gün = 90: ölçüm M → NOT ESTABLISHED ise status = CLOSED, p = 1
-            gün < 365                             → p[c] = 1
-            gün = 365 ∧ ESTABLISHED               → p[c] = p_GO(c, C, gün 91–365)
-        c ∈ CAND ∧ status = PENDING               → p[c] = p_GO(c, forward gün 1..gün)
+        if   status[c] ∈ {CLOSED, FINAL GO}:      p[c] = 1   (yalnız Holm için; FINAL GO'nun p'si raporlanır)
+        elif c ∈ FEAS:
+             if gün = 90: ölçüm M; NOT ESTABLISHED → status = CLOSED
+             if gün = 365 ∧ ESTABLISHED: p[c] = p_GO(c, C, gün 91–365)
+             else: p[c] = 1
+        elif c ∈ CAND:                            p[c] = p_GO(c, forward gün 1..gün)
+        else:                                     p[c] = 1
     R = holm(p[FAMILY_F], α)                       # payda her zaman 4
-    ara bakışlarda (gün 90, 180) ek koşul: c ∈ R ise aynı serilerde Newey–West (lag 28)
-        tek taraflı t-testi hem net hem carry için p ≤ c'nin Holm eşiği; değilse c R'den çıkar
+    ara bakışlarda (gün 90, 180) ek koşul: c ∈ R ise aynı serilerde Newey–West t-testi
+        (Bartlett çekirdeği, lag 28, tek taraflı, referans dağılım N(0,1)) hem net hem carry için
+        p ≤ c'nin Holm eşiği; değilse c R'den çıkar
     her c (status = PENDING):
         L = ladder(c, stat = (c ∈ R ∧ LB koşulu), pencere = c'nin penceresi)
         L = FINAL GO             → status = FINAL GO (kalıcı)
@@ -551,7 +562,7 @@ FINAL GO sonrası izleme: P5, P6 ya da P10 ihlali → GO REVOKED (risk); yeniden
 5. Implementasyon (TDD).
 6. Kör dev invariant koşuları.
 7. Bağımsız implementasyon review'u.
-8. **Kod freeze:** tag `v6-code-frozen`. Zamanı **T_F**'dir.
+8. **Kod freeze:** tag `v6-code-frozen`, implementasyon review onayından en az 24 saat sonraki ilk 00:00 UTC'de atılır; bu an **T_F**'dir.
 9. Kullanıcının açık onayıyla tek holdout açılışı.
 10. Forward bakışları (S-STAT-F).
 

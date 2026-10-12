@@ -165,14 +165,20 @@
     "stop_cooldown_hours": 24,
     "standalone_side_ratio_max": 1.5,
     "drop_rule": "drop the smallest |n| below max(min_qty*mid, 10 USD) (ties by name), recompute from scratch, at most #legs iterations",
-    "intraday_post_exit_check": "next 15m tick: post-rounding checks on the realised book; proportional reduce-only scale-down; else infeasible",
+    "intraday_post_exit_check": "next 15m tick, reduce-only: (1) beta scale whole book; (2) net-dollar or q fail -> shrink only the heavier side until pass, exit legs below min; (3) beta again; (4) < 3 legs on a side -> exit all. 00:00 build always runs and clears INFEASIBLE",
     "band_repair": "rebalance all legs to target",
     "ewma_init": "sample variance of the first 30 days",
     "lw_on": "standardised returns",
     "cov_assets": "eligible + held + BTC",
     "capital_usd": 265,
     "infeasibility_is_not_a_bug": true,
-    "forward_rebalance_gap_hours": 6
+    "forward_rebalance_gap_hours": 6,
+    "post_rounding_checks": [
+      "|sum n beta| <= 0.05 E",
+      "|net dollar| <= 0.2 sum|n| + max step notional",
+      "q in [1/1.5, 1.5]"
+    ],
+    "phi_dollar_check_tolerance": 1e-12
   },
   "h1": {
     "variants_m": [
@@ -204,7 +210,8 @@
     "forward_skip_gap_rule": ">= 6 h",
     "feas_membership": "H1, no INVALID RUN/MODEL INVALID, P10=0, PRIMARY (P1<=0 or P3<=0), MAKER-BOUND (P1>0, P3>0, P5, P6)",
     "feasibility_mb_formula": "sum_e(fee+spreadslip-lagPnL)/sum_e entry notional; open episodes at day 90 exit by hypothetical taker unwind",
-    "confirmation_start": "day 91, flat, 265 USD, no state carried"
+    "confirmation_start": "day 91, flat, 265 USD, no state carried",
+    "forward_submission": "t_sub = time of the fresh reference ticker; all windows start at t_sub; marketable remainder rests as maker after walking only levels <= limit"
   },
   "statistics": {
     "bootstrap": "moving block, one-sided H0 mean <= 0, V5 stats.mbb",
@@ -236,7 +243,8 @@
     "B_forward": 200000,
     "forward_family": "all 4 holdout configs, m_F = 4, fixed; non-candidates p = 1",
     "closed_or_go_p_for_holm": 1.0,
-    "interim_extra_test": "Newey-West lag 28 one-sided t-test, net and carry, p <= the config's Holm threshold"
+    "interim_extra_test": "Newey-West t-test, Bartlett kernel, lag 28, one-sided, N(0,1) reference, net and carry, p <= the config's Holm threshold",
+    "cand": "no INVALID RUN, NO-GO or MODEL INVALID reason; P1 > 0 and P3 > 0"
   },
   "criteria": {
     "sharpe_min": 1.0,
@@ -277,7 +285,7 @@
     "holdout_partial_last_day": "counted as one day"
   },
   "forward": {
-    "evidence_start": "T_F = time of the v6-code-frozen tag; recv_ts >= T_F; day 1 = first 00:00 UTC at or after T_F",
+    "evidence_start": "T_F = first 00:00 UTC at least 24 h after the independent implementation-review sign-off; v6-code-frozen tag made then; recv_ts >= T_F",
     "evaluable_day_min_snapshot_share": 0.9,
     "look_inconclusive_if_evaluable_share_below": 0.8,
     "pnl_masked_until": "holdout decision and then each scheduled look",
