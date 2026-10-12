@@ -117,8 +117,12 @@ def _fill(a, leg, t_dec, ts, dq, px, mid, fee_rate, maker=False) -> Fill:
 class FwdMarket:
     """The same interface as ``HistMarket`` on forward snapshots (S-H3-11 / S-H1-X)."""
 
-    def __init__(self, streams: Streams, funding: FundingPanel, assets: list) -> None:
+    def __init__(self, streams: Streams, funding: FundingPanel, assets: list,
+                 settlement: FundingPanel | None = None) -> None:
+        """``funding``: what decisions see (collector receive times); ``settlement``: the same plus
+        the periods the collector missed, from the official API (S-DATA-1), used only to settle."""
         self.s, self.funding, self._assets = streams, funding, list(assets)
+        self.settlement = settlement
 
     @property
     def assets(self) -> list:
@@ -410,3 +414,57 @@ def funding_from_collector(raw: Path, start: pd.Timestamp, end: pd.Timestamp, as
     for (a, p), v in rel.items():
         R.loc[p, a], A.loc[p, a], K.loc[p, a] = v, ab[(a, p)], known[(a, p)]
     return FundingPanel(R, abs_=A, known_at=K)
+
+
+def merge_funding(hist: FundingPanel, fwd: FundingPanel, tf: pd.Timestamp) -> FundingPanel:
+    """Decision panel: periods before T_F from history (known at p + 1h), periods from T_F on as
+    received by the collector (known_at = receive time)."""
+    tf = pd.Timestamp(tf)
+    cols = list(dict.fromkeys(list(hist.rel.columns) + list(fwd.rel.columns)))
+    hr = hist.rel[hist.rel.index < tf].reindex(columns=cols)
+    ha = (hist.abs[hist.abs.index < tf] if hist.abs is not None else hr * np.nan).reindex(columns=cols)
+    fr = fwd.rel[fwd.rel.index >= tf].reindex(columns=cols)
+    fa = (fwd.abs[fwd.abs.index >= tf] if fwd.abs is not None else fr * np.nan).reindex(columns=cols)
+    R_, A_ = pd.concat([hr, fr]), pd.concat([ha, fa])
+    idx = pd.date_range(R_.index.min(), R_.index.max(), freq="h")
+    R_, A_ = R_.reindex(idx), A_.reindex(idx)
+    hk = pd.DataFrame({c: hr.index + pd.Timedelta("1h") for c in cols}, index=hr.index)
+    fk = {}
+    for c in cols:
+        if c in fwd.assets:
+            fk[c] = pd.Series(pd.to_datetime(fwd._known[:, fwd.assets.index(c)], utc=True), index=fwd.rel.index)
+        else:
+            fk[c] = pd.Series(pd.NaT, index=fwd.rel.index, dtype="datetime64[ns, UTC]")
+    fk = pd.DataFrame(fk)
+    fk = fk[fk.index >= tf]
+    K = pd.concat([hk, fk]).reindex(idx)
+    K = K.where(R_.notna())
+    return FundingPanel(R_, abs_=A_, known_at=K)
+
+
+def settlement_panel(decision: FundingPanel, api_rates: pd.DataFrame | None, assets: list) -> FundingPanel:
+    """Settlement panel: the decision panel plus the periods only the official API has (known at
+    p + 1h, for settlement only). ``api_rates``: columns asset, period_start, rel, abs (hashed file)."""
+    R_ = decision.rel.copy()
+    A_ = decision.abs.copy() if decision.abs is not None else decision.rel * np.nan
+    if api_rates is not None and len(api_rates):
+        for _, r in api_rates.iterrows():
+            p_ = pd.Timestamp(r["period_start"])
+            if p_ in R_.index and r["asset"] in R_.columns and not np.isfinite(R_.loc[p_, r["asset"]]):
+                R_.loc[p_, r["asset"]], A_.loc[p_, r["asset"]] = float(r["rel"]), float(r["abs"])
+    return FundingPanel(R_, abs_=A_)
+
+
+def hourly_marks(hist_prices: pd.DataFrame, streams: Streams, tf: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
+    """Risk-model prices: history before T_F, then the fresh fut ticker mark received by each hour."""
+    hours = pd.date_range(pd.Timestamp(tf).ceil("h"), pd.Timestamp(end), freq="h")
+    add = {}
+    for a, st in streams.fut_ticks.items():
+        vals = []
+        for h in hours:
+            x = st.latest(h)
+            vals.append(x.mark if x is not None and h - x.ts <= FRESH and math.isfinite(x.mark) else np.nan)
+        add[a] = vals
+    fwd = pd.DataFrame(add, index=hours).reindex(columns=hist_prices.columns)
+    out = pd.concat([hist_prices[hist_prices.index < hours[0]] if len(hours) else hist_prices, fwd])
+    return out[~out.index.duplicated(keep="first")]

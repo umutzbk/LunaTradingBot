@@ -193,7 +193,8 @@ class H3Engine:
                     pe = t - HOUR
                     for key in [k for k in st.acc if k[1] == pe]:
                         a = key[0]
-                        rate = self.m.funding.abs_rate(a, pe, t) if a in self.m.funding.assets else math.nan
+                        sp = getattr(self.m, "settlement", None) or self.m.funding
+                        rate = sp.abs_rate(a, pe, t) if a in sp.assets else math.nan
                         if not math.isfinite(rate):
                             self.counters["funding_unknown"] += 1
                             amt = 0.0

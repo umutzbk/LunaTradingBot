@@ -737,6 +737,22 @@ def v5_backtest(
     typer.echo(f"verdict {study['evaluation']['verdict']} {study['evaluation']['tags']}; summary {m['summary_sha256']}")
 
 
+@app.command("v6-blind-dev")
+def v6_blind_dev(
+    frozen_dir: Annotated[Path, typer.Option("--frozen", help="Frozen V5 input copy (verified)")] = Path(
+        "var/history_v5/frozen"),
+    out: Annotated[Path, typer.Option("--out", help="Where to write the masked invariant report")] = Path(
+        "docs/results/v6-blind-dev/invariants.json"),
+) -> None:
+    """V6 blind development run: invariants only (spec S-GUARD-2). P&L, returns, carry, Sharpe,
+    calibration and rankings never reach the output."""
+    from luna.v6 import blind
+
+    rep = blind.blind_dev_run(frozen_dir)
+    blind.write(rep, out)
+    typer.echo(f"blind invariant report written to {out}")
+
+
 if __name__ == "__main__":
     app()
 

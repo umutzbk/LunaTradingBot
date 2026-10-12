@@ -171,7 +171,8 @@ class H1Engine:
                 if t.minute == 0:
                     pe = t - HOUR
                     for key in [k for k in st.acc if k[1] == pe]:
-                        rate = self.m.funding.abs_rate(key[0], pe, t)
+                        sp = getattr(self.m, "settlement", None) or self.m.funding
+                        rate = sp.abs_rate(key[0], pe, t)
                         amt = -st.acc[key] * rate if math.isfinite(rate) else 0.0
                         if not math.isfinite(rate):
                             self.counters["funding_unknown"] += 1
