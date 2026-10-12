@@ -72,3 +72,22 @@ The frozen spec and constants are unchanged, and the `v6-profitability-spec-froz
 - **Still needs the user's sign-off** (the reviewer flagged both):
   - D-A1: Stage 0 coverage below 90 % in any asset or asset × hour-of-day cell = FAIL (INVALID RUN).
   - D-B5: spec-literal rounding at an exactly-binding cap or beta limit → INFEASIBLE.
+
+### Erratum 001: final status (2026-10-12) — IN EFFECT
+
+- **Pending condition closed:** the methodology reviewer stated **"INTERPRETATION FIX, NOT OUTCOME TUNING"** unconditionally on the final exact HEAD `576f5fac4b01de45f6b4a6c7cb7b380c881df5ab`.
+- **The code implements the erratum exactly.**
+  - R5–R9 and R14 apply only to opening orders.
+  - **R6 is measured at the average entry FILL price**, the V5 `risk_amount` (`carry/core.py:691`, `portfolio._trade` on `fill.price` at fabd419).
+    - The fill-time mid is only the stop/reset reference (D-E5, D-E12).
+    - The earlier "fill-time mid, negligible" wording is withdrawn.
+- **Final reviews on `576f5fa`:**
+  - code review PASS (Critical 0, Major 0, Minor 3);
+  - methodology review CONFORMS (Critical 0, Major 0, Minor 3).
+- **User decisions, 2026-10-12:**
+  - D-A1 ACCEPTED (strict Stage 0 coverage FAIL);
+  - D-B5 ACKNOWLEDGED AND ACCEPTED;
+  - remote push approved.
+- **Review PASS timestamp (pinned):** `2026-10-12T12:30:03Z`.
+- **T_F:** `2026-10-14T00:00:00Z`.
+- **Record:** `docs/results/v6-code-freeze-record.json`.

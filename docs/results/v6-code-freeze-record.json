@@ -1,0 +1,26 @@
+{
+ "run_id": "v6-c659d0cd6928c635",
+ "code_head": "576f5fac4b01de45f6b4a6c7cb7b380c881df5ab",
+ "review_pass_at": "2026-10-12T12:30:03Z",
+ "T_F": "2026-10-14T00:00:00Z",
+ "t_f_rule": "first 00:00 UTC at least 24 h after the final independent implementation-review PASS (D-G2)",
+ "code_review": "PASS (Critical 0, Major 0, Minor 3) on exact HEAD 576f5fa",
+ "methodology_review": "CONFORMS (Critical 0, Major 0, Minor 3) on exact HEAD 576f5fa",
+ "erratum_001": {
+  "file": "docs/results/v6-spec-erratum-001.md",
+  "sha256": "ca93982b6304096fe81071597a4d31988d2f63e90b96f7432094ab9f90dec13c",
+  "commit": "3de40ab3c9cf166f3f0726f6c6dd185195506ba5",
+  "tag": "v6-profitability-spec-erratum-001",
+  "tag_object": "4c8d4c4590b296d4e3c0f18270c9457edb80bc0e",
+  "status": "IN EFFECT: methodology reviewer, unconditional on exact HEAD 576f5fa: INTERPRETATION FIX, NOT OUTCOME TUNING"
+ },
+ "spec_tag": "v6-profitability-spec-frozen",
+ "spec_sha256": "c659d0cd6928c6356be43cbe97eaa91075197640ef195d09aba1ac5d582b2c5f",
+ "constants_sha256": "152af4cb19e688b3551feb8210aeec5c471aec78b708592fcbb6eeef08946974",
+ "user_decisions": {
+  "D-A1": "ACCEPTED 2026-10-12: Stage 0 coverage < 90 % in any required asset or asset x hour-of-day cell = FAIL / INVALID RUN; never relaxed after an outcome",
+  "D-B5": "ACKNOWLEDGED AND ACCEPTED 2026-10-12: exactly-binding dollar cap / beta limit exceeded after quantity rounding -> H3 book INFEASIBLE; no tolerance added, frozen spec unchanged"
+ },
+ "holdout": "SEALED; opening needs a separate explicit user approval after a PRE-HOLDOUT OPERATIONAL PREFLIGHT",
+ "code_frozen_tag": "v6-code-frozen: created at or after T_F on the commit carrying this record; not before T_F"
+}
