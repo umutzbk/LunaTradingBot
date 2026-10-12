@@ -287,9 +287,12 @@ build(L, S):
 - Bacak stop'u: girişe göre %15 ters hareket → çıkış ve 24 saat cooldown. Ayrıca R3/R4 ve V5 ineligibility çıkışları.
 - **Herhangi bir gün içi çıkıştan sonra**, bir sonraki 15 dakikalık anda gerçekleşen kitapta sırasıyla, hepsi reduce-only:
   1. `|β_net| > 0.05·E` ise her bacak `0.05·E/|β_net|` ile çarpılır.
-  2. Net dolar kontrolü ya da `q` kontrolü başarısızsa yalnız ağır taraf (net dolar için dolarca, `q` için standalone riskçe ağır olan) orantılı küçültülür; kontrol sağlanana kadar. Sonuçta `max(min_qty·mid, 10$)` altına düşen bacaktan çıkılır.
+  2. Net dolar ya da `q` kontrolü başarısızsa taraf küçültme oranı `a_L/a_S` seçilir. Taraf dolarları `D_L, D_S`, standalone riskleri `R_L, R_S` ile:
+     - net dolar kontrolü `a_L/a_S ∈ [2/3·D_S/D_L, 1.5·D_S/D_L]` ister;
+     - `q` kontrolü `a_L/a_S ∈ [2/3·R_S/R_L, 1.5·R_S/R_L]` ister.
+     İki aralığın kesişiminden 1'e en yakın oran seçilir ve **yalnız küçültmeyle** uygulanır (bir taraf küçülür, hiçbiri büyümez). Kesişim boşsa bütün bacaklardan çıkılır.
   3. Sonra (1) bir kez daha uygulanır.
-  4. Herhangi bir tarafta < 3 bacak kalırsa bütün bacaklardan çıkılır.
+  4. Her adımdan sonra `max(min_qty·mid, 10$)` altına düşen bacaklardan çıkılır ve (1)–(3) yeniden uygulanır; en fazla bacak sayısı kadar tekrar. Kontroller hâlâ sağlanmıyorsa ya da herhangi bir tarafta < 3 bacak kalırsa bütün bacaklardan çıkılır.
 - 00:00 inşası (S-H3-7) her gün çalışır; gün içi durumdan etkilenmez. Başarılı bir inşa önceki INFEASIBLE durumunu temizler.
 
 **S-H3-11 Execution.**
