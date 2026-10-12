@@ -1,6 +1,6 @@
 # V6 Profitability — Exact Spec
 
-**Durum:** TASLAK r3 (ikinci red-team'in 2. turu sonrası). Freeze edilmedi. Holdout kapalı; V6 backtest ya da outcome yok.
+**Durum:** **FROZEN** (r4; tag `v6-profitability-spec-frozen`; freeze kaydı `docs/results/v6-spec-freeze-record.md`). Holdout kapalı; V6 backtest ya da outcome yok. Bu dosya artık değiştirilmez.
 
 **Kaynaklar:**
 - Plan rev 2 (`luna-v6-profitability-research-plan.md`, commit `25ee363`). Bu spec onun normatif, tek anlamlı halidir.
