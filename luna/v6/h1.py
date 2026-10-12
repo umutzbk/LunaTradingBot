@@ -62,9 +62,18 @@ class H1Config:
 class _Pos:
     q: float  # spot qty (> 0)
     pq: float  # perp short qty (> 0); the perp position is -pq
-    spot_entry: float
+    spot_entry: float  # average entry mid (stop / reset reference)
     perp_entry: float
     collateral: float
+    spot_px: float = math.nan  # average entry FILL price of the spot leg (V5 R6, Erratum 001)
+    perp_px: float = math.nan  # average entry FILL price of the perp leg
+
+    def risk(self) -> float:
+        """V5 risk amount of the pair's legs: 0.15 x qty x average fill price (fill-time mid only as a
+        fallback when no fill price is recorded)."""
+        sp = self.spot_px if math.isfinite(self.spot_px) else self.spot_entry
+        pp = self.perp_px if math.isfinite(self.perp_px) else self.perp_entry
+        return v5risk.V5_LEG_STOP * (self.q * sp + self.pq * pp)
 
 
 @dataclass
@@ -253,7 +262,9 @@ class H1Engine:
                     smid = sum(f.mid * f.dq for f in sfs) / dq
                     pq = -dp
                     pmid = sum(f.mid * abs(f.dq) for f in pfs) / pq if pq > 0 else math.nan
-                    st.pos[a] = _Pos(dq, pq, smid, pmid, pq * pmid if pq > 0 else 0.0)
+                    spx = sum(f.px * f.dq for f in sfs) / dq
+                    ppx = sum(f.px * abs(f.dq) for f in pfs) / pq if pq > 0 else math.nan
+                    st.pos[a] = _Pos(dq, pq, smid, pmid, pq * pmid if pq > 0 else 0.0, spx, ppx)
                 elif ps is not None:
                     q1, pq1 = ps.q + dq, ps.pq - dp
                     if q1 <= QTY_EPS and pq1 <= QTY_EPS:
@@ -428,8 +439,7 @@ class H1Engine:
             kept = [b for b in held if b in st.pos]
             gross_after = [n for b in kept for n in (st.pos[b].q * self._px(st, b, t, "spot"),
                                                      st.pos[b].pq * self._px(st, b, t, "perp"))]
-            risk_after = [v5risk.V5_LEG_STOP * n for b in kept
-                          for n in (st.pos[b].q * st.pos[b].spot_entry, st.pos[b].pq * st.pos[b].perp_entry)]
+            risk_after = [st.pos[b].risk() for b in kept]  # held pairs at their average fill prices
             gross_after += entered + [q * px, q * px]  # pairs sent earlier in this decision, then this pair
             risk_after += [v5risk.V5_LEG_STOP * n for n in entered + [q * px, q * px]]
             bad = v5risk.violations([q * px, q * px], gross_after, risk_after, E, positions_after=len(held) + 1,

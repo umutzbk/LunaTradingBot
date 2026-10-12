@@ -62,6 +62,22 @@ FILL_COLS = ["decision_ts", "ts", "asset", "leg", "dq", "px", "mid", "mid_decisi
 SETT_COLS = ["period_start", "ts", "asset", "amount", "known", "qty_hours"]
 
 
+def avg_entry(q: float, avg: float, dq: float, px: float) -> tuple[float, float]:
+    """V5 ``portfolio._trade`` (fabd419) on fill prices: open/increase -> quantity-weighted average of
+    the fill prices; partial reduce -> unchanged; exact close -> (0, 0); flip -> the new side at px.
+    Erratum 001 R6 measures held risk at this average FILL price (V5 ``entry_price``)."""
+    tol = 1e-9 * max(abs(q), abs(dq))
+    if q == 0.0 or (q > 0) == (dq > 0):
+        new = q + dq
+        return new, (q * avg + dq * px) / new
+    rem = abs(dq) - abs(q)
+    if abs(rem) <= tol:
+        return 0.0, 0.0
+    if rem < 0:
+        return q + dq, avg
+    return math.copysign(rem, dq), px
+
+
 def fill_row(f, intent: str) -> dict:
     return {"decision_ts": f.decision_ts, "ts": f.ts, "asset": f.asset, "leg": f.leg, "dq": f.dq, "px": f.px,
             "mid": f.mid, "mid_decision": f.mid_decision, "half": f.half, "fee": f.fee, "spread_slip": f.spread_slip,
@@ -119,7 +135,8 @@ class RunResult:
 class _State:
     cash: float
     pos: dict = field(default_factory=dict)  # asset -> qty
-    entry: dict = field(default_factory=dict)  # asset -> average entry mid
+    entry: dict = field(default_factory=dict)  # asset -> average entry mid (leg-stop reference, D-E5)
+    entry_px: dict = field(default_factory=dict)  # asset -> average entry FILL price (V5 R6, Erratum 001)
     acc: dict = field(default_factory=dict)  # (asset, period) -> qty * hours
     pending: list = field(default_factory=list)  # (Fill, intent)
     exiting: set = field(default_factory=set)
@@ -219,9 +236,10 @@ class H3Engine:
             st.exiting.add(a)
 
     def _leg_risk(self, st: _State, a: str, q_after: float, mid: float) -> float:
-        """V5 risk amount of a leg after a decision (Erratum 001, R6): 0.15 x held qty x entry price
-        for the quantity kept on the same side (scaled down on a reduction), 0.15 x mid for the rest."""
-        q0, e = st.pos.get(a, 0.0), st.entry.get(a)
+        """V5 risk amount of a leg after a decision (Erratum 001, R6; V5 core.py:691/608 at fabd419):
+        0.15 x held qty x the average entry FILL price for the quantity kept on the same side (scaled
+        down on a reduction), 0.15 x the decision mid for opened quantity (V5 pre-registration, core.py:499)."""
+        q0, e = st.pos.get(a, 0.0), st.entry_px.get(a)
         if q0 and e and q0 * q_after > 0:
             kept = min(abs(q_after), abs(q0))
             return v5risk.V5_LEG_STOP * (kept * e + (abs(q_after) - kept) * mid)
@@ -278,10 +296,12 @@ class H3Engine:
                     st.entry[f.asset] = f.mid
                 elif abs(q1) > abs(q0):
                     st.entry[f.asset] = (st.entry[f.asset] * abs(q0) + f.mid * abs(f.dq)) / abs(q1)
+                _, st.entry_px[f.asset] = avg_entry(q0, st.entry_px.get(f.asset, 0.0), f.dq, f.px)
                 st.pos[f.asset] = q1
                 if q1 == 0:
                     st.pos.pop(f.asset, None)
                     st.entry.pop(f.asset, None)
+                    st.entry_px.pop(f.asset, None)
                 if not any(x[0].asset == f.asset for x in st.pending):
                     st.exiting.discard(f.asset)
                 fills.append(fill_row(f, intent))

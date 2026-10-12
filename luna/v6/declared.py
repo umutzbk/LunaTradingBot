@@ -30,8 +30,15 @@ DECLARED = {
             "(11:45); the terminal unwind is valued there.",
     "D-E4": "S-H3-12 '> 24 h': checked at every 15-minute tick; a book infeasible since a 00:00 decision is "
             "exited at 00:15 one day later unless the 00:00 build that day succeeds.",
-    "D-E5": "Leg-stop reference = the position's average entry mid (fill-time mid, weighted by opening "
-            "quantity; reductions keep it).",
+    "D-E5": "Leg-stop reference = the position's average entry MID (fill-time mid, weighted by opening "
+            "quantity; reductions keep it). It is used only for the 15 % leg stop (H3) and the combined stop / "
+            "hedge reset (H1); it is NOT the R6 price (see D-E12).",
+    "D-E12": "Erratum 001 R6 open risk = 0.15 x |qty| x the average entry FILL price, exactly V5 risk_amount "
+             "(luna/carry/core.py:691 at fabd419, entry_price = 'avg entry at fill prices' maintained by "
+             "portfolio._trade: open/increase quantity-weighted fill prices, partial reduce unchanged, flip -> the "
+             "fill price; engine.avg_entry is that rule). Not-yet-filled opened quantity is valued at the decision "
+             "mid (V5 pre-registration risk_amount = stop x qty x mid, core.py:499). H1: per leg (spot, perp) average "
+             "fill prices.",
     "D-E6": "An exit or stop order without a fill price (no mid at t + 15m) is retried at the next tick; an "
             "open without a fill is dropped (counted as unfilled).",
     "D-V1": "When several classes of the same severity (MODEL INCONCLUSIVE, INSUFFICIENT, INCONCLUSIVE) fire, "

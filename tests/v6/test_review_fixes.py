@@ -724,3 +724,27 @@ def test_transient_rate_limit_is_retried(monkeypatch):
 
     monkeypatch.setattr(hd, "RETRY_WAIT", 0.0)
     assert hd._retry(flaky) == 7 and n["k"] == 3
+
+
+def test_a_completed_download_is_never_rewritten_even_if_a_part_was_altered(tmp_path, monkeypatch):
+    from luna.v6 import holdout_data as hd
+
+    calls = {"n": 0}
+    frame = pd.DataFrame({"close": [1.0]}, index=pd.DatetimeIndex([guard.HOLDOUT_START]).as_unit("ns"))
+
+    def f(client, a, auth, *rest, **kw):
+        calls["n"] += 1
+        return frame
+
+    for nm in ("funding", "spreads", "spot"):
+        monkeypatch.setattr(hd, f"fetch_{nm}", f)
+    monkeypatch.setattr(hd, "fetch_candles", lambda client, tick, a, auth: f(client, a, auth))
+    monkeypatch.setattr(guard, "pin_manifest", lambda sha, auth, repo=None: None)
+    auth = guard.HoldoutAuthorization(guard.HoldoutAuthorization._secret, {})
+    hd.download(_FlakyClient(), tmp_path, ["ETH"], auth)
+    part = tmp_path / "mark" / "ETH.parquet"
+    part.write_bytes(b"altered")
+    n0 = calls["n"]
+    with pytest.raises(FileExistsError):
+        hd.download(_FlakyClient(), tmp_path, ["ETH"], auth)
+    assert calls["n"] == n0 and part.read_bytes() == b"altered"  # no refetch, no rewrite after completion

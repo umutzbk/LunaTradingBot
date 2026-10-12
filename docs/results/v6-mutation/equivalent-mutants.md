@@ -50,16 +50,18 @@ The original code refuses the pair (`skipped_cash`); the mutant sends it. The mu
 
 ## Deliberately not mutated: overlapping guards (round 4)
 
-Mutating either half of each pair below alone is observationally equivalent, because the other half
-still produces the same outcome. Both halves are kept on purpose.
+Both halves of each pair below are kept on purpose. Pair 2 is observationally equivalent under single
+mutation. Pair 1 is **not strictly equivalent**; the correction (code reviewer, m-3) is given there.
 
 1. **`holdout_data.download`: the early `manifest.json exists → FileExistsError` check, and the
    exclusive `O_EXCL` create of `manifest.json`.**
-   - Remove the early check: complete parts are skipped (not refetched) and the `O_EXCL` create
-     raises the same `FileExistsError`.
-   - Remove `O_EXCL`: the early check raises first.
-   - The early check avoids a pointless pass over the parts; `O_EXCL` closes the race between two
-     processes.
+   - Remove `O_EXCL`: the early check raises first, so the outcome is the same, except for the race
+     between two processes, which only `O_EXCL` closes.
+   - Remove the early check: **not equivalent.** On a second call after the manifest exists, a part
+     whose bytes no longer match its sidecar (deleted or altered) would be refetched and rewritten
+     before the `O_EXCL` create raises. The kept early check prevents any write after the download
+     completed, which is why it stays. The final `FileExistsError` is the same either way, so the
+     existing tests do not distinguish the two.
    - Covered by `test_holdout_download_resumes_after_a_transient_failure_without_refetching` (third call).
 2. **`engine._decide`: the V5 price fallback (`insts` mid, else the last valuation mid), and
    `v5risk.violations` failing closed on any non-finite input.**

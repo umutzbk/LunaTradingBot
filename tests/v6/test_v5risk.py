@@ -40,7 +40,7 @@ def test_r6_open_risk_of_held_legs_is_measured_at_the_entry_price():
     w = build_world()
     eng = H3Engine(w.market, FixedModel(w.funding_levels), w.prices, w.vol, w.insts, H3Config("H3-k4", 4))
     st = _State(cash=0.0)
-    st.pos["A00"], st.entry["A00"] = 2.0, 100.0
+    st.pos["A00"], st.entry_px["A00"] = 2.0, 100.0  # average entry FILL price
     # held 2 at entry 100, mid now 300; growing to 3: 0.15 x (2 x 100) + 0.15 x (1 x 300)
     assert eng._leg_risk(st, "A00", 3.0, 300.0) == pytest.approx(0.15 * 200 + 0.15 * 300)
     assert eng._leg_risk(st, "A00", 1.0, 300.0) == pytest.approx(0.15 * 100)  # reduced: scaled down

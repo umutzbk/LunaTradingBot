@@ -1,0 +1,65 @@
+[
+ {
+  "name": "H3 R6 at the fill-time mid",
+  "file": "luna/v6/engine.py",
+  "old": "        q0, e = st.pos.get(a, 0.0), st.entry_px.get(a)",
+  "new": "        q0, e = st.pos.get(a, 0.0), st.entry.get(a)",
+  "tests": "tests/v6/test_r6_entry_price.py::test_h3_r6_uses_the_average_fill_price_not_the_fill_time_mid"
+ },
+ {
+  "name": "H3 books the mid as entry price",
+  "file": "luna/v6/engine.py",
+  "old": "avg_entry(q0, st.entry_px.get(f.asset, 0.0), f.dq, f.px)",
+  "new": "avg_entry(q0, st.entry_px.get(f.asset, 0.0), f.dq, f.mid)",
+  "tests": "tests/v6/test_r6_entry_price.py::test_h3_books_the_average_fill_price_on_every_fill"
+ },
+ {
+  "name": "reduce moves the average",
+  "file": "luna/v6/engine.py",
+  "old": "    if rem < 0:\n        return q + dq, avg",
+  "new": "    if rem < 0:\n        return q + dq, px",
+  "tests": "tests/v6/test_r6_entry_price.py"
+ },
+ {
+  "name": "flip keeps the old average",
+  "file": "luna/v6/engine.py",
+  "old": "    return math.copysign(rem, dq), px",
+  "new": "    return math.copysign(rem, dq), avg",
+  "tests": "tests/v6/test_r6_entry_price.py"
+ },
+ {
+  "name": "increase not weighted",
+  "file": "luna/v6/engine.py",
+  "old": "        return new, (q * avg + dq * px) / new",
+  "new": "        return new, px",
+  "tests": "tests/v6/test_r6_entry_price.py"
+ },
+ {
+  "name": "H1 R6 at the mid",
+  "file": "luna/v6/h1.py",
+  "old": "        sp = self.spot_px if math.isfinite(self.spot_px) else self.spot_entry",
+  "new": "        sp = self.spot_entry",
+  "tests": "tests/v6/test_r6_entry_price.py::test_h1_r6_uses_each_leg_s_average_fill_price"
+ },
+ {
+  "name": "H1 books the spot mid",
+  "file": "luna/v6/h1.py",
+  "old": "                    spx = sum(f.px * f.dq for f in sfs) / dq",
+  "new": "                    spx = sum(f.mid * f.dq for f in sfs) / dq",
+  "tests": "tests/v6/test_r6_entry_price.py::test_h1_books_average_fill_prices_per_leg"
+ },
+ {
+  "name": "H1 books the perp mid",
+  "file": "luna/v6/h1.py",
+  "old": "                    ppx = sum(f.px * abs(f.dq) for f in pfs) / pq if pq > 0 else math.nan",
+  "new": "                    ppx = sum(f.mid * abs(f.dq) for f in pfs) / pq if pq > 0 else math.nan",
+  "tests": "tests/v6/test_r6_entry_price.py::test_h1_books_average_fill_prices_per_leg"
+ },
+ {
+  "name": "completed download rewritten",
+  "file": "luna/v6/holdout_data.py",
+  "old": "    if mp.exists():\n        raise FileExistsError(f\"{mp} exists: the holdout download is complete and write-once\")",
+  "new": "    if False:\n        raise FileExistsError(f\"{mp} exists: the holdout download is complete and write-once\")",
+  "tests": "tests/v6/test_review_fixes.py::test_a_completed_download_is_never_rewritten_even_if_a_part_was_altered"
+ }
+]
