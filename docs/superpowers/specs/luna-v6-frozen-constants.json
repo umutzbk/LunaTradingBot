@@ -1,0 +1,151 @@
+{
+  "spec": "luna-v6-profitability-spec.md",
+  "fees": {
+    "source_url": "https://www.kraken.com/features/fee-schedule",
+    "access_utc": "2026-10-12T01:12:31Z",
+    "snapshot_file": "docs/results/v6-fee-source/kraken-fee-schedule-2026-10-12.html",
+    "tier": "Tier 1 (public, conservative primary; account tier not verified)",
+    "spot_maker": 0.0040,
+    "spot_taker": 0.0080,
+    "futures_maker": 0.0002,
+    "futures_taker": 0.0005
+  },
+  "costs": {
+    "slippage_per_side": 0.0002,
+    "spot_half_spread_rule": "max(2 * perp_half_spread_at_same_time, 0.0005)",
+    "fill_delay_minutes": 15,
+    "cost2x_multiplier": 2.0,
+    "pit10_spread_known_after_minutes": 10,
+    "fbcons_lookback_days": 35,
+    "fbcons_quantile": 0.90
+  },
+  "common": {
+    "universe": ["ADA", "AVAX", "BNB", "BTC", "DOGE", "ENA", "ETH", "FET", "HYPE", "LINK", "NEAR", "PEPE", "PUMP", "SOL", "SUI", "TAO", "UNI", "XLM", "XRP", "ZEC"],
+    "capital_usd": 265,
+    "decision_hour_utc": 0,
+    "monitor_minutes": 15,
+    "gate_max_spread_bps": 15,
+    "gate_min_quote_volume_usd": 1000000,
+    "gate_min_funding_coverage": 0.90,
+    "gate_max_funding_age_hours": 3,
+    "risk_max_drawdown_kill": 0.15,
+    "risk_profile": "V5 carry.risk unchanged (config/default.yaml at fabd419)"
+  },
+  "h2a": {
+    "feature": "FL30 = mean f(p), p in [t-720h, t-1h], min 648 known",
+    "label": "Y(s,h) = mean f(p), p in [s, s+h-1h], min 0.90*h known, known at s+h",
+    "sample_grid": "daily 00:00 UTC",
+    "model": "pooled OLS Y = a(h) + b(h) * X, equal weights",
+    "horizons_hours": [168, 720],
+    "window": "expanding from S0, samples with s+h <= t",
+    "s0_rule": "first daily date with X available for >= 10 assets",
+    "min_history_dates": 60,
+    "min_mean_assets_per_date": 10,
+    "winsor_quantiles": [0.01, 0.99],
+    "predict_clip": "X clipped to the fit's winsor cut-offs",
+    "refit": "daily 00:00 UTC",
+    "missing_forecast_exit_hours": 24
+  },
+  "h2b": {
+    "features": {"FL30": [720, 648], "FL7": [168, 151], "FL1d": [24, 22], "PREM24_bars": [96, 86]},
+    "order": "winsorize (0.01, 0.99) then z-score on the fit sample",
+    "ridge_lambda": 0.01,
+    "role": "diagnostic only"
+  },
+  "h2_gate": {
+    "calibration_range": [0.8, 1.25],
+    "h1_top_n": 3,
+    "fs_epsilon": 1e-9,
+    "bootstrap_B": 10000,
+    "seed": 20261010,
+    "gate_block_days": {"168": 14, "720": 30},
+    "ci": "two-sided percentile 2.5/97.5",
+    "min_evidence": {"168": "60 evaluation dates", "720": "8 non-overlapping 720h windows"},
+    "missing_label_partial_min_share": 0.5
+  },
+  "h3": {
+    "variants_k": [4, 6],
+    "min_k_prime": 3,
+    "rank_buffer": 2,
+    "horizon_hours": 168,
+    "min_mark_history_days": 60,
+    "ewma_half_life_days": 14,
+    "ewma_init_days": 30,
+    "cov_window_days": 60,
+    "cov_shrinkage": "Ledoit-Wolf 2004 constant-correlation, analytic intensity clipped to [0,1]",
+    "side_split": "risk parity on basket vols, then dollar cap",
+    "dollar_cap_frac_of_G": 0.2,
+    "sigma_star_annual": 0.08,
+    "gross_cap": 1.0,
+    "net_beta_limit_frac_equity": 0.05,
+    "size_band": 0.25,
+    "min_leg_usd": 10,
+    "infeasible_grace_hours": 24,
+    "leg_stop_frac": 0.15,
+    "stop_cooldown_hours": 24
+  },
+  "h1": {
+    "variants_m": [1.5, 2.5],
+    "max_assets": 3,
+    "per_asset_hedged_frac_equity": 0.16666666666666666,
+    "total_hedged_frac_equity": 0.5,
+    "perp_collateral_multiple": 1.0,
+    "exit_rule": "F(t,720h)*720 < RT/2",
+    "combined_stop_frac_of_hedged_notional": 0.15,
+    "hedge_reset_move": 0.40,
+    "cooldown_hours": 24,
+    "min_spot_volume_usd": 1000000,
+    "forward_maker_window_minutes": 60,
+    "forward_skip_gap_hours": 6,
+    "feasibility_window_days": 90,
+    "feasibility_maker_share_min": 0.50,
+    "feasibility_rt_max": 0.0125,
+    "feasibility_min_episodes": 3
+  },
+  "statistics": {
+    "bootstrap": "moving block, one-sided H0 mean <= 0, V5 stats.mbb",
+    "B": 10000,
+    "seed": 20261010,
+    "blocks_days": [14, 28],
+    "p_go": "max(p_net, p_carry), each the max over blocks",
+    "holdout_family": ["H3-k4", "H3-k6", "H1-m1.5", "H1-m2.5"],
+    "holdout_alpha_fw": 0.05,
+    "forward_looks_days": [90, 180, 365],
+    "forward_alpha_fw": [0.001, 0.001, 0.048],
+    "terminal_look_day": 365
+  },
+  "criteria": {
+    "sharpe_min": 1.0,
+    "max_drawdown_max": 0.10,
+    "worst_day_min": -0.03,
+    "es975_min": -0.02,
+    "evidence": {
+      "H1": {"active_days": 60, "episodes": 3, "clusters": 3, "underlyings": 3},
+      "H3": {"active_days": 60, "episodes": 10, "clusters": 4, "underlyings": 6}
+    },
+    "active_day_rule": ">= 12 h with gross >= 10% of equity (H1 gross = hedged perp notional)",
+    "episode_gap_days": 7,
+    "cluster_gap_days": 7,
+    "p8a_max_share": 0.5,
+    "p8a_min_assets": 3,
+    "p8c_neff_min": {"H1": 2, "H3": 4},
+    "p8d_min_closed_episodes": 10,
+    "p8d_top_share": 0.2,
+    "p8d_max_net_share": 0.5,
+    "p9_subwindows": 3,
+    "p9_floor": -0.03,
+    "p9_min_active_days": "max(15, 25% of subwindow days)"
+  },
+  "forward": {
+    "evidence_start": "first 00:00 UTC at or after the freeze timestamp; recv_ts >= freeze timestamp",
+    "evaluable_day_min_snapshot_share": 0.90,
+    "look_inconclusive_if_evaluable_share_below": 0.80,
+    "pnl_masked_until": "holdout decision and then each scheduled look"
+  },
+  "holdout": {
+    "start": "2026-07-01T00:00:00Z",
+    "end": "2026-10-09T11:52:48.861565107Z",
+    "single_opening": true,
+    "requires_explicit_user_approval": true
+  }
+}
