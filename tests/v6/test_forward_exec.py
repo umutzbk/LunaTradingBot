@@ -172,3 +172,25 @@ def test_forward_funding_known_at_is_the_first_receive_time(tmp_path):
     assert p.abs_rate("ETH", T, T + pd.Timedelta("1h")) != p.abs_rate("ETH", T, T + pd.Timedelta("1h"))  # NaN: not received
     assert p.abs_rate("ETH", T, T + pd.Timedelta("65min")) == pytest.approx(0.01)
     assert p.rel.loc[T, "ETH"] == pytest.approx(1e-5)  # the later revision is ignored
+
+
+def test_maker_loop_never_uses_a_depth_received_after_the_ticker():
+    s = streams(ticks=[(-30 * S, 100.0, 100.2), (5 * M, 100.0, 100.2), (10 * M, 99.9, 99.95)],
+                depths=[(-60 * S, [(100.0, 5)], [(100.2, 5)]), (11 * M, [(99.9, 5)], [(99.95, 9.0)])])
+    r = fx.maker_first_spot(s, "ETH", 3.0, T)
+    assert not any(f.maker for f in r.fills)
+
+
+def test_no_maker_fill_after_the_60_minute_window():
+    s = streams(ticks=[(-30 * S, 100.0, 100.2), (5 * M, 100.0, 100.2), (70 * M, 99.9, 99.95)],
+                depths=[(65 * M, [(99.9, 5)], [(99.95, 9.0)])])
+    r = fx.maker_first_spot(s, "ETH", 3.0, T)
+    assert not any(f.maker for f in r.fills)
+
+
+def test_a_stale_ticker_gives_no_mid():
+    s = streams(ticks=[(-200 * S, 100.0, 100.2)], depths=[(1 * M, [(100.0, 5)], [(100.2, 5)])],
+                fticks=[(-181 * S, 99.9, 100.1)])
+    m = fx.FwdMarket(s, None, ["ETH"])
+    assert m.mid("ETH", T) != m.mid("ETH", T)  # NaN: 181 s old
+    assert m.spot_mid("ETH", T) != m.spot_mid("ETH", T)

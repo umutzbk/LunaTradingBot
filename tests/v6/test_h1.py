@@ -165,3 +165,15 @@ def test_spot_funding_plus_one_x_collateral_never_exceed_cash():
         need = 2 * (spot["dq"] * spot["mid"]).sum()  # spot purchase + 1x perp collateral
         assert need <= 3000.0 + 1e-6
     assert r.counters["skipped_cash"] + r.counters["skipped_size"] >= 0
+
+
+def test_no_entry_when_the_forecast_is_below_m_round_trips():
+    w, insts = h1_world()
+    lv = w.funding_levels * 0 + 1e-6  # 1e-6/h x 720 = 0.072 % << 1.5 x ~2 % round trip
+    eng = H1Engine(w.market, Fixed720(lv), insts, H1Config("H1-m1.5", 1.5), equity0=10_000.0)
+    r = eng.run(w.start, w.start + 3 * DAY)
+    assert r.fills[r.fills["intent"] == "open"].empty
+    big = w.funding_levels * 4
+    r15 = H1Engine(w.market, Fixed720(big), insts, H1Config("a", 1.5), equity0=10_000.0).run(w.start, w.start + 3 * DAY)
+    r25 = H1Engine(w.market, Fixed720(big), insts, H1Config("b", 25.0), equity0=10_000.0).run(w.start, w.start + 3 * DAY)
+    assert r15.fills["asset"].nunique() > r25.fills["asset"].nunique()
