@@ -5,3 +5,4 @@ docs/results/v5-backtest/** -text
 docs/results/v6-fee-source/** -text
 # V6 red-team record: stored byte-identical to its freeze-record sha256
 docs/results/v6-redteam/** -text
+docs/results/v6-spec-erratum-001.md -text
