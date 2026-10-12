@@ -1,1 +1,3 @@
 * text=auto eol=lf
+# the single V5 outcome run: stored byte-identical to the sha256 values in its manifest
+docs/results/v5-backtest/** -text

@@ -1,0 +1,792 @@
+{
+ "head": "129bb54bc407803bc9d08145a38b1a3bc8a6b283",
+ "tag": "v5-backtest-protocol-frozen",
+ "protocol_sha256": "4bd90f5a169025e0483d13c636964a937d01f10fce3355ced1c81058dfcaba54",
+ "manifest_sha256": "eecdc6a21626ccd5e2677cce2503f304a5730845de552554281a6ea54cc53f14",
+ "config_sha256": "98c1a706f10731ada79cc15557598b5cd95fbc523a03418c04dda3ddd581fd51",
+ "approved": true,
+ "started_at": "2026-10-11T21:35:18.723238+00:00",
+ "summary_sha256": "c0b7adc615a4bb5d5e23cc74df0d1a2461ff54d311ca1089e6299781eb77b3db",
+ "tables": {
+  "W:PRIMARY:daily": {
+   "path": "tables/W_PRIMARY_daily.parquet",
+   "sha256": "9f2179df01de1cb335f756081f80825f4bba0c1a2983458fd9b2e30257250d49"
+  },
+  "W:PRIMARY:fills": {
+   "path": "tables/W_PRIMARY_fills.parquet",
+   "sha256": "5d8bb9ced3f260af79afcaf2097b6e062a40bdee80b2991511f8d24f8d5051ae"
+  },
+  "W:PRIMARY:records": {
+   "path": "tables/W_PRIMARY_records.parquet",
+   "sha256": "948b9e1bccd4dd354d98f2263bdbdb36aef22565db3ca089c4f0fb54424e3559"
+  },
+  "W:PRIMARY:settlements": {
+   "path": "tables/W_PRIMARY_settlements.parquet",
+   "sha256": "ddc3493eca65e73135bb69ecce02d59c606aae367c4d7982e840831aad051b51"
+  },
+  "W:PRIMARY:schedule": {
+   "path": "tables/W_PRIMARY_schedule.parquet",
+   "sha256": "4a4d4c371dd01e3f95c7ab7160ff46df9d08e980874c1d70eba27dbccfc790ab"
+  },
+  "D:PRIMARY:daily": {
+   "path": "tables/D_PRIMARY_daily.parquet",
+   "sha256": "a0eb80bdf398388cb60c68aef29315b981a22fe0d9e89ef0a98e10add741264e"
+  },
+  "D:PRIMARY:fills": {
+   "path": "tables/D_PRIMARY_fills.parquet",
+   "sha256": "d2b728a63c256a212e3c02a70a6c9cc9c22668ba807e855b6c09714594676037"
+  },
+  "D:PRIMARY:records": {
+   "path": "tables/D_PRIMARY_records.parquet",
+   "sha256": "95e6ff9a17ffac4afe317c53452788ef8ae4556bf6641856dc0c9b5a7e8c665b"
+  },
+  "D:PRIMARY:settlements": {
+   "path": "tables/D_PRIMARY_settlements.parquet",
+   "sha256": "9c17fb19ae2270afdd83c2909d31564b0c69387ee03a3f2a104d48b0f5cba78d"
+  },
+  "D:PRIMARY:schedule": {
+   "path": "tables/D_PRIMARY_schedule.parquet",
+   "sha256": "9d616901da76f5135bdf28b1867af907d8a65be4d1df9395a1d0a1a576352621"
+  },
+  "C:PRIMARY:daily": {
+   "path": "tables/C_PRIMARY_daily.parquet",
+   "sha256": "7ded7852f69d78d40d83e01e4a0c7cd3ba6020751f5e2a4c40203afef36a87e9"
+  },
+  "C:PRIMARY:fills": {
+   "path": "tables/C_PRIMARY_fills.parquet",
+   "sha256": "8327f3ea5b0af44fcf4d9e1b8a2a5eb3ffa7224668e80f3a74970c9f43e72214"
+  },
+  "C:PRIMARY:records": {
+   "path": "tables/C_PRIMARY_records.parquet",
+   "sha256": "729b907761d42bc7874622fa7eeb600fd78b3b32a4333e0c3e6eb3c73356dc21"
+  },
+  "C:PRIMARY:settlements": {
+   "path": "tables/C_PRIMARY_settlements.parquet",
+   "sha256": "e770daffede6b7e956383246483ba18ee813fe3e126e47fb701adf74f5c2b128"
+  },
+  "C:PRIMARY:schedule": {
+   "path": "tables/C_PRIMARY_schedule.parquet",
+   "sha256": "a8a2716c27df9048eecffd03d739d59323faa412663702dc594257c843fedbb8"
+  },
+  "E:PRIMARY:daily": {
+   "path": "tables/E_PRIMARY_daily.parquet",
+   "sha256": "ea0083fdebeb75f9bcf4e2ba2303855d101a202087179ad7678de563d2be1932"
+  },
+  "E:PRIMARY:fills": {
+   "path": "tables/E_PRIMARY_fills.parquet",
+   "sha256": "c8a17c8462445df040daab6538c7432eb6fedb1e5ec256a7ed7e17961cdc7b51"
+  },
+  "E:PRIMARY:records": {
+   "path": "tables/E_PRIMARY_records.parquet",
+   "sha256": "ef00d887360b626fd8af375a7b55f159773fc4d3c6d07ae3ed9d11145a6a3509"
+  },
+  "E:PRIMARY:settlements": {
+   "path": "tables/E_PRIMARY_settlements.parquet",
+   "sha256": "b53f148870198961b59ef8c4b0ccd58c6e3087389e892d47b997440622781b66"
+  },
+  "E:PRIMARY:schedule": {
+   "path": "tables/E_PRIMARY_schedule.parquet",
+   "sha256": "a95748a8a394e6ce7e531bb7b7136b2eabba83bc94732d275878b88b93290d11"
+  },
+  "W:S-COST2X:daily": {
+   "path": "tables/W_S-COST2X_daily.parquet",
+   "sha256": "caba2652cd4fd15bb524d7ae71f2e6baa20ea1c46690686c0c89041d56dd15f9"
+  },
+  "W:S-COST2X:fills": {
+   "path": "tables/W_S-COST2X_fills.parquet",
+   "sha256": "4f5080f1454f92e4089a4b50d2de874db205b074c69c533a4648932ad13baf9d"
+  },
+  "W:S-COST2X:records": {
+   "path": "tables/W_S-COST2X_records.parquet",
+   "sha256": "eb5b270f83fa62c8344d11fb9c34229f5550c5aeaa40827a716f7dcd88ac44fe"
+  },
+  "W:S-COST2X:settlements": {
+   "path": "tables/W_S-COST2X_settlements.parquet",
+   "sha256": "63337dc8f8a7ef3fc5eee47982a31017b885e4cbcfd2cd84fa1ab3150415d190"
+  },
+  "W:S-COST2X:schedule": {
+   "path": "tables/W_S-COST2X_schedule.parquet",
+   "sha256": "4a4d4c371dd01e3f95c7ab7160ff46df9d08e980874c1d70eba27dbccfc790ab"
+  },
+  "D:S-COST2X:daily": {
+   "path": "tables/D_S-COST2X_daily.parquet",
+   "sha256": "0320bfb7738c8f7613170ce0e3ab20c2c811081d9999e6cc614740fc2003f712"
+  },
+  "D:S-COST2X:fills": {
+   "path": "tables/D_S-COST2X_fills.parquet",
+   "sha256": "1f601a105494504619605565ea9f4f45121a3c533fb55250492fccb2cd258de0"
+  },
+  "D:S-COST2X:records": {
+   "path": "tables/D_S-COST2X_records.parquet",
+   "sha256": "5f074cf6cfe0f08037fa599551e3a96014df8ac327456a3c52c3853112595e7b"
+  },
+  "D:S-COST2X:settlements": {
+   "path": "tables/D_S-COST2X_settlements.parquet",
+   "sha256": "ce5dd833755ec3c63fa679a8ef53e725d16b73e9f20f809811b99025cab71bb1"
+  },
+  "D:S-COST2X:schedule": {
+   "path": "tables/D_S-COST2X_schedule.parquet",
+   "sha256": "aa5b17bfbb876c8a47867e743b5e865d4c47710df92bc487503e36a2f18ce1f3"
+  },
+  "C:S-COST2X:daily": {
+   "path": "tables/C_S-COST2X_daily.parquet",
+   "sha256": "0134a4dfc9afaeb383282ac15f9dfb8081aca7e8381cc9bdbec6a603185b7ef3"
+  },
+  "C:S-COST2X:fills": {
+   "path": "tables/C_S-COST2X_fills.parquet",
+   "sha256": "14bf629d066466aeb73555bfc5b8a4ca1513cc173626ce3561a612b595b1f9f2"
+  },
+  "C:S-COST2X:records": {
+   "path": "tables/C_S-COST2X_records.parquet",
+   "sha256": "53084faf09ae59c7b7257b7bd69e5fe93e15973bb99279c5977e3d5274135b23"
+  },
+  "C:S-COST2X:settlements": {
+   "path": "tables/C_S-COST2X_settlements.parquet",
+   "sha256": "337c95210e79a7ed0cb467a2eea783edb77850cac2dc29f88c6155cf2110f122"
+  },
+  "C:S-COST2X:schedule": {
+   "path": "tables/C_S-COST2X_schedule.parquet",
+   "sha256": "a8a2716c27df9048eecffd03d739d59323faa412663702dc594257c843fedbb8"
+  },
+  "E:S-COST2X:daily": {
+   "path": "tables/E_S-COST2X_daily.parquet",
+   "sha256": "b6d4e01db2018d2db61cec54fda3a4323e07f4de41f981c0403ef7edcbf8b29f"
+  },
+  "E:S-COST2X:fills": {
+   "path": "tables/E_S-COST2X_fills.parquet",
+   "sha256": "c4ff4e070474cc12bf8e463604d720ede8ead553a3e80caee833993fd393c5c9"
+  },
+  "E:S-COST2X:records": {
+   "path": "tables/E_S-COST2X_records.parquet",
+   "sha256": "dd17cbd86dc0f4e43732412f610c5180e4066da36fbcc4164535fd8e5ea395da"
+  },
+  "E:S-COST2X:settlements": {
+   "path": "tables/E_S-COST2X_settlements.parquet",
+   "sha256": "bf5b95ef1604fc80ef53dd3245a8403e29398bf77351375e9eccdcdc02118b76"
+  },
+  "E:S-COST2X:schedule": {
+   "path": "tables/E_S-COST2X_schedule.parquet",
+   "sha256": "a95748a8a394e6ce7e531bb7b7136b2eabba83bc94732d275878b88b93290d11"
+  },
+  "W:S-SPREAD-FIX:daily": {
+   "path": "tables/W_S-SPREAD-FIX_daily.parquet",
+   "sha256": "d0f7862e70b548befe22f12b1017378a8c9aac1873de58adbf3106b7669fc20b"
+  },
+  "W:S-SPREAD-FIX:fills": {
+   "path": "tables/W_S-SPREAD-FIX_fills.parquet",
+   "sha256": "b1fe57334e1adf6279c63c8fdedf8f28f5ceb611e3886137c1d3efdf02635377"
+  },
+  "W:S-SPREAD-FIX:records": {
+   "path": "tables/W_S-SPREAD-FIX_records.parquet",
+   "sha256": "6985612bb6f9709a96aef6a0e4d0743a3743c1599252eff902d144cc604696e2"
+  },
+  "W:S-SPREAD-FIX:settlements": {
+   "path": "tables/W_S-SPREAD-FIX_settlements.parquet",
+   "sha256": "87a4a5bcc90e6e021f2d94e8e20bed5db120e7e3537196566b121afde7666d5b"
+  },
+  "W:S-SPREAD-FIX:schedule": {
+   "path": "tables/W_S-SPREAD-FIX_schedule.parquet",
+   "sha256": "55dadc75b4b7744c1c85a8a6df126d991a22d8edca1ed78f7b85d1ea57fbb8bd"
+  },
+  "D:S-SPREAD-FIX:daily": {
+   "path": "tables/D_S-SPREAD-FIX_daily.parquet",
+   "sha256": "15da55864147c6215d05e4e8f55724e6be4dd3bc4ee2a1047721886095561f24"
+  },
+  "D:S-SPREAD-FIX:fills": {
+   "path": "tables/D_S-SPREAD-FIX_fills.parquet",
+   "sha256": "1ec11ddabe46e5ae5b2f3eeaff44e58c837116a4e095d14fd09ddbe2708d9672"
+  },
+  "D:S-SPREAD-FIX:records": {
+   "path": "tables/D_S-SPREAD-FIX_records.parquet",
+   "sha256": "dfe7181fba120c9353892ff9129b5cfec90a19c93e95dca5da78b723c952afb6"
+  },
+  "D:S-SPREAD-FIX:settlements": {
+   "path": "tables/D_S-SPREAD-FIX_settlements.parquet",
+   "sha256": "f9df1db14e49753bbe879cd49b58844def2436393d37315e97e619a8951409eb"
+  },
+  "D:S-SPREAD-FIX:schedule": {
+   "path": "tables/D_S-SPREAD-FIX_schedule.parquet",
+   "sha256": "85c734b803823476b86991418b69d601ecedbbdf10b148f4e7a15eb97569d09d"
+  },
+  "C:S-SPREAD-FIX:daily": {
+   "path": "tables/C_S-SPREAD-FIX_daily.parquet",
+   "sha256": "5de387ba642637b12ead300cd4c985801912716bfce55d5c8e3523d4685c357e"
+  },
+  "C:S-SPREAD-FIX:fills": {
+   "path": "tables/C_S-SPREAD-FIX_fills.parquet",
+   "sha256": "d7b814184ba679be1f381e8f1064f2fa061d07d87e94206018b37111e3f45bee"
+  },
+  "C:S-SPREAD-FIX:records": {
+   "path": "tables/C_S-SPREAD-FIX_records.parquet",
+   "sha256": "e3f5d2347ed06dcb5687c70f13fba9cf2da4154422cd85dede8ba0973aab1ab3"
+  },
+  "C:S-SPREAD-FIX:settlements": {
+   "path": "tables/C_S-SPREAD-FIX_settlements.parquet",
+   "sha256": "1bbf579ca6369a63e2080672b4a3b1e7fd1294e0a8affa8e4401bb96c89d5bae"
+  },
+  "C:S-SPREAD-FIX:schedule": {
+   "path": "tables/C_S-SPREAD-FIX_schedule.parquet",
+   "sha256": "dc81dcf833f209baad17ed72414a869cb7c1e05adbb30815b4ec522bc72c5725"
+  },
+  "E:S-SPREAD-FIX:daily": {
+   "path": "tables/E_S-SPREAD-FIX_daily.parquet",
+   "sha256": "8a868dacc81a4b6a32b5c682380f1c81a21a32efdd9a88539a650a938d198637"
+  },
+  "E:S-SPREAD-FIX:fills": {
+   "path": "tables/E_S-SPREAD-FIX_fills.parquet",
+   "sha256": "12e5babe9b07fb05a86edb31b4a9888b1deede4ab2427bf77e6b9951889ce78d"
+  },
+  "E:S-SPREAD-FIX:records": {
+   "path": "tables/E_S-SPREAD-FIX_records.parquet",
+   "sha256": "0d716acfb67cb3620579b73e8bafe9e6e2e509b099ae784423c289fdcc37be59"
+  },
+  "E:S-SPREAD-FIX:settlements": {
+   "path": "tables/E_S-SPREAD-FIX_settlements.parquet",
+   "sha256": "54b298d866a75527d343be8227356a584a998588130eb4107aefaf1aa89419b6"
+  },
+  "E:S-SPREAD-FIX:schedule": {
+   "path": "tables/E_S-SPREAD-FIX_schedule.parquet",
+   "sha256": "a95748a8a394e6ce7e531bb7b7136b2eabba83bc94732d275878b88b93290d11"
+  },
+  "W:S-NOKILL:daily": {
+   "path": "tables/W_S-NOKILL_daily.parquet",
+   "sha256": "9819a14acb4c4d4c4fed0468605b01f51335f6947039e135b19e28e01f5fa5f4"
+  },
+  "W:S-NOKILL:fills": {
+   "path": "tables/W_S-NOKILL_fills.parquet",
+   "sha256": "8d446d3d3a03561e64a20496c8e028a3a62fad89de60f7764018bef7934580f2"
+  },
+  "W:S-NOKILL:records": {
+   "path": "tables/W_S-NOKILL_records.parquet",
+   "sha256": "9fbd43cae0caad95f7a42426d549785dfc973837ef88d9c03cd62e3e79f96c2f"
+  },
+  "W:S-NOKILL:settlements": {
+   "path": "tables/W_S-NOKILL_settlements.parquet",
+   "sha256": "1e28ec98813775a68beb1e9f5de4147850040e11e7b71db496424d387284c372"
+  },
+  "W:S-NOKILL:schedule": {
+   "path": "tables/W_S-NOKILL_schedule.parquet",
+   "sha256": "01747a719da3d71923310e50562f2025479eea372abb7ea230639e9a1e6a93e4"
+  },
+  "D:S-NOKILL:daily": {
+   "path": "tables/D_S-NOKILL_daily.parquet",
+   "sha256": "9efd4d6e4ec0d81a3103d82d302d9b5ae2fa7a402e45a417353d3facf0ef46b1"
+  },
+  "D:S-NOKILL:fills": {
+   "path": "tables/D_S-NOKILL_fills.parquet",
+   "sha256": "fa08b19d277f03b01d535ba7a17491e023ce2bbf34ad32abe60b9b0eb06f3581"
+  },
+  "D:S-NOKILL:records": {
+   "path": "tables/D_S-NOKILL_records.parquet",
+   "sha256": "856a7299bb365e9d6e95b9065a92902ad4b39257e83462df842c7c28686d1dbb"
+  },
+  "D:S-NOKILL:settlements": {
+   "path": "tables/D_S-NOKILL_settlements.parquet",
+   "sha256": "9fc0d5e3eb2fb3c32556838af002afc8454ec325b1478b794431d6ab54fd0f62"
+  },
+  "D:S-NOKILL:schedule": {
+   "path": "tables/D_S-NOKILL_schedule.parquet",
+   "sha256": "b4801f5cb885dce71ebd3930b30b383148cbb23c6a905c56c660f1ac9aa529da"
+  },
+  "C:S-NOKILL:daily": {
+   "path": "tables/C_S-NOKILL_daily.parquet",
+   "sha256": "a3f6668269629d0383a9129ee3c85a30e29e178078ff9f21f3d78c8f62e22a89"
+  },
+  "C:S-NOKILL:fills": {
+   "path": "tables/C_S-NOKILL_fills.parquet",
+   "sha256": "10fdd25342a3939d42dda20218c06acd288d10fe825ab5364fe872d888ad5faa"
+  },
+  "C:S-NOKILL:records": {
+   "path": "tables/C_S-NOKILL_records.parquet",
+   "sha256": "a08dae46403de932568669681d3bc01942449c15ca642f9f1312d6097ace4c0e"
+  },
+  "C:S-NOKILL:settlements": {
+   "path": "tables/C_S-NOKILL_settlements.parquet",
+   "sha256": "105f8e00e78f5bf569705727ae0ed5649aafe3ed4e2e24ae3c05a5439e53139e"
+  },
+  "C:S-NOKILL:schedule": {
+   "path": "tables/C_S-NOKILL_schedule.parquet",
+   "sha256": "935bb82f1a600da7dd5bfe5dc3932e15d0a38c7d472a403b34dc09066f3f8113"
+  },
+  "E:S-NOKILL:daily": {
+   "path": "tables/E_S-NOKILL_daily.parquet",
+   "sha256": "8d49ca5d60ce8d8074c215772a7ad26bd2ba11c8c987fb64d90f0fd29b3cea14"
+  },
+  "E:S-NOKILL:fills": {
+   "path": "tables/E_S-NOKILL_fills.parquet",
+   "sha256": "54e916db2ae0f66529396577d0320ecef7db83a9aebc6ff7c2e92419adbb4196"
+  },
+  "E:S-NOKILL:records": {
+   "path": "tables/E_S-NOKILL_records.parquet",
+   "sha256": "88e422b8f4f7bd00677870499a216be0a2c98b60defa1973821e000876e67107"
+  },
+  "E:S-NOKILL:settlements": {
+   "path": "tables/E_S-NOKILL_settlements.parquet",
+   "sha256": "e3bca58e5efb5288bb394e786ac0b687d774bbe6e7594c8bfbeb0cdc266b39a6"
+  },
+  "E:S-NOKILL:schedule": {
+   "path": "tables/E_S-NOKILL_schedule.parquet",
+   "sha256": "a95748a8a394e6ce7e531bb7b7136b2eabba83bc94732d275878b88b93290d11"
+  },
+  "W:S-PIT10:daily": {
+   "path": "tables/W_S-PIT10_daily.parquet",
+   "sha256": "8fcf0649602eba228ad40d8ab6c7665589def1940b3d5919e54a0c61a09f5bac"
+  },
+  "W:S-PIT10:fills": {
+   "path": "tables/W_S-PIT10_fills.parquet",
+   "sha256": "0a6ae2250109fa062458d5f7a01c863b9a4ae7cdad8c8ef0f135ad223046c08a"
+  },
+  "W:S-PIT10:records": {
+   "path": "tables/W_S-PIT10_records.parquet",
+   "sha256": "a8701fb1b3b864430d3a70b6ae4ce6c81c2a9d130585223af785a13fecf21b67"
+  },
+  "W:S-PIT10:settlements": {
+   "path": "tables/W_S-PIT10_settlements.parquet",
+   "sha256": "ddc3493eca65e73135bb69ecce02d59c606aae367c4d7982e840831aad051b51"
+  },
+  "W:S-PIT10:schedule": {
+   "path": "tables/W_S-PIT10_schedule.parquet",
+   "sha256": "4a4d4c371dd01e3f95c7ab7160ff46df9d08e980874c1d70eba27dbccfc790ab"
+  },
+  "D:S-PIT10:daily": {
+   "path": "tables/D_S-PIT10_daily.parquet",
+   "sha256": "3a48ab45ae1345fb2c37369de804857373975d5c69c8151ada4f1016fdaaf292"
+  },
+  "D:S-PIT10:fills": {
+   "path": "tables/D_S-PIT10_fills.parquet",
+   "sha256": "5184e8cfa61a5bb6e477ce7d5a30306a7d615ef74c20fbb8234b504400908fe4"
+  },
+  "D:S-PIT10:records": {
+   "path": "tables/D_S-PIT10_records.parquet",
+   "sha256": "bd09532f3ec6b154862cf5b73553bee157a0f2e8da532675504ea7b8245428c6"
+  },
+  "D:S-PIT10:settlements": {
+   "path": "tables/D_S-PIT10_settlements.parquet",
+   "sha256": "c4cd63ade752c6486eb658b938f6615e22a4eb3c1397127b58a92891966d6c97"
+  },
+  "D:S-PIT10:schedule": {
+   "path": "tables/D_S-PIT10_schedule.parquet",
+   "sha256": "e2c54799aa751f60236532a0e10fc7e1b2b154261e6193ca0c62ccb328c47387"
+  },
+  "C:S-PIT10:daily": {
+   "path": "tables/C_S-PIT10_daily.parquet",
+   "sha256": "52dcce57dbef31107cceef71829c19db1cb1f4cde3d2735e99dc871f4d75d293"
+  },
+  "C:S-PIT10:fills": {
+   "path": "tables/C_S-PIT10_fills.parquet",
+   "sha256": "92b5177dd5b2c73ae52c501210477c01949c535e85b782c3db33e75e38abda4a"
+  },
+  "C:S-PIT10:records": {
+   "path": "tables/C_S-PIT10_records.parquet",
+   "sha256": "814c560332f1a9696d3c47834c71c7b83abce8c613bda978234c6c9922cf9a6c"
+  },
+  "C:S-PIT10:settlements": {
+   "path": "tables/C_S-PIT10_settlements.parquet",
+   "sha256": "e770daffede6b7e956383246483ba18ee813fe3e126e47fb701adf74f5c2b128"
+  },
+  "C:S-PIT10:schedule": {
+   "path": "tables/C_S-PIT10_schedule.parquet",
+   "sha256": "a8a2716c27df9048eecffd03d739d59323faa412663702dc594257c843fedbb8"
+  },
+  "E:S-PIT10:daily": {
+   "path": "tables/E_S-PIT10_daily.parquet",
+   "sha256": "d649a9c302d0fc8834bd946804acb8c4542190408213a4c1846feab4a681ebbd"
+  },
+  "E:S-PIT10:fills": {
+   "path": "tables/E_S-PIT10_fills.parquet",
+   "sha256": "bc8c9e2de5fb1ec33aa24ea7fc25cddaec40e933d9cb42c2af58acfc3d843392"
+  },
+  "E:S-PIT10:records": {
+   "path": "tables/E_S-PIT10_records.parquet",
+   "sha256": "9b75cdeef9e816e1ab54857191865543898745200692415617115d12a6aef6e9"
+  },
+  "E:S-PIT10:settlements": {
+   "path": "tables/E_S-PIT10_settlements.parquet",
+   "sha256": "24e54eef4a644b6f17d949d55bc4c7d06289832c42283a0c888d8453ad15fc8e"
+  },
+  "E:S-PIT10:schedule": {
+   "path": "tables/E_S-PIT10_schedule.parquet",
+   "sha256": "a95748a8a394e6ce7e531bb7b7136b2eabba83bc94732d275878b88b93290d11"
+  },
+  "W:S-FB-CONS:daily": {
+   "path": "tables/W_S-FB-CONS_daily.parquet",
+   "sha256": "9f2179df01de1cb335f756081f80825f4bba0c1a2983458fd9b2e30257250d49"
+  },
+  "W:S-FB-CONS:fills": {
+   "path": "tables/W_S-FB-CONS_fills.parquet",
+   "sha256": "5d8bb9ced3f260af79afcaf2097b6e062a40bdee80b2991511f8d24f8d5051ae"
+  },
+  "W:S-FB-CONS:records": {
+   "path": "tables/W_S-FB-CONS_records.parquet",
+   "sha256": "948b9e1bccd4dd354d98f2263bdbdb36aef22565db3ca089c4f0fb54424e3559"
+  },
+  "W:S-FB-CONS:settlements": {
+   "path": "tables/W_S-FB-CONS_settlements.parquet",
+   "sha256": "ddc3493eca65e73135bb69ecce02d59c606aae367c4d7982e840831aad051b51"
+  },
+  "W:S-FB-CONS:schedule": {
+   "path": "tables/W_S-FB-CONS_schedule.parquet",
+   "sha256": "4a4d4c371dd01e3f95c7ab7160ff46df9d08e980874c1d70eba27dbccfc790ab"
+  },
+  "D:S-FB-CONS:daily": {
+   "path": "tables/D_S-FB-CONS_daily.parquet",
+   "sha256": "a0eb80bdf398388cb60c68aef29315b981a22fe0d9e89ef0a98e10add741264e"
+  },
+  "D:S-FB-CONS:fills": {
+   "path": "tables/D_S-FB-CONS_fills.parquet",
+   "sha256": "d2b728a63c256a212e3c02a70a6c9cc9c22668ba807e855b6c09714594676037"
+  },
+  "D:S-FB-CONS:records": {
+   "path": "tables/D_S-FB-CONS_records.parquet",
+   "sha256": "95e6ff9a17ffac4afe317c53452788ef8ae4556bf6641856dc0c9b5a7e8c665b"
+  },
+  "D:S-FB-CONS:settlements": {
+   "path": "tables/D_S-FB-CONS_settlements.parquet",
+   "sha256": "9c17fb19ae2270afdd83c2909d31564b0c69387ee03a3f2a104d48b0f5cba78d"
+  },
+  "D:S-FB-CONS:schedule": {
+   "path": "tables/D_S-FB-CONS_schedule.parquet",
+   "sha256": "9d616901da76f5135bdf28b1867af907d8a65be4d1df9395a1d0a1a576352621"
+  },
+  "C:S-FB-CONS:daily": {
+   "path": "tables/C_S-FB-CONS_daily.parquet",
+   "sha256": "7ded7852f69d78d40d83e01e4a0c7cd3ba6020751f5e2a4c40203afef36a87e9"
+  },
+  "C:S-FB-CONS:fills": {
+   "path": "tables/C_S-FB-CONS_fills.parquet",
+   "sha256": "8327f3ea5b0af44fcf4d9e1b8a2a5eb3ffa7224668e80f3a74970c9f43e72214"
+  },
+  "C:S-FB-CONS:records": {
+   "path": "tables/C_S-FB-CONS_records.parquet",
+   "sha256": "729b907761d42bc7874622fa7eeb600fd78b3b32a4333e0c3e6eb3c73356dc21"
+  },
+  "C:S-FB-CONS:settlements": {
+   "path": "tables/C_S-FB-CONS_settlements.parquet",
+   "sha256": "e770daffede6b7e956383246483ba18ee813fe3e126e47fb701adf74f5c2b128"
+  },
+  "C:S-FB-CONS:schedule": {
+   "path": "tables/C_S-FB-CONS_schedule.parquet",
+   "sha256": "a8a2716c27df9048eecffd03d739d59323faa412663702dc594257c843fedbb8"
+  },
+  "E:S-FB-CONS:daily": {
+   "path": "tables/E_S-FB-CONS_daily.parquet",
+   "sha256": "ea0083fdebeb75f9bcf4e2ba2303855d101a202087179ad7678de563d2be1932"
+  },
+  "E:S-FB-CONS:fills": {
+   "path": "tables/E_S-FB-CONS_fills.parquet",
+   "sha256": "c8a17c8462445df040daab6538c7432eb6fedb1e5ec256a7ed7e17961cdc7b51"
+  },
+  "E:S-FB-CONS:records": {
+   "path": "tables/E_S-FB-CONS_records.parquet",
+   "sha256": "ef00d887360b626fd8af375a7b55f159773fc4d3c6d07ae3ed9d11145a6a3509"
+  },
+  "E:S-FB-CONS:settlements": {
+   "path": "tables/E_S-FB-CONS_settlements.parquet",
+   "sha256": "b53f148870198961b59ef8c4b0ccd58c6e3087389e892d47b997440622781b66"
+  },
+  "E:S-FB-CONS:schedule": {
+   "path": "tables/E_S-FB-CONS_schedule.parquet",
+   "sha256": "a95748a8a394e6ce7e531bb7b7136b2eabba83bc94732d275878b88b93290d11"
+  },
+  "W:S-PIT10/NOKILL:daily": {
+   "path": "tables/W_S-PIT10_NOKILL_daily.parquet",
+   "sha256": "14e1d5bf59a7ca2958d7208651e8dde3f351552c103baf48cd5bd51683aa4c58"
+  },
+  "W:S-PIT10/NOKILL:fills": {
+   "path": "tables/W_S-PIT10_NOKILL_fills.parquet",
+   "sha256": "45aa02ecd5bd2de3382828a9295565c6d9e14c39a69772ffe6cc69a122c86649"
+  },
+  "W:S-PIT10/NOKILL:records": {
+   "path": "tables/W_S-PIT10_NOKILL_records.parquet",
+   "sha256": "57d9c0c1ae52516124f6638ac866e585981d759cd5888d94be3b85f657283100"
+  },
+  "W:S-PIT10/NOKILL:settlements": {
+   "path": "tables/W_S-PIT10_NOKILL_settlements.parquet",
+   "sha256": "7d7223ab8bddc0244a03adf4dc7f3909227f9aa8ea95be4bfffaa15226696793"
+  },
+  "W:S-PIT10/NOKILL:schedule": {
+   "path": "tables/W_S-PIT10_NOKILL_schedule.parquet",
+   "sha256": "01747a719da3d71923310e50562f2025479eea372abb7ea230639e9a1e6a93e4"
+  },
+  "D:S-PIT10/NOKILL:daily": {
+   "path": "tables/D_S-PIT10_NOKILL_daily.parquet",
+   "sha256": "031387196f61268c6846b9c79d5a8fd2b074c866f4f3e20f3e16ab5949ab0ea9"
+  },
+  "D:S-PIT10/NOKILL:fills": {
+   "path": "tables/D_S-PIT10_NOKILL_fills.parquet",
+   "sha256": "0c8d216602f770cc275bca13f3840f9b62acb1d1c220bef9c3227f9efb5b3fa6"
+  },
+  "D:S-PIT10/NOKILL:records": {
+   "path": "tables/D_S-PIT10_NOKILL_records.parquet",
+   "sha256": "459cec04eacf87b2ef4df3b8fad04511953428b4012d31a2bb31b700314c3b88"
+  },
+  "D:S-PIT10/NOKILL:settlements": {
+   "path": "tables/D_S-PIT10_NOKILL_settlements.parquet",
+   "sha256": "26b0c4f11b4c28b1c69a42638cf4317fff6621f54e425c0b18af15a92ba3b888"
+  },
+  "D:S-PIT10/NOKILL:schedule": {
+   "path": "tables/D_S-PIT10_NOKILL_schedule.parquet",
+   "sha256": "f368c5ca9d055d26d3a67871f4a8f7195f549609194c4aa910cb986e3c692afc"
+  },
+  "C:S-PIT10/NOKILL:daily": {
+   "path": "tables/C_S-PIT10_NOKILL_daily.parquet",
+   "sha256": "89c2669ec1126e99cd68ba5fdbeac468c8fbfd04caec327c92eb6f466781fa0d"
+  },
+  "C:S-PIT10/NOKILL:fills": {
+   "path": "tables/C_S-PIT10_NOKILL_fills.parquet",
+   "sha256": "5f348ef6190e9f54d8b243356bde566ce67e59d9d731ff71eb585f333a1b8e29"
+  },
+  "C:S-PIT10/NOKILL:records": {
+   "path": "tables/C_S-PIT10_NOKILL_records.parquet",
+   "sha256": "56ae3a59e2632067c8e3222871c3eec9b7ef76cd6d36b1b7326dbcde5d781258"
+  },
+  "C:S-PIT10/NOKILL:settlements": {
+   "path": "tables/C_S-PIT10_NOKILL_settlements.parquet",
+   "sha256": "5fec3a47b8dfc6941d0e76519dd07aa304773619b69428edbbeeb51cfd5c8cc8"
+  },
+  "C:S-PIT10/NOKILL:schedule": {
+   "path": "tables/C_S-PIT10_NOKILL_schedule.parquet",
+   "sha256": "935bb82f1a600da7dd5bfe5dc3932e15d0a38c7d472a403b34dc09066f3f8113"
+  },
+  "E:S-PIT10/NOKILL:daily": {
+   "path": "tables/E_S-PIT10_NOKILL_daily.parquet",
+   "sha256": "6fcef0ec384678f4a7fb91086e0737682e141edba388d210c9a0d811c7c9e5b9"
+  },
+  "E:S-PIT10/NOKILL:fills": {
+   "path": "tables/E_S-PIT10_NOKILL_fills.parquet",
+   "sha256": "5be1746de5df7e236a11a25635274c64132f00e46e30061945f70d83a5078812"
+  },
+  "E:S-PIT10/NOKILL:records": {
+   "path": "tables/E_S-PIT10_NOKILL_records.parquet",
+   "sha256": "d492036d63b3c5e6e38f9d4cbc7b6bd7feef5e22ce0fc4027bb167c6b9d39b6c"
+  },
+  "E:S-PIT10/NOKILL:settlements": {
+   "path": "tables/E_S-PIT10_NOKILL_settlements.parquet",
+   "sha256": "4063d83a5d6874fed1b68c18181897615273357e014f196a444ae86b535be2e6"
+  },
+  "E:S-PIT10/NOKILL:schedule": {
+   "path": "tables/E_S-PIT10_NOKILL_schedule.parquet",
+   "sha256": "a95748a8a394e6ce7e531bb7b7136b2eabba83bc94732d275878b88b93290d11"
+  },
+  "W:S-FB-CONS/NOKILL:daily": {
+   "path": "tables/W_S-FB-CONS_NOKILL_daily.parquet",
+   "sha256": "9819a14acb4c4d4c4fed0468605b01f51335f6947039e135b19e28e01f5fa5f4"
+  },
+  "W:S-FB-CONS/NOKILL:fills": {
+   "path": "tables/W_S-FB-CONS_NOKILL_fills.parquet",
+   "sha256": "8d446d3d3a03561e64a20496c8e028a3a62fad89de60f7764018bef7934580f2"
+  },
+  "W:S-FB-CONS/NOKILL:records": {
+   "path": "tables/W_S-FB-CONS_NOKILL_records.parquet",
+   "sha256": "9fbd43cae0caad95f7a42426d549785dfc973837ef88d9c03cd62e3e79f96c2f"
+  },
+  "W:S-FB-CONS/NOKILL:settlements": {
+   "path": "tables/W_S-FB-CONS_NOKILL_settlements.parquet",
+   "sha256": "1e28ec98813775a68beb1e9f5de4147850040e11e7b71db496424d387284c372"
+  },
+  "W:S-FB-CONS/NOKILL:schedule": {
+   "path": "tables/W_S-FB-CONS_NOKILL_schedule.parquet",
+   "sha256": "01747a719da3d71923310e50562f2025479eea372abb7ea230639e9a1e6a93e4"
+  },
+  "D:S-FB-CONS/NOKILL:daily": {
+   "path": "tables/D_S-FB-CONS_NOKILL_daily.parquet",
+   "sha256": "9efd4d6e4ec0d81a3103d82d302d9b5ae2fa7a402e45a417353d3facf0ef46b1"
+  },
+  "D:S-FB-CONS/NOKILL:fills": {
+   "path": "tables/D_S-FB-CONS_NOKILL_fills.parquet",
+   "sha256": "fa08b19d277f03b01d535ba7a17491e023ce2bbf34ad32abe60b9b0eb06f3581"
+  },
+  "D:S-FB-CONS/NOKILL:records": {
+   "path": "tables/D_S-FB-CONS_NOKILL_records.parquet",
+   "sha256": "856a7299bb365e9d6e95b9065a92902ad4b39257e83462df842c7c28686d1dbb"
+  },
+  "D:S-FB-CONS/NOKILL:settlements": {
+   "path": "tables/D_S-FB-CONS_NOKILL_settlements.parquet",
+   "sha256": "9fc0d5e3eb2fb3c32556838af002afc8454ec325b1478b794431d6ab54fd0f62"
+  },
+  "D:S-FB-CONS/NOKILL:schedule": {
+   "path": "tables/D_S-FB-CONS_NOKILL_schedule.parquet",
+   "sha256": "b4801f5cb885dce71ebd3930b30b383148cbb23c6a905c56c660f1ac9aa529da"
+  },
+  "C:S-FB-CONS/NOKILL:daily": {
+   "path": "tables/C_S-FB-CONS_NOKILL_daily.parquet",
+   "sha256": "a3f6668269629d0383a9129ee3c85a30e29e178078ff9f21f3d78c8f62e22a89"
+  },
+  "C:S-FB-CONS/NOKILL:fills": {
+   "path": "tables/C_S-FB-CONS_NOKILL_fills.parquet",
+   "sha256": "10fdd25342a3939d42dda20218c06acd288d10fe825ab5364fe872d888ad5faa"
+  },
+  "C:S-FB-CONS/NOKILL:records": {
+   "path": "tables/C_S-FB-CONS_NOKILL_records.parquet",
+   "sha256": "a08dae46403de932568669681d3bc01942449c15ca642f9f1312d6097ace4c0e"
+  },
+  "C:S-FB-CONS/NOKILL:settlements": {
+   "path": "tables/C_S-FB-CONS_NOKILL_settlements.parquet",
+   "sha256": "105f8e00e78f5bf569705727ae0ed5649aafe3ed4e2e24ae3c05a5439e53139e"
+  },
+  "C:S-FB-CONS/NOKILL:schedule": {
+   "path": "tables/C_S-FB-CONS_NOKILL_schedule.parquet",
+   "sha256": "935bb82f1a600da7dd5bfe5dc3932e15d0a38c7d472a403b34dc09066f3f8113"
+  },
+  "E:S-FB-CONS/NOKILL:daily": {
+   "path": "tables/E_S-FB-CONS_NOKILL_daily.parquet",
+   "sha256": "8d49ca5d60ce8d8074c215772a7ad26bd2ba11c8c987fb64d90f0fd29b3cea14"
+  },
+  "E:S-FB-CONS/NOKILL:fills": {
+   "path": "tables/E_S-FB-CONS_NOKILL_fills.parquet",
+   "sha256": "54e916db2ae0f66529396577d0320ecef7db83a9aebc6ff7c2e92419adbb4196"
+  },
+  "E:S-FB-CONS/NOKILL:records": {
+   "path": "tables/E_S-FB-CONS_NOKILL_records.parquet",
+   "sha256": "88e422b8f4f7bd00677870499a216be0a2c98b60defa1973821e000876e67107"
+  },
+  "E:S-FB-CONS/NOKILL:settlements": {
+   "path": "tables/E_S-FB-CONS_NOKILL_settlements.parquet",
+   "sha256": "e3bca58e5efb5288bb394e786ac0b687d774bbe6e7594c8bfbeb0cdc266b39a6"
+  },
+  "E:S-FB-CONS/NOKILL:schedule": {
+   "path": "tables/E_S-FB-CONS_NOKILL_schedule.parquet",
+   "sha256": "a95748a8a394e6ce7e531bb7b7136b2eabba83bc94732d275878b88b93290d11"
+  },
+  "W:S-COST2X/NOKILL:daily": {
+   "path": "tables/W_S-COST2X_NOKILL_daily.parquet",
+   "sha256": "42dd6d841df6c54f0f34490f7501d121bd215fbb5dcd0b8825d3c17cc256d852"
+  },
+  "W:S-COST2X/NOKILL:fills": {
+   "path": "tables/W_S-COST2X_NOKILL_fills.parquet",
+   "sha256": "6749c87c12b627192b28a236730561a050d6ae009c5e5dcb2a639b8939bae9eb"
+  },
+  "W:S-COST2X/NOKILL:records": {
+   "path": "tables/W_S-COST2X_NOKILL_records.parquet",
+   "sha256": "b6e56a6aa8aaaa26f097038ed92e579d7ff9109b6a608415ebdd8a6c33c90da8"
+  },
+  "W:S-COST2X/NOKILL:settlements": {
+   "path": "tables/W_S-COST2X_NOKILL_settlements.parquet",
+   "sha256": "85ba06d0dd93cc71252dc71a2d1346052a25e0ad6f2013beb08aec1ce11ff86b"
+  },
+  "W:S-COST2X/NOKILL:schedule": {
+   "path": "tables/W_S-COST2X_NOKILL_schedule.parquet",
+   "sha256": "01747a719da3d71923310e50562f2025479eea372abb7ea230639e9a1e6a93e4"
+  },
+  "D:S-COST2X/NOKILL:daily": {
+   "path": "tables/D_S-COST2X_NOKILL_daily.parquet",
+   "sha256": "373033a7da8f4989fe3b53f1a9e289e92250c320814d7e2a26137f0ce081e94b"
+  },
+  "D:S-COST2X/NOKILL:fills": {
+   "path": "tables/D_S-COST2X_NOKILL_fills.parquet",
+   "sha256": "81c05e5518a64442e633a526ea96117aa0bbd502e7c311ed67df1279c76c285b"
+  },
+  "D:S-COST2X/NOKILL:records": {
+   "path": "tables/D_S-COST2X_NOKILL_records.parquet",
+   "sha256": "d843804843d203a605844070a8a0b72f588e10b9843603ed86a63c6354855e52"
+  },
+  "D:S-COST2X/NOKILL:settlements": {
+   "path": "tables/D_S-COST2X_NOKILL_settlements.parquet",
+   "sha256": "18c746c57dc694cfcdb84130c2d6dc8bf08926ee35c192037c4bc91508277280"
+  },
+  "D:S-COST2X/NOKILL:schedule": {
+   "path": "tables/D_S-COST2X_NOKILL_schedule.parquet",
+   "sha256": "27f8ef11329ffa0e411a8f6b0f6b66b26771a6177380e14c5ca7d51d1f032d7c"
+  },
+  "C:S-COST2X/NOKILL:daily": {
+   "path": "tables/C_S-COST2X_NOKILL_daily.parquet",
+   "sha256": "cf995b6f8da958075c2d4cb04838e3ea2877b6378c8f4aaa293ee881121e2a99"
+  },
+  "C:S-COST2X/NOKILL:fills": {
+   "path": "tables/C_S-COST2X_NOKILL_fills.parquet",
+   "sha256": "b4970d5b7e26b806c6b9423bb03a836bf8802ae59ddb8d10f6f825decef76288"
+  },
+  "C:S-COST2X/NOKILL:records": {
+   "path": "tables/C_S-COST2X_NOKILL_records.parquet",
+   "sha256": "62576517cd26015d0c19b592c80bba528552610326f804986edec8ce18b9315d"
+  },
+  "C:S-COST2X/NOKILL:settlements": {
+   "path": "tables/C_S-COST2X_NOKILL_settlements.parquet",
+   "sha256": "84a7f2dea38cc2592efb9d3ad7b5b336629aa50d6fff16d7fa77598feffc4757"
+  },
+  "C:S-COST2X/NOKILL:schedule": {
+   "path": "tables/C_S-COST2X_NOKILL_schedule.parquet",
+   "sha256": "935bb82f1a600da7dd5bfe5dc3932e15d0a38c7d472a403b34dc09066f3f8113"
+  },
+  "E:S-COST2X/NOKILL:daily": {
+   "path": "tables/E_S-COST2X_NOKILL_daily.parquet",
+   "sha256": "06c91ab02a2b956475be37c8b3d847b1f49fb707d8a2910f4273127074667d0b"
+  },
+  "E:S-COST2X/NOKILL:fills": {
+   "path": "tables/E_S-COST2X_NOKILL_fills.parquet",
+   "sha256": "5f77c6225035580e62fdf39c3e11ba07daa3ad96792667f682e6c623f4719bc8"
+  },
+  "E:S-COST2X/NOKILL:records": {
+   "path": "tables/E_S-COST2X_NOKILL_records.parquet",
+   "sha256": "6adc875ddb694047ec6d021168fb1e2e2ac3dda6448d85d9a617fc6462297c36"
+  },
+  "E:S-COST2X/NOKILL:settlements": {
+   "path": "tables/E_S-COST2X_NOKILL_settlements.parquet",
+   "sha256": "70201dd8d0e36ff7f351295f551eb36fef7ea339b7dfad7e7fbf30fc245a384f"
+  },
+  "E:S-COST2X/NOKILL:schedule": {
+   "path": "tables/E_S-COST2X_NOKILL_schedule.parquet",
+   "sha256": "a95748a8a394e6ce7e531bb7b7136b2eabba83bc94732d275878b88b93290d11"
+  },
+  "P-TIGHT:PRIMARY:daily": {
+   "path": "tables/P-TIGHT_PRIMARY_daily.parquet",
+   "sha256": "7757ac277fe90b4195a6732d2e3fbfed4257acc806ca513a16680e9bcf4121e7"
+  },
+  "P-TIGHT:PRIMARY:fills": {
+   "path": "tables/P-TIGHT_PRIMARY_fills.parquet",
+   "sha256": "cb29d8a9634ff4c825b56e6439192373d4982d6d9a453e5893040113fcab7f21"
+  },
+  "P-TIGHT:PRIMARY:records": {
+   "path": "tables/P-TIGHT_PRIMARY_records.parquet",
+   "sha256": "60e0f00285d2e117b1976fec7f3beac985c5bbcb375a8ba51fc63d9c09902671"
+  },
+  "P-TIGHT:PRIMARY:settlements": {
+   "path": "tables/P-TIGHT_PRIMARY_settlements.parquet",
+   "sha256": "3009bee827bccc5790fbef729a44b9170b463b7bd51d6ab1f05a571ab4bce4ce"
+  },
+  "P-TIGHT:PRIMARY:schedule": {
+   "path": "tables/P-TIGHT_PRIMARY_schedule.parquet",
+   "sha256": "a95748a8a394e6ce7e531bb7b7136b2eabba83bc94732d275878b88b93290d11"
+  },
+  "P-LOOSE:PRIMARY:daily": {
+   "path": "tables/P-LOOSE_PRIMARY_daily.parquet",
+   "sha256": "42272d2e09d7ceed092b986d233c31cb0e4f23727af876153c4d67e6c5f384cf"
+  },
+  "P-LOOSE:PRIMARY:fills": {
+   "path": "tables/P-LOOSE_PRIMARY_fills.parquet",
+   "sha256": "51cd736cdfd8d8a0a6ac1470b16e0cdb834b832aa42532a7dda1c4e84198ece0"
+  },
+  "P-LOOSE:PRIMARY:records": {
+   "path": "tables/P-LOOSE_PRIMARY_records.parquet",
+   "sha256": "fae01be58195401feb3feb3daf35217e177c115fbaef0f20c86a6351dc5098b8"
+  },
+  "P-LOOSE:PRIMARY:settlements": {
+   "path": "tables/P-LOOSE_PRIMARY_settlements.parquet",
+   "sha256": "426bde4081b7ee2acef242af4fa7cc2f1f5b287fd8e39617fb31715eb21d517f"
+  },
+  "P-LOOSE:PRIMARY:schedule": {
+   "path": "tables/P-LOOSE_PRIMARY_schedule.parquet",
+   "sha256": "a95748a8a394e6ce7e531bb7b7136b2eabba83bc94732d275878b88b93290d11"
+  },
+  "P-C8:PRIMARY:daily": {
+   "path": "tables/P-C8_PRIMARY_daily.parquet",
+   "sha256": "c5153db4460e0c01aa3ffc900b687dac7f2968b7ab815242a3019ca5b42cb2aa"
+  },
+  "P-C8:PRIMARY:fills": {
+   "path": "tables/P-C8_PRIMARY_fills.parquet",
+   "sha256": "b55b22209c670bc81fb5e68ebf316b646c7c52d31ae7d4b2fe27d5d54f5ab0f3"
+  },
+  "P-C8:PRIMARY:records": {
+   "path": "tables/P-C8_PRIMARY_records.parquet",
+   "sha256": "3ec5ca9a74da4aff57ac738f7ec18f6e3cd616a920d3a8e79c40fca36bb368e4"
+  },
+  "P-C8:PRIMARY:settlements": {
+   "path": "tables/P-C8_PRIMARY_settlements.parquet",
+   "sha256": "21eef042c4ea67135afa62d80fa62b02a781192ff9d75f5e8a6402e9db2c8a0b"
+  },
+  "P-C8:PRIMARY:schedule": {
+   "path": "tables/P-C8_PRIMARY_schedule.parquet",
+   "sha256": "0b3875bd18d2332c301fc194fd0db065d691c5220628086da2415dc1371cbf38"
+  }
+ }
+}

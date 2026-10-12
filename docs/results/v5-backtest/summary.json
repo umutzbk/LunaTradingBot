@@ -1,0 +1,4174 @@
+{
+ "label": "EXPLORATORY — reused development period",
+ "window": [
+  "2025-11-10T00:00:00+00:00",
+  "2026-07-01T00:00:00+00:00"
+ ],
+ "meta": {
+  "head": "129bb54bc407803bc9d08145a38b1a3bc8a6b283",
+  "tag": "v5-backtest-protocol-frozen",
+  "protocol_sha256": "4bd90f5a169025e0483d13c636964a937d01f10fce3355ced1c81058dfcaba54",
+  "manifest_sha256": "eecdc6a21626ccd5e2677cce2503f304a5730845de552554281a6ea54cc53f14",
+  "config_sha256": "98c1a706f10731ada79cc15557598b5cd95fbc523a03418c04dda3ddd581fd51",
+  "approved": true,
+  "started_at": "2026-10-11T21:35:18.723238+00:00"
+ },
+ "verdict": {
+  "final": "ADVANTAGE",
+  "tags": [
+   "KILL-AFFECTED"
+  ],
+  "rows_used": [
+   "S-NOKILL",
+   "S-PIT10/NOKILL"
+  ],
+  "rows": {
+   "S-NOKILL": {
+    "verdict": "ADVANTAGE",
+    "delta_carry": {
+     "mean": 9.120220443740247e-05,
+     "lb95": {
+      "28": 4.50659275554304e-05,
+      "14": 4.651892991352764e-05
+     },
+     "ub95": {
+      "28": 0.00014073433810959653,
+      "14": 0.0001357411686694592
+     },
+     "p": {
+      "28": 9.999000099990002e-05,
+      "14": 0.00029997000299970003
+     },
+     "pass": true
+    },
+    "broken_guardrails": []
+   },
+   "S-PIT10/NOKILL": {
+    "verdict": "ADVANTAGE",
+    "delta_carry": {
+     "mean": 9.215540566230217e-05,
+     "lb95": {
+      "28": 4.605157633517087e-05,
+      "14": 4.76803887654386e-05
+     },
+     "ub95": {
+      "28": 0.00014226167345560123,
+      "14": 0.0001371954847988309
+     },
+     "p": {
+      "28": 9.999000099990002e-05,
+      "14": 0.00029997000299970003
+     },
+     "pass": true
+    },
+    "broken_guardrails": []
+   },
+   "S-FB-CONS/NOKILL": {
+    "verdict": "ADVANTAGE",
+    "delta_carry": {
+     "mean": 9.120220443740247e-05,
+     "lb95": {
+      "28": 4.50659275554304e-05,
+      "14": 4.651892991352764e-05
+     },
+     "ub95": {
+      "28": 0.00014073433810959653,
+      "14": 0.0001357411686694592
+     },
+     "p": {
+      "28": 9.999000099990002e-05,
+      "14": 0.00029997000299970003
+     },
+     "pass": true
+    },
+    "broken_guardrails": []
+   }
+  }
+ },
+ "kill": {
+  "W": true,
+  "E": true,
+  "kill_affected": true,
+  "e_only_kill": false
+ },
+ "fallback_exposure": {
+  "W": {
+   "notional": 11096.766175525054,
+   "decision": 0.0,
+   "fill": 0.0,
+   "any": 0.0,
+   "by_asset": {
+    "ADA": {
+     "notional": 215.91203607891,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "AVAX": {
+     "notional": 921.9003213527144,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "BNB": {
+     "notional": 778.1390007933853,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "BTC": {
+     "notional": 587.4542439235599,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "DOGE": {
+     "notional": 439.64997449194004,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "ENA": {
+     "notional": 240.37700004772,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "ETH": {
+     "notional": 522.7762460944696,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "FET": {
+     "notional": 137.2173835527,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "HYPE": {
+     "notional": 1208.743078848137,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "LINK": {
+     "notional": 237.17071499558398,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "NEAR": {
+     "notional": 861.21337621984,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "PEPE": {
+     "notional": 598.44204776,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "SOL": {
+     "notional": 132.628894310128,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "SUI": {
+     "notional": 716.43351522385,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "TAO": {
+     "notional": 783.7272699722027,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "UNI": {
+     "notional": 602.696471642015,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "XLM": {
+     "notional": 590.85034294614,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "ZEC": {
+     "notional": 1521.434257271757,
+     "decision": 0.0,
+     "fill": 0.0
+    }
+   },
+   "by_hour": {
+    "0": {
+     "notional": 6157.087055456275,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "2": {
+     "notional": 110.4069296757983,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "3": {
+     "notional": 131.76250610970442,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "4": {
+     "notional": 126.5862826053232,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "5": {
+     "notional": 6.356050000000001,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "7": {
+     "notional": 600.6627330573186,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "8": {
+     "notional": 244.1437061916862,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "10": {
+     "notional": 398.8212730212847,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "11": {
+     "notional": 154.78873711027398,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "12": {
+     "notional": 198.0282104938564,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "13": {
+     "notional": 97.5171986223317,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "14": {
+     "notional": 323.50066601003834,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "15": {
+     "notional": 210.69124862570828,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "16": {
+     "notional": 118.41727406302121,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "18": {
+     "notional": 200.0196447950174,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "19": {
+     "notional": 345.05373676953536,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "20": {
+     "notional": 420.3909665375055,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "21": {
+     "notional": 536.2242595413845,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "22": {
+     "notional": 360.1234431991213,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "23": {
+     "notional": 356.18425363986785,
+     "decision": 0.0,
+     "fill": 0.0
+    }
+   }
+  },
+  "D": {
+   "notional": 28791.60959857542,
+   "decision": 0.0,
+   "fill": 0.0,
+   "any": 0.0,
+   "by_asset": {
+    "ADA": {
+     "notional": 473.25430185093,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "AVAX": {
+     "notional": 1945.2545218677315,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "BNB": {
+     "notional": 2347.1976128125257,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "BTC": {
+     "notional": 1466.7611557149182,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "DOGE": {
+     "notional": 1820.0086946311399,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "ENA": {
+     "notional": 1469.86390040738,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "ETH": {
+     "notional": 1617.4895183276285,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "FET": {
+     "notional": 501.38836800774,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "HYPE": {
+     "notional": 3853.2673244907405,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "LINK": {
+     "notional": 480.756902928145,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "NEAR": {
+     "notional": 2774.0014373462304,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "PEPE": {
+     "notional": 2156.2564520100004,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "SOL": {
+     "notional": 387.30054591548264,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "SUI": {
+     "notional": 931.8814550967301,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "TAO": {
+     "notional": 1398.6013987313117,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "UNI": {
+     "notional": 824.5078612962019,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "XLM": {
+     "notional": 1341.05557304384,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "ZEC": {
+     "notional": 3002.762574096744,
+     "decision": 0.0,
+     "fill": 0.0
+    }
+   },
+   "by_hour": {
+    "0": {
+     "notional": 19278.920908554024,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "1": {
+     "notional": 577.4230869802296,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "2": {
+     "notional": 351.38302318164057,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "3": {
+     "notional": 241.6900202181795,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "4": {
+     "notional": 115.6020283167847,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "5": {
+     "notional": 321.0086219042594,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "6": {
+     "notional": 229.3877505261172,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "7": {
+     "notional": 483.8448986299202,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "8": {
+     "notional": 332.54848184881894,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "9": {
+     "notional": 246.04715052095602,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "10": {
+     "notional": 711.7637442878244,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "11": {
+     "notional": 481.52640976951227,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "12": {
+     "notional": 446.8852417719421,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "13": {
+     "notional": 248.06948358380077,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "14": {
+     "notional": 802.5742064099011,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "15": {
+     "notional": 340.8131327566109,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "16": {
+     "notional": 561.6308597992974,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "17": {
+     "notional": 307.6571637466818,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "18": {
+     "notional": 434.09031257538817,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "19": {
+     "notional": 123.26937742322801,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "20": {
+     "notional": 518.7390987235681,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "21": {
+     "notional": 387.89885886601144,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "22": {
+     "notional": 435.6920239837872,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "23": {
+     "notional": 813.1437141969359,
+     "decision": 0.0,
+     "fill": 0.0
+    }
+   }
+  },
+  "C": {
+   "notional": 1651.010928692969,
+   "decision": 0.0,
+   "fill": 0.0,
+   "any": 0.0,
+   "by_asset": {
+    "BTC": {
+     "notional": 115.24851725677807,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "ENA": {
+     "notional": 121.98630476846,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "ETH": {
+     "notional": 246.11305143174255,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "HYPE": {
+     "notional": 114.497548464618,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "SUI": {
+     "notional": 362.76764223502005,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "TAO": {
+     "notional": 119.554290259172,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "ZEC": {
+     "notional": 570.8435742771785,
+     "decision": 0.0,
+     "fill": 0.0
+    }
+   },
+   "by_hour": {
+    "0": {
+     "notional": 986.544888848334,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "2": {
+     "notional": 117.09479302848,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "15": {
+     "notional": 5.4015350509016,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "17": {
+     "notional": 7.0966763404830004,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "18": {
+     "notional": 104.7080698355554,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "20": {
+     "notional": 97.73718190800349,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "22": {
+     "notional": 103.6463705160312,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "23": {
+     "notional": 228.78141316518028,
+     "decision": 0.0,
+     "fill": 0.0
+    }
+   }
+  },
+  "E": {
+   "notional": 1647.0909293388238,
+   "decision": 0.0,
+   "fill": 0.0,
+   "any": 0.0,
+   "by_asset": {
+    "BTC": {
+     "notional": 114.83704579205494,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "ENA": {
+     "notional": 266.47158931254,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "ETH": {
+     "notional": 197.3194008649666,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "SUI": {
+     "notional": 231.45205437295002,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "TAO": {
+     "notional": 132.81364414228,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "UNI": {
+     "notional": 270.085631827887,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "ZEC": {
+     "notional": 434.1115630261453,
+     "decision": 0.0,
+     "fill": 0.0
+    }
+   },
+   "by_hour": {
+    "0": {
+     "notional": 257.950088665551,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "1": {
+     "notional": 124.07818612071742,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "2": {
+     "notional": 120.965340180922,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "3": {
+     "notional": 7.125994523801,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "4": {
+     "notional": 206.3932684884585,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "6": {
+     "notional": 141.396412728396,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "7": {
+     "notional": 421.72537545735014,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "9": {
+     "notional": 4.8603469411181,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "11": {
+     "notional": 5.0978867738008,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "13": {
+     "notional": 125.12993306875148,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "14": {
+     "notional": 100.90397026448136,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "15": {
+     "notional": 7.2748994150647,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "17": {
+     "notional": 5.4746490669423995,
+     "decision": 0.0,
+     "fill": 0.0
+    },
+    "23": {
+     "notional": 118.714577643469,
+     "decision": 0.0,
+     "fill": 0.0
+    }
+   }
+  }
+ },
+ "fallback_affected": false,
+ "fallback_diffs_vs_W": {
+  "D": {
+   "decision": 0.0,
+   "fill": 0.0
+  },
+  "C": {
+   "decision": 0.0,
+   "fill": 0.0
+  },
+  "E": {
+   "decision": 0.0,
+   "fill": 0.0
+  }
+ },
+ "cost2x_mean_delta_carry": 0.0002481607424981927,
+ "secondary": {
+  "D-W": {
+   "carry_p": {
+    "28": 1.0,
+    "14": 1.0
+   },
+   "net_p": {
+    "28": 0.3805619438056194,
+    "14": 0.48205179482051796
+   },
+   "mean_delta_carry": -0.00026561036716530066,
+   "mean_delta_net": 7.535538760143177e-06
+  },
+  "C-W": {
+   "carry_p": {
+    "28": 0.0028997100289971,
+    "14": 0.0040995900409959
+   },
+   "net_p": {
+    "28": 0.34356564343565643,
+    "14": 0.36746325367463256
+   },
+   "mean_delta_carry": 7.642653060296679e-05,
+   "mean_delta_net": -1.3462893769410264e-05
+  },
+  "E-C": {
+   "carry_p": {
+    "28": 0.06319368063193681,
+    "14": 0.0953904609539046
+   },
+   "net_p": {
+    "28": 0.0011998800119988001,
+    "14": 0.005099490050994901
+   },
+   "mean_delta_carry": 1.4775673834435685e-05,
+   "mean_delta_net": 0.0006360576534567645
+  }
+ },
+ "holm": {
+  "carry_b28": {
+   "C-W": {
+    "p": 0.0028997100289971,
+    "alpha": 0.016666666666666666,
+    "reject": true
+   },
+   "E-C": {
+    "p": 0.06319368063193681,
+    "alpha": 0.025,
+    "reject": false
+   },
+   "D-W": {
+    "p": 1.0,
+    "alpha": 0.05,
+    "reject": false
+   }
+  },
+  "carry_b14": {
+   "C-W": {
+    "p": 0.0040995900409959,
+    "alpha": 0.016666666666666666,
+    "reject": true
+   },
+   "E-C": {
+    "p": 0.0953904609539046,
+    "alpha": 0.025,
+    "reject": false
+   },
+   "D-W": {
+    "p": 1.0,
+    "alpha": 0.05,
+    "reject": false
+   }
+  },
+  "net_b28": {
+   "E-C": {
+    "p": 0.0011998800119988001,
+    "alpha": 0.016666666666666666,
+    "reject": true
+   },
+   "C-W": {
+    "p": 0.34356564343565643,
+    "alpha": 0.025,
+    "reject": false
+   },
+   "D-W": {
+    "p": 0.3805619438056194,
+    "alpha": 0.05,
+    "reject": false
+   }
+  },
+  "net_b14": {
+   "E-C": {
+    "p": 0.005099490050994901,
+    "alpha": 0.016666666666666666,
+    "reject": true
+   },
+   "C-W": {
+    "p": 0.36746325367463256,
+    "alpha": 0.025,
+    "reject": false
+   },
+   "D-W": {
+    "p": 0.48205179482051796,
+    "alpha": 0.05,
+    "reject": false
+   }
+  }
+ },
+ "delta_net_ci": {
+  "28": {
+   "mean": 0.0006225947596873542,
+   "lb95": -0.000600007512119926,
+   "ub95": 0.0032386775613472106
+  },
+  "14": {
+   "mean": 0.0006225947596873542,
+   "lb95": -0.0006461284320500734,
+   "ub95": 0.0029002476746670973
+  }
+ },
+ "mde": {
+  "a_priori": {
+   "b28": 6.6e-05,
+   "b14": 6.3e-05,
+   "note": "lower bound, W-side distribution only (protocol §5.4)"
+  },
+  "post_hoc_b28": 7.278934068507595e-05,
+  "post_hoc_label": "POST HOC"
+ },
+ "arms": {
+  "W": {
+   "PRIMARY": {
+    "net_pnl": -36.19256544690353,
+    "net_return": -0.1365757186675605,
+    "funding": 0.0909318154597325,
+    "fees": 0.9391908769256104,
+    "spread_slip": 0.9117197898059638,
+    "price": -34.43258659563169,
+    "delay_drift": -1.3236705685960093,
+    "carry_net_mean": -3.058936990477997e-05,
+    "turnover": 1878.3817538512208,
+    "sharpe": -1.9857036539411475,
+    "max_drawdown": 0.13657571866756046,
+    "worst_day": -0.07009721253104084,
+    "es975": -0.028008492906463622,
+    "mean_gross_frac": 0.03744309644874175,
+    "mean_net_frac": -0.0010278648308524316,
+    "flat_days": 222,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 32,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 3,
+     "kill": true,
+     "funding_unknown_periods": 4,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 19679,
+     "decisions": {
+      "ENTER": 8,
+      "EXIT:stop": 6,
+      "EXIT:neutrality_unwind": 6,
+      "EXIT:kill_switch": 4
+     },
+     "stops": 6
+    },
+    "decisions": {
+     "ENTER": 8,
+     "EXIT:stop": 6,
+     "EXIT:neutrality_unwind": 6,
+     "EXIT:kill_switch": 4
+    },
+    "stops": 6,
+    "turnover_per_year_over_mean_equity": 12.792724214412104,
+    "carry_per_turnover_bps": {
+     "funding": 0.4840965648931386,
+     "carry_net": -9.369654744906784
+    },
+    "capture_ratio": 0.008166258522729977,
+    "kill_ts": "2025-12-01T04:15:00+00:00",
+    "holding_hours": {
+     "median": 22.0,
+     "mean": 47.78125,
+     "p10": 4.25,
+     "p90": 106.125,
+     "n": 16
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-COST2X": {
+    "net_pnl": -38.938255973476544,
+    "net_return": -0.1469368149942511,
+    "funding": 0.09156164111729401,
+    "fees": 1.87469390806636,
+    "spread_slip": 1.7954646282370135,
+    "price": -35.35965907829046,
+    "delay_drift": 1.6913195890480834,
+    "carry_net_mean": -6.222800764572418e-05,
+    "turnover": 1874.6939080663599,
+    "sharpe": -2.0622423362772264,
+    "max_drawdown": 0.14693681499425126,
+    "worst_day": -0.07221968023761494,
+    "es975": -0.029860082345433525,
+    "mean_gross_frac": 0.03746383844835939,
+    "mean_net_frac": -0.001016235554350584,
+    "flat_days": 222,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 32,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 4,
+     "kill": true,
+     "funding_unknown_periods": 4,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 19679,
+     "decisions": {
+      "ENTER": 8,
+      "EXIT:stop": 6,
+      "EXIT:neutrality_unwind": 6,
+      "EXIT:kill_switch": 4
+     },
+     "stops": 6
+    },
+    "decisions": {
+     "ENTER": 8,
+     "EXIT:stop": 6,
+     "EXIT:neutrality_unwind": 6,
+     "EXIT:kill_switch": 4
+    },
+    "stops": 6,
+    "turnover_per_year_over_mean_equity": 12.912357266922422,
+    "carry_per_turnover_bps": {
+     "funding": 0.48840848483758414,
+     "carry_net": -19.088966362925873
+    },
+    "capture_ratio": 0.00822282089441355,
+    "kill_ts": "2025-12-01T04:00:00+00:00",
+    "holding_hours": {
+     "median": 22.0,
+     "mean": 47.71875,
+     "p10": 4.0,
+     "p90": 106.125,
+     "n": 16
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-SPREAD-FIX": {
+    "net_pnl": -35.165025285124074,
+    "net_return": -0.13269820862310971,
+    "funding": 0.13616391885999385,
+    "fees": 0.7249185767204033,
+    "spread_slip": 1.0148728169763868,
+    "price": -33.561397810287275,
+    "delay_drift": -1.23706668543466,
+    "carry_net_mean": -2.7632704442742493e-05,
+    "turnover": 1449.8371534408066,
+    "sharpe": -2.260325772206271,
+    "max_drawdown": 0.13269820862310988,
+    "worst_day": -0.04915069570221564,
+    "es975": -0.025425644024069844,
+    "mean_gross_frac": 0.022924515317046663,
+    "mean_net_frac": -0.0004826992017800799,
+    "flat_days": 225,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 0,
+     "funding_stale_asset_cycles": 0,
+     "fills": 24,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 4,
+     "kill": true,
+     "funding_unknown_periods": 2,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 20351,
+     "decisions": {
+      "ENTER": 6,
+      "EXIT:stop": 5,
+      "EXIT:neutrality_unwind": 5,
+      "EXIT:kill_switch": 2
+     },
+     "stops": 5
+    },
+    "decisions": {
+     "ENTER": 6,
+     "EXIT:stop": 5,
+     "EXIT:neutrality_unwind": 5,
+     "EXIT:kill_switch": 2
+    },
+    "stops": 5,
+    "turnover_per_year_over_mean_equity": 9.840733733025997,
+    "carry_per_turnover_bps": {
+     "funding": 0.9391669853186246,
+     "carry_net": -11.060742035965962
+    },
+    "capture_ratio": 0.012228390660155073,
+    "kill_ts": "2025-11-25T03:15:00+00:00",
+    "holding_hours": {
+     "median": 26.875,
+     "mean": 39.25,
+     "p10": 19.85,
+     "p90": 100.72500000000002,
+     "n": 12
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-NOKILL": {
+    "net_pnl": -26.47184335235471,
+    "net_return": -0.09989374849945173,
+    "funding": 6.228367158995295,
+    "fees": 5.548403717959447,
+    "spread_slip": 5.028060685738293,
+    "price": -22.123746107652284,
+    "delay_drift": -0.6572259401317544,
+    "carry_net_mean": -7.61466634827744e-05,
+    "turnover": 11096.807435918894,
+    "sharpe": -0.44113801597258295,
+    "max_drawdown": 0.21096539868470976,
+    "worst_day": -0.07021837607249937,
+    "es975": -0.05103756405920673,
+    "mean_gross_frac": 0.6629370557579539,
+    "mean_net_frac": 0.01842772618645309,
+    "flat_days": 37,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 199,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 24,
+     "kill": false,
+     "funding_unknown_periods": 12,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 50,
+      "EXIT:stop": 23,
+      "EXIT:neutrality_unwind": 43,
+      "EXIT:ineligible": 20,
+      "EXIT:rebalance": 7,
+      "EXIT:net_exposure_trim": 256,
+      "REJECT:below_min_qty": 247
+     },
+     "stops": 23
+    },
+    "decisions": {
+     "ENTER": 50,
+     "EXIT:stop": 23,
+     "EXIT:neutrality_unwind": 43,
+     "EXIT:ineligible": 20,
+     "EXIT:rebalance": 7,
+     "EXIT:net_exposure_trim": 256,
+     "REJECT:below_min_qty": 247
+    },
+    "stops": 23,
+    "turnover_per_year_over_mean_equity": 73.22196749575934,
+    "carry_per_turnover_bps": {
+     "funding": 5.612755916476387,
+     "carry_net": -3.918331709197936
+    },
+    "capture_ratio": 0.5593472002916331,
+    "kill_ts": null,
+    "holding_hours": {
+     "median": 98.0,
+     "mean": 147.68041237113403,
+     "p10": 19.5,
+     "p90": 341.80000000000007,
+     "n": 97
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-PIT10": {
+    "net_pnl": -36.20889673072227,
+    "net_return": -0.13663734615366896,
+    "funding": 0.0909318154597325,
+    "fees": 0.939209642842358,
+    "spread_slip": 0.9280323077079952,
+    "price": -34.432586595631655,
+    "delay_drift": -1.323670568595975,
+    "carry_net_mean": -3.088189142261946e-05,
+    "turnover": 1878.4192856847158,
+    "sharpe": -1.986201027983443,
+    "max_drawdown": 0.13663734615366863,
+    "worst_day": -0.07009429686559165,
+    "es975": -0.02802004262771281,
+    "mean_gross_frac": 0.037443626119073294,
+    "mean_net_frac": -0.001027895005342746,
+    "flat_days": 222,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 21,
+     "funding_stale_asset_cycles": 0,
+     "fills": 32,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 3,
+     "kill": true,
+     "funding_unknown_periods": 4,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 19679,
+     "decisions": {
+      "ENTER": 8,
+      "EXIT:stop": 6,
+      "EXIT:neutrality_unwind": 6,
+      "EXIT:kill_switch": 4
+     },
+     "stops": 6
+    },
+    "decisions": {
+     "ENTER": 8,
+     "EXIT:stop": 6,
+     "EXIT:neutrality_unwind": 6,
+     "EXIT:kill_switch": 4
+    },
+    "stops": 6,
+    "turnover_per_year_over_mean_equity": 12.793823251038457,
+    "carry_per_turnover_bps": {
+     "funding": 0.48408689238189073,
+     "carry_net": -9.456409166088418
+    },
+    "capture_ratio": 0.008166258522729977,
+    "kill_ts": "2025-12-01T04:15:00+00:00",
+    "holding_hours": {
+     "median": 22.0,
+     "mean": 47.78125,
+     "p10": 4.25,
+     "p90": 106.125,
+     "n": 16
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-FB-CONS": {
+    "net_pnl": -36.19256544690353,
+    "net_return": -0.1365757186675605,
+    "funding": 0.0909318154597325,
+    "fees": 0.9391908769256104,
+    "spread_slip": 0.9117197898059638,
+    "price": -34.43258659563169,
+    "delay_drift": -1.3236705685960093,
+    "carry_net_mean": -3.058936990477997e-05,
+    "turnover": 1878.3817538512208,
+    "sharpe": -1.9857036539411475,
+    "max_drawdown": 0.13657571866756046,
+    "worst_day": -0.07009721253104084,
+    "es975": -0.028008492906463622,
+    "mean_gross_frac": 0.03744309644874175,
+    "mean_net_frac": -0.0010278648308524316,
+    "flat_days": 222,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 32,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 3,
+     "kill": true,
+     "funding_unknown_periods": 4,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 19679,
+     "decisions": {
+      "ENTER": 8,
+      "EXIT:stop": 6,
+      "EXIT:neutrality_unwind": 6,
+      "EXIT:kill_switch": 4
+     },
+     "stops": 6
+    },
+    "decisions": {
+     "ENTER": 8,
+     "EXIT:stop": 6,
+     "EXIT:neutrality_unwind": 6,
+     "EXIT:kill_switch": 4
+    },
+    "stops": 6,
+    "turnover_per_year_over_mean_equity": 12.792724214412104,
+    "carry_per_turnover_bps": {
+     "funding": 0.4840965648931386,
+     "carry_net": -9.369654744906784
+    },
+    "capture_ratio": 0.008166258522729977,
+    "kill_ts": "2025-12-01T04:15:00+00:00",
+    "holding_hours": {
+     "median": 22.0,
+     "mean": 47.78125,
+     "p10": 4.25,
+     "p90": 106.125,
+     "n": 16
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-PIT10/NOKILL": {
+    "net_pnl": -26.53680134947868,
+    "net_return": -0.10013887301690068,
+    "funding": 6.228327003773538,
+    "fees": 5.548330524343964,
+    "spread_slip": 5.089325747343715,
+    "price": -22.12747208156454,
+    "delay_drift": -0.657681898659509,
+    "carry_net_mean": -7.729849695478425e-05,
+    "turnover": 11096.661048687929,
+    "sharpe": -0.442531532273719,
+    "max_drawdown": 0.2110030089928131,
+    "worst_day": -0.07022653808672641,
+    "es975": -0.051049970875983584,
+    "mean_gross_frac": 0.6630384081197312,
+    "mean_net_frac": 0.018425898760194737,
+    "flat_days": 37,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 21,
+     "funding_stale_asset_cycles": 0,
+     "fills": 199,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 24,
+     "kill": false,
+     "funding_unknown_periods": 12,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 50,
+      "EXIT:stop": 23,
+      "EXIT:neutrality_unwind": 43,
+      "EXIT:ineligible": 20,
+      "EXIT:rebalance": 7,
+      "EXIT:net_exposure_trim": 255,
+      "REJECT:below_min_qty": 246
+     },
+     "stops": 23
+    },
+    "decisions": {
+     "ENTER": 50,
+     "EXIT:stop": 23,
+     "EXIT:neutrality_unwind": 43,
+     "EXIT:ineligible": 20,
+     "EXIT:rebalance": 7,
+     "EXIT:net_exposure_trim": 255,
+     "REJECT:below_min_qty": 246
+    },
+    "stops": 23,
+    "turnover_per_year_over_mean_equity": 73.23269301017685,
+    "carry_per_turnover_bps": {
+     "funding": 5.612793773231433,
+     "carry_net": -3.9735639834069727
+    },
+    "capture_ratio": 0.5593435940959331,
+    "kill_ts": null,
+    "holding_hours": {
+     "median": 98.0,
+     "mean": 147.68041237113403,
+     "p10": 19.5,
+     "p90": 341.80000000000007,
+     "n": 97
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-FB-CONS/NOKILL": {
+    "net_pnl": -26.47184335235471,
+    "net_return": -0.09989374849945173,
+    "funding": 6.228367158995295,
+    "fees": 5.548403717959447,
+    "spread_slip": 5.028060685738293,
+    "price": -22.123746107652284,
+    "delay_drift": -0.6572259401317544,
+    "carry_net_mean": -7.61466634827744e-05,
+    "turnover": 11096.807435918894,
+    "sharpe": -0.44113801597258295,
+    "max_drawdown": 0.21096539868470976,
+    "worst_day": -0.07021837607249937,
+    "es975": -0.05103756405920673,
+    "mean_gross_frac": 0.6629370557579539,
+    "mean_net_frac": 0.01842772618645309,
+    "flat_days": 37,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 199,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 24,
+     "kill": false,
+     "funding_unknown_periods": 12,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 50,
+      "EXIT:stop": 23,
+      "EXIT:neutrality_unwind": 43,
+      "EXIT:ineligible": 20,
+      "EXIT:rebalance": 7,
+      "EXIT:net_exposure_trim": 256,
+      "REJECT:below_min_qty": 247
+     },
+     "stops": 23
+    },
+    "decisions": {
+     "ENTER": 50,
+     "EXIT:stop": 23,
+     "EXIT:neutrality_unwind": 43,
+     "EXIT:ineligible": 20,
+     "EXIT:rebalance": 7,
+     "EXIT:net_exposure_trim": 256,
+     "REJECT:below_min_qty": 247
+    },
+    "stops": 23,
+    "turnover_per_year_over_mean_equity": 73.22196749575934,
+    "carry_per_turnover_bps": {
+     "funding": 5.612755916476387,
+     "carry_net": -3.918331709197936
+    },
+    "capture_ratio": 0.5593472002916331,
+    "kill_ts": null,
+    "holding_hours": {
+     "median": 98.0,
+     "mean": 147.68041237113403,
+     "p10": 19.5,
+     "p90": 341.80000000000007,
+     "n": 97
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-COST2X/NOKILL": {
+    "net_pnl": -34.362159483369794,
+    "net_return": -0.12966852635233886,
+    "funding": 6.155418802152832,
+    "fees": 10.874917628281928,
+    "spread_slip": 9.773562414652014,
+    "price": -19.869098242588674,
+    "delay_drift": -2.7024742205929315,
+    "carry_net_mean": -0.0002611422268288705,
+    "turnover": 10874.917628281928,
+    "sharpe": -0.6184967721700434,
+    "max_drawdown": 0.22106643361823441,
+    "worst_day": -0.07282128844375357,
+    "es975": -0.05217697817960023,
+    "mean_gross_frac": 0.6630788251909185,
+    "mean_net_frac": 0.022430805635534276,
+    "flat_days": 37,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 199,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 25,
+     "kill": false,
+     "funding_unknown_periods": 12,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 50,
+      "EXIT:stop": 23,
+      "EXIT:neutrality_unwind": 43,
+      "EXIT:ineligible": 20,
+      "EXIT:rebalance": 7,
+      "EXIT:net_exposure_trim": 337,
+      "REJECT:below_min_qty": 328
+     },
+     "stops": 23
+    },
+    "decisions": {
+     "ENTER": 50,
+     "EXIT:stop": 23,
+     "EXIT:neutrality_unwind": 43,
+     "EXIT:ineligible": 20,
+     "EXIT:rebalance": 7,
+     "EXIT:net_exposure_trim": 337,
+     "REJECT:below_min_qty": 328
+    },
+    "stops": 23,
+    "turnover_per_year_over_mean_equity": 73.246237684409,
+    "carry_per_turnover_bps": {
+     "funding": 5.6601980930363105,
+     "carry_net": -13.327053809667147
+    },
+    "capture_ratio": 0.5527959713540814,
+    "kill_ts": null,
+    "holding_hours": {
+     "median": 98.0,
+     "mean": 147.57731958762886,
+     "p10": 19.5,
+     "p90": 341.80000000000007,
+     "n": 97
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-UNWIND": {
+    "net_pnl": -36.19256544690353,
+    "net_return": -0.1365757186675605,
+    "funding": 0.0909318154597325,
+    "fees": 0.9391908769256104,
+    "spread_slip": 0.9117197898059638,
+    "price": -34.43258659563169,
+    "delay_drift": -1.3236705685960093,
+    "carry_net_mean": -3.058936990477997e-05,
+    "turnover": 1878.3817538512208,
+    "sharpe": -1.9857036539411475,
+    "max_drawdown": 0.13657571866756046,
+    "worst_day": -0.07009721253104084,
+    "es975": -0.028008492906463622,
+    "mean_gross_frac": 0.03744309644874175,
+    "mean_net_frac": -0.0010278648308524316,
+    "flat_days": 222,
+    "counters": {},
+    "decisions": {},
+    "stops": 0,
+    "turnover_per_year_over_mean_equity": 12.792724214412104,
+    "carry_per_turnover_bps": {
+     "funding": 0.4840965648931386,
+     "carry_net": -9.369654744906784
+    },
+    "capture_ratio": 0.008166258522729977
+   }
+  },
+  "D": {
+   "PRIMARY": {
+    "net_pnl": -35.14163291203181,
+    "net_return": -0.13260993551710118,
+    "funding": 0.887991983592052,
+    "fees": 2.7193774277490546,
+    "spread_slip": 2.9973991870985564,
+    "price": -30.31284828077626,
+    "delay_drift": -0.934611693953626,
+    "carry_net_mean": -8.455005827070335e-05,
+    "turnover": 5438.754855498108,
+    "sharpe": -1.0997249754343132,
+    "max_drawdown": 0.1389204392323592,
+    "worst_day": -0.07009721253104084,
+    "es975": -0.04117023269078274,
+    "mean_gross_frac": 0.1688074632404811,
+    "mean_net_frac": 0.002481237167170741,
+    "flat_days": 192,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 93,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 11,
+     "kill": true,
+     "funding_unknown_periods": 8,
+     "scheduled_retries": 1,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 18335,
+     "decisions": {
+      "ENTER": 30,
+      "EXIT:stop": 9,
+      "EXIT:neutrality_unwind": 14,
+      "EXIT:rebalance": 14,
+      "EXIT:net_exposure_trim": 86,
+      "REJECT:below_min_qty": 85,
+      "EXIT:ineligible": 5,
+      "EXIT:kill_switch": 4
+     },
+     "stops": 9
+    },
+    "decisions": {
+     "ENTER": 30,
+     "EXIT:stop": 9,
+     "EXIT:neutrality_unwind": 14,
+     "EXIT:rebalance": 14,
+     "EXIT:net_exposure_trim": 86,
+     "REJECT:below_min_qty": 85,
+     "EXIT:ineligible": 5,
+     "EXIT:kill_switch": 4
+    },
+    "stops": 9,
+    "turnover_per_year_over_mean_equity": 36.58223602667523,
+    "carry_per_turnover_bps": {
+     "funding": 1.6327119114301858,
+     "carry_net": -8.878474502990473
+    },
+    "capture_ratio": 0.0797473586935666,
+    "kill_ts": "2025-12-21T01:15:00+00:00",
+    "holding_hours": {
+     "median": 48.0,
+     "mean": 79.3586956521739,
+     "p10": 12.5,
+     "p90": 196.375,
+     "n": 46
+    },
+    "scheduled": {
+     "retries": 1,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-COST2X": {
+    "net_pnl": -32.30846282907214,
+    "net_return": -0.121918727656876,
+    "funding": 0.8218744995773228,
+    "fees": 4.570656491897029,
+    "spread_slip": 5.136345317650086,
+    "price": -23.423335519102352,
+    "delay_drift": 0.09867495180012864,
+    "carry_net_mean": -0.0001526757009358072,
+    "turnover": 4570.65649189703,
+    "sharpe": -0.9951040368885619,
+    "max_drawdown": 0.14060960250815524,
+    "worst_day": -0.07221968023761494,
+    "es975": -0.0419532479215848,
+    "mean_gross_frac": 0.14739869192174498,
+    "mean_net_frac": 0.0028191226942222733,
+    "flat_days": 197,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 77,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 11,
+     "kill": true,
+     "funding_unknown_periods": 8,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 18815,
+     "decisions": {
+      "ENTER": 25,
+      "EXIT:stop": 8,
+      "EXIT:neutrality_unwind": 11,
+      "EXIT:rebalance": 12,
+      "EXIT:net_exposure_trim": 132,
+      "REJECT:below_min_qty": 131,
+      "EXIT:ineligible": 3,
+      "EXIT:kill_switch": 4
+     },
+     "stops": 8
+    },
+    "decisions": {
+     "ENTER": 25,
+     "EXIT:stop": 8,
+     "EXIT:neutrality_unwind": 11,
+     "EXIT:rebalance": 12,
+     "EXIT:net_exposure_trim": 132,
+     "REJECT:below_min_qty": 131,
+     "EXIT:ineligible": 3,
+     "EXIT:kill_switch": 4
+    },
+    "stops": 8,
+    "turnover_per_year_over_mean_equity": 30.383739561380438,
+    "carry_per_turnover_bps": {
+     "funding": 1.7981541623929995,
+     "carry_net": -19.43949917418113
+    },
+    "capture_ratio": 0.07380958581828682,
+    "kill_ts": "2025-12-16T12:45:00+00:00",
+    "holding_hours": {
+     "median": 49.625,
+     "mean": 86.97368421052632,
+     "p10": 21.0,
+     "p90": 218.92500000000004,
+     "n": 38
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-SPREAD-FIX": {
+    "net_pnl": -25.78449482812985,
+    "net_return": -0.09729998048350888,
+    "funding": 0.3421662922054778,
+    "fees": 2.4259547611362327,
+    "spread_slip": 3.396328407250369,
+    "price": -20.304377951948723,
+    "delay_drift": 0.5869687808160402,
+    "carry_net_mean": -9.218615372026998e-05,
+    "turnover": 4851.9095222724645,
+    "sharpe": -0.8522365518407176,
+    "max_drawdown": 0.1257482565466218,
+    "worst_day": -0.05024009829034681,
+    "es975": -0.03912545884346467,
+    "mean_gross_frac": 0.08855886456381212,
+    "mean_net_frac": 0.0022085126696978876,
+    "flat_days": 211,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 0,
+     "funding_stale_asset_cycles": 0,
+     "fills": 79,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 9,
+     "kill": true,
+     "funding_unknown_periods": 4,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 20159,
+     "decisions": {
+      "ENTER": 23,
+      "EXIT:stop": 6,
+      "EXIT:neutrality_unwind": 13,
+      "EXIT:rebalance": 9,
+      "EXIT:ineligible": 7,
+      "EXIT:net_exposure_trim": 95,
+      "REJECT:below_min_qty": 94,
+      "EXIT:kill_switch": 4
+     },
+     "stops": 6
+    },
+    "decisions": {
+     "ENTER": 23,
+     "EXIT:stop": 6,
+     "EXIT:neutrality_unwind": 13,
+     "EXIT:rebalance": 9,
+     "EXIT:ineligible": 7,
+     "EXIT:net_exposure_trim": 95,
+     "REJECT:below_min_qty": 94,
+     "EXIT:kill_switch": 4
+    },
+    "stops": 6,
+    "turnover_per_year_over_mean_equity": 31.555369586042136,
+    "carry_per_turnover_bps": {
+     "funding": 0.7052198534098366,
+     "carry_net": -11.294763125785636
+    },
+    "capture_ratio": 0.03072872113887649,
+    "kill_ts": "2025-12-02T08:30:00+00:00",
+    "holding_hours": {
+     "median": 24.0,
+     "mean": 45.91025641025641,
+     "p10": 7.7,
+     "p90": 99.20000000000005,
+     "n": 39
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-NOKILL": {
+    "net_pnl": -29.307257864883184,
+    "net_return": -0.11059342590521956,
+    "funding": 8.894214051855235,
+    "fees": 14.395810459060954,
+    "spread_slip": 13.352303823217632,
+    "price": -10.453357634459824,
+    "delay_drift": -4.773880704258717,
+    "carry_net_mean": -0.00034175703064807505,
+    "turnover": 28791.620918121906,
+    "sharpe": -0.3464670141139071,
+    "max_drawdown": 0.22514125186213163,
+    "worst_day": -0.07009721253104084,
+    "es975": -0.05100262821554874,
+    "mean_gross_frac": 0.9785029523362239,
+    "mean_net_frac": 0.027493491923398283,
+    "flat_days": 0,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 521,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 41,
+     "kill": false,
+     "funding_unknown_periods": 16,
+     "scheduled_retries": 14,
+     "scheduled_exhausted": 3,
+     "scheduled_late_1h": 3,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 158,
+      "EXIT:stop": 28,
+      "EXIT:neutrality_unwind": 88,
+      "EXIT:rebalance": 73,
+      "EXIT:net_exposure_trim": 487,
+      "REJECT:below_min_qty": 466,
+      "EXIT:ineligible": 60
+     },
+     "stops": 28
+    },
+    "decisions": {
+     "ENTER": 158,
+     "EXIT:stop": 28,
+     "EXIT:neutrality_unwind": 88,
+     "EXIT:rebalance": 73,
+     "EXIT:net_exposure_trim": 487,
+     "REJECT:below_min_qty": 466,
+     "EXIT:ineligible": 60
+    },
+    "stops": 28,
+    "turnover_per_year_over_mean_equity": 191.4239106546549,
+    "carry_per_turnover_bps": {
+     "funding": 3.089167531466446,
+     "carry_net": -6.548398328819481
+    },
+    "capture_ratio": 0.7987572989358327,
+    "kill_ts": null,
+    "holding_hours": {
+     "median": 44.75,
+     "mean": 81.2788844621514,
+     "p10": 9.5,
+     "p90": 178.75,
+     "n": 251
+    },
+    "scheduled": {
+     "retries": 14,
+     "exhausted": 3,
+     "late_1h": 3
+    }
+   },
+   "S-PIT10": {
+    "net_pnl": -34.9776668330295,
+    "net_return": -0.13199119559633773,
+    "funding": 0.7639347257643346,
+    "fees": 2.2702048664856322,
+    "spread_slip": 2.543131447678879,
+    "price": -30.928265244629323,
+    "delay_drift": -0.7756905416193693,
+    "carry_net_mean": -7.012204819977245e-05,
+    "turnover": 4540.409732971266,
+    "sharpe": -1.097627779328438,
+    "max_drawdown": 0.1384875997503594,
+    "worst_day": -0.07009429686559165,
+    "es975": -0.04116549769538227,
+    "mean_gross_frac": 0.14796783811273082,
+    "mean_net_frac": 0.0029934197118441632,
+    "flat_days": 197,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 21,
+     "funding_stale_asset_cycles": 0,
+     "fills": 77,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 11,
+     "kill": true,
+     "funding_unknown_periods": 8,
+     "scheduled_retries": 1,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 18815,
+     "decisions": {
+      "ENTER": 26,
+      "EXIT:stop": 8,
+      "EXIT:neutrality_unwind": 10,
+      "EXIT:rebalance": 14,
+      "EXIT:net_exposure_trim": 86,
+      "REJECT:below_min_qty": 85,
+      "EXIT:ineligible": 2,
+      "EXIT:kill_switch": 4
+     },
+     "stops": 8
+    },
+    "decisions": {
+     "ENTER": 26,
+     "EXIT:stop": 8,
+     "EXIT:neutrality_unwind": 10,
+     "EXIT:rebalance": 14,
+     "EXIT:net_exposure_trim": 86,
+     "REJECT:below_min_qty": 85,
+     "EXIT:ineligible": 2,
+     "EXIT:kill_switch": 4
+    },
+    "stops": 8,
+    "turnover_per_year_over_mean_equity": 30.528940906458654,
+    "carry_per_turnover_bps": {
+     "funding": 1.682523760392902,
+     "carry_net": -8.918581860563117
+    },
+    "capture_ratio": 0.06860622361427487,
+    "kill_ts": "2025-12-16T14:45:00+00:00",
+    "holding_hours": {
+     "median": 48.125,
+     "mean": 87.67105263157895,
+     "p10": 22.4,
+     "p90": 218.92500000000004,
+     "n": 38
+    },
+    "scheduled": {
+     "retries": 1,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-FB-CONS": {
+    "net_pnl": -35.14163291203181,
+    "net_return": -0.13260993551710118,
+    "funding": 0.887991983592052,
+    "fees": 2.7193774277490546,
+    "spread_slip": 2.9973991870985564,
+    "price": -30.31284828077626,
+    "delay_drift": -0.934611693953626,
+    "carry_net_mean": -8.455005827070335e-05,
+    "turnover": 5438.754855498108,
+    "sharpe": -1.0997249754343132,
+    "max_drawdown": 0.1389204392323592,
+    "worst_day": -0.07009721253104084,
+    "es975": -0.04117023269078274,
+    "mean_gross_frac": 0.1688074632404811,
+    "mean_net_frac": 0.002481237167170741,
+    "flat_days": 192,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 93,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 11,
+     "kill": true,
+     "funding_unknown_periods": 8,
+     "scheduled_retries": 1,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 18335,
+     "decisions": {
+      "ENTER": 30,
+      "EXIT:stop": 9,
+      "EXIT:neutrality_unwind": 14,
+      "EXIT:rebalance": 14,
+      "EXIT:net_exposure_trim": 86,
+      "REJECT:below_min_qty": 85,
+      "EXIT:ineligible": 5,
+      "EXIT:kill_switch": 4
+     },
+     "stops": 9
+    },
+    "decisions": {
+     "ENTER": 30,
+     "EXIT:stop": 9,
+     "EXIT:neutrality_unwind": 14,
+     "EXIT:rebalance": 14,
+     "EXIT:net_exposure_trim": 86,
+     "REJECT:below_min_qty": 85,
+     "EXIT:ineligible": 5,
+     "EXIT:kill_switch": 4
+    },
+    "stops": 9,
+    "turnover_per_year_over_mean_equity": 36.58223602667523,
+    "carry_per_turnover_bps": {
+     "funding": 1.6327119114301858,
+     "carry_net": -8.878474502990473
+    },
+    "capture_ratio": 0.0797473586935666,
+    "kill_ts": "2025-12-21T01:15:00+00:00",
+    "holding_hours": {
+     "median": 48.0,
+     "mean": 79.3586956521739,
+     "p10": 12.5,
+     "p90": 196.375,
+     "n": 46
+    },
+    "scheduled": {
+     "retries": 1,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-PIT10/NOKILL": {
+    "net_pnl": -24.92240178721468,
+    "net_return": -0.09404679919703654,
+    "funding": 9.011716180809138,
+    "fees": 14.799726628895982,
+    "spread_slip": 13.72224220511713,
+    "price": -5.412149134010697,
+    "delay_drift": -6.15396058284866,
+    "carry_net_mean": -0.0003493476098774648,
+    "turnover": 29599.453257791967,
+    "sharpe": -0.2666326757793694,
+    "max_drawdown": 0.20215532497072253,
+    "worst_day": -0.07009429686559165,
+    "es975": -0.05137420765510111,
+    "mean_gross_frac": 0.9782886602230736,
+    "mean_net_frac": 0.026859560503939492,
+    "flat_days": 0,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 21,
+     "funding_stale_asset_cycles": 0,
+     "fills": 527,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 39,
+     "kill": false,
+     "funding_unknown_periods": 16,
+     "scheduled_retries": 8,
+     "scheduled_exhausted": 2,
+     "scheduled_late_1h": 2,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 162,
+      "EXIT:stop": 28,
+      "EXIT:neutrality_unwind": 87,
+      "EXIT:rebalance": 78,
+      "EXIT:net_exposure_trim": 501,
+      "REJECT:below_min_qty": 480,
+      "EXIT:ineligible": 59
+     },
+     "stops": 28
+    },
+    "decisions": {
+     "ENTER": 162,
+     "EXIT:stop": 28,
+     "EXIT:neutrality_unwind": 87,
+     "EXIT:rebalance": 78,
+     "EXIT:net_exposure_trim": 501,
+     "REJECT:below_min_qty": 480,
+     "EXIT:ineligible": 59
+    },
+    "stops": 28,
+    "turnover_per_year_over_mean_equity": 193.13548656406445,
+    "carry_per_turnover_bps": {
+     "funding": 3.04455494576976,
+     "carry_net": -6.591423322343955
+    },
+    "capture_ratio": 0.809309741523253,
+    "kill_ts": null,
+    "holding_hours": {
+     "median": 43.25,
+     "mean": 80.39173228346456,
+     "p10": 9.575,
+     "p90": 178.75,
+     "n": 254
+    },
+    "scheduled": {
+     "retries": 8,
+     "exhausted": 2,
+     "late_1h": 2
+    }
+   },
+   "S-FB-CONS/NOKILL": {
+    "net_pnl": -29.307257864883184,
+    "net_return": -0.11059342590521956,
+    "funding": 8.894214051855235,
+    "fees": 14.395810459060954,
+    "spread_slip": 13.352303823217632,
+    "price": -10.453357634459824,
+    "delay_drift": -4.773880704258717,
+    "carry_net_mean": -0.00034175703064807505,
+    "turnover": 28791.620918121906,
+    "sharpe": -0.3464670141139071,
+    "max_drawdown": 0.22514125186213163,
+    "worst_day": -0.07009721253104084,
+    "es975": -0.05100262821554874,
+    "mean_gross_frac": 0.9785029523362239,
+    "mean_net_frac": 0.027493491923398283,
+    "flat_days": 0,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 521,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 41,
+     "kill": false,
+     "funding_unknown_periods": 16,
+     "scheduled_retries": 14,
+     "scheduled_exhausted": 3,
+     "scheduled_late_1h": 3,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 158,
+      "EXIT:stop": 28,
+      "EXIT:neutrality_unwind": 88,
+      "EXIT:rebalance": 73,
+      "EXIT:net_exposure_trim": 487,
+      "REJECT:below_min_qty": 466,
+      "EXIT:ineligible": 60
+     },
+     "stops": 28
+    },
+    "decisions": {
+     "ENTER": 158,
+     "EXIT:stop": 28,
+     "EXIT:neutrality_unwind": 88,
+     "EXIT:rebalance": 73,
+     "EXIT:net_exposure_trim": 487,
+     "REJECT:below_min_qty": 466,
+     "EXIT:ineligible": 60
+    },
+    "stops": 28,
+    "turnover_per_year_over_mean_equity": 191.4239106546549,
+    "carry_per_turnover_bps": {
+     "funding": 3.089167531466446,
+     "carry_net": -6.548398328819481
+    },
+    "capture_ratio": 0.7987572989358327,
+    "kill_ts": null,
+    "holding_hours": {
+     "median": 44.75,
+     "mean": 81.2788844621514,
+     "p10": 9.5,
+     "p90": 178.75,
+     "n": 251
+    },
+    "scheduled": {
+     "retries": 14,
+     "exhausted": 3,
+     "late_1h": 3
+    }
+   },
+   "S-COST2X/NOKILL": {
+    "net_pnl": -47.857682725076046,
+    "net_return": -0.18059502915123035,
+    "funding": 8.520514562897455,
+    "fees": 27.809400171886438,
+    "spread_slip": 25.789991949140678,
+    "price": -2.7788051669463805,
+    "delay_drift": -5.149712625596367,
+    "carry_net_mean": -0.0008434874650362287,
+    "turnover": 27809.40017188644,
+    "sharpe": -0.7168596999902571,
+    "max_drawdown": 0.26036438887674584,
+    "worst_day": -0.07221968023761494,
+    "es975": -0.05141823779785835,
+    "mean_gross_frac": 0.9724862307960733,
+    "mean_net_frac": 0.025069584877566824,
+    "flat_days": 0,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 520,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 41,
+     "kill": false,
+     "funding_unknown_periods": 16,
+     "scheduled_retries": 3,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 158,
+      "EXIT:stop": 28,
+      "EXIT:neutrality_unwind": 88,
+      "EXIT:rebalance": 73,
+      "EXIT:net_exposure_trim": 405,
+      "REJECT:below_min_qty": 385,
+      "EXIT:ineligible": 60
+     },
+     "stops": 28
+    },
+    "decisions": {
+     "ENTER": 158,
+     "EXIT:stop": 28,
+     "EXIT:neutrality_unwind": 88,
+     "EXIT:rebalance": 73,
+     "EXIT:net_exposure_trim": 405,
+     "REJECT:below_min_qty": 385,
+     "EXIT:ineligible": 60
+    },
+    "stops": 28,
+    "turnover_per_year_over_mean_equity": 191.3759685483273,
+    "carry_per_turnover_bps": {
+     "funding": 3.063897283016971,
+     "carry_net": -16.20994242216759
+    },
+    "capture_ratio": 0.7651966950788394,
+    "kill_ts": null,
+    "holding_hours": {
+     "median": 44.75,
+     "mean": 81.27290836653387,
+     "p10": 9.5,
+     "p90": 178.75,
+     "n": 251
+    },
+    "scheduled": {
+     "retries": 3,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-UNWIND": {
+    "net_pnl": -35.14163291203181,
+    "net_return": -0.13260993551710118,
+    "funding": 0.887991983592052,
+    "fees": 2.7193774277490546,
+    "spread_slip": 2.9973991870985564,
+    "price": -30.31284828077626,
+    "delay_drift": -0.934611693953626,
+    "carry_net_mean": -8.455005827070335e-05,
+    "turnover": 5438.754855498108,
+    "sharpe": -1.0997249754343132,
+    "max_drawdown": 0.1389204392323592,
+    "worst_day": -0.07009721253104084,
+    "es975": -0.04117023269078274,
+    "mean_gross_frac": 0.1688074632404811,
+    "mean_net_frac": 0.002481237167170741,
+    "flat_days": 192,
+    "counters": {},
+    "decisions": {},
+    "stops": 0,
+    "turnover_per_year_over_mean_equity": 36.58223602667523,
+    "carry_per_turnover_bps": {
+     "funding": 1.6327119114301858,
+     "carry_net": -8.878474502990473
+    },
+    "capture_ratio": 0.0797473586935666
+   }
+  },
+  "C": {
+   "PRIMARY": {
+    "net_pnl": -16.673375482484204,
+    "net_return": -0.0629183980471102,
+    "funding": 0.21928764739537288,
+    "fees": 0.4797427948031374,
+    "spread_slip": 0.5311890102829006,
+    "price": -15.881731324793536,
+    "delay_drift": 2.362759043655669,
+    "carry_net_mean": -1.3378741613268371e-05,
+    "turnover": 959.4855896062747,
+    "sharpe": -0.6393445387451776,
+    "max_drawdown": 0.13250189942199353,
+    "worst_day": -0.039121964309398294,
+    "es975": -0.03151324752727878,
+    "mean_gross_frac": 0.040966000219002346,
+    "mean_net_frac": 0.0037746601133521445,
+    "flat_days": 211,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 17,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 7,
+     "kill": true,
+     "funding_unknown_periods": 2,
+     "scheduled_retries": 5,
+     "scheduled_exhausted": 1,
+     "scheduled_late_1h": 1,
+     "scheduled_blocked_cycles": 20063,
+     "decisions": {
+      "ENTER": 4,
+      "EXIT:stop": 2,
+      "EXIT:neutrality_unwind": 3,
+      "EXIT:ineligible": 1,
+      "EXIT:net_exposure_trim": 168,
+      "REJECT:below_min_qty": 167,
+      "EXIT:kill_switch": 2
+     },
+     "stops": 2
+    },
+    "decisions": {
+     "ENTER": 4,
+     "EXIT:stop": 2,
+     "EXIT:neutrality_unwind": 3,
+     "EXIT:ineligible": 1,
+     "EXIT:net_exposure_trim": 168,
+     "REJECT:below_min_qty": 167,
+     "EXIT:kill_switch": 2
+    },
+    "stops": 2,
+    "turnover_per_year_over_mean_equity": 6.003311056824856,
+    "carry_per_turnover_bps": {
+     "funding": 2.2854709833146907,
+     "carry_net": -8.25071440640934
+    },
+    "capture_ratio": 0.019693433045608496,
+    "kill_ts": "2025-12-03T01:00:00+00:00",
+    "holding_hours": {
+     "median": 25.875,
+     "mean": 125.6875,
+     "p10": 23.0,
+     "p90": 428.0,
+     "n": 8
+    },
+    "scheduled": {
+     "retries": 5,
+     "exhausted": 1,
+     "late_1h": 1
+    }
+   },
+   "S-COST2X": {
+    "net_pnl": -17.523797979367657,
+    "net_return": -0.0661275395447836,
+    "funding": 0.21947202188479262,
+    "fees": 0.9592788016419054,
+    "spread_slip": 1.0615870747156553,
+    "price": -15.722404124894892,
+    "delay_drift": 2.37815983193757,
+    "carry_net_mean": -3.0225971841687216e-05,
+    "turnover": 959.2788016419054,
+    "sharpe": -0.6720841233782472,
+    "max_drawdown": 0.13331076621544669,
+    "worst_day": -0.03963279983592716,
+    "es975": -0.03175424437423787,
+    "mean_gross_frac": 0.04106041581873785,
+    "mean_net_frac": 0.0037843875286076296,
+    "flat_days": 211,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 17,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 7,
+     "kill": true,
+     "funding_unknown_periods": 2,
+     "scheduled_retries": 5,
+     "scheduled_exhausted": 1,
+     "scheduled_late_1h": 1,
+     "scheduled_blocked_cycles": 20063,
+     "decisions": {
+      "ENTER": 4,
+      "EXIT:stop": 2,
+      "EXIT:neutrality_unwind": 3,
+      "EXIT:ineligible": 1,
+      "EXIT:net_exposure_trim": 172,
+      "REJECT:below_min_qty": 171,
+      "EXIT:kill_switch": 2
+     },
+     "stops": 2
+    },
+    "decisions": {
+     "ENTER": 4,
+     "EXIT:stop": 2,
+     "EXIT:neutrality_unwind": 3,
+     "EXIT:ineligible": 1,
+     "EXIT:net_exposure_trim": 172,
+     "REJECT:below_min_qty": 171,
+     "EXIT:kill_switch": 2
+    },
+    "stops": 2,
+    "turnover_per_year_over_mean_equity": 6.02203269461613,
+    "carry_per_turnover_bps": {
+     "funding": 2.2878856648259447,
+     "carry_net": -18.778626728637132
+    },
+    "capture_ratio": 0.01970999105380382,
+    "kill_ts": "2025-12-03T01:00:00+00:00",
+    "holding_hours": {
+     "median": 25.875,
+     "mean": 125.5625,
+     "p10": 23.0,
+     "p90": 427.5,
+     "n": 8
+    },
+    "scheduled": {
+     "retries": 5,
+     "exhausted": 1,
+     "late_1h": 1
+    }
+   },
+   "S-SPREAD-FIX": {
+    "net_pnl": -4.277190146011378,
+    "net_return": -0.01614034017362784,
+    "funding": 0.29995556668720863,
+    "fees": 0.6108189936200064,
+    "spread_slip": 0.8551452921926498,
+    "price": -3.111181426885932,
+    "delay_drift": 2.904719053718429,
+    "carry_net_mean": -1.971312794767349e-05,
+    "turnover": 1221.637987240013,
+    "sharpe": -0.11618970282657366,
+    "max_drawdown": 0.096900463086392,
+    "worst_day": -0.043075643478331926,
+    "es975": -0.028125561270383164,
+    "mean_gross_frac": 0.04279369611386864,
+    "mean_net_frac": 0.0038954266617789537,
+    "flat_days": 211,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 0,
+     "funding_stale_asset_cycles": 0,
+     "fills": 21,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 7,
+     "kill": false,
+     "funding_unknown_periods": 2,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 5,
+      "EXIT:stop": 2,
+      "EXIT:neutrality_unwind": 5,
+      "EXIT:ineligible": 3,
+      "EXIT:net_exposure_trim": 91,
+      "REJECT:below_min_qty": 90
+     },
+     "stops": 2
+    },
+    "decisions": {
+     "ENTER": 5,
+     "EXIT:stop": 2,
+     "EXIT:neutrality_unwind": 5,
+     "EXIT:ineligible": 3,
+     "EXIT:net_exposure_trim": 91,
+     "REJECT:below_min_qty": 90
+    },
+    "stops": 2,
+    "turnover_per_year_over_mean_equity": 7.356285683914312,
+    "carry_per_turnover_bps": {
+     "funding": 2.4553555948672123,
+     "carry_net": -9.544633772888432
+    },
+    "capture_ratio": 0.0269379280564836,
+    "kill_ts": null,
+    "holding_hours": {
+     "median": 29.375,
+     "mean": 104.4,
+     "p10": 7.475,
+     "p90": 428.0,
+     "n": 10
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-NOKILL": {
+    "net_pnl": -25.09197853616999,
+    "net_return": -0.09468671145724525,
+    "funding": 1.7847001088090562,
+    "fees": 0.8255158551521218,
+    "spread_slip": 0.8238134789663983,
+    "price": -25.22734931086054,
+    "delay_drift": 1.7243842343456657,
+    "carry_net_mean": 2.7986712019236183e-07,
+    "turnover": 1651.0317103042435,
+    "sharpe": -0.5644622496751867,
+    "max_drawdown": 0.1852652556973624,
+    "worst_day": -0.04582532739945655,
+    "es975": -0.036607329241286256,
+    "mean_gross_frac": 0.25388730854879904,
+    "mean_net_frac": 0.01711040739663524,
+    "flat_days": 109,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 30,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 16,
+     "kill": false,
+     "funding_unknown_periods": 4,
+     "scheduled_retries": 11,
+     "scheduled_exhausted": 3,
+     "scheduled_late_1h": 3,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 7,
+      "EXIT:stop": 6,
+      "EXIT:neutrality_unwind": 7,
+      "EXIT:ineligible": 1,
+      "EXIT:net_exposure_trim": 384,
+      "REJECT:below_min_qty": 382
+     },
+     "stops": 6
+    },
+    "decisions": {
+     "ENTER": 7,
+     "EXIT:stop": 6,
+     "EXIT:neutrality_unwind": 7,
+     "EXIT:ineligible": 1,
+     "EXIT:net_exposure_trim": 384,
+     "REJECT:below_min_qty": 382
+    },
+    "stops": 6,
+    "turnover_per_year_over_mean_equity": 9.887032359815159,
+    "carry_per_turnover_bps": {
+     "funding": 10.809605276934269,
+     "carry_net": 0.8199162611212999
+    },
+    "capture_ratio": 0.16027748264338837,
+    "kill_ts": null,
+    "holding_hours": {
+     "median": 143.75,
+     "mean": 416.85714285714283,
+     "p10": 24.125,
+     "p90": 1229.6500000000008,
+     "n": 14
+    },
+    "scheduled": {
+     "retries": 11,
+     "exhausted": 3,
+     "late_1h": 3
+    }
+   },
+   "S-PIT10": {
+    "net_pnl": -16.657891987850036,
+    "net_return": -0.06285996976547183,
+    "funding": 0.21928764739537288,
+    "fees": 0.4797440847479376,
+    "spread_slip": 0.5157042257039511,
+    "price": -15.881731324793517,
+    "delay_drift": 2.362759043655714,
+    "carry_net_mean": -1.3125237414975915e-05,
+    "turnover": 959.4881694958751,
+    "sharpe": -0.6388066521445689,
+    "max_drawdown": 0.13251613941408713,
+    "worst_day": -0.039129850516281595,
+    "es975": -0.03150503466112901,
+    "mean_gross_frac": 0.04096284596231707,
+    "mean_net_frac": 0.0037743522219627207,
+    "flat_days": 211,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 21,
+     "funding_stale_asset_cycles": 0,
+     "fills": 17,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 7,
+     "kill": true,
+     "funding_unknown_periods": 2,
+     "scheduled_retries": 5,
+     "scheduled_exhausted": 1,
+     "scheduled_late_1h": 1,
+     "scheduled_blocked_cycles": 20063,
+     "decisions": {
+      "ENTER": 4,
+      "EXIT:stop": 2,
+      "EXIT:neutrality_unwind": 3,
+      "EXIT:ineligible": 1,
+      "EXIT:net_exposure_trim": 168,
+      "REJECT:below_min_qty": 167,
+      "EXIT:kill_switch": 2
+     },
+     "stops": 2
+    },
+    "decisions": {
+     "ENTER": 4,
+     "EXIT:stop": 2,
+     "EXIT:neutrality_unwind": 3,
+     "EXIT:ineligible": 1,
+     "EXIT:net_exposure_trim": 168,
+     "REJECT:below_min_qty": 167,
+     "EXIT:kill_switch": 2
+    },
+    "stops": 2,
+    "turnover_per_year_over_mean_equity": 6.002941023102965,
+    "carry_per_turnover_bps": {
+     "funding": 2.2854648380978873,
+     "carry_net": -8.089319782486934
+    },
+    "capture_ratio": 0.019693433045608496,
+    "kill_ts": "2025-12-03T01:00:00+00:00",
+    "holding_hours": {
+     "median": 25.875,
+     "mean": 125.6875,
+     "p10": 23.0,
+     "p90": 428.0,
+     "n": 8
+    },
+    "scheduled": {
+     "retries": 5,
+     "exhausted": 1,
+     "late_1h": 1
+    }
+   },
+   "S-FB-CONS": {
+    "net_pnl": -16.673375482484204,
+    "net_return": -0.0629183980471102,
+    "funding": 0.21928764739537288,
+    "fees": 0.4797427948031374,
+    "spread_slip": 0.5311890102829006,
+    "price": -15.881731324793536,
+    "delay_drift": 2.362759043655669,
+    "carry_net_mean": -1.3378741613268371e-05,
+    "turnover": 959.4855896062747,
+    "sharpe": -0.6393445387451776,
+    "max_drawdown": 0.13250189942199353,
+    "worst_day": -0.039121964309398294,
+    "es975": -0.03151324752727878,
+    "mean_gross_frac": 0.040966000219002346,
+    "mean_net_frac": 0.0037746601133521445,
+    "flat_days": 211,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 17,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 7,
+     "kill": true,
+     "funding_unknown_periods": 2,
+     "scheduled_retries": 5,
+     "scheduled_exhausted": 1,
+     "scheduled_late_1h": 1,
+     "scheduled_blocked_cycles": 20063,
+     "decisions": {
+      "ENTER": 4,
+      "EXIT:stop": 2,
+      "EXIT:neutrality_unwind": 3,
+      "EXIT:ineligible": 1,
+      "EXIT:net_exposure_trim": 168,
+      "REJECT:below_min_qty": 167,
+      "EXIT:kill_switch": 2
+     },
+     "stops": 2
+    },
+    "decisions": {
+     "ENTER": 4,
+     "EXIT:stop": 2,
+     "EXIT:neutrality_unwind": 3,
+     "EXIT:ineligible": 1,
+     "EXIT:net_exposure_trim": 168,
+     "REJECT:below_min_qty": 167,
+     "EXIT:kill_switch": 2
+    },
+    "stops": 2,
+    "turnover_per_year_over_mean_equity": 6.003311056824856,
+    "carry_per_turnover_bps": {
+     "funding": 2.2854709833146907,
+     "carry_net": -8.25071440640934
+    },
+    "capture_ratio": 0.019693433045608496,
+    "kill_ts": "2025-12-03T01:00:00+00:00",
+    "holding_hours": {
+     "median": 25.875,
+     "mean": 125.6875,
+     "p10": 23.0,
+     "p90": 428.0,
+     "n": 8
+    },
+    "scheduled": {
+     "retries": 5,
+     "exhausted": 1,
+     "late_1h": 1
+    }
+   },
+   "S-PIT10/NOKILL": {
+    "net_pnl": -24.98936941480858,
+    "net_return": -0.09429950722569275,
+    "funding": 1.7859116217734199,
+    "fees": 0.8272743694902475,
+    "spread_slip": 0.8122741578378202,
+    "price": -25.135732509253938,
+    "delay_drift": 1.723724989233462,
+    "carry_net_mean": 4.573130975621153e-07,
+    "turnover": 1654.5487389804948,
+    "sharpe": -0.5617067507961467,
+    "max_drawdown": 0.18496911534227156,
+    "worst_day": -0.045822622376236244,
+    "es975": -0.03659830440247406,
+    "mean_gross_frac": 0.25407322922788506,
+    "mean_net_frac": 0.016899538826054487,
+    "flat_days": 109,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 21,
+     "funding_stale_asset_cycles": 0,
+     "fills": 30,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 16,
+     "kill": false,
+     "funding_unknown_periods": 4,
+     "scheduled_retries": 11,
+     "scheduled_exhausted": 3,
+     "scheduled_late_1h": 3,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 7,
+      "EXIT:stop": 6,
+      "EXIT:neutrality_unwind": 7,
+      "EXIT:ineligible": 1,
+      "EXIT:net_exposure_trim": 384,
+      "REJECT:below_min_qty": 382
+     },
+     "stops": 6
+    },
+    "decisions": {
+     "ENTER": 7,
+     "EXIT:stop": 6,
+     "EXIT:neutrality_unwind": 7,
+     "EXIT:ineligible": 1,
+     "EXIT:net_exposure_trim": 384,
+     "REJECT:below_min_qty": 382
+    },
+    "stops": 6,
+    "turnover_per_year_over_mean_equity": 9.907226383382683,
+    "carry_per_turnover_bps": {
+     "funding": 10.793949913339322,
+     "carry_net": 0.8846103532467632
+    },
+    "capture_ratio": 0.16038628425502027,
+    "kill_ts": null,
+    "holding_hours": {
+     "median": 143.75,
+     "mean": 416.85714285714283,
+     "p10": 24.125,
+     "p90": 1229.6500000000008,
+     "n": 14
+    },
+    "scheduled": {
+     "retries": 11,
+     "exhausted": 3,
+     "late_1h": 3
+    }
+   },
+   "S-FB-CONS/NOKILL": {
+    "net_pnl": -25.09197853616999,
+    "net_return": -0.09468671145724525,
+    "funding": 1.7847001088090562,
+    "fees": 0.8255158551521218,
+    "spread_slip": 0.8238134789663983,
+    "price": -25.22734931086054,
+    "delay_drift": 1.7243842343456657,
+    "carry_net_mean": 2.7986712019236183e-07,
+    "turnover": 1651.0317103042435,
+    "sharpe": -0.5644622496751867,
+    "max_drawdown": 0.1852652556973624,
+    "worst_day": -0.04582532739945655,
+    "es975": -0.036607329241286256,
+    "mean_gross_frac": 0.25388730854879904,
+    "mean_net_frac": 0.01711040739663524,
+    "flat_days": 109,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 30,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 16,
+     "kill": false,
+     "funding_unknown_periods": 4,
+     "scheduled_retries": 11,
+     "scheduled_exhausted": 3,
+     "scheduled_late_1h": 3,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 7,
+      "EXIT:stop": 6,
+      "EXIT:neutrality_unwind": 7,
+      "EXIT:ineligible": 1,
+      "EXIT:net_exposure_trim": 384,
+      "REJECT:below_min_qty": 382
+     },
+     "stops": 6
+    },
+    "decisions": {
+     "ENTER": 7,
+     "EXIT:stop": 6,
+     "EXIT:neutrality_unwind": 7,
+     "EXIT:ineligible": 1,
+     "EXIT:net_exposure_trim": 384,
+     "REJECT:below_min_qty": 382
+    },
+    "stops": 6,
+    "turnover_per_year_over_mean_equity": 9.887032359815159,
+    "carry_per_turnover_bps": {
+     "funding": 10.809605276934269,
+     "carry_net": 0.8199162611212999
+    },
+    "capture_ratio": 0.16027748264338837,
+    "kill_ts": null,
+    "holding_hours": {
+     "median": 143.75,
+     "mean": 416.85714285714283,
+     "p10": 24.125,
+     "p90": 1229.6500000000008,
+     "n": 14
+    },
+    "scheduled": {
+     "retries": 11,
+     "exhausted": 3,
+     "late_1h": 3
+    }
+   },
+   "S-COST2X/NOKILL": {
+    "net_pnl": -26.58084762962875,
+    "net_return": -0.10030508539482547,
+    "funding": 1.7848844832984758,
+    "fees": 1.6508605310742386,
+    "spread_slip": 1.6468494708911077,
+    "price": -25.06802211096188,
+    "delay_drift": 1.7397850226275664,
+    "carry_net_mean": -2.7511572744554154e-05,
+    "turnover": 1650.8605310742385,
+    "sharpe": -0.6033028884369838,
+    "max_drawdown": 0.18826022707275125,
+    "worst_day": -0.04598914679778077,
+    "es975": -0.03691848244356092,
+    "mean_gross_frac": 0.2546751666230594,
+    "mean_net_frac": 0.017158302558930222,
+    "flat_days": 109,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 30,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 16,
+     "kill": false,
+     "funding_unknown_periods": 4,
+     "scheduled_retries": 11,
+     "scheduled_exhausted": 3,
+     "scheduled_late_1h": 3,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 7,
+      "EXIT:stop": 6,
+      "EXIT:neutrality_unwind": 7,
+      "EXIT:ineligible": 1,
+      "EXIT:net_exposure_trim": 389,
+      "REJECT:below_min_qty": 387
+     },
+     "stops": 6
+    },
+    "decisions": {
+     "ENTER": 7,
+     "EXIT:stop": 6,
+     "EXIT:neutrality_unwind": 7,
+     "EXIT:ineligible": 1,
+     "EXIT:net_exposure_trim": 389,
+     "REJECT:below_min_qty": 387
+    },
+    "stops": 6,
+    "turnover_per_year_over_mean_equity": 9.920353324422903,
+    "carry_per_turnover_bps": {
+     "funding": 10.811842973415969,
+     "carry_net": -9.163860242527292
+    },
+    "capture_ratio": 0.16029404065158367,
+    "kill_ts": null,
+    "holding_hours": {
+     "median": 143.75,
+     "mean": 416.7857142857143,
+     "p10": 24.125,
+     "p90": 1229.6500000000008,
+     "n": 14
+    },
+    "scheduled": {
+     "retries": 11,
+     "exhausted": 3,
+     "late_1h": 3
+    }
+   },
+   "S-UNWIND": {
+    "net_pnl": -16.673375482484204,
+    "net_return": -0.0629183980471102,
+    "funding": 0.21928764739537288,
+    "fees": 0.4797427948031374,
+    "spread_slip": 0.5311890102829006,
+    "price": -15.881731324793536,
+    "delay_drift": 2.362759043655669,
+    "carry_net_mean": -1.3378741613268371e-05,
+    "turnover": 959.4855896062747,
+    "sharpe": -0.6393445387451776,
+    "max_drawdown": 0.13250189942199353,
+    "worst_day": -0.039121964309398294,
+    "es975": -0.03151324752727878,
+    "mean_gross_frac": 0.040966000219002346,
+    "mean_net_frac": 0.0037746601133521445,
+    "flat_days": 211,
+    "counters": {},
+    "decisions": {},
+    "stops": 0,
+    "turnover_per_year_over_mean_equity": 6.003311056824856,
+    "carry_per_turnover_bps": {
+     "funding": 2.2854709833146907,
+     "carry_net": -8.25071440640934
+    },
+    "capture_ratio": 0.019693433045608496
+   }
+  },
+  "E": {
+   "PRIMARY": {
+    "net_pnl": -0.20111263843853067,
+    "net_return": -0.0007589156167491723,
+    "funding": 2.0733386233424103,
+    "fees": 0.7597248607929253,
+    "spread_slip": 0.8515253263778301,
+    "price": -0.6632010746101926,
+    "delay_drift": 3.058597367983952,
+    "carry_net_mean": 5.77171618851028e-06,
+    "turnover": 1519.4497215858505,
+    "sharpe": 0.11209972809742197,
+    "max_drawdown": 0.14615130105099772,
+    "worst_day": -0.04759614547424329,
+    "es975": -0.035931741564540265,
+    "mean_gross_frac": 0.22910001379766046,
+    "mean_net_frac": 0.021083288440226947,
+    "flat_days": 120,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 30,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 16,
+     "kill": true,
+     "funding_unknown_periods": 4,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 6,
+      "EXIT:stop": 3,
+      "EXIT:neutrality_unwind": 5,
+      "EXIT:ineligible": 2,
+      "EXIT:net_exposure_trim": 503,
+      "REJECT:below_min_qty": 497,
+      "EXIT:kill_switch": 2
+     },
+     "stops": 3
+    },
+    "decisions": {
+     "ENTER": 6,
+     "EXIT:stop": 3,
+     "EXIT:neutrality_unwind": 5,
+     "EXIT:ineligible": 2,
+     "EXIT:net_exposure_trim": 503,
+     "REJECT:below_min_qty": 497,
+     "EXIT:kill_switch": 2
+    },
+    "stops": 3,
+    "turnover_per_year_over_mean_equity": 8.63479757249168,
+    "carry_per_turnover_bps": {
+     "funding": 13.645325632614323,
+     "carry_net": 3.0411564766313757
+    },
+    "capture_ratio": 0.18619906704571365,
+    "kill_ts": "2026-04-14T07:15:00+00:00",
+    "holding_hours": {
+     "median": 242.75,
+     "mean": 458.4166666666667,
+     "p10": 23.0,
+     "p90": 1439.6500000000003,
+     "n": 12
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-COST2X": {
+    "net_pnl": -1.6716114173203778,
+    "net_return": -0.006307967612529728,
+    "funding": 2.03769689903413,
+    "fees": 1.5135812393911174,
+    "spread_slip": 1.702393330237947,
+    "price": -0.4933337467254493,
+    "delay_drift": 3.015735095612951,
+    "carry_net_mean": -2.033965216443915e-05,
+    "turnover": 1513.5812393911176,
+    "sharpe": 0.07498361329807032,
+    "max_drawdown": 0.14722100007419314,
+    "worst_day": -0.04623799206437551,
+    "es975": -0.036013489447179824,
+    "mean_gross_frac": 0.2288865224852755,
+    "mean_net_frac": 0.01986169796151633,
+    "flat_days": 120,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 30,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 15,
+     "kill": true,
+     "funding_unknown_periods": 4,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 6,
+      "EXIT:stop": 3,
+      "EXIT:neutrality_unwind": 5,
+      "EXIT:ineligible": 2,
+      "EXIT:net_exposure_trim": 518,
+      "REJECT:below_min_qty": 512,
+      "EXIT:kill_switch": 2
+     },
+     "stops": 3
+    },
+    "decisions": {
+     "ENTER": 6,
+     "EXIT:stop": 3,
+     "EXIT:neutrality_unwind": 5,
+     "EXIT:ineligible": 2,
+     "EXIT:net_exposure_trim": 518,
+     "REJECT:below_min_qty": 512,
+     "EXIT:kill_switch": 2
+    },
+    "stops": 3,
+    "turnover_per_year_over_mean_equity": 8.6457559256147,
+    "carry_per_turnover_bps": {
+     "funding": 13.462752087584366,
+     "carry_net": -7.784700549465921
+    },
+    "capture_ratio": 0.182998212279692,
+    "kill_ts": "2026-04-14T07:15:00+00:00",
+    "holding_hours": {
+     "median": 242.75,
+     "mean": 458.4166666666667,
+     "p10": 23.0,
+     "p90": 1439.6500000000003,
+     "n": 12
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-SPREAD-FIX": {
+    "net_pnl": 5.329227204401207,
+    "net_return": 0.020110291337363043,
+    "funding": 0.33551993755008347,
+    "fees": 0.6102420260909651,
+    "spread_slip": 0.8543412698263774,
+    "price": 6.458290562768463,
+    "delay_drift": 4.505724491570421,
+    "carry_net_mean": -1.8954444599719774e-05,
+    "turnover": 1220.48405218193,
+    "sharpe": 0.2895768570056637,
+    "max_drawdown": 0.09351747922723919,
+    "worst_day": -0.043075643478331926,
+    "es975": -0.02764426706403537,
+    "mean_gross_frac": 0.04375859060502302,
+    "mean_net_frac": 0.004470913311763638,
+    "flat_days": 210,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 0,
+     "funding_stale_asset_cycles": 0,
+     "fills": 22,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 7,
+     "kill": false,
+     "funding_unknown_periods": 2,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 5,
+      "EXIT:stop": 2,
+      "EXIT:neutrality_unwind": 5,
+      "EXIT:ineligible": 3,
+      "EXIT:net_exposure_trim": 234,
+      "REJECT:below_min_qty": 232
+     },
+     "stops": 2
+    },
+    "decisions": {
+     "ENTER": 5,
+     "EXIT:stop": 2,
+     "EXIT:neutrality_unwind": 5,
+     "EXIT:ineligible": 3,
+     "EXIT:net_exposure_trim": 234,
+     "REJECT:below_min_qty": 232
+    },
+    "stops": 2,
+    "turnover_per_year_over_mean_equity": 7.090383854501284,
+    "carry_per_turnover_bps": {
+     "funding": 2.749072689235513,
+     "carry_net": -9.250947247928123
+    },
+    "capture_ratio": 0.030131835988444905,
+    "kill_ts": null,
+    "holding_hours": {
+     "median": 29.375,
+     "mean": 109.85,
+     "p10": 7.475,
+     "p90": 448.5,
+     "n": 10
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-NOKILL": {
+    "net_pnl": 12.370554332774589,
+    "net_return": 0.04668133710480977,
+    "funding": 2.773666883516165,
+    "fees": 0.823539514204949,
+    "spread_slip": 0.902964949650411,
+    "price": 11.323391913113777,
+    "delay_drift": 3.6895836749122446,
+    "carry_net_mean": 1.5055540954628047e-05,
+    "turnover": 1647.079028409898,
+    "sharpe": 0.40956952139844993,
+    "max_drawdown": 0.15250187813725635,
+    "worst_day": -0.04759614547424329,
+    "es975": -0.035931741564540265,
+    "mean_gross_frac": 0.36480953763630203,
+    "mean_net_frac": 0.021767006585469623,
+    "flat_days": 56,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 32,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 16,
+     "kill": false,
+     "funding_unknown_periods": 5,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 7,
+      "EXIT:stop": 3,
+      "EXIT:neutrality_unwind": 6,
+      "EXIT:ineligible": 3,
+      "EXIT:net_exposure_trim": 503,
+      "REJECT:below_min_qty": 497
+     },
+     "stops": 3
+    },
+    "decisions": {
+     "ENTER": 7,
+     "EXIT:stop": 3,
+     "EXIT:neutrality_unwind": 6,
+     "EXIT:ineligible": 3,
+     "EXIT:net_exposure_trim": 503,
+     "REJECT:below_min_qty": 497
+    },
+    "stops": 3,
+    "turnover_per_year_over_mean_equity": 9.234718639257881,
+    "carry_per_turnover_bps": {
+     "funding": 16.839913784791996,
+     "carry_net": 6.357693842242306
+    },
+    "capture_ratio": 0.2490930232967594,
+    "kill_ts": null,
+    "holding_hours": {
+     "median": 400.5,
+     "mean": 612.1071428571429,
+     "p10": 23.0,
+     "p90": 1737.6750000000004,
+     "n": 14
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-PIT10": {
+    "net_pnl": 0.9905831577343065,
+    "net_return": 0.0037380496518275718,
+    "funding": 2.0720910308830702,
+    "fees": 0.7620482234149335,
+    "spread_slip": 0.8547301595895309,
+    "price": 0.5352705098556942,
+    "delay_drift": 1.3629101050676957,
+    "carry_net_mean": 5.590782779049773e-06,
+    "turnover": 1524.0964468298669,
+    "sharpe": 0.141817912291334,
+    "max_drawdown": 0.14560796972947487,
+    "worst_day": -0.047397122794067714,
+    "es975": -0.035942783630895724,
+    "mean_gross_frac": 0.22833327381950777,
+    "mean_net_frac": 0.021111576573383948,
+    "flat_days": 120,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 21,
+     "funding_stale_asset_cycles": 0,
+     "fills": 30,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 16,
+     "kill": true,
+     "funding_unknown_periods": 4,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 6,
+      "EXIT:stop": 3,
+      "EXIT:neutrality_unwind": 5,
+      "EXIT:ineligible": 2,
+      "EXIT:net_exposure_trim": 491,
+      "REJECT:below_min_qty": 485,
+      "EXIT:kill_switch": 2
+     },
+     "stops": 3
+    },
+    "decisions": {
+     "ENTER": 6,
+     "EXIT:stop": 3,
+     "EXIT:neutrality_unwind": 5,
+     "EXIT:ineligible": 2,
+     "EXIT:net_exposure_trim": 491,
+     "REJECT:below_min_qty": 485,
+     "EXIT:kill_switch": 2
+    },
+    "stops": 3,
+    "turnover_per_year_over_mean_equity": 8.625563685447101,
+    "carry_per_turnover_bps": {
+     "funding": 13.595537442482966,
+     "carry_net": 2.9874267394669145
+    },
+    "capture_ratio": 0.18608702526471027,
+    "kill_ts": "2026-04-14T07:15:00+00:00",
+    "holding_hours": {
+     "median": 243.0,
+     "mean": 458.5416666666667,
+     "p10": 23.0,
+     "p90": 1439.6500000000003,
+     "n": 12
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-FB-CONS": {
+    "net_pnl": -0.20111263843853067,
+    "net_return": -0.0007589156167491723,
+    "funding": 2.0733386233424103,
+    "fees": 0.7597248607929253,
+    "spread_slip": 0.8515253263778301,
+    "price": -0.6632010746101926,
+    "delay_drift": 3.058597367983952,
+    "carry_net_mean": 5.77171618851028e-06,
+    "turnover": 1519.4497215858505,
+    "sharpe": 0.11209972809742197,
+    "max_drawdown": 0.14615130105099772,
+    "worst_day": -0.04759614547424329,
+    "es975": -0.035931741564540265,
+    "mean_gross_frac": 0.22910001379766046,
+    "mean_net_frac": 0.021083288440226947,
+    "flat_days": 120,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 30,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 16,
+     "kill": true,
+     "funding_unknown_periods": 4,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 6,
+      "EXIT:stop": 3,
+      "EXIT:neutrality_unwind": 5,
+      "EXIT:ineligible": 2,
+      "EXIT:net_exposure_trim": 503,
+      "REJECT:below_min_qty": 497,
+      "EXIT:kill_switch": 2
+     },
+     "stops": 3
+    },
+    "decisions": {
+     "ENTER": 6,
+     "EXIT:stop": 3,
+     "EXIT:neutrality_unwind": 5,
+     "EXIT:ineligible": 2,
+     "EXIT:net_exposure_trim": 503,
+     "REJECT:below_min_qty": 497,
+     "EXIT:kill_switch": 2
+    },
+    "stops": 3,
+    "turnover_per_year_over_mean_equity": 8.63479757249168,
+    "carry_per_turnover_bps": {
+     "funding": 13.645325632614323,
+     "carry_net": 3.0411564766313757
+    },
+    "capture_ratio": 0.18619906704571365,
+    "kill_ts": "2026-04-14T07:15:00+00:00",
+    "holding_hours": {
+     "median": 242.75,
+     "mean": 458.4166666666667,
+     "p10": 23.0,
+     "p90": 1439.6500000000003,
+     "n": 12
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-PIT10/NOKILL": {
+    "net_pnl": 13.66602468090565,
+    "net_return": 0.051569904456247734,
+    "funding": 2.772121326879933,
+    "fees": 0.8256967693390237,
+    "spread_slip": 0.9045076462709534,
+    "price": 12.624107769635685,
+    "delay_drift": 1.6203592291074336,
+    "carry_net_mean": 1.4856908707517897e-05,
+    "turnover": 1651.3935386780472,
+    "sharpe": 0.4388036172771865,
+    "max_drawdown": 0.15193610295962423,
+    "worst_day": -0.047397122794067714,
+    "es975": -0.035942783630895724,
+    "mean_gross_frac": 0.363445721003766,
+    "mean_net_frac": 0.021792747780357277,
+    "flat_days": 56,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 21,
+     "funding_stale_asset_cycles": 0,
+     "fills": 32,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 16,
+     "kill": false,
+     "funding_unknown_periods": 5,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 7,
+      "EXIT:stop": 3,
+      "EXIT:neutrality_unwind": 6,
+      "EXIT:ineligible": 3,
+      "EXIT:net_exposure_trim": 491,
+      "REJECT:below_min_qty": 485
+     },
+     "stops": 3
+    },
+    "decisions": {
+     "ENTER": 7,
+     "EXIT:stop": 3,
+     "EXIT:neutrality_unwind": 6,
+     "EXIT:ineligible": 3,
+     "EXIT:net_exposure_trim": 491,
+     "REJECT:below_min_qty": 485
+    },
+    "stops": 3,
+    "turnover_per_year_over_mean_equity": 9.221067450334766,
+    "carry_per_turnover_bps": {
+     "funding": 16.78655790974595,
+     "carry_net": 6.309319292262813
+    },
+    "capture_ratio": 0.24895422242723778,
+    "kill_ts": null,
+    "holding_hours": {
+     "median": 400.25,
+     "mean": 612.1785714285714,
+     "p10": 23.0,
+     "p90": 1737.6750000000004,
+     "n": 14
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-FB-CONS/NOKILL": {
+    "net_pnl": 12.370554332774589,
+    "net_return": 0.04668133710480977,
+    "funding": 2.773666883516165,
+    "fees": 0.823539514204949,
+    "spread_slip": 0.902964949650411,
+    "price": 11.323391913113777,
+    "delay_drift": 3.6895836749122446,
+    "carry_net_mean": 1.5055540954628047e-05,
+    "turnover": 1647.079028409898,
+    "sharpe": 0.40956952139844993,
+    "max_drawdown": 0.15250187813725635,
+    "worst_day": -0.04759614547424329,
+    "es975": -0.035931741564540265,
+    "mean_gross_frac": 0.36480953763630203,
+    "mean_net_frac": 0.021767006585469623,
+    "flat_days": 56,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 32,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 16,
+     "kill": false,
+     "funding_unknown_periods": 5,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 7,
+      "EXIT:stop": 3,
+      "EXIT:neutrality_unwind": 6,
+      "EXIT:ineligible": 3,
+      "EXIT:net_exposure_trim": 503,
+      "REJECT:below_min_qty": 497
+     },
+     "stops": 3
+    },
+    "decisions": {
+     "ENTER": 7,
+     "EXIT:stop": 3,
+     "EXIT:neutrality_unwind": 6,
+     "EXIT:ineligible": 3,
+     "EXIT:net_exposure_trim": 503,
+     "REJECT:below_min_qty": 497
+    },
+    "stops": 3,
+    "turnover_per_year_over_mean_equity": 9.234718639257881,
+    "carry_per_turnover_bps": {
+     "funding": 16.839913784791996,
+     "carry_net": 6.357693842242306
+    },
+    "capture_ratio": 0.2490930232967594,
+    "kill_ts": null,
+    "holding_hours": {
+     "median": 400.5,
+     "mean": 612.1071428571429,
+     "p10": 23.0,
+     "p90": 1737.6750000000004,
+     "n": 14
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-COST2X/NOKILL": {
+    "net_pnl": 10.715551271871504,
+    "net_return": 0.04043604253536417,
+    "funding": 2.722711767211538,
+    "fees": 1.6411559235741269,
+    "spread_slip": 1.8044533754594294,
+    "price": 11.438448803693518,
+    "delay_drift": 3.6367863400373435,
+    "carry_net_mean": -1.2981484330677763e-05,
+    "turnover": 1641.1559235741267,
+    "sharpe": 0.37259424778950434,
+    "max_drawdown": 0.15292140551301503,
+    "worst_day": -0.04623799206437551,
+    "es975": -0.036013489447179824,
+    "mean_gross_frac": 0.36337878863663114,
+    "mean_net_frac": 0.018547228000348876,
+    "flat_days": 56,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 32,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 15,
+     "kill": false,
+     "funding_unknown_periods": 5,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 7,
+      "EXIT:stop": 3,
+      "EXIT:neutrality_unwind": 6,
+      "EXIT:ineligible": 3,
+      "EXIT:net_exposure_trim": 518,
+      "REJECT:below_min_qty": 512
+     },
+     "stops": 3
+    },
+    "decisions": {
+     "ENTER": 7,
+     "EXIT:stop": 3,
+     "EXIT:neutrality_unwind": 6,
+     "EXIT:ineligible": 3,
+     "EXIT:net_exposure_trim": 518,
+     "REJECT:below_min_qty": 512
+    },
+    "stops": 3,
+    "turnover_per_year_over_mean_equity": 9.24951681985604,
+    "carry_per_turnover_bps": {
+     "funding": 16.590207719459023,
+     "carry_net": -4.40480713281456
+    },
+    "capture_ratio": 0.24451692800276822,
+    "kill_ts": null,
+    "holding_hours": {
+     "median": 400.5,
+     "mean": 612.1071428571429,
+     "p10": 23.0,
+     "p90": 1737.6750000000004,
+     "n": 14
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   },
+   "S-UNWIND": {
+    "net_pnl": -0.20111263843853067,
+    "net_return": -0.0007589156167491723,
+    "funding": 2.0733386233424103,
+    "fees": 0.7597248607929253,
+    "spread_slip": 0.8515253263778301,
+    "price": -0.6632010746101926,
+    "delay_drift": 3.058597367983952,
+    "carry_net_mean": 5.77171618851028e-06,
+    "turnover": 1519.4497215858505,
+    "sharpe": 0.11209972809742197,
+    "max_drawdown": 0.14615130105099772,
+    "worst_day": -0.04759614547424329,
+    "es975": -0.035931741564540265,
+    "mean_gross_frac": 0.22910001379766046,
+    "mean_net_frac": 0.021083288440226947,
+    "flat_days": 120,
+    "counters": {},
+    "decisions": {},
+    "stops": 0,
+    "turnover_per_year_over_mean_equity": 8.63479757249168,
+    "carry_per_turnover_bps": {
+     "funding": 13.645325632614323,
+     "carry_net": 3.0411564766313757
+    },
+    "capture_ratio": 0.18619906704571365
+   }
+  },
+  "P-TIGHT": {
+   "PRIMARY": {
+    "net_pnl": 0.0,
+    "net_return": 0.0,
+    "funding": 0.0,
+    "fees": 0.0,
+    "spread_slip": 0.0,
+    "price": 0.0,
+    "delay_drift": 0.0,
+    "carry_net_mean": 0.0,
+    "turnover": 0.0,
+    "sharpe": null,
+    "max_drawdown": 0.0,
+    "worst_day": 0.0,
+    "es975": 0.0,
+    "mean_gross_frac": 0.0,
+    "mean_net_frac": 0.0,
+    "flat_days": 233,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 0,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 0,
+     "kill": false,
+     "funding_unknown_periods": 0,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {},
+     "stops": 0
+    },
+    "decisions": {},
+    "stops": 0,
+    "turnover_per_year_over_mean_equity": 0.0,
+    "carry_per_turnover_bps": {
+     "funding": null,
+     "carry_net": null
+    },
+    "capture_ratio": 0.0,
+    "kill_ts": null,
+    "holding_hours": {},
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   }
+  },
+  "P-LOOSE": {
+   "PRIMARY": {
+    "net_pnl": 10.566755539393284,
+    "net_return": 0.039874549205257674,
+    "funding": 6.602945492577043,
+    "fees": 9.075561752658018,
+    "spread_slip": 9.332452891971435,
+    "price": 22.371824691445696,
+    "delay_drift": -0.4730386578504371,
+    "carry_net_mean": -0.00018072485349315752,
+    "turnover": 18151.123505316034,
+    "sharpe": 0.36219527611314956,
+    "max_drawdown": 0.1370324652032402,
+    "worst_day": -0.07777396727066088,
+    "es975": -0.04108339076205545,
+    "mean_gross_frac": 0.5853950707280038,
+    "mean_net_frac": 0.019437581619715687,
+    "flat_days": 78,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 292,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 17,
+     "kill": true,
+     "funding_unknown_periods": 16,
+     "scheduled_retries": 0,
+     "scheduled_exhausted": 0,
+     "scheduled_late_1h": 0,
+     "scheduled_blocked_cycles": 0,
+     "decisions": {
+      "ENTER": 63,
+      "SWITCH": 25,
+      "EXIT:stop": 13,
+      "EXIT:neutrality_unwind": 42,
+      "EXIT:ineligible": 48,
+      "EXIT:net_exposure_trim": 433,
+      "REJECT:below_min_qty": 405,
+      "EXIT:kill_switch": 4
+     },
+     "stops": 13
+    },
+    "decisions": {
+     "ENTER": 63,
+     "SWITCH": 25,
+     "EXIT:stop": 13,
+     "EXIT:neutrality_unwind": 42,
+     "EXIT:ineligible": 48,
+     "EXIT:net_exposure_trim": 433,
+     "REJECT:below_min_qty": 405,
+     "EXIT:kill_switch": 4
+    },
+    "stops": 13,
+    "turnover_per_year_over_mean_equity": 102.06940512002946,
+    "carry_per_turnover_bps": {
+     "funding": 3.6377613157902857,
+     "carry_net": -6.503767741206205
+    },
+    "capture_ratio": 0.5929867300159299,
+    "kill_ts": "2026-04-15T00:15:00+00:00",
+    "holding_hours": {
+     "median": 39.5,
+     "mean": 104.71969696969697,
+     "p10": 3.7750000000000004,
+     "p90": 254.125,
+     "n": 132
+    },
+    "scheduled": {
+     "retries": 0,
+     "exhausted": 0,
+     "late_1h": 0
+    }
+   }
+  },
+  "P-C8": {
+   "PRIMARY": {
+    "net_pnl": 0.9444886003304305,
+    "net_return": 0.0035641079257752095,
+    "funding": 1.9625328847756858,
+    "fees": 0.6083607248814873,
+    "spread_slip": 0.6391017875182932,
+    "price": 0.22941822795452183,
+    "delay_drift": -0.182694191528319,
+    "carry_net_mean": 9.53404401779261e-06,
+    "turnover": 1216.7214497629748,
+    "sharpe": 0.13699771264786142,
+    "max_drawdown": 0.1471032024390707,
+    "worst_day": -0.04456651198150374,
+    "es975": -0.03380140151039177,
+    "mean_gross_frac": 0.22334496357983524,
+    "mean_net_frac": 0.01797995841817682,
+    "flat_days": 121,
+    "counters": {
+     "cycles": 22367,
+     "snapshot_assets": 447340,
+     "mid_trade_fallback": 0,
+     "no_quote": 0,
+     "decision_fallback_points": 14,
+     "funding_stale_asset_cycles": 0,
+     "fills": 25,
+     "unfilled_orders": 0,
+     "r3_blocked_days": 16,
+     "kill": true,
+     "funding_unknown_periods": 4,
+     "scheduled_retries": 48,
+     "scheduled_exhausted": 15,
+     "scheduled_late_1h": 15,
+     "scheduled_blocked_cycles": 7935,
+     "decisions": {
+      "ENTER": 5,
+      "EXIT:stop": 3,
+      "EXIT:neutrality_unwind": 4,
+      "EXIT:ineligible": 1,
+      "EXIT:net_exposure_trim": 491,
+      "REJECT:below_min_qty": 486,
+      "EXIT:kill_switch": 2
+     },
+     "stops": 3
+    },
+    "decisions": {
+     "ENTER": 5,
+     "EXIT:stop": 3,
+     "EXIT:neutrality_unwind": 4,
+     "EXIT:ineligible": 1,
+     "EXIT:net_exposure_trim": 491,
+     "REJECT:below_min_qty": 486,
+     "EXIT:kill_switch": 2
+    },
+    "stops": 3,
+    "turnover_per_year_over_mean_equity": 6.898080623293451,
+    "carry_per_turnover_bps": {
+     "funding": 16.129680997717266,
+     "carry_net": 5.877026105812515
+    },
+    "capture_ratio": 0.17624800313740965,
+    "kill_ts": "2026-04-13T23:30:00+00:00",
+    "holding_hours": {
+     "median": 449.25,
+     "mean": 539.5,
+     "p10": 23.0,
+     "p90": 1519.0,
+     "n": 10
+    },
+    "scheduled": {
+     "retries": 48,
+     "exhausted": 15,
+     "late_1h": 15
+    }
+   }
+  }
+ },
+ "attribution": {
+  "totals": {
+   "W": {
+    "funding": 6.228367158995295,
+    "price": -22.123746107652284,
+    "delay_drift": -0.6572259401317544,
+    "fees": 5.548403717959447,
+    "spread_slip": 5.028060685738293
+   },
+   "D": {
+    "funding": 8.894214051855235,
+    "price": -10.453357634459824,
+    "delay_drift": -4.773880704258717,
+    "fees": 14.395810459060954,
+    "spread_slip": 13.352303823217632
+   },
+   "C": {
+    "funding": 1.7847001088090562,
+    "price": -25.22734931086054,
+    "delay_drift": 1.7243842343456657,
+    "fees": 0.8255158551521218,
+    "spread_slip": 0.8238134789663983
+   },
+   "E": {
+    "funding": 2.773666883516165,
+    "price": 11.323391913113777,
+    "delay_drift": 3.6895836749122446,
+    "fees": 0.823539514204949,
+    "spread_slip": 0.902964949650411
+   }
+  },
+  "exposure": {
+   "W": {
+    "mean_gross_frac": 0.6629370557579539,
+    "exposure_normalized_carry": -9.497043708187653e-05
+   },
+   "D": {
+    "mean_gross_frac": 0.9785029523362239,
+    "exposure_normalized_carry": -0.0003545995538252891
+   },
+   "C": {
+    "mean_gross_frac": 0.25388730854879904,
+    "exposure_normalized_carry": 2.1529623883753097e-05
+   },
+   "E": {
+    "mean_gross_frac": 0.36480953763630203,
+    "exposure_normalized_carry": 4.903193331970696e-05
+   }
+  },
+  "terms": {
+   "D-W": {
+    "funding": 2.66584689285994,
+    "price": 11.67038847319246,
+    "delay_drift": -4.116654764126963,
+    "fees": 8.847406741101507,
+    "spread_slip": 8.324243137479339,
+    "mean_gross_frac": 0.31556589657826994,
+    "exposure_normalized_carry": -0.00025962911674341256
+   },
+   "C-D": {
+    "funding": -7.109513943046179,
+    "price": -14.773991676400716,
+    "delay_drift": 6.4982649386043825,
+    "fees": -13.570294603908831,
+    "spread_slip": -12.528490344251233,
+    "mean_gross_frac": -0.7246156437874248,
+    "exposure_normalized_carry": 0.0003761291777090422
+   },
+   "E-C": {
+    "funding": 0.9889667747071089,
+    "price": 36.55074122397431,
+    "delay_drift": 1.965199440566579,
+    "fees": -0.0019763409471728055,
+    "spread_slip": 0.07915147068401263,
+    "mean_gross_frac": 0.11092222908750299,
+    "exposure_normalized_carry": 2.7502309435953862e-05
+   },
+   "E-W": {
+    "funding": -3.4547002754791296,
+    "price": 33.44713802076606,
+    "delay_drift": 4.346809615043999,
+    "fees": -4.724864203754498,
+    "spread_slip": -4.125095736087882,
+    "mean_gross_frac": -0.2981275181216519,
+    "exposure_normalized_carry": 0.0001440023704015835
+   }
+  }
+ },
+ "switch_ledger": {
+  "C": {
+   "n": 14,
+   "hit_rate": 0.35714285714285715,
+   "bias_expected_minus_realized": 0.54047799639921,
+   "by_decision": {
+    "ENTER": 14
+   }
+  },
+  "E": {
+   "n": 14,
+   "hit_rate": 0.42857142857142855,
+   "bias_expected_minus_realized": 0.6732357389295058,
+   "by_decision": {
+    "ENTER": 14
+   }
+  }
+ },
+ "ideal_funding": 11.135064510464952,
+ "bridge": [
+  {
+   "step": "forward:W-V4",
+   "final_equity": 282.291402979162,
+   "carry_net_mean": 0.00011590587200916088,
+   "counters": {
+    "decisions": 34.0,
+    "flat_weeks": 0.0,
+    "skipped_actions": 0.0,
+    "min_order_skips": 41.0,
+    "perp_spread_fallbacks": 0.0,
+    "margin_reductions": 0.0,
+    "liquidations": 0.0,
+    "margin_check_skipped": 0.0,
+    "valuation_fallbacks": 0.0,
+    "funding_unknown_hours": 16.0,
+    "funding_held_hours": 22367.0,
+    "forced_closes": 0.0
+   }
+  },
+  {
+   "step": "forward:+exec_v5",
+   "final_equity": 284.01212970896216,
+   "carry_net_mean": 0.00011629314785866908,
+   "counters": {
+    "decisions": 34.0,
+    "flat_weeks": 0.0,
+    "skipped_actions": 0.0,
+    "min_order_skips": 38.0,
+    "perp_spread_fallbacks": 0.0,
+    "margin_reductions": 0.0,
+    "liquidations": 0.0,
+    "margin_check_skipped": 0.0,
+    "valuation_fallbacks": 0.0,
+    "funding_unknown_hours": 16.0,
+    "funding_held_hours": 22367.0,
+    "forced_closes": 0.0
+   }
+  },
+  {
+   "step": "forward:+slip2",
+   "final_equity": 283.1169234790362,
+   "carry_net_mean": 0.00010210567619763475,
+   "counters": {
+    "decisions": 34.0,
+    "flat_weeks": 0.0,
+    "skipped_actions": 0.0,
+    "min_order_skips": 38.0,
+    "perp_spread_fallbacks": 0.0,
+    "margin_reductions": 0.0,
+    "liquidations": 0.0,
+    "margin_check_skipped": 0.0,
+    "valuation_fallbacks": 0.0,
+    "funding_unknown_hours": 16.0,
+    "funding_held_hours": 22367.0,
+    "forced_closes": 0.0
+   }
+  },
+  {
+   "step": "forward:+gates_v5",
+   "final_equity": 225.86609890479673,
+   "carry_net_mean": 3.850155494706039e-05,
+   "counters": {
+    "decisions": 34.0,
+    "flat_weeks": 0.0,
+    "skipped_actions": 0.0,
+    "min_order_skips": 31.0,
+    "perp_spread_fallbacks": 0.0,
+    "margin_reductions": 0.0,
+    "liquidations": 0.0,
+    "margin_check_skipped": 0.0,
+    "valuation_fallbacks": 0.0,
+    "funding_unknown_hours": 16.0,
+    "funding_held_hours": 22367.0,
+    "forced_closes": 0.0
+   }
+  },
+  {
+   "step": "forward:+no_resize",
+   "final_equity": 205.24310929663807,
+   "carry_net_mean": 6.412088096851805e-05,
+   "counters": {
+    "decisions": 34.0,
+    "flat_weeks": 0.0,
+    "skipped_actions": 0.0,
+    "min_order_skips": 0.0,
+    "perp_spread_fallbacks": 0.0,
+    "margin_reductions": 0.0,
+    "liquidations": 0.0,
+    "margin_check_skipped": 0.0,
+    "valuation_fallbacks": 0.0,
+    "funding_unknown_hours": 16.0,
+    "funding_held_hours": 22367.0,
+    "forced_closes": 0.0
+   }
+  },
+  {
+   "step": "forward:engine->W",
+   "final_equity": 238.5281566476453,
+   "carry_net_mean": -7.61466634827744e-05,
+   "counters": {
+    "cycles": 22367,
+    "snapshot_assets": 447340,
+    "mid_trade_fallback": 0,
+    "no_quote": 0,
+    "decision_fallback_points": 14,
+    "funding_stale_asset_cycles": 0,
+    "fills": 199,
+    "unfilled_orders": 0,
+    "r3_blocked_days": 24,
+    "kill": false,
+    "funding_unknown_periods": 12,
+    "scheduled_retries": 0,
+    "scheduled_exhausted": 0,
+    "scheduled_late_1h": 0,
+    "scheduled_blocked_cycles": 0,
+    "decisions": {
+     "ENTER": 50,
+     "EXIT:stop": 23,
+     "EXIT:neutrality_unwind": 43,
+     "EXIT:ineligible": 20,
+     "EXIT:rebalance": 7,
+     "EXIT:net_exposure_trim": 256,
+     "REJECT:below_min_qty": 247
+    },
+    "stops": 23
+   }
+  },
+  {
+   "step": "reverse:W-V4",
+   "final_equity": 282.291402979162,
+   "carry_net_mean": 0.00011590587200916088,
+   "counters": {
+    "decisions": 34.0,
+    "flat_weeks": 0.0,
+    "skipped_actions": 0.0,
+    "min_order_skips": 41.0,
+    "perp_spread_fallbacks": 0.0,
+    "margin_reductions": 0.0,
+    "liquidations": 0.0,
+    "margin_check_skipped": 0.0,
+    "valuation_fallbacks": 0.0,
+    "funding_unknown_hours": 16.0,
+    "funding_held_hours": 22367.0,
+    "forced_closes": 0.0
+   }
+  },
+  {
+   "step": "reverse:+no_resize",
+   "final_equity": 260.4511494595646,
+   "carry_net_mean": 0.00013849445273378348,
+   "counters": {
+    "decisions": 34.0,
+    "flat_weeks": 0.0,
+    "skipped_actions": 0.0,
+    "min_order_skips": 0.0,
+    "perp_spread_fallbacks": 0.0,
+    "margin_reductions": 0.0,
+    "liquidations": 0.0,
+    "margin_check_skipped": 0.0,
+    "valuation_fallbacks": 0.0,
+    "funding_unknown_hours": 16.0,
+    "funding_held_hours": 22367.0,
+    "forced_closes": 0.0
+   }
+  },
+  {
+   "step": "reverse:+gates_v5",
+   "final_equity": 204.14622251144291,
+   "carry_net_mean": 8.578380409161075e-05,
+   "counters": {
+    "decisions": 34.0,
+    "flat_weeks": 0.0,
+    "skipped_actions": 0.0,
+    "min_order_skips": 0.0,
+    "perp_spread_fallbacks": 0.0,
+    "margin_reductions": 0.0,
+    "liquidations": 0.0,
+    "margin_check_skipped": 0.0,
+    "valuation_fallbacks": 0.0,
+    "funding_unknown_hours": 16.0,
+    "funding_held_hours": 22367.0,
+    "forced_closes": 0.0
+   }
+  },
+  {
+   "step": "reverse:+slip2",
+   "final_equity": 203.58232847551912,
+   "carry_net_mean": 6.546226337442217e-05,
+   "counters": {
+    "decisions": 34.0,
+    "flat_weeks": 0.0,
+    "skipped_actions": 0.0,
+    "min_order_skips": 0.0,
+    "perp_spread_fallbacks": 0.0,
+    "margin_reductions": 0.0,
+    "liquidations": 0.0,
+    "margin_check_skipped": 0.0,
+    "valuation_fallbacks": 0.0,
+    "funding_unknown_hours": 16.0,
+    "funding_held_hours": 22367.0,
+    "forced_closes": 0.0
+   }
+  },
+  {
+   "step": "reverse:+exec_v5",
+   "final_equity": 205.24310929663807,
+   "carry_net_mean": 6.412088096851805e-05,
+   "counters": {
+    "decisions": 34.0,
+    "flat_weeks": 0.0,
+    "skipped_actions": 0.0,
+    "min_order_skips": 0.0,
+    "perp_spread_fallbacks": 0.0,
+    "margin_reductions": 0.0,
+    "liquidations": 0.0,
+    "margin_check_skipped": 0.0,
+    "valuation_fallbacks": 0.0,
+    "funding_unknown_hours": 16.0,
+    "funding_held_hours": 22367.0,
+    "forced_closes": 0.0
+   }
+  },
+  {
+   "step": "reverse:engine->W",
+   "final_equity": 238.5281566476453,
+   "carry_net_mean": -7.61466634827744e-05,
+   "counters": {
+    "cycles": 22367,
+    "snapshot_assets": 447340,
+    "mid_trade_fallback": 0,
+    "no_quote": 0,
+    "decision_fallback_points": 14,
+    "funding_stale_asset_cycles": 0,
+    "fills": 199,
+    "unfilled_orders": 0,
+    "r3_blocked_days": 24,
+    "kill": false,
+    "funding_unknown_periods": 12,
+    "scheduled_retries": 0,
+    "scheduled_exhausted": 0,
+    "scheduled_late_1h": 0,
+    "scheduled_blocked_cycles": 0,
+    "decisions": {
+     "ENTER": 50,
+     "EXIT:stop": 23,
+     "EXIT:neutrality_unwind": 43,
+     "EXIT:ineligible": 20,
+     "EXIT:rebalance": 7,
+     "EXIT:net_exposure_trim": 256,
+     "REJECT:below_min_qty": 247
+    },
+    "stops": 23
+   }
+  }
+ ]
+}
