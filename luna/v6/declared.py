@@ -40,6 +40,14 @@ DECLARED = {
             "unwind); decisions keep the PRIMARY cost estimates (as V5 S-COST2X: the strategy does not know "
             "its costs are mis-estimated). S-PIT10 and S-FB-CONS change the information (spread known time, "
             "fallback value) and therefore the decisions.",
+    "D-X1": "Forward taker fill (H3, risk exits, spot taker fallback for exits): if the first book snapshot "
+            "after the order does not show enough depth, the remainder is filled on the following snapshots "
+            "(same walk); no price is invented. For the H1 entry taker fallback the remainder is cancelled "
+            "(spec S-H1-X).",
+    "D-X2": "Forward terminal / hypothetical unwind on the latest book received by the end: a remainder beyond "
+            "the visible depth is valued at the worst visible level (valuation only, no order).",
+    "D-X3": "Forward funding known_at = receive time of the first collector round carrying the period; a later "
+            "revision of the same period is ignored; missing periods come from the official API (S-DATA-1).",
     "D-E2": "V5 ineligibility exit (S-H3-10): a held asset that is ineligible for a holding reason "
             "(no mid, decision-window spread > 40 bps, 24 h volume < 1M USD, funding coverage < 90 %, "
             "newest funding older than 3 h) at two consecutive 15-minute ticks (>= 900 s) is exited; "

@@ -215,3 +215,12 @@ class HistMarket:
         s = -1.0 if q > 0 else 1.0  # selling a long, buying back a short
         px = mid * (1 + s * half) * (1 + s * slip)
         return mid, fr * abs(q) * px, abs(q) * abs(px - mid)
+
+    def pair_fill(self, a: str, q: float, t: pd.Timestamp, economic: bool = True):
+        """H1 historical execution (S-H1-5): both legs taker at t + 15m, atomic (both or neither).
+        Returns ([spot fills], [perp fills]) or None."""
+        fs = self.fill(a, q, t, leg="spot")
+        fp = self.fill(a, -q, t, leg="perp")
+        if fs is None or fp is None:
+            return None
+        return [fs], [fp]

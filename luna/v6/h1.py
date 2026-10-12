@@ -135,15 +135,15 @@ class H1Engine:
 
     # --- orders (atomic two-leg) -------------------------------------------------------------------
     def _pair(self, st: _St, a: str, q: float, t: pd.Timestamp, intent: str) -> bool:
-        """Open (q > 0) or close (q < 0) the pair: spot dq = q, perp dq = -q; both or neither."""
-        fs = self.m.fill(a, q, t, leg="spot")
-        fp = self.m.fill(a, -q, t, leg="perp")
-        if fs is None or fp is None:
+        """Open (q > 0) or close (q < 0) the pair through the market's pair execution: historical =
+        atomic taker at t + 15m; forward = S-H1-X (maker-first only for the 00:00 economic orders)."""
+        res = self.m.pair_fill(a, q, t, economic=intent in ("open", "exit"))
+        if res is None or not res[0]:
             self.counters["unfilled_pairs"] += 1
             if intent != "open":
                 st.retry.append((a, intent))
             return False
-        st.pending.append(((fs, fp), intent))
+        st.pending.append(((res[0], res[1]), intent))
         if intent != "open":
             st.exiting.add(a)
         return True
@@ -179,18 +179,34 @@ class H1Engine:
                         sett.append({"period_start": pe, "ts": t, "asset": key[0], "amount": amt,
                                      "known": math.isfinite(rate), "qty_hours": st.acc[key]})
                         del st.acc[key]
-            due = [x for x in st.pending if max(x[0][0].ts, x[0][1].ts) <= t]
-            st.pending = [x for x in st.pending if max(x[0][0].ts, x[0][1].ts) > t]
-            for (fs, fp), intent in due:
-                a = fs.asset
-                st.usd -= fs.dq * fs.px + fs.fee + fp.fee
-                st.pvc -= fp.dq * fp.px
-                if intent == "open":
-                    st.pos[a] = _Pos(fs.dq, fs.mid, fp.mid, abs(fp.dq) * fp.mid)
-                else:
-                    st.pos.pop(a, None)
+            def last_ts(x):
+                return max(f.ts for f in x[0][0] + x[0][1])
+
+            due = [x for x in st.pending if last_ts(x) <= t]
+            st.pending = [x for x in st.pending if last_ts(x) > t]
+            for (sfs, pfs), intent in due:
+                a = sfs[0].asset
+                dq = sum(f.dq for f in sfs)
+                for f in sfs:
+                    st.usd -= f.dq * f.px + f.fee
+                for f in pfs:
+                    st.usd -= f.fee
+                    st.pvc -= f.dq * f.px
+                ps = st.pos.get(a)
+                if ps is None and dq > 0:
+                    smid = sum(f.mid * f.dq for f in sfs) / dq
+                    pq = -sum(f.dq for f in pfs)
+                    pmid = sum(f.mid * abs(f.dq) for f in pfs) / pq if pq else math.nan
+                    st.pos[a] = _Pos(dq, smid, pmid, pq * pmid)
+                elif ps is not None:
+                    q1 = ps.q + dq
+                    if q1 <= 1e-12:
+                        st.pos.pop(a, None)
+                    else:
+                        ps.collateral *= q1 / ps.q
+                        ps.q = q1
                 st.exiting.discard(a)
-                for f in (fs, fp):
+                for f in sfs + pfs:
                     fills.append({"decision_ts": f.decision_ts, "ts": f.ts, "asset": a, "leg": f.leg, "dq": f.dq,
                                   "px": f.px, "mid": f.mid, "mid_decision": f.mid_decision, "half": f.half,
                                   "fee": f.fee, "spread_slip": f.spread_slip, "fallback": f.fallback,
