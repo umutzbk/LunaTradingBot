@@ -68,3 +68,12 @@ def test_index_must_be_a_tz_aware_hourly_grid():
         FundingPanel(pd.DataFrame({"A": 1.0}, index=idx))
     with pytest.raises(ValueError):
         FundingPanel(pd.DataFrame({"A": [1.0, 2.0]}, index=pd.DatetimeIndex(["2025-01-01", "2025-01-01 01:00"])))
+
+
+def test_abs_rate_is_nan_until_the_period_has_ended_even_if_known_earlier():
+    hidx = pd.date_range("2026-01-01", periods=4, freq="h", tz="UTC")
+    rel = pd.DataFrame({"ETH": 1e-5}, index=hidx)
+    known = pd.DataFrame({"ETH": hidx + pd.Timedelta("30min")}, index=hidx)  # 'received' mid-period
+    p = FundingPanel(rel, abs_=rel * 100, known_at=known)
+    assert np.isnan(p.abs_rate("ETH", hidx[1], hidx[1] + pd.Timedelta("45min")))
+    assert p.abs_rate("ETH", hidx[1], hidx[1] + pd.Timedelta("1h")) == pytest.approx(1e-3)

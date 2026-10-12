@@ -46,7 +46,7 @@
   "file": "luna/v6/h1.py",
   "old": "            need = q * px * (2 + entry_cost)  # 2N + N * entry cost (S-H1-2)",
   "new": "            need = q * px * (1 + entry_cost)  # 2N + N * entry cost (S-H1-2)",
-  "tests": "tests/v6/test_h1.py"
+  "tests": "tests/v6/test_conformance_fixes.py::test_h1_cash_rule_refuses_a_pair_whose_floor_tolerance_rounds_q_above_the_cash tests/v6/test_h1.py"
  },
  {
   "name": "H1 max assets 3 -> 4",
@@ -149,8 +149,8 @@
  {
   "name": "forward family overwritable",
   "file": "luna/v6/forward.py",
-  "old": "        fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY)",
-  "new": "        fd = os.open(p, os.O_CREAT | os.O_WRONLY)",
+  "old": "        os.link(tmp, p)",
+  "new": "        os.replace(tmp, p)",
   "tests": "tests/v6/test_forward_runner.py"
  },
  {

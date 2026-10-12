@@ -136,18 +136,32 @@ class FwdMarket:
         return list(self._assets)
 
     # --- quotes ------------------------------------------------------------------------------------
-    def _tick(self, a: str, t: pd.Timestamp, spot: bool = False) -> Tick | None:
+    def _tick(self, a: str, t: pd.Timestamp, spot: bool = False, decision: bool = True) -> Tick | None:
+        """The latest fresh ticker. ``decision``: the signal-known view (S-PIT10 lag applies); marks,
+        fills and unwind valuation use the snapshot at t itself (no lag; D-X9)."""
         st = (self.s.spot_ticks if spot else self.s.fut_ticks).get(a)
-        tq = t - self.pit_lag
+        tq = t - (self.pit_lag if decision else pd.Timedelta(0))
         x = st.latest(tq) if st else None
         return x if x is not None and tq - x.ts <= FRESH else None
 
     def mid(self, a: str, t: pd.Timestamp) -> float:
+        """Decision mid (eligibility, sizing, stops)."""
         x = self._tick(a, t)
         return x.mid if x else math.nan
 
+    decision_mid = mid
+
     def spot_mid(self, a: str, t: pd.Timestamp) -> float:
         x = self._tick(a, t, spot=True)
+        return x.mid if x else math.nan
+
+    def mark_mid(self, a: str, t: pd.Timestamp) -> float:
+        """Valuation mid at t (equity marks, fill reference mids): never lagged."""
+        x = self._tick(a, t, decision=False)
+        return x.mid if x else math.nan
+
+    def mark_spot_mid(self, a: str, t: pd.Timestamp) -> float:
+        x = self._tick(a, t, spot=True, decision=False)
         return x.mid if x else math.nan
 
     def decision_half(self, a: str, t: pd.Timestamp) -> tuple[float, bool]:
@@ -197,14 +211,14 @@ class FwdMarket:
     def fill(self, a: str, dq: float, t: pd.Timestamp, leg: str = "perp") -> Fill | None:
         if leg == "spot":
             return self._book_taker(self.s.spot_depth.get(a), a, dq, t, "spot", SPOT_TAKER,
-                                    lambda ts: self.spot_mid(a, ts))
-        return self._book_taker(self.s.fut_book.get(a), a, dq, t, "perp", FUT_TAKER, lambda ts: self.mid(a, ts))
+                                    lambda ts: self.mark_spot_mid(a, ts))
+        return self._book_taker(self.s.fut_book.get(a), a, dq, t, "perp", FUT_TAKER, lambda ts: self.mark_mid(a, ts))
 
     def unwind_cost(self, a: str, q: float, t: pd.Timestamp, leg: str = "perp") -> tuple[float, float, float]:
         """Terminal / hypothetical unwind at t on the latest book received by t (no snapshot after t)."""
         books = (self.s.spot_depth if leg == "spot" else self.s.fut_book).get(a)
         b = books.latest(t) if books else None
-        mid = self.spot_mid(a, t) if leg == "spot" else self.mid(a, t)
+        mid = self.mark_spot_mid(a, t) if leg == "spot" else self.mark_mid(a, t)
         if b is None or q == 0:
             return mid, 0.0, 0.0
         if not math.isfinite(mid):

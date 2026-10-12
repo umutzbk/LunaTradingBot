@@ -33,6 +33,7 @@ import pandas as pd
 
 from luna.v6 import book as bk
 from luna.v6 import riskmodel as rm
+from luna.v6 import v5risk
 from luna.v6.forecast import GateRecord, H2a, ModelWarmup
 from luna.v6.market import FALLBACK_FULL, FUT_TAKER, SLIP, HistMarket
 from luna.v6.spec import constants
@@ -136,6 +137,7 @@ class _State:
     retry: list = field(default_factory=list)
     decision_due: pd.Timestamp | None = None
     repair_due: bool = False
+    orders_today: int = 0  # V5 R14 (orders sent since 00:00 UTC)
 
 
 class H3Engine:
@@ -153,7 +155,8 @@ class H3Engine:
         return True if f is None else bool(f(t))
 
     def _mid(self, st: _State, a: str, t: pd.Timestamp) -> float:
-        v = self.m.mid(a, t)
+        """Valuation mid (the market's mark view; equals the decision mid historically)."""
+        v = getattr(self.m, "mark_mid", self.m.mid)(a, t)
         if math.isfinite(v):
             st.last_mid[a] = v
             return v
@@ -204,6 +207,7 @@ class H3Engine:
     def _order(self, st: _State, a: str, dq: float, t: pd.Timestamp, intent: str) -> None:
         if not dq:
             return
+        st.orders_today += 1
         f = self.m.fill(a, dq, t)
         if f is None:
             self.counters["unfilled"] += 1
@@ -284,6 +288,7 @@ class H3Engine:
             if t.hour == 0 and t.minute == 0 and t > start:
                 st.r3_blocked = False
                 st.day_start = E
+                st.orders_today = 0
             if t.hour == 0 and t.minute == 0 and t <= end - BAR:
                 st.decision_due = t
             fresh = self._fresh(t)
@@ -329,9 +334,9 @@ class H3Engine:
                             events.append({"t": t, "event": "ineligible_exit", "asset": a})
                             self._order(st, a, -q, t, "inelig")
             st.inelig_prev = inelig_now
-            if st.repair_due and not st.killed and t < end and st.last_cov is not None and st.pos:
-                st.repair_due = False
-                self._repair(st, t, E, events)
+            if st.repair_due and not st.killed and t < end and st.last_cov is not None:
+                st.repair_due = False  # consumed even when nothing is held: never fires on a later book
+                self._repair(st, t, self.E0 if invariant_mode else E, events)
             if st.decision_due is not None:
                 if t - st.decision_due > DECISION_GAP:
                     self.counters["skipped_decision_days"] += 1
@@ -341,8 +346,8 @@ class H3Engine:
                         self.counters["deferred_decisions"] += 1
                     if st.killed:
                         self._gate_only(t, gates)
-                    else:
-                        self._decide(st, t, E, decisions, events, gates)
+                    else:  # invariant mode sizes on the initial capital: no P&L reaches a blind counter
+                        self._decide(st, t, self.E0 if invariant_mode else E, decisions, events, gates)
                     st.decision_due = None
             if t < end and not st.killed:
                 if st.infeasible_since is not None and t - st.infeasible_since > GRACE and not st.infeasible_exited:
@@ -468,7 +473,7 @@ class H3Engine:
         if band.status != "OK":
             return infeasible("band")
         self.counters["band_repaired"] += int(band.repaired)
-        st.infeasible_since, st.infeasible_exited, st.last_cov = None, False, cov
+        plan = []
         for a, v in band.n.items():
             if a in st.exiting:
                 continue
@@ -476,11 +481,22 @@ class H3Engine:
             q1 = insts[a].round_qty(v) if v else 0.0
             if st.r3_blocked and abs(q1) > abs(q0):
                 q1 = q0  # R3: no entry, no growth
-            dq = q1 - q0
-            if abs(dq) < 1e-12:
-                continue
+            if abs(q1 - q0) >= 1e-12:
+                plan.append((a, q0, q1))
+        # Erratum 001: the retained V5 controls, checked on the whole book (no partial book)
+        mid = {a: insts[a].mid for a in insts}
+        opening = [abs(q1 - q0) * mid[a] for a, q0, q1 in plan if abs(q1) > abs(q0)]
+        after = {a: self._target_pos(st, a) for a in st.pos}
+        after.update({a: q1 for a, _, q1 in plan})
+        open_after = [abs(q) * (mid.get(a) or self._mid(st, a, t)) for a, q in after.items() if q]
+        bad = v5risk.violations(opening, open_after, E, orders_today=st.orders_today, new_orders=len(plan))
+        if bad:
+            self.counters["v5_vetoes"] = self.counters.get("v5_vetoes", 0) + 1
+            return infeasible("V5 " + "+".join(bad))
+        st.infeasible_since, st.infeasible_exited, st.last_cov = None, False, cov
+        for a, q0, q1 in plan:
             intent = "open" if q0 == 0 else ("exit" if q1 == 0 else "resize")
-            self._order(st, a, dq, t, intent)
+            self._order(st, a, q1 - q0, t, intent)
         rec.update(status="OK", target={a: v for a, v in band.n.items()}, risk=b.diag.get("RC"),
                    post=b.diag.get("post"))
         decisions.append(rec)

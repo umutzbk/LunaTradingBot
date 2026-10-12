@@ -106,6 +106,25 @@ def lag_and_unwind(run, market, at: pd.Timestamp) -> tuple[float, dict]:
     return lag, costs
 
 
+def check_inputs_reach(inputs) -> None:
+    """A forward look needs the model history complete up to the holdout end (S-DATA-4): the last hourly
+    funding period and the last hourly price must reach HOLDOUT_END (floored to the hour) minus 1 h.
+    Otherwise the look is refused (INVALID LOOK), never run on a silent warm-up."""
+    need = guard.HOLDOUT_END.floor("h") - pd.Timedelta("1h")
+    f = inputs.funding.rel
+    f_last = f.dropna(how="all").index.max() if len(f) else None
+    p_last = inputs.prices.dropna(how="all").index.max() if len(inputs.prices) else None
+    if f_last is None or p_last is None or f_last < need or p_last < need:
+        raise LookError(f"INVALID LOOK: model history (funding {f_last}, prices {p_last}) does not reach the "
+                        f"holdout end ({need})")
+
+
+def coverage_share(cov: pd.DataFrame, lo: pd.Timestamp) -> float:
+    """S-DATA-5 coverage share of the evaluable days from ``lo`` on (a FEAS slot's C window starts at day 91)."""
+    c = cov[cov.index >= pd.Timestamp(lo)]
+    return float(c["share"].mean()) if len(c) else 0.0
+
+
 def cost2x_view(run):
     """Forward S-COST2X (S-H1-6): net - 1 x (all realised fees + spread/slip), per day."""
     d = run.daily.copy()
@@ -141,16 +160,24 @@ def save_state(fam: ForwardFamily, repo: Path | None = None) -> None:
 
 
 def init_family(cand: list, feas: list, repo: Path | None = None) -> ForwardFamily:
-    """Fixed once at the holdout decision; refuses to overwrite an existing family."""
+    """Fixed once at the holdout decision. The complete state is written to a temporary file and then
+    linked into place (create-if-absent, atomic): a crash leaves either no family or the full one.
+    Re-running with the same family is idempotent (restart-safe); a different family is refused."""
     p = _state_path(repo)
     p.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
-        raise LookError("the forward family is already fixed") from None
-    os.close(fd)
     fam = ForwardFamily(tuple(cand), tuple(feas))
-    save_state(fam, repo)
+    tmp = p.with_name(f".{p.name}.{os.getpid()}.init")
+    tmp.write_text(json.dumps({"cand": list(fam.cand), "feas": list(fam.feas), "status": fam.status,
+                               "looks_done": [], "established": {}, "history": []}, indent=1), encoding="utf-8")
+    try:
+        os.link(tmp, p)
+    except FileExistsError:
+        old = load_state(repo)
+        if tuple(old.cand) == fam.cand and tuple(old.feas) == fam.feas:
+            return old
+        raise LookError("the forward family is already fixed") from None
+    finally:
+        tmp.unlink(missing_ok=True)
     return fam
 
 
@@ -170,7 +197,8 @@ def evaluate_forward(name: str, kind: str, k, run, rows: dict, funding, window_e
 
 
 def run_window(name: str, inputs, start: pd.Timestamp, end: pd.Timestamp, market_fn, models: dict):
-    """PRIMARY and the forward S-PIT10 row of one config on [start, end) (flat, 265 USD)."""
+    """PRIMARY and the forward S-PIT10 row of one config on [start, end) (flat, 265 USD). ``models``:
+    {(row, h): H2a} — the S-PIT10 models see funding 5 minutes later (FundingPanel.delayed)."""
     from luna.v6.engine import H3Config, H3Engine
     from luna.v6.h1 import H1Config, H1Engine
     from luna.v6.riskmodel import ewma_vol
@@ -180,20 +208,22 @@ def run_window(name: str, inputs, start: pd.Timestamp, end: pd.Timestamp, market
     for row, lag in (("PRIMARY", pd.Timedelta(0)), ("S-PIT10", PIT_LAG)):
         m = market_fn(lag)
         if kind == "H3":
-            eng = H3Engine(m, models[168], inputs.prices, ewma_vol(inputs.prices), inputs.insts, H3Config(name, param, row))
+            eng = H3Engine(m, models[(row, 168)], inputs.prices, ewma_vol(inputs.prices), inputs.insts,
+                           H3Config(name, param, row))
         else:
-            eng = H1Engine(m, models[720], inputs.insts, H1Config(name, param, row))
+            eng = H1Engine(m, models[(row, 720)], inputs.insts, H1Config(name, param, row))
         runs[row] = eng.run(start, end)
     return runs
 
 
 def evaluate_window(name: str, inputs, start: pd.Timestamp, end: pd.Timestamp, market_fn, models: dict,
-                    coverage_share: float):
+                    share: float):
     kind, param = CONFIGS[name]
     runs = run_window(name, inputs, start, end, market_fn, models)
     prim = runs["PRIMARY"]
     rows = {"S-COST2X": cost2x_view(prim), "S-PIT10": runs["S-PIT10"]}
-    ev, g, cov_ok, nwp = evaluate_forward(name, kind, param, prim, rows, models[168].panel, end, coverage_share)
+    ev, g, cov_ok, nwp = evaluate_forward(name, kind, param, prim, rows, models[("PRIMARY", 168)].panel, end,
+                                          share)
     return {"run": prim, "eval": ev, "gate": g, "coverage_ok": cov_ok, "nw": nwp}
 
 
@@ -222,34 +252,39 @@ def run_look(day: int, now: pd.Timestamp, evaluations: dict, feasibility_results
     return {**res, "status": dict(fam.status)}
 
 
-def forward_look(day: int, now: pd.Timestamp, raw: Path, hist_inputs, api_funding: pd.DataFrame | None = None,
-                 repo: Path | None = None) -> dict:
-    """The scheduled look end to end: guarded loads, the family's windows, the look, the state."""
+def forward_look(day: int, now: pd.Timestamp, raw: Path, frozen_root: Path, holdout_root: Path,
+                 api_funding: pd.DataFrame | None = None, repo: Path | None = None) -> dict:
+    """The scheduled look end to end: the verified holdout history (read only, pinned at the opening),
+    guarded collector loads, the family's windows, the look, the state."""
+    from luna.v6.devdata import Inputs
     from luna.v6.forward_exec import (FwdMarket, coverage, funding_from_collector, hourly_marks, merge_funding,
                                       read_streams, settlement_panel)
-    from luna.v6.devdata import Inputs
+    from luna.v6.holdout_data import load_holdout_inputs
 
     d = check_look(day, now, repo)
     tf = guard.forward_start(repo)
     d1 = day1(tf)
     fam = load_state(repo)
-    assets = list(hist_inputs.mark.close.columns)
+    hist = load_holdout_inputs(frozen_root, holdout_root, repo=repo)
+    check_inputs_reach(hist)
+    assets = list(hist.mark.close.columns)
     hend = guard.HOLDOUT_END
     s_inputs = read_streams(raw, hend, d, assets, repo=repo, purpose="inputs")
     s_evidence = read_streams(raw, tf, d, assets, repo=repo, purpose="evidence")
     fund_c = funding_from_collector(raw, hend - pd.Timedelta("48h"), d, assets, repo=repo)
-    funding = merge_funding(hist_inputs.funding, fund_c, hend)
+    funding = merge_funding(hist.funding, fund_c, hend)
     settle = settlement_panel(funding, api_funding, assets)
-    prices = hourly_marks(hist_inputs.prices, s_inputs, hend, d)
-    inputs = Inputs("forward", hist_inputs.mark, hist_inputs.trade, hist_inputs.volume_usd, hist_inputs.spot,
-                    hist_inputs.spot_volume_usd, hist_inputs.index, funding, hist_inputs.spreads, hist_inputs.insts, prices)
-    models = {168: H2a(funding, 168), 720: H2a(funding, 720)}
+    prices = hourly_marks(hist.prices, s_inputs, hend, d)
+    inputs = Inputs("forward", hist.mark, hist.trade, hist.volume_usd, hist.spot, hist.spot_volume_usd, hist.index,
+                    funding, hist.spreads, hist.insts, prices)
+    lagged = funding.delayed(PIT_LAG)
+    models = {("PRIMARY", 168): H2a(funding, 168), ("PRIMARY", 720): H2a(funding, 720),
+              ("S-PIT10", 168): H2a(lagged, 168), ("S-PIT10", 720): H2a(lagged, 720)}
 
     def market_fn(lag):
-        return FwdMarket(s_evidence, funding, assets, settlement=settle, pit_lag=lag)
+        return FwdMarket(s_evidence, lagged if lag else funding, assets, settlement=settle, pit_lag=lag)
 
     cov = coverage(s_evidence, d1, d - pd.Timedelta("15min"))
-    share = float(cov["evaluable"].mean()) if len(cov) else 0.0
     evaluations, feas_results = {}, {}
     for c in FAMILY:
         st = fam.status[c]
@@ -264,8 +299,10 @@ def forward_look(day: int, now: pd.Timestamp, raw: Path, hist_inputs, api_fundin
                 continue
             if not fam.established.get(c):
                 continue
-            evaluations[c] = evaluate_window(c, inputs, d1 + 90 * DAY, d, market_fn, models, share)
+            c0 = d1 + 90 * DAY  # the confirmation replay C: flat from day 91, its own coverage window
+            evaluations[c] = evaluate_window(c, inputs, c0, d, market_fn, models, coverage_share(cov, c0))
         else:
-            evaluations[c] = evaluate_window(c, inputs, d1, d, market_fn, models, share)
+            evaluations[c] = evaluate_window(c, inputs, d1, d, market_fn, models, coverage_share(cov, d1))
     res = run_look(day, now, evaluations, feas_results, repo)
-    return {"look": res, "coverage_share": share, "feasibility": {c: vars(v) for c, v in feas_results.items()}}
+    return {"look": res, "coverage_share": coverage_share(cov, d1),
+            "feasibility": {c: vars(v) for c, v in feas_results.items()}}

@@ -42,6 +42,16 @@ class FundingPanel:
         self._v = self.rel.to_numpy()
         self.assets = list(self.rel.columns)
 
+    def delayed(self, lag: pd.Timedelta) -> "FundingPanel":
+        """The same values, each known ``lag`` later (forward S-PIT10 decision view); settlement keeps
+        its own panel."""
+        import copy
+
+        d = copy.copy(self)
+        never = np.iinfo(np.int64).max
+        d._known = np.where(self._known == never, never, self._known + pd.Timedelta(lag).value)
+        return d
+
     def _visible(self, lo: pd.Timestamp, hi: pd.Timestamp, t: pd.Timestamp) -> tuple[np.ndarray, np.ndarray]:
         """Values of periods p in [lo, hi] that are visible at t (others NaN)."""
         a = np.searchsorted(self._t, pd.Timestamp(lo).value, "left")

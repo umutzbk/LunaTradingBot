@@ -195,3 +195,46 @@ def test_min_notional_drops_the_smallest_first_and_the_rebuild_can_keep_the_next
     L5 = ["L1", "L2", "L3", "L4", "L5"]
     b = bk.build(L5, SHORT, cov, 1000.0, legs(L5 + SHORT, step=0.01, min_qty=0.01))
     assert b.status == "OK" and b.diag["dropped"][0] == "L4"  # the 4.0-vol leg is the smallest
+
+
+@pytest.mark.parametrize("ratio,ok", [(2.20, True), (2.24, True), (2.26, False), (2.30, False)])
+def test_the_2_25_bound_is_the_basket_vol_ratio_implied_by_q_max_1_5_and_the_dollar_cap(ratio, ok):
+    """Three different metrics, one frozen constant each: q (standalone side risk ratio) <= 1.5
+    (standalone_side_ratio_max); D_L/D_S in [2/3, 1.5] from the 0.2 net-dollar cap ((1+0.2)/(1-0.2));
+    the per-dollar basket vol ratio sigma~_L/sigma~_S <= 2.25 is not a separate threshold but the
+    consequence 1.5 x 1.5 (spec S-H3 note: 'in practice INFEASIBLE if sigma~_L/sigma~_S > 2.25')."""
+    vols = {**{a: 0.6 * ratio for a in LONG}, **{a: 0.6 for a in SHORT}}
+    cov = make_cov(vols, betas={a: 0.0 for a in LONG + SHORT})  # beta limit not binding: the ratio metric alone
+    eq = {**{a: 1.0 for a in LONG}, **{a: -1.0 for a in SHORT}}
+    assert bk.side_risk_ratio(eq, LONG, SHORT, cov) == pytest.approx(ratio)  # basket ratio at equal dollars
+    b = bk.build(LONG, SHORT, cov, 10_000.0, legs(LONG + SHORT, step=1e-6, min_qty=1e-6))
+    refused_by_ratio = "2.25" in b.reason  # the construction refusal (before any rounding)
+    assert refused_by_ratio is (not ok)
+    if ok:  # the construction: q metric at the limit, dollar metric at the cap
+        assert b.diag["phi_L"] * b.diag["sigt_L"] / (b.diag["phi_S"] * b.diag["sigt_S"]) <= 1.5 + 1e-9
+        assert 2 / 3 - 1e-9 <= b.diag["phi_L"] / b.diag["phi_S"] <= 1.5 + 1e-9
+    else:
+        assert b.n == {}
+
+
+def test_with_the_cap_binding_exactly_rounding_toward_zero_can_fail_the_literal_dollar_check():
+    """Observation (spec-literal D-B1, not a code choice): when the 0.2 net-dollar cap binds exactly
+    (phi 0.4/0.6) the pre-rounding book sits on the limit; rounding every leg toward zero may move the
+    net dollar beyond the single max-step-notional allowance and the frozen post-rounding check refuses
+    the book. The same book with negligible steps passes."""
+    vols = {**{a: 0.6 * 2.2 for a in LONG}, **{a: 0.6 for a in SHORT}}
+    cov = make_cov(vols)
+    coarse = bk.build(LONG, SHORT, cov, 10_000.0, legs(LONG + SHORT))
+    fine = bk.build(LONG, SHORT, cov, 10_000.0, legs(LONG + SHORT, step=1e-6, min_qty=1e-6))
+    assert coarse.diag["cap_bound"] and coarse.status == "INFEASIBLE" and not coarse.diag["post"]["dollar_ok"]
+    assert fine.status == "OK"
+
+
+def test_with_beta_scaled_exactly_to_the_limit_rounding_can_fail_the_literal_beta_check():
+    """Observation (spec-literal D-B1): the whole-book beta scale-down lands exactly on 0.05 E; rounding
+    toward zero shrinks the short legs too and can raise |beta_net| by a few 1e-9 E; the frozen
+    post-rounding beta check has no tolerance and refuses the book."""
+    vols = {**{a: 0.6 * 2.24 for a in LONG}, **{a: 0.6 for a in SHORT}}
+    b = bk.build(LONG, SHORT, make_cov(vols), 10_000.0, legs(LONG + SHORT, step=1e-6, min_qty=1e-6))
+    assert b.diag["beta_scaled"] and b.status == "INFEASIBLE" and not b.diag["post"]["beta_ok"]
+    assert b.diag["post"]["beta_net"] - 0.05 < 1e-7

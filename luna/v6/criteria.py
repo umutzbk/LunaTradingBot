@@ -183,7 +183,7 @@ def evaluate(config: str, kind: str, env: str, primary, rows: dict, gate_cls: st
     carry = float(d["carry"].sum())
     r = d["ret"].to_numpy(float)
     ev = Evaluation(config, kind, env, net, carry, gate=gate_cls)
-    if primary.counters.get("funding_unknown", 0) > 0:
+    if env == "forward" and primary.counters.get("funding_unknown", 0) > 0:  # S-DATA-1: forward only
         ev.invalid_run.append(f"funding unknown for {primary.counters['funding_unknown']} held periods (S-DATA-1)")
     P = ev.P
     P["P1"] = {"evaluable": True, "pass": net > 0, "value": net}

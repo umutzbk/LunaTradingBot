@@ -8,6 +8,7 @@ the final class is the most severe one triggered; all reasons are reported.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from luna.v6 import stats6
@@ -182,7 +183,8 @@ class ForwardFamily:
         rejected = {c for c in FAMILY if h[c]["reject"]}
         if day != 365:
             rejected = {c for c in rejected
-                        if c in (nw_p or {}) and max(nw_p[c]) <= h[c]["alpha"]}
+                        if c in (nw_p or {}) and all(math.isfinite(float(x)) and float(x) <= h[c]["alpha"]
+                                                     for x in nw_p[c])}  # non-finite NW p fails closed
         out = {}
         for c in FAMILY:
             if self.status[c] != "PENDING":

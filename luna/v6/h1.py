@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from luna.v6 import v5risk
 from luna.v6.engine import SETT_COLS, RunResult, daily_table, fill_row, fills_frame, terminal_cost
 from luna.v6.forecast import GateRecord, ModelWarmup
 from luna.v6.market import HistMarket
@@ -47,6 +48,7 @@ EXIT_SPREAD = 0.0040
 MISSING_FC = pd.Timedelta(hours=_K["h2a"]["missing_forecast_exit_hours"])
 DECISION_GAP = pd.Timedelta(hours=_K["h3"]["forward_rebalance_gap_hours"])
 H = 720
+QTY_EPS = 1e-12
 
 
 @dataclass
@@ -83,6 +85,7 @@ class _St:
     day_start: float = math.nan
     last: dict = field(default_factory=dict)
     decision_due: pd.Timestamp | None = None
+    orders_today: int = 0  # V5 R14
 
 
 class H1Engine:
@@ -100,7 +103,11 @@ class H1Engine:
         return True if f is None else bool(f(t))
 
     def _px(self, st: _St, a: str, t: pd.Timestamp, leg: str) -> float:
-        v = self.m.spot_mid(a, t) if leg == "spot" else self.m.mid(a, t)
+        """Valuation mid (the market's mark view)."""
+        if leg == "spot":
+            v = getattr(self.m, "mark_spot_mid", self.m.spot_mid)(a, t)
+        else:
+            v = getattr(self.m, "mark_mid", self.m.mid)(a, t)
         if math.isfinite(v):
             st.last[(a, leg)] = v
             return v
@@ -148,8 +155,9 @@ class H1Engine:
     def _pair(self, st: _St, a: str, q: float, t: pd.Timestamp, intent: str, perp_q: float | None = None) -> bool:
         """Open (q > 0) or close (q < 0) through the market's pair execution: historical = atomic taker
         at t + 15m; forward = S-H1-X (maker-first only for the 00:00 economic orders)."""
+        st.orders_today += 2
         res = self.m.pair_fill(a, q, t, economic=intent in ("open", "exit"), perp_q=perp_q)
-        if res is None or not res[0]:
+        if res is None or (not res[0] and not res[1]) or (intent == "open" and not res[0]):
             self.counters["unfilled_pairs"] += 1
             if intent != "open":
                 st.retry.append((a, intent))
@@ -159,12 +167,40 @@ class H1Engine:
             st.exiting.add(a)
         return True
 
+    def _leg(self, st: _St, a: str, leg: str, dq: float, t: pd.Timestamp, intent: str) -> None:
+        st.orders_today += 1
+        f = self.m.fill(a, dq, t, leg=leg)
+        if f is None:
+            self.counters["unfilled_pairs"] += 1
+            st.retry.append((a, intent))
+            return
+        st.pending.append((([f], []) if leg == "spot" else ([], [f]), intent))
+        st.exiting.add(a)
+
     def _close(self, st: _St, a: str, t: pd.Timestamp, intent: str) -> None:
-        """Any exit closes both legs and starts the 24 h cooldown (S-H1-4)."""
-        if a in st.pos and a not in st.exiting:
-            st.cooldown[a] = t + COOLDOWN
-            ps = st.pos[a]
+        """Any exit closes both legs, each by its own quantity, and starts the 24 h cooldown (S-H1-4). A
+        one-legged remainder is closed through its own leg (taker), never through a zero-quantity pair."""
+        if a not in st.pos or a in st.exiting:
+            return
+        st.cooldown[a] = t + COOLDOWN
+        ps = st.pos[a]
+        if ps.q > QTY_EPS and ps.pq > QTY_EPS:
             self._pair(st, a, -ps.q, t, intent, perp_q=ps.pq)
+        elif ps.pq > QTY_EPS:
+            self._leg(st, a, "perp", ps.pq, t, intent)
+        elif ps.q > QTY_EPS:
+            self._leg(st, a, "spot", -ps.q, t, intent)
+
+    def _reconcile(self, st: _St, t: pd.Timestamp) -> None:
+        """Hedge integrity (S-H1-1 qty-matched): a pair whose legs differ by more than one quantity step
+        (one leg filled, the other not) is closed at once, both legs by their own quantities."""
+        for a, ps in list(st.pos.items()):
+            if a in st.exiting:
+                continue
+            step = self._qty_step(a)[0] if a in self.insts else QTY_EPS
+            if abs(ps.q - ps.pq) > step + QTY_EPS:
+                self.counters["hedge_reconciliations"] += 1
+                self._close(st, a, t, "reconcile")
 
     # --- run ---------------------------------------------------------------------------------------
     def run(self, start: pd.Timestamp, end: pd.Timestamp, invariant_mode: bool = False) -> RunResult:
@@ -174,7 +210,9 @@ class H1Engine:
         self.counters = {"unfilled_pairs": 0, "funding_unknown": 0, "kill": 0, "liquidation": 0, "r3_days": 0,
                          "stops": 0, "hedge_resets": 0, "inelig_exits": 0, "decisions": 0, "warmup_decisions": 0,
                          "entries": 0, "economic_exits": 0, "missing_fc_exits": 0, "skipped_cash": 0,
-                         "skipped_size": 0, "stale_ticks": 0, "deferred_decisions": 0, "skipped_decision_days": 0}
+                         "skipped_size": 0, "stale_ticks": 0, "deferred_decisions": 0, "skipped_decision_days": 0,
+                         "hedge_reconciliations": 0}
+        self._inv = invariant_mode
         fills, sett, ticks, decisions, events, gates = [], [], [], [], [], []
         t = start
         while t <= end:
@@ -202,7 +240,7 @@ class H1Engine:
             due = [x for x in st.pending if last_ts(x) <= t]
             st.pending = [x for x in st.pending if last_ts(x) > t]
             for (sfs, pfs), intent in due:
-                a = sfs[0].asset
+                a = (sfs or pfs)[0].asset
                 dq = sum(f.dq for f in sfs)
                 dp = sum(f.dq for f in pfs)  # perp: negative opens a short, positive buys back
                 for f in sfs:
@@ -218,7 +256,7 @@ class H1Engine:
                     st.pos[a] = _Pos(dq, pq, smid, pmid, pq * pmid if pq > 0 else 0.0)
                 elif ps is not None:
                     q1, pq1 = ps.q + dq, ps.pq - dp
-                    if q1 <= 1e-12 and pq1 <= 1e-12:
+                    if q1 <= QTY_EPS and pq1 <= QTY_EPS:
                         st.pos.pop(a, None)
                     else:
                         ps.collateral *= (pq1 / ps.pq) if ps.pq > 0 else 0.0
@@ -233,7 +271,7 @@ class H1Engine:
                 if ps.pq > 0 and ps.collateral - ps.pq * (self._px(st, a, t, "perp") - ps.perp_entry) <= 0:
                     self.counters["liquidation"] += 1
             if t.hour == 0 and t.minute == 0 and t > start:
-                st.r3, st.day_start = False, E
+                st.r3, st.day_start, st.orders_today = False, E, 0
             if t.hour == 0 and t.minute == 0 and t <= end - BAR:
                 st.decision_due = t
             if not self._fresh(t):
@@ -257,6 +295,8 @@ class H1Engine:
             retry, st.retry = st.retry, []
             for a, intent in retry:
                 self._close(st, a, t, intent)
+            if t < end:
+                self._reconcile(st, t)
             inelig_now = set()
             if t < end:
                 for a, ps in list(st.pos.items()):
@@ -359,11 +399,15 @@ class H1Engine:
         held = [a for a in st.pos if a not in st.exiting]
         reserved = sum(st.pos[a].collateral for a in held)
         free = st.usd - reserved
+        if getattr(self, "_inv", False):  # invariant mode: sizing on the initial capital (no P&L signal)
+            E = self.E0
+            free = self.E0 - sum(2 * st.pos[a].collateral for a in held)
         cands = sorted((a for a in elig if a not in st.pos and st.cooldown.get(a, t) <= t and float(fc[a]) > 0
                         and float(fc[a]) * H >= self.cfg.m * self.rt(a, t)), key=lambda a: (-float(fc[a]), a))
         if st.r3:
             cands = []
         hedged = sum(st.pos[a].pq * self._px(st, a, t, "perp") for a in held)
+        entered: list = []
         for a in cands:
             if len(held) >= MAX_ASSETS:
                 break
@@ -380,7 +424,17 @@ class H1Engine:
             if need > free + 1e-9:
                 self.counters["skipped_cash"] += 1
                 continue
+            # Erratum 001: retained V5 controls per entry (spot leg + perp leg; one pair = one position id)
+            legs_after = [n for b in held if b in st.pos for n in (st.pos[b].q * self._px(st, b, t, "spot"),
+                                                                   st.pos[b].pq * self._px(st, b, t, "perp"))]
+            legs_after += entered  # pairs sent earlier in this decision (still pending)
+            bad = v5risk.violations([q * px, q * px], legs_after + [q * px, q * px], E,
+                                    positions_after=len(held) + 1, orders_today=st.orders_today, new_orders=2)
+            if bad:
+                self.counters["v5_vetoes"] = self.counters.get("v5_vetoes", 0) + 1
+                continue
             if self._pair(st, a, q, t, "open"):
+                entered += [q * px, q * px]
                 self.counters["entries"] += 1
                 rec["entries"].append(a)
                 held.append(a)

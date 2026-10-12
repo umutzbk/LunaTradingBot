@@ -125,9 +125,11 @@ def fetch_spreads(client, asset: str, auth) -> pd.DataFrame:
 
 MIN_POINT_COVERAGE = 0.90  # V5 Stage 0 (protocol §2.1 S0.3), per asset and per asset x hour of day
 MAX_SPREAD_BPS = 500
+TRUNCATION_TOLERANCE = "24h"  # a family that starts or ends further than this inside the window = truncated
 
 
-def stage0_audit(spreads: dict, lo: pd.Timestamp, hi: pd.Timestamp) -> dict:
+def stage0_audit(spreads: dict, lo: pd.Timestamp, hi: pd.Timestamp, bars: dict | None = None,
+                 funding: dict | None = None) -> dict:
     """The V5 Stage 0 audit rules on the holdout spread download (spec S-GUARD-1: failure = INVALID
     RUN). Pure function of the downloaded series ({asset: spread_full series}); no returns, no signals.
 
@@ -187,7 +189,23 @@ def stage0_audit(spreads: dict, lo: pd.Timestamp, hi: pd.Timestamp) -> dict:
                     failures.append(f"{a}: {name}-window coverage in hour {h:02d} UTC "
                                     f"{float(arr[m].mean()):.3f} < {MIN_POINT_COVERAGE}")
         per_asset[a] = rep
-    return {"pass": not failures, "failures": failures, "assets": per_asset}
+    # every other required input family: completeness (an empty or truncated download FAILs; D-A1)
+    edge = pd.Timedelta(TRUNCATION_TOLERANCE)
+    fam_rep = {}
+    for fam, by_asset in list((bars or {}).items()) + ([("funding", funding)] if funding is not None else []):
+        step = pd.Timedelta("1h") if fam == "funding" else pd.Timedelta("15min")
+        expected = int((hi - lo) / step)
+        for a, idx in by_asset.items():
+            idx = pd.DatetimeIndex(idx)
+            idx = idx[(idx >= lo) & (idx < hi)]
+            share = len(idx.unique()) / expected if expected else 0.0
+            fam_rep[f"{fam}:{a}"] = {"present_share": share, "first": str(idx.min()) if len(idx) else None,
+                                     "last": str(idx.max()) if len(idx) else None}
+            if not len(idx):
+                failures.append(f"{fam} {a}: empty download")
+            elif idx.min() > lo + edge or idx.max() < hi - step - edge:
+                failures.append(f"{fam} {a}: truncated download ({idx.min()} .. {idx.max()})")
+    return {"pass": not failures, "failures": failures, "assets": per_asset, "families": fam_rep}
 
 
 def fetch_spot(client, asset: str, auth, sleep=None) -> pd.DataFrame:
@@ -211,8 +229,10 @@ def fetch_spot(client, asset: str, auth, sleep=None) -> pd.DataFrame:
     return bars[(bars.index >= lo) & (bars.index + pd.Timedelta("15min") <= hi)]
 
 
-def download(client, root: Path, assets: list, auth) -> dict:
-    """The holdout download (once). Returns the manifest {relative path: sha256}."""
+def download(client, root: Path, assets: list, auth, repo: Path | None = None) -> dict:
+    """The holdout download (once, inside the authorised opening). Writes every file and the manifest
+    exclusively, then pins the manifest's sha256 next to both opening markers (guard.pin_manifest).
+    Returns the manifest {relative path: sha256}."""
     _require(auth)
     root = Path(root)
     man = {}
@@ -226,24 +246,42 @@ def download(client, root: Path, assets: list, auth) -> dict:
     fd = os.open(mp, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump({"window": [str(guard.HOLDOUT_START), str(guard.HOLDOUT_END)], "files": man}, f, indent=1)
+    guard.pin_manifest(hashlib.sha256(mp.read_bytes()).hexdigest(), auth, repo)
     return man
 
 
-def load_holdout(frozen_root: Path, root: Path, auth) -> Inputs:
-    """Development inputs (history for the models) + the verified holdout download, scope holdout."""
-    _require(auth)
-    root = Path(root)
-    man = json.loads((root / "manifest.json").read_text(encoding="utf-8"))["files"]
+FAMILIES = ("mark", "trade", "index", "spot", "funding", "spreads")
+
+
+def _verify(root: Path, pinned: str) -> dict:
+    """Read-only provenance check: manifest.json has the pinned sha256 and every listed file has its
+    recorded sha256. Returns the manifest files map."""
+    mp = Path(root) / "manifest.json"
+    if hashlib.sha256(mp.read_bytes()).hexdigest() != pinned:
+        raise guard.HoldoutBlocked("the holdout manifest is not the one pinned at the authorised opening")
+    man = json.loads(mp.read_text(encoding="utf-8"))["files"]
     for rel, sha in man.items():
-        if hashlib.sha256((root / rel).read_bytes()).hexdigest() != sha:
-            raise ValueError(f"holdout file {rel} changed after download")
+        if hashlib.sha256((Path(root) / rel).read_bytes()).hexdigest() != sha:
+            raise guard.HoldoutBlocked(f"holdout file {rel} changed after the authorised download")
+    return man
+
+
+def _assemble(frozen_root: Path, root: Path, scope: str = "holdout") -> Inputs:
+    """Development inputs + the verified holdout download (read only; nothing downloaded or repaired).
+    Every required family must be listed for every asset; the Stage 0 audit covers all of them."""
+    root = Path(root)
     dev = load_dev(frozen_root)
     assets = list(dev.mark.close.columns)
+    man = json.loads((root / "manifest.json").read_text(encoding="utf-8"))["files"]
+    missing = [f"{fam}/{a}.parquet" for fam in FAMILIES for a in assets if f"{fam}/{a}.parquet" not in man]
+    if missing:
+        raise guard.HoldoutBlocked(f"holdout manifest lacks required inputs: {missing[:5]}")
+    raw = {fam: {a: pd.read_parquet(root / fam / f"{a}.parquet") for a in assets} for fam in FAMILIES}
 
     def cat(panel: BarPanel, name: str, col: str, usd: bool = False) -> BarPanel:
         add = {}
         for a in assets:
-            d = pd.read_parquet(root / name / f"{a}.parquet")
+            d = raw[name][a]
             add[a] = d["volume"] * d["close"] if usd else d[col]
         lo, hi = panel.close.index.min(), guard.HOLDOUT_END.floor("15min")
         idx = pd.date_range(lo, hi - pd.Timedelta("15min"), freq="15min").as_unit("ns")
@@ -252,17 +290,41 @@ def load_holdout(frozen_root: Path, root: Path, auth) -> Inputs:
         return BarPanel(full)
 
     mark = cat(dev.mark, "mark", "close")
-    funding_rel, funding_abs = dev.funding.rel.copy(), dev.funding.abs.copy()
-    fr = {a: pd.read_parquet(root / "funding" / f"{a}.parquet") for a in assets}
-    R = pd.concat([funding_rel, pd.DataFrame({a: f["funding_rel"] for a, f in fr.items()})]).sort_index()
-    A = pd.concat([funding_abs, pd.DataFrame({a: f["funding_abs"] for a, f in fr.items()})]).sort_index()
+    fr = raw["funding"]
+    R = pd.concat([dev.funding.rel.copy(), pd.DataFrame({a: f["funding_rel"] for a, f in fr.items()})]).sort_index()
+    A = pd.concat([dev.funding.abs.copy(), pd.DataFrame({a: f["funding_abs"] for a, f in fr.items()})]).sort_index()
     R, A = R[~R.index.duplicated(keep="first")], A[~A.index.duplicated(keep="first")]
-    spreads = {a: pd.concat([dev.spreads[a], pd.read_parquet(root / "spreads" / f"{a}.parquet")["spread_full"]]).sort_index()
-               for a in assets}
-    inp = Inputs("holdout", mark, cat(dev.trade, "trade", "close"), cat(dev.volume_usd, "trade", "", usd=True),
+    spreads = {a: pd.concat([dev.spreads[a], raw["spreads"][a]["spread_full"]]).sort_index() for a in assets}
+    inp = Inputs(scope, mark, cat(dev.trade, "trade", "close"), cat(dev.volume_usd, "trade", "", usd=True),
                  cat(dev.spot, "spot", "close"), cat(dev.spot_volume_usd, "spot", "", usd=True),
                  cat(dev.index, "index", "close"), FundingPanel(R, abs_=A), spreads, dev.insts, hourly_prices(mark))
-    guard.require_window(guard.HOLDOUT_START, inp.mark.close.index.max(), "holdout", auth)
-    inp.audit = stage0_audit({a: pd.read_parquet(root / "spreads" / f"{a}.parquet")["spread_full"] for a in assets},
-                             guard.HOLDOUT_START, guard.HOLDOUT_END)
+    inp.audit = stage0_audit({a: raw["spreads"][a]["spread_full"] for a in assets}, guard.HOLDOUT_START,
+                             guard.HOLDOUT_END,
+                             bars={fam: {a: raw[fam][a].index for a in assets} for fam in ("mark", "trade", "index", "spot")},
+                             funding={a: raw["funding"][a].index for a in assets})
     return inp
+
+
+def load_holdout(frozen_root: Path, root: Path, auth, repo: Path | None = None) -> Inputs:
+    """The single holdout run's inputs (scope holdout, inside the authorised opening)."""
+    _require(auth)
+    pinned = guard.pinned_manifest(repo)
+    if pinned is None:
+        raise guard.HoldoutBlocked("the holdout download is not pinned (guard.pin_manifest after download)")
+    _verify(root, pinned)
+    inp = _assemble(frozen_root, root)
+    guard.require_window(guard.HOLDOUT_START, inp.mark.close.index.max(), "holdout", auth)
+    return inp
+
+
+def load_holdout_inputs(frozen_root: Path, root: Path, repo: Path | None = None) -> Inputs:
+    """Forward looks only (S-DATA-4: after the opening the holdout data are model inputs): the verified
+    history up to the holdout end, read only from the artefacts pinned at the authorised opening.
+    Refused before T_F, before the opening, without a pin and on any hash mismatch. Needs no
+    authorization token and cannot download, repair or write anything."""
+    guard.require_window(guard.HOLDOUT_START, guard.HOLDOUT_END, "forward", repo=repo)
+    pinned = guard.pinned_manifest(repo)
+    if pinned is None:
+        raise guard.HoldoutBlocked("no holdout manifest pinned at an authorised opening")
+    _verify(root, pinned)
+    return _assemble(frozen_root, root, scope="forward-inputs")

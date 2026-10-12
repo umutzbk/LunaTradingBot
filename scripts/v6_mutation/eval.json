@@ -86,8 +86,8 @@
  {
   "name": "forward: interim without NW",
   "file": "luna/v6/verdict.py",
-  "old": "        if day != 365:\n            rejected = {c for c in rejected\n                        if c in (nw_p or {}) and max(nw_p[c]) <= h[c][\"alpha\"]}",
-  "new": "        if False:\n            rejected = set()",
+  "old": "        if day != 365:\n            rejected = {c for c in rejected\n                        if c in (nw_p or {}) and all(",
+  "new": "        if False:\n            rejected = {c for c in rejected\n                        if c in (nw_p or {}) and all(",
   "tests": "tests/v6/test_verdict.py"
  },
  {

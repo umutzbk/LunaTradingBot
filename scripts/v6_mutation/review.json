@@ -65,8 +65,8 @@
  {
   "name": "H1 cooldown only on stops",
   "file": "luna/v6/h1.py",
-  "old": "            st.cooldown[a] = t + COOLDOWN\n            ps = st.pos[a]",
-  "new": "            ps = st.pos[a]",
+  "old": "        st.cooldown[a] = t + COOLDOWN\n        ps = st.pos[a]",
+  "new": "        ps = st.pos[a]",
   "tests": "tests/v6/test_conformance_fixes.py::test_h1_economic_exit_also_starts_the_cooldown"
  },
  {
@@ -107,8 +107,8 @@
  {
   "name": "PIT10 lag ignored",
   "file": "luna/v6/forward_exec.py",
-  "old": "        tq = t - self.pit_lag\n",
-  "new": "        tq = t\n",
+  "old": "        tq = t - (self.pit_lag if decision else pd.Timedelta(0))",
+  "new": "        tq = t",
   "tests": "tests/v6/test_review_fixes.py::test_forward_pit10_market_uses_snapshots_received_five_minutes_earlier"
  },
  {
@@ -121,8 +121,8 @@
  {
   "name": "NW against the raw alpha",
   "file": "luna/v6/verdict.py",
-  "old": "if c in (nw_p or {}) and max(nw_p[c]) <= h[c][\"alpha\"]}",
-  "new": "if c in (nw_p or {}) and max(nw_p[c]) <= alpha}",
+  "old": "all(math.isfinite(float(x)) and float(x) <= h[c][\"alpha\"]",
+  "new": "all(math.isfinite(float(x)) and float(x) <= alpha",
   "tests": "tests/v6/test_review_fixes.py::test_nw_threshold_ignores_closed_slots"
  },
  {
@@ -149,7 +149,7 @@
  {
   "name": "unknown funding not invalid",
   "file": "luna/v6/criteria.py",
-  "old": "    if primary.counters.get(\"funding_unknown\", 0) > 0:",
+  "old": "    if env == \"forward\" and primary.counters.get(\"funding_unknown\", 0) > 0:",
   "new": "    if False:",
   "tests": "tests/v6/test_review_fixes.py::test_unknown_funding_for_a_held_period_is_an_invalid_run"
  },

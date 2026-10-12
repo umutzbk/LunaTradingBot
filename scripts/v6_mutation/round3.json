@@ -1,0 +1,205 @@
+[
+ {
+  "name": "NW non-finite accepted",
+  "file": "luna/v6/verdict.py",
+  "old": "all(math.isfinite(float(x)) and float(x) <= h[c][\"alpha\"]",
+  "new": "all(not float(x) > h[c][\"alpha\"]",
+  "tests": "tests/v6/test_review_fixes.py::test_a_non_finite_newey_west_p_blocks_the_interim_rejection"
+ },
+ {
+  "name": "forward loader unguarded",
+  "file": "luna/v6/holdout_data.py",
+  "old": "    guard.require_window(guard.HOLDOUT_START, guard.HOLDOUT_END, \"forward\", repo=repo)\n",
+  "new": "",
+  "tests": "tests/v6/test_review_fixes.py::test_holdout_inputs_after_the_opening_load_only_through_the_forward_guard"
+ },
+ {
+  "name": "forward loader without pin",
+  "file": "luna/v6/holdout_data.py",
+  "old": "    if pinned is None:\n        raise guard.HoldoutBlocked(\"no holdout manifest pinned at an authorised opening\")",
+  "new": "    pass",
+  "tests": "tests/v6/test_review_fixes.py::test_holdout_inputs_after_the_opening_load_only_through_the_forward_guard"
+ },
+ {
+  "name": "manifest sha not checked",
+  "file": "luna/v6/holdout_data.py",
+  "old": "    if hashlib.sha256(mp.read_bytes()).hexdigest() != pinned:",
+  "new": "    if False:",
+  "tests": "tests/v6/test_review_fixes.py::test_verify_refuses_a_manifest_or_file_other_than_the_pinned_one"
+ },
+ {
+  "name": "file sha not checked",
+  "file": "luna/v6/holdout_data.py",
+  "old": "        if hashlib.sha256((Path(root) / rel).read_bytes()).hexdigest() != sha:",
+  "new": "        if False:",
+  "tests": "tests/v6/test_review_fixes.py::test_verify_refuses_a_manifest_or_file_other_than_the_pinned_one"
+ },
+ {
+  "name": "disagreeing pins accepted",
+  "file": "luna/v6/guard.py",
+  "old": "    return shas.pop() if len(shas) == 1 and None not in shas else None",
+  "new": "    return shas.pop() if shas else None",
+  "tests": "tests/v6/test_review_fixes.py::test_pins_need_the_opening_token_and_both_markers_must_agree"
+ },
+ {
+  "name": "pin without token",
+  "file": "luna/v6/guard.py",
+  "old": "    if not isinstance(auth, HoldoutAuthorization):\n        raise HoldoutBlocked(\"pinning the holdout manifest",
+  "new": "    if False:\n        raise HoldoutBlocked(\"pinning the holdout manifest",
+  "tests": "tests/v6/test_review_fixes.py::test_pins_need_the_opening_token_and_both_markers_must_agree"
+ },
+ {
+  "name": "short history accepted",
+  "file": "luna/v6/forward.py",
+  "old": "    if f_last is None or p_last is None or f_last < need or p_last < need:",
+  "new": "    if f_last is None or p_last is None:",
+  "tests": "tests/v6/test_review_fixes.py::test_forward_look_refuses_inputs_that_stop_before_the_holdout_end"
+ },
+ {
+  "name": "C coverage over days 1..d",
+  "file": "luna/v6/forward.py",
+  "old": "    c = cov[cov.index >= pd.Timestamp(lo)]",
+  "new": "    c = cov",
+  "tests": "tests/v6/test_review_fixes.py::test_feas_confirmation_coverage_uses_its_own_window"
+ },
+ {
+  "name": "family re-init with another family",
+  "file": "luna/v6/forward.py",
+  "old": "        if tuple(old.cand) == fam.cand and tuple(old.feas) == fam.feas:",
+  "new": "        if True:",
+  "tests": "tests/v6/test_forward_runner.py::test_family_is_fixed_once"
+ },
+ {
+  "name": "funding not delayed",
+  "file": "luna/v6/data.py",
+  "old": "self._known + pd.Timedelta(lag).value)",
+  "new": "self._known)",
+  "tests": "tests/v6/test_review_fixes.py::test_funding_delayed_view_shifts_visibility_only"
+ },
+ {
+  "name": "marks lagged",
+  "file": "luna/v6/forward_exec.py",
+  "old": "        tq = t - (self.pit_lag if decision else pd.Timedelta(0))",
+  "new": "        tq = t - self.pit_lag",
+  "tests": "tests/v6/test_review_fixes.py::test_pit10_lags_decision_quotes_but_not_marks_or_fill_reference_mids"
+ },
+ {
+  "name": "fill reference mid lagged",
+  "file": "luna/v6/forward_exec.py",
+  "old": "lambda ts: self.mark_mid(a, ts))",
+  "new": "lambda ts: self.mid(a, ts))",
+  "tests": "tests/v6/test_review_fixes.py::test_pit10_lags_decision_quotes_but_not_marks_or_fill_reference_mids"
+ },
+ {
+  "name": "H3 valuation at decision view",
+  "file": "luna/v6/engine.py",
+  "old": "        v = getattr(self.m, \"mark_mid\", self.m.mid)(a, t)",
+  "new": "        v = self.m.mid(a, t)",
+  "tests": "tests/v6/test_review_fixes.py::test_engines_value_positions_at_the_mark_view_not_the_lagged_decision_view"
+ },
+ {
+  "name": "H1 valuation at decision view",
+  "file": "luna/v6/h1.py",
+  "old": "            v = getattr(self.m, \"mark_spot_mid\", self.m.spot_mid)(a, t)",
+  "new": "            v = self.m.spot_mid(a, t)",
+  "tests": "tests/v6/test_review_fixes.py::test_engines_value_positions_at_the_mark_view_not_the_lagged_decision_view"
+ },
+ {
+  "name": "stale repair flag kept",
+  "file": "luna/v6/engine.py",
+  "old": "            if st.repair_due and not st.killed and t < end and st.last_cov is not None:",
+  "new": "            if st.repair_due and not st.killed and t < end and st.last_cov is not None and st.pos:",
+  "tests": "tests/v6/test_review_fixes.py::test_a_repair_flag_left_by_a_full_exit_does_not_fire_on_the_next_build"
+ },
+ {
+  "name": "perp-only remainder via zero pair",
+  "file": "luna/v6/h1.py",
+  "old": "        elif ps.pq > QTY_EPS:\n            self._leg(st, a, \"perp\", ps.pq, t, intent)",
+  "new": "        elif ps.pq > QTY_EPS:\n            self._pair(st, a, -ps.q, t, intent, perp_q=ps.pq)",
+  "tests": "tests/v6/test_review_fixes.py::test_h1_closes_a_perp_only_remainder_through_the_perp_leg tests/v6/test_review_fixes.py::test_h1_historical_closes_a_perp_only_remainder_through_the_perp_leg"
+ },
+ {
+  "name": "no hedge reconciliation",
+  "file": "luna/v6/h1.py",
+  "old": "            if abs(ps.q - ps.pq) > step + QTY_EPS:",
+  "new": "            if False:",
+  "tests": "tests/v6/test_review_fixes.py::test_h1_reconciles_a_one_legged_pair_at_once"
+ },
+ {
+  "name": "blind sizing on realised equity",
+  "file": "luna/v6/engine.py",
+  "old": "self._decide(st, t, self.E0 if invariant_mode else E, decisions, events, gates)",
+  "new": "self._decide(st, t, E, decisions, events, gates)",
+  "tests": "tests/v6/test_review_fixes.py::test_blind_builds_are_identical_when_only_the_realised_equity_differs"
+ },
+ {
+  "name": "historical funding gap invalid",
+  "file": "luna/v6/criteria.py",
+  "old": "    if env == \"forward\" and primary.counters.get(\"funding_unknown\", 0) > 0:",
+  "new": "    if primary.counters.get(\"funding_unknown\", 0) > 0:",
+  "tests": "tests/v6/test_review_fixes.py::test_unknown_funding_for_a_held_period_is_an_invalid_run"
+ },
+ {
+  "name": "truncated family accepted",
+  "file": "luna/v6/holdout_data.py",
+  "old": "            elif idx.min() > lo + edge or idx.max() < hi - step - edge:",
+  "new": "            elif False:",
+  "tests": "tests/v6/test_review_fixes.py::test_stage0_audit_fails_a_truncated_bar_download"
+ },
+ {
+  "name": "V5 R5 off",
+  "file": "luna/v6/v5risk.py",
+  "old": "    if any(n * V5_LEG_STOP > R5_MAX_RISK_PER_TRADE * E for n in opening):",
+  "new": "    if False:",
+  "tests": "tests/v6/test_v5risk.py"
+ },
+ {
+  "name": "V5 R6 off",
+  "file": "luna/v6/v5risk.py",
+  "old": "    if sum(n * V5_LEG_STOP for n in open_after) > R6_MAX_OPEN_RISK * E:",
+  "new": "    if False:",
+  "tests": "tests/v6/test_v5risk.py"
+ },
+ {
+  "name": "V5 R7 off",
+  "file": "luna/v6/v5risk.py",
+  "old": "    if positions_after is not None and positions_after > R7_MAX_POSITIONS:",
+  "new": "    if False:",
+  "tests": "tests/v6/test_v5risk.py"
+ },
+ {
+  "name": "V5 R8 off",
+  "file": "luna/v6/v5risk.py",
+  "old": "    if sum(open_after) > R8_MAX_GROSS * E:",
+  "new": "    if False:",
+  "tests": "tests/v6/test_v5risk.py"
+ },
+ {
+  "name": "V5 R9 off",
+  "file": "luna/v6/v5risk.py",
+  "old": "    if any(n > R9_MAX_LEG * E for n in opening):",
+  "new": "    if False:",
+  "tests": "tests/v6/test_v5risk.py"
+ },
+ {
+  "name": "V5 R14 off",
+  "file": "luna/v6/v5risk.py",
+  "old": "    if opening and orders_today + new_orders > R14_MAX_ORDERS_PER_DAY:",
+  "new": "    if False:",
+  "tests": "tests/v6/test_v5risk.py"
+ },
+ {
+  "name": "H3 partial book on V5 breach",
+  "file": "luna/v6/engine.py",
+  "old": "            return infeasible(\"V5 \" + \"+\".join(bad))",
+  "new": "            pass",
+  "tests": "tests/v6/test_v5risk.py"
+ },
+ {
+  "name": "H1 V5 veto ignored",
+  "file": "luna/v6/h1.py",
+  "old": "                self.counters[\"v5_vetoes\"] = self.counters.get(\"v5_vetoes\", 0) + 1\n                continue",
+  "new": "                self.counters[\"v5_vetoes\"] = self.counters.get(\"v5_vetoes\", 0) + 1",
+  "tests": "tests/v6/test_v5risk.py"
+ }
+]

@@ -18,12 +18,14 @@ DECLARED = {
             "short candidates from the highest downwards; ties by asset name.",
     "D-B3": "S-H3-5 free slots = k' - kept legs on that side; when k' fell below the kept count no "
             "entry happens and the kept legs stay (S-H3-4 decides each kept leg).",
-    "D-E1": "Risk profile: the spec names R3 (daily loss limit 2 %: no entries or growth until the next "
-            "00:00) and R4 (drawdown 15 % from the running peak of the 15-minute equity: exit all, no "
-            "re-entry for the rest of the run); the V5 position-count/size rules (R5-R8) are superseded "
-            "by the H3/H1 construction limits and are not applied.",
-    "D-E1b": "Consequence of D-E1 (not a choice): the R3 day resets at 00:00 before the daily decision, "
-             "so R3 can only block intraday entries/growth, of which H3 and H1 have none.",
+    "D-E1": "SUPERSEDED by docs/results/v6-spec-erratum-001.md (tag v6-profitability-spec-erratum-001): the V5 "
+            "carry.risk profile is applied rule by rule - R3/R4 retained; R5, R6, R8, R9, R14 retained with the V5 "
+            "values (H3: book-level, a breach makes the decision INFEASIBLE, no partial book; H1: per-entry veto); R7 "
+            "replaced for H3 by the frozen leg-count construction (k, min_k_prime), retained for H1 (pair = one id); "
+            "R10 replaced for H3 by the S-H3-9 band; R12 not evaluable from the frozen inputs (no maintenance margin); "
+            "R15/R16/R18 replaced by the frozen execution, S-DATA-5 and exact accounting; the rest retained.",
+    "D-E1b": "Consequence of R3 (not a choice): the R3 day resets at 00:00 before the daily decision, so R3 can "
+             "only block a 00:00 decision deferred within 6 h (D-X4) after an intraday loss; repairs are reduce-only.",
     "D-E3": "A window end that is not on the 15-minute grid (holdout end 11:52:48) is floored to the grid "
             "(11:45); the terminal unwind is valued there.",
     "D-E4": "S-H3-12 '> 24 h': checked at every 15-minute tick; a book infeasible since a 00:00 decision is "
@@ -85,14 +87,39 @@ DECLARED = {
             "decision-window (>= 6/12) or fill-window (>= 2/3) point coverage < 90 % for any asset or any asset x "
             "hour-of-day cell. V5 flagged coverage for the user; V6 maps it to FAIL (the spec's failure rule). "
             "Repeats, gaps and invalid values are reported, not FAIL (V5).",
-    "D-G1": "Holdout markers: one in the code checkout, one in the user's home (~/.luna/v6_holdout), written "
-            "exclusively, all-or-nothing; 'opened' = both present with approved = true and this spec's sha256.",
+    "D-G1": "Holdout markers keyed by the canonical run identity RUN_ID = v6-<spec sha16>, independent of the checkout "
+            "path: ~/.luna/v6_holdout/<RUN_ID>/ and <git common dir>/luna-v6/<RUN_ID>/ (every worktree of the repo); "
+            "written exclusively, all-or-nothing; 'opened' = both present with approved = true and this spec's sha256. "
+            "A different clone on another machine has neither marker: forward runs there are refused (fail closed).",
     "D-G2": "T_F = the first 00:00 UTC at least 24 h after the independent review PASS; the freeze record holds "
             "both times and is rejected when T_F does not equal that derivation.",
     "D-G3": "Gate bootstrap: a replicate whose ratio is undefined (zero denominator) is dropped from the "
             "percentile (nanquantile); the number dropped is reported.",
     "D-B4": "An asset is never moved from one side to the other in the same decision: a held leg whose side "
             "flips is exited at 00:00 and may enter the other side at the next decision.",
+    "D-G4": "The holdout download is pinned at the authorised opening (sha256 of its manifest.json, written exclusively "
+            "next to both markers). Forward looks read the holdout-window history only through load_holdout_inputs: "
+            "forward-guarded (T_F + opening), pinned manifest required, every file hash verified, read only (no "
+            "download, repair or write), no authorization token needed. A look whose model history does not reach the "
+            "holdout end is refused (INVALID LOOK), never run on a silent warm-up.",
+    "D-A2": "The Stage 0 audit also covers every other required input family (mark, trade, index, spot bars, funding): "
+            "an empty download or one that starts/ends more than 24 h inside the window is a truncated download = FAIL; "
+            "present shares are reported. Provenance = the pinned manifest and per-file sha256.",
+    "D-S2": "S-DATA-1: unknown funding for a held period is an INVALID RUN only in forward looks (after the official API "
+            "fallback); historically it is counted and settled as 0 (as V5).",
+    "D-X9": "Forward S-PIT10: every decision input (tickers, spreads, volumes, stops, eligibility, funding visibility and "
+            "the H2a models) uses the view at t - 5 min; equity marks, fill reference mids and unwind valuation use the "
+            "snapshot at t (signal-known time and valuation time are separate). R3/R4 compare the marked equity.",
+    "D-X10": "Historical perp mid = the mark bar; if the mark bar is missing the trade bar of the same quarter is used "
+             "(valuation and decisions); no mid -> no decision for that asset, the last mid values a held leg.",
+    "D-H1": "H1 hedge integrity: a pair whose legs differ by more than one quantity step (one leg filled, the other not) "
+            "is reconciled at the next fresh tick by closing both legs, each by its own quantity (intent 'reconcile'); "
+            "a one-legged remainder is closed through its own leg only, never through a zero-quantity pair.",
+    "D-E11": "MODEL WARMUP does not start the S-H3-12 infeasible clock (there is no forecast to build from); held legs "
+             "without a forecast exit after 24 h by the missing-forecast rule, which gives the same 24 h bound.",
+    "D-B5": "Observation, spec-literal (D-B1): when the 0.2 net-dollar cap or the beta limit binds exactly, rounding "
+            "toward zero can move the book beyond the post-rounding check (one max-step-notional allowance for dollars, "
+            "none for beta) and the book is INFEASIBLE. Not changed (frozen).",
     "D-P1": "P8/P9 entry clusters are built from every opening from flat (per asset, both H1 legs together), "
             "not from merged episodes.",
 }

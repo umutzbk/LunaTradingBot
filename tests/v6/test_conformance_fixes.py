@@ -162,3 +162,59 @@ def test_gate_records_continue_after_the_r4_kill():
     assert r.counters["kill"] == 1
     kt = [e["t"] for e in r.events if e["event"] == "kill"][0]
     assert any(g.s > kt for g in r.gate_records)
+
+
+# --- S-H1-2 cash rule: the explicit check binds where the floor tolerance rounds q up -----------------
+
+class _CashMarket:
+    """A minimal market for one H1 decision: zero costs, price 1000, step 1."""
+
+    assets = ["X"]
+    spot = True
+
+    def __init__(self):
+        from types import SimpleNamespace
+        self.funding = SimpleNamespace(newest_end=lambda a, t: t, fl=lambda t, h, k: pd.Series({"X": 1e-4}))
+        self.sent = []
+
+    def mid(self, a, t):
+        return 1000.0
+
+    spot_mid = mid
+
+    def decision_half(self, a, t):
+        return 0.0, False
+
+    def volume24(self, a, t, spot=False):
+        return 1e12
+
+    def decision_cost(self, a, t, leg="perp"):
+        return 0.0
+
+    def pair_fill(self, a, q, t, economic=True, perp_q=None):
+        self.sent.append(q)
+        return None
+
+
+def test_h1_cash_rule_refuses_a_pair_whose_floor_tolerance_rounds_q_above_the_cash():
+    from collections import defaultdict
+
+    from luna.v6.h1 import _St
+
+    class _M720:
+        h = 720
+
+        def forecast(self, t):
+            return pd.Series({"X": 1e-3})
+
+    m = _CashMarket()
+    e = H1Engine(m, _M720(), {"X": {"spot": {"step": 1.0, "min_qty": 1.0}, "perp": {"step": 1.0, "min_qty": 1.0}}},
+                 H1Config("H1-m1.5", 1.5), equity0=1e6)
+    e.counters = defaultdict(int)
+    t = pd.Timestamp("2026-01-10T00:00Z")
+    st = _St(usd=6000.0 - 1e-6)  # n = free / 2 -> n / px = 2.9999999995 -> floor(+1e-9) = 3 -> need 6000 > free
+    e._decide(st, t, 1e6, [], [])
+    assert m.sent == [] and e.counters["skipped_cash"] == 1
+    st2 = _St(usd=6000.0)
+    e._decide(st2, t, 1e6, [], [])
+    assert m.sent == [3.0]

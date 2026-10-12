@@ -31,6 +31,8 @@ SPEC_REL = "docs/superpowers/specs/luna-v6-profitability-spec.md"
 CONSTANTS_REL = "docs/superpowers/specs/luna-v6-frozen-constants.json"
 FREEZE_RECORD_REL = "docs/results/v6-code-freeze-record.json"
 MARKER = "HOLDOUT_OPENED.json"
+PIN = "HOLDOUT_MANIFEST.json"
+RUN_ID = f"v6-{SPEC_SHA256[:16]}"  # canonical run identity of the single opening (spec sha)
 
 
 class HoldoutBlocked(RuntimeError):
@@ -64,11 +66,21 @@ def main_repo(repo: Path | None = None) -> Path:
     return p.parent
 
 
+def git_common_dir(repo: Path | None = None) -> Path:
+    repo = Path(repo or code_repo())
+    r = _git(repo, "rev-parse", "--git-common-dir")
+    if r.returncode != 0 or not r.stdout.strip():
+        raise HoldoutBlocked(f"{repo} is not a git checkout (the holdout markers need the repository identity)")
+    p = Path(r.stdout.strip())
+    return p if p.is_absolute() else (repo / p).resolve()
+
+
 def marker_paths(repo: Path | None = None) -> list[Path]:
-    """Two markers in distinct places: the code checkout and the user's home (shared by every clone and
-    worktree on the machine), so deleting or re-cloning one checkout cannot re-open the holdout."""
-    repo = repo or code_repo()
-    return [Path(repo) / "var" / "ops" / "v6_holdout" / MARKER, Path.home() / ".luna" / "v6_holdout" / MARKER]
+    """Two markers keyed by the canonical run identity (RUN_ID), independent of the checkout path: the
+    user's home (every clone on the machine) and the repository's common git dir (every worktree of the
+    repository). Deleting or switching a checkout cannot re-open the holdout (D-G1)."""
+    return [Path.home() / ".luna" / "v6_holdout" / RUN_ID / MARKER,
+            git_common_dir(repo) / "luna-v6" / RUN_ID / MARKER]
 
 
 def _marker_ok(m: Path) -> bool:
@@ -77,6 +89,34 @@ def _marker_ok(m: Path) -> bool:
     except (OSError, ValueError):
         return False
     return isinstance(rec, dict) and rec.get("approved") is True and rec.get("spec_sha256") == SPEC_SHA256
+
+
+def pin_manifest(manifest_sha256: str, auth: "HoldoutAuthorization", repo: Path | None = None) -> None:
+    """Pins the verified holdout download (sha256 of its manifest.json) next to both markers, exclusively
+    and once; only inside the authorised opening. Later reads verify against this pin."""
+    if not isinstance(auth, HoldoutAuthorization):
+        raise HoldoutBlocked("pinning the holdout manifest needs the opening's HoldoutAuthorization")
+    rec = json.dumps({"run_id": RUN_ID, "spec_sha256": SPEC_SHA256, "manifest_sha256": manifest_sha256}, indent=1)
+    for m in marker_paths(repo):
+        fd = os.open(m.parent / PIN, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(rec)
+
+
+def pinned_manifest(repo: Path | None = None) -> str | None:
+    """The pinned manifest sha256 when both pins exist and agree (and the holdout is opened), else None."""
+    if not holdout_opened(repo):
+        return None
+    shas = set()
+    for m in marker_paths(repo):
+        try:
+            rec = json.loads((m.parent / PIN).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if rec.get("spec_sha256") != SPEC_SHA256 or rec.get("run_id") != RUN_ID:
+            return None
+        shas.add(rec.get("manifest_sha256"))
+    return shas.pop() if len(shas) == 1 and None not in shas else None
 
 
 def holdout_opened(repo: Path | None = None) -> bool:
@@ -172,7 +212,7 @@ def authorize_holdout(approval: str | None, repo: Path | None = None) -> Holdout
     done = [str(m) for m in markers if m.exists()]
     if done:
         raise HoldoutBlocked(f"holdout opening refused: the holdout was already opened ({done})")
-    rec = {**preflight(repo), "spec_sha256": SPEC_SHA256, "approved": True,
+    rec = {**preflight(repo), "run_id": RUN_ID, "spec_sha256": SPEC_SHA256, "approved": True,
            "opened_at": pd.Timestamp.now(tz="UTC").isoformat()}
     written: list[Path] = []
     try:
