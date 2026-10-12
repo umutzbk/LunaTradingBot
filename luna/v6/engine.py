@@ -218,6 +218,15 @@ class H3Engine:
         if intent != "open" and intent != "resize":
             st.exiting.add(a)
 
+    def _leg_risk(self, st: _State, a: str, q_after: float, mid: float) -> float:
+        """V5 risk amount of a leg after a decision (Erratum 001, R6): 0.15 x held qty x entry price
+        for the quantity kept on the same side (scaled down on a reduction), 0.15 x mid for the rest."""
+        q0, e = st.pos.get(a, 0.0), st.entry.get(a)
+        if q0 and e and q0 * q_after > 0:
+            kept = min(abs(q_after), abs(q0))
+            return v5risk.V5_LEG_STOP * (kept * e + (abs(q_after) - kept) * mid)
+        return v5risk.V5_LEG_STOP * abs(q_after) * mid
+
     def _exit_all(self, st: _State, t: pd.Timestamp, intent: str) -> None:
         for a, q in list(st.pos.items()):
             if q and a not in st.exiting:
@@ -484,12 +493,18 @@ class H3Engine:
             if abs(q1 - q0) >= 1e-12:
                 plan.append((a, q0, q1))
         # Erratum 001: the retained V5 controls, checked on the whole book (no partial book)
-        mid = {a: insts[a].mid for a in insts}
-        opening = [abs(q1 - q0) * mid[a] for a, q0, q1 in plan if abs(q1) > abs(q0)]
+        def px(a: str) -> float:
+            v = insts[a].mid if a in insts else math.nan
+            return v if math.isfinite(v) else self._mid(st, a, t)
+
+        opening = [abs(q1 - q0) * px(a) for a, q0, q1 in plan if abs(q1) > abs(q0) and (q0 == 0 or q0 * q1 > 0)]
+        opening += [abs(q1) * px(a) for a, q0, q1 in plan if q0 * q1 < 0]  # a flip opens the new side
         after = {a: self._target_pos(st, a) for a in st.pos}
         after.update({a: q1 for a, _, q1 in plan})
-        open_after = [abs(q) * (mid.get(a) or self._mid(st, a, t)) for a, q in after.items() if q]
-        bad = v5risk.violations(opening, open_after, E, orders_today=st.orders_today, new_orders=len(plan))
+        gross_after = [abs(q) * px(a) for a, q in after.items() if q]
+        risk_after = [self._leg_risk(st, a, q, px(a)) for a, q in after.items() if q]
+        opens_at = [st.orders_today + k for k, (a, q0, q1) in enumerate(plan) if abs(q1) > abs(q0)]
+        bad = v5risk.violations(opening, gross_after, risk_after, E, orders_before=opens_at)
         if bad:
             self.counters["v5_vetoes"] = self.counters.get("v5_vetoes", 0) + 1
             return infeasible("V5 " + "+".join(bad))

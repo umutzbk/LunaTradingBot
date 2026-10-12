@@ -573,8 +573,14 @@ def test_funding_delayed_view_shifts_visibility_only():
 def test_feas_confirmation_coverage_uses_its_own_window():
     days = pd.date_range("2026-11-20", periods=180, freq="D", tz="UTC")
     cov = pd.DataFrame({"share": [0.5] * 90 + [1.0] * 90, "evaluable": [False] * 90 + [True] * 90}, index=days)
-    assert fw.coverage_share(cov, days[0]) == pytest.approx(0.75)  # candidate: days 1..180
-    assert fw.coverage_share(cov, days[90]) == pytest.approx(1.0)
+    assert fw.coverage_share(cov, days[0]) == pytest.approx(0.5)  # candidate: evaluable days 1..180
+    assert fw.coverage_share(cov, days[90]) == pytest.approx(1.0)  # FEAS C: days 91..180
+
+
+def test_coverage_is_the_share_of_evaluable_days_not_the_mean_snapshot_share():
+    days = pd.date_range("2026-11-20", periods=90, freq="D", tz="UTC")
+    cov = pd.DataFrame({"share": [0.85] * 90, "evaluable": [False] * 90}, index=days)  # every day 85 % fresh
+    assert fw.coverage_share(cov, days[0]) == 0.0  # S-DATA-5: no evaluable day
 
 
 def test_family_file_is_never_left_empty(tmp_path):
@@ -642,3 +648,79 @@ def test_a_repair_flag_left_by_a_full_exit_does_not_fire_on_the_next_build():
     builds = [d["t"] for d in r.decisions if d.get("status") == "OK"]
     assert any(b > when for b in builds)  # rebuilt after the cooldown
     assert r.counters["repairs"] == 0  # the flag left by the full exit did not fire on the fresh book
+
+
+
+def test_forward_look_refuses_when_any_asset_stops_before_the_holdout_end():
+    full = pd.date_range(pd.Timestamp("2026-05-01", tz="UTC"), guard.HOLDOUT_END.floor("h") - pd.Timedelta("1h"),
+                         freq="h")
+    rel = pd.DataFrame({"ETH": 1e-5, "BTC": 1e-5}, index=full)
+    rel.loc[rel.index > full[-1] - pd.Timedelta("3h"), "BTC"] = np.nan  # BTC stops 3 h early
+    short = SimpleNamespace(funding=FundingPanel(rel), prices=pd.DataFrame({"ETH": 1.0, "BTC": 1.0},
+                                                                           index=full + pd.Timedelta("1h")))
+    with pytest.raises(vd.LookError, match="BTC"):
+        fw.check_inputs_reach(short)
+
+
+def test_pins_are_written_all_or_nothing(tmp_path, monkeypatch):
+    ms = [tmp_path / "a" / guard.MARKER, tmp_path / "b" / guard.MARKER]
+    for m in ms:
+        m.parent.mkdir(parents=True)
+    (ms[1].parent / guard.PIN).write_text("{}")  # the second pin cannot be created
+    monkeypatch.setattr(guard, "marker_paths", lambda repo=None: ms)
+    auth = guard.HoldoutAuthorization(guard.HoldoutAuthorization._secret, {})
+    with pytest.raises(FileExistsError):
+        guard.pin_manifest("abc", auth)
+    assert not (ms[0].parent / guard.PIN).exists()  # rolled back
+
+
+class _FlakyClient:
+    pass
+
+
+def test_holdout_download_resumes_after_a_transient_failure_without_refetching(tmp_path, monkeypatch):
+    from luna.v6 import holdout_data as hd
+
+    calls = {"n": 0, "fail": True}
+    frame = pd.DataFrame({"close": [1.0]}, index=pd.DatetimeIndex([guard.HOLDOUT_START]).as_unit("ns"))
+
+    def fetch(name):
+        def f(client, a, auth, *rest, **kw):
+            calls["n"] += 1
+            if name == "spot" and a == "BTC" and calls["fail"]:
+                raise RuntimeError("EGeneral:Too many requests")
+            return frame
+        return f
+
+    for nm in ("funding", "spreads", "spot"):
+        monkeypatch.setattr(hd, f"fetch_{nm}", fetch(nm))
+    monkeypatch.setattr(hd, "fetch_candles", lambda client, tick, a, auth: fetch("candles")(client, a, auth))
+    monkeypatch.setattr(hd, "RETRY_WAIT", 0.0)
+    pinned = []
+    monkeypatch.setattr(guard, "pin_manifest", lambda sha, auth, repo=None: pinned.append(sha))
+    auth = guard.HoldoutAuthorization(guard.HoldoutAuthorization._secret, {})
+    with pytest.raises(RuntimeError):
+        hd.download(_FlakyClient(), tmp_path, ["ETH", "BTC"], auth)
+    assert not (tmp_path / "manifest.json").exists() and not pinned
+    first = calls["n"]
+    calls["fail"] = False
+    man = hd.download(_FlakyClient(), tmp_path, ["ETH", "BTC"], auth)  # the same authorised process resumes
+    assert calls["n"] - first == 1  # only the missing file is fetched again
+    assert len(man) == 12 and len(pinned) == 1
+    with pytest.raises(FileExistsError):  # the manifest is write-once
+        hd.download(_FlakyClient(), tmp_path, ["ETH", "BTC"], auth)
+
+
+def test_transient_rate_limit_is_retried(monkeypatch):
+    from luna.v6 import holdout_data as hd
+
+    n = {"k": 0}
+
+    def flaky():
+        n["k"] += 1
+        if n["k"] < 3:
+            raise RuntimeError("EGeneral:Too many requests")
+        return 7
+
+    monkeypatch.setattr(hd, "RETRY_WAIT", 0.0)
+    assert hd._retry(flaky) == 7 and n["k"] == 3

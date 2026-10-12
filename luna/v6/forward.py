@@ -111,18 +111,23 @@ def check_inputs_reach(inputs) -> None:
     funding period and the last hourly price must reach HOLDOUT_END (floored to the hour) minus 1 h.
     Otherwise the look is refused (INVALID LOOK), never run on a silent warm-up."""
     need = guard.HOLDOUT_END.floor("h") - pd.Timedelta("1h")
-    f = inputs.funding.rel
-    f_last = f.dropna(how="all").index.max() if len(f) else None
-    p_last = inputs.prices.dropna(how="all").index.max() if len(inputs.prices) else None
-    if f_last is None or p_last is None or f_last < need or p_last < need:
-        raise LookError(f"INVALID LOOK: model history (funding {f_last}, prices {p_last}) does not reach the "
-                        f"holdout end ({need})")
+    short = []
+    for name, frame in (("funding", inputs.funding.rel), ("prices", inputs.prices)):
+        for a in frame.columns:
+            col = frame[a].dropna()
+            last = col.index.max() if len(col) else None
+            if last is None or last < need:
+                short.append(f"{name} {a} ends {last}")
+    if short:
+        raise LookError(f"INVALID LOOK: model history does not reach the holdout end ({need}) for every asset: "
+                        + "; ".join(short[:10]))
 
 
 def coverage_share(cov: pd.DataFrame, lo: pd.Timestamp) -> float:
-    """S-DATA-5 coverage share of the evaluable days from ``lo`` on (a FEAS slot's C window starts at day 91)."""
+    """S-DATA-5: the share of EVALUABLE days (each day >= 90 % fresh quarters) from ``lo`` on (a FEAS
+    slot's C window starts at day 91); the look is INCONCLUSIVE below 80 %."""
     c = cov[cov.index >= pd.Timestamp(lo)]
-    return float(c["share"].mean()) if len(c) else 0.0
+    return float(c["evaluable"].astype(bool).mean()) if len(c) else 0.0
 
 
 def cost2x_view(run):

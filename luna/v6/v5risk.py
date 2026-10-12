@@ -19,6 +19,8 @@ independent pairs, so a violation vetoes that entry as in V5.
 
 from __future__ import annotations
 
+import math
+
 V5_LEG_STOP = 0.15  # carry.leg_stop_frac at fabd419: the R5/R6 stop distance
 R5_MAX_RISK_PER_TRADE = 0.04
 R6_MAX_OPEN_RISK = 0.16
@@ -28,25 +30,34 @@ R9_MAX_LEG = 0.30
 R14_MAX_ORDERS_PER_DAY = 30
 
 
-def violations(opening: list, open_after: list, E: float, positions_after: int | None = None,
-               orders_today: int = 0, new_orders: int = 0) -> list[str]:
-    """V5 rules violated by a set of opening orders. ``opening``: notionals (USD, >= 0) of the opening
-    orders (new legs, or the growth of a leg); ``open_after``: notionals of every open leg after the
-    orders (held legs at the decision mid, plus the new ones); ``positions_after``: open position ids
-    after the orders (None = R7 not applied); ``orders_today``/``new_orders``: R14."""
+def violations(opening: list, gross_after: list, risk_after: list, E: float, positions_after: int | None = None,
+               orders_before: list = ()) -> list[str]:
+    """V5 rules violated by the opening orders of one decision (luna/risk/engine.py at fabd419).
+
+    ``opening``: notionals (USD) of the opening orders (a new leg, or the growth of one); closes and
+    reductions are exempt from R5-R9 and R14, as in V5, so with no opening nothing is checked.
+    ``gross_after``: notionals of every leg after the decision (R8). ``risk_after``: the V5 risk amount of
+    every leg after the decision, 0.15 x qty x ENTRY price for held quantity (scaled down on a reduction)
+    and 0.15 x notional for opened quantity (R6, as V5 ``risk_amount``). ``positions_after``: open
+    position ids after the decision (R7; None = not applied). ``orders_before``: for each opening order,
+    the orders already sent that UTC day before it (R14: an open is vetoed once 30 were sent).
+    Non-finite inputs fail closed."""
+    if not opening:
+        return []
+    vals = list(opening) + list(gross_after) + list(risk_after) + [E]
+    if not all(math.isfinite(float(x)) for x in vals) or not E > 0:
+        return ["V5 inputs not finite"]
     out = []
-    if not E > 0:
-        return ["R5-R9: equity <= 0"]
     if any(n * V5_LEG_STOP > R5_MAX_RISK_PER_TRADE * E for n in opening):
         out.append("R5_risk_per_trade")
-    if sum(n * V5_LEG_STOP for n in open_after) > R6_MAX_OPEN_RISK * E:
+    if sum(risk_after) > R6_MAX_OPEN_RISK * E:
         out.append("R6_open_risk")
     if positions_after is not None and positions_after > R7_MAX_POSITIONS:
         out.append("R7_max_positions")
-    if sum(open_after) > R8_MAX_GROSS * E:
+    if sum(gross_after) > R8_MAX_GROSS * E:
         out.append("R8_gross_leverage")
     if any(n > R9_MAX_LEG * E for n in opening):
         out.append("R9_leg_notional")
-    if opening and orders_today + new_orders > R14_MAX_ORDERS_PER_DAY:
+    if any(k >= R14_MAX_ORDERS_PER_DAY for k in orders_before):
         out.append("R14_orders_per_day")
     return out

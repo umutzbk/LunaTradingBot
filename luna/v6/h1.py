@@ -425,11 +425,15 @@ class H1Engine:
                 self.counters["skipped_cash"] += 1
                 continue
             # Erratum 001: retained V5 controls per entry (spot leg + perp leg; one pair = one position id)
-            legs_after = [n for b in held if b in st.pos for n in (st.pos[b].q * self._px(st, b, t, "spot"),
-                                                                   st.pos[b].pq * self._px(st, b, t, "perp"))]
-            legs_after += entered  # pairs sent earlier in this decision (still pending)
-            bad = v5risk.violations([q * px, q * px], legs_after + [q * px, q * px], E,
-                                    positions_after=len(held) + 1, orders_today=st.orders_today, new_orders=2)
+            kept = [b for b in held if b in st.pos]
+            gross_after = [n for b in kept for n in (st.pos[b].q * self._px(st, b, t, "spot"),
+                                                     st.pos[b].pq * self._px(st, b, t, "perp"))]
+            risk_after = [v5risk.V5_LEG_STOP * n for b in kept
+                          for n in (st.pos[b].q * st.pos[b].spot_entry, st.pos[b].pq * st.pos[b].perp_entry)]
+            gross_after += entered + [q * px, q * px]  # pairs sent earlier in this decision, then this pair
+            risk_after += [v5risk.V5_LEG_STOP * n for n in entered + [q * px, q * px]]
+            bad = v5risk.violations([q * px, q * px], gross_after, risk_after, E, positions_after=len(held) + 1,
+                                    orders_before=[st.orders_today, st.orders_today + 1])
             if bad:
                 self.counters["v5_vetoes"] = self.counters.get("v5_vetoes", 0) + 1
                 continue

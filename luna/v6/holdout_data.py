@@ -41,12 +41,47 @@ def _window():
     return guard.HOLDOUT_START, guard.HOLDOUT_END
 
 
-def _write_once(path: Path, df: pd.DataFrame) -> str:
+RETRY_WAIT = 5.0  # seconds; doubled per attempt
+RETRIES = 6
+SPOT_PAGE_SLEEP = 1.0  # Kraken public Trades paging throttle
+
+
+def _retry(fn, *args, **kw):
+    """Retries a public GET-based fetch on any error (rate limit 'EGeneral:Too many requests' arrives as an
+    HTTP 200 error body, transport errors, 5xx) with exponential backoff; the last error is raised."""
+    import time
+
+    for k in range(RETRIES + 1):
+        try:
+            return fn(*args, **kw)
+        except Exception:
+            if k == RETRIES:
+                raise
+            time.sleep(RETRY_WAIT * 2**k)
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _write_part(path: Path, df: pd.DataFrame) -> str:
+    """Resumable staging: write to a temporary file, replace atomically, then record the sha256 in a
+    sidecar. A part with a matching sidecar is complete and is never fetched or written again."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    os.close(fd)
-    df.to_parquet(path)
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    tmp = path.with_name(path.name + ".partial")
+    df.to_parquet(tmp)
+    os.replace(tmp, path)
+    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    side = path.with_name(path.name + ".sha256")
+    side_tmp = path.with_name(path.name + ".sha256.partial")
+    side_tmp.write_text(sha, encoding="utf-8")
+    os.replace(side_tmp, side)
+    return sha
+
+
+def _complete(path: Path) -> str | None:
+    side = path.with_name(path.name + ".sha256")
+    if not (path.exists() and side.exists()):
+        return None
+    sha = side.read_text(encoding="utf-8").strip()
+    return sha if hashlib.sha256(path.read_bytes()).hexdigest() == sha else None
 
 
 def fetch_candles(client, tick: str, asset: str, auth) -> pd.DataFrame:
@@ -234,15 +269,26 @@ def download(client, root: Path, assets: list, auth, repo: Path | None = None) -
     exclusively, then pins the manifest's sha256 next to both opening markers (guard.pin_manifest).
     Returns the manifest {relative path: sha256}."""
     _require(auth)
+    import time
+
     root = Path(root)
-    man = {}
-    for a in assets:
-        for name, df in (("trade", fetch_candles(client, "trade", a, auth)), ("mark", fetch_candles(client, "mark", a, auth)),
-                         ("index", fetch_candles(client, "spot", a, auth)), ("funding", fetch_funding(client, a, auth)),
-                         ("spreads", fetch_spreads(client, a, auth)), ("spot", fetch_spot(client, a, auth))):
-            rel = f"{name}/{a}.parquet"
-            man[rel] = _write_once(root / rel, df)
     mp = root / "manifest.json"
+    if mp.exists():
+        raise FileExistsError(f"{mp} exists: the holdout download is complete and write-once")
+    fetchers = {
+        "trade": lambda a: fetch_candles(client, "trade", a, auth),
+        "mark": lambda a: fetch_candles(client, "mark", a, auth),
+        "index": lambda a: fetch_candles(client, "spot", a, auth),
+        "funding": lambda a: fetch_funding(client, a, auth),
+        "spreads": lambda a: fetch_spreads(client, a, auth),
+        "spot": lambda a: fetch_spot(client, a, auth, sleep=lambda s: time.sleep(SPOT_PAGE_SLEEP)),
+    }
+    man = {}
+    for a in assets:  # resumable inside the authorised process: complete parts are kept, not refetched
+        for name in ("trade", "mark", "index", "funding", "spreads", "spot"):
+            rel = f"{name}/{a}.parquet"
+            done = _complete(root / rel)
+            man[rel] = done if done is not None else _write_part(root / rel, _retry(fetchers[name], a))
     fd = os.open(mp, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump({"window": [str(guard.HOLDOUT_START), str(guard.HOLDOUT_END)], "files": man}, f, indent=1)

@@ -44,8 +44,10 @@ def test_candles_keep_bars_closed_inside_the_window(token):
     assert df.index.min() == lo and df.index.max() + pd.Timedelta("15min") <= guard.HOLDOUT_END
 
 
-def test_writes_are_exclusive(tmp_path):
+def test_parts_are_complete_only_with_a_matching_sidecar_hash(tmp_path):
     p = tmp_path / "x.parquet"
-    hd._write_once(p, pd.DataFrame({"a": [1]}))
-    with pytest.raises(FileExistsError):
-        hd._write_once(p, pd.DataFrame({"a": [2]}))
+    assert hd._complete(p) is None
+    sha = hd._write_part(p, pd.DataFrame({"a": [1]}))
+    assert hd._complete(p) == sha
+    p.write_bytes(p.read_bytes() + b"x")  # a changed or torn part is not complete -> fetched again
+    assert hd._complete(p) is None

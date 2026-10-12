@@ -97,10 +97,20 @@ def pin_manifest(manifest_sha256: str, auth: "HoldoutAuthorization", repo: Path 
     if not isinstance(auth, HoldoutAuthorization):
         raise HoldoutBlocked("pinning the holdout manifest needs the opening's HoldoutAuthorization")
     rec = json.dumps({"run_id": RUN_ID, "spec_sha256": SPEC_SHA256, "manifest_sha256": manifest_sha256}, indent=1)
-    for m in marker_paths(repo):
-        fd = os.open(m.parent / PIN, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(rec)
+    written: list[Path] = []
+    try:
+        for m in marker_paths(repo):
+            fd = os.open(m.parent / PIN, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            written.append(m.parent / PIN)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(rec)
+    except BaseException:
+        for w in written:  # all or nothing
+            try:
+                os.remove(w)
+            except OSError:
+                pass
+        raise
 
 
 def pinned_manifest(repo: Path | None = None) -> str | None:

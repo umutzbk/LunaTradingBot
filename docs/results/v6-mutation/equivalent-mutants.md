@@ -47,3 +47,22 @@ builds that case:
 - need = 6000 > free.
 
 The original code refuses the pair (`skipped_cash`); the mutant sends it. The mutant is now killed.
+
+## Deliberately not mutated: overlapping guards (round 4)
+
+Mutating either half of each pair below alone is observationally equivalent, because the other half
+still produces the same outcome. Both halves are kept on purpose.
+
+1. **`holdout_data.download`: the early `manifest.json exists → FileExistsError` check, and the
+   exclusive `O_EXCL` create of `manifest.json`.**
+   - Remove the early check: complete parts are skipped (not refetched) and the `O_EXCL` create
+     raises the same `FileExistsError`.
+   - Remove `O_EXCL`: the early check raises first.
+   - The early check avoids a pointless pass over the parts; `O_EXCL` closes the race between two
+     processes.
+   - Covered by `test_holdout_download_resumes_after_a_transient_failure_without_refetching` (third call).
+2. **`engine._decide`: the V5 price fallback (`insts` mid, else the last valuation mid), and
+   `v5risk.violations` failing closed on any non-finite input.**
+   - A NaN that slipped through would make the decision INFEASIBLE "V5 inputs not finite" rather
+     than pass silently.
+   - The fail-closed half is mutated and killed (`round4.json` "V5 NaN passes").

@@ -57,3 +57,18 @@ The frozen spec and constants are unchanged, and the `v6-profitability-spec-froz
 | Implementation | `luna/v6/v5risk.py`, `tests/v6/test_v5risk.py` (commit `69bc6ca`) |
 | Decision | Option A, narrow formal erratum (user, 2026-10-12) |
 | Status | **Pending.** It takes effect only when an independent methodology reviewer states "INTERPRETATION FIX, NOT OUTCOME TUNING". There is no code freeze before that. |
+
+### Erratum 001: independent methodology review (2026-10-12)
+
+- **Statement on the erratum text** (methodology reviewer, re-review of exact HEAD `84e5ed6`):
+  "INTERPRETATION FIX, NOT OUTCOME TUNING".
+- **Condition:** the code must implement the erratum as written. The reviewer's E1 (R5–R9 apply only
+  to opening orders; R6 measured at entry price as V5 `risk_amount`) is fixed in the next commit.
+- **Reviewer's note on R12** (recorded here because the erratum file is immutable): V5's own
+  historical replay at fabd419 used maintenance margin 0 from the same instrument file
+  (`carry/backtest.py`). Under the V5 formula, R12 then needs leg ≤ 0.667 E, which R9 (0.30 E)
+  already guarantees. With live margins, R12 cannot bind unless mm > 0.35, given R8/R9. "Not
+  applicable" is accepted.
+- **Still needs the user's sign-off** (the reviewer flagged both):
+  - D-A1: Stage 0 coverage below 90 % in any asset or asset × hour-of-day cell = FAIL (INVALID RUN).
+  - D-B5: spec-literal rounding at an exactly-binding cap or beta limit → INFEASIBLE.
