@@ -43,3 +43,17 @@ The fee source, the red-team report and the V5 results folders are marked `-text
   - opening the holdout requires the user's separate explicit approval (S-GUARD-1).
 - **Forward evidence** starts at T_F, the first 00:00 UTC at least 24 h after the independent implementation-review sign-off. The `v6-code-frozen` tag is made then (D7).
 - **V5 unchanged:** tag `v5-backtest-protocol-frozen`, results commit `fabd419`. Paper config unchanged; `live_enabled=false`.
+
+## Erratum 001 (2026-10-12)
+
+The frozen spec and constants are unchanged, and the `v6-profitability-spec-frozen` tag was not moved. The erratum records how `common.risk_profile` ("V5 carry.risk unchanged") is read for H3 and H1, rule by rule. It was needed because V5 R7 `max_positions 4` contradicts the frozen H3 leg count (at least 6 legs).
+
+| Item | Value |
+|---|---|
+| File | `docs/results/v6-spec-erratum-001.md` (stored `-text`, byte-identical) |
+| sha256 | `ca93982b6304096fe81071597a4d31988d2f63e90b96f7432094ab9f90dec13c` |
+| Commit | `3de40ab3c9cf166f3f0726f6c6dd185195506ba5` (contains only the erratum and its `.gitattributes` line) |
+| Annotated tag | `v6-profitability-spec-erratum-001` → tag object `4c8d4c4590b296d4e3c0f18270c9457edb80bc0e` |
+| Implementation | `luna/v6/v5risk.py`, `tests/v6/test_v5risk.py` (commit `69bc6ca`) |
+| Decision | Option A, narrow formal erratum (user, 2026-10-12) |
+| Status | **Pending.** It takes effect only when an independent methodology reviewer states "INTERPRETATION FIX, NOT OUTCOME TUNING". There is no code freeze before that. |
