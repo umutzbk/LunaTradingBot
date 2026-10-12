@@ -32,6 +32,10 @@ DECLARED = {
             "quantity; reductions keep it).",
     "D-E6": "An exit or stop order without a fill price (no mid at t + 15m) is retried at the next tick; an "
             "open without a fill is dropped (counted as unfilled).",
+    "D-V1": "When several classes of the same severity (MODEL INCONCLUSIVE, INSUFFICIENT, INCONCLUSIVE) fire, "
+            "the displayed class is the first in that order; every reason is reported.",
+    "D-V2": "P8 and P9 'not evaluable' raise INCONCLUSIVE only when P1 passed (P8 is evaluated only after P1; "
+            "with P1 failed the config is NO-GO anyway).",
     "D-E2": "V5 ineligibility exit (S-H3-10): a held asset that is ineligible for a holding reason "
             "(no mid, decision-window spread > 40 bps, 24 h volume < 1M USD, funding coverage < 90 %, "
             "newest funding older than 3 h) at two consecutive 15-minute ticks (>= 900 s) is exited; "
