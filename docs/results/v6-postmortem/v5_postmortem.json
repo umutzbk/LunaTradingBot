@@ -1,0 +1,1425 @@
+{
+ "checks": {
+  "E/PRIMARY": {
+   "settlement_total": 2.073339,
+   "legs_funding_total": 2.073339,
+   "legs_price_total": -0.663201
+  },
+  "E/S-NOKILL": {
+   "settlement_total": 2.773667,
+   "legs_funding_total": 2.773667,
+   "legs_price_total": 11.323392
+  },
+  "W/S-NOKILL": {
+   "settlement_total": 6.228367,
+   "legs_funding_total": 6.228367,
+   "legs_price_total": -22.123746
+  },
+  "D/S-NOKILL": {
+   "settlement_total": 8.894214,
+   "legs_funding_total": 8.894214,
+   "legs_price_total": -10.453358
+  },
+  "C/S-NOKILL": {
+   "settlement_total": 1.7847,
+   "legs_funding_total": 1.7847,
+   "legs_price_total": -25.227349
+  },
+  "W/PRIMARY": {
+   "settlement_total": 0.090932,
+   "legs_funding_total": 0.090932,
+   "legs_price_total": -34.432587
+  },
+  "C/PRIMARY": {
+   "settlement_total": 0.219288,
+   "legs_funding_total": 0.219288,
+   "legs_price_total": -15.881731
+  },
+  "D/PRIMARY": {
+   "settlement_total": 0.887992,
+   "legs_funding_total": 0.887992,
+   "legs_price_total": -30.312848
+  }
+ },
+ "Q1": {
+  "decision_counts": {
+   "HOLD:entry_carry_below_cost": 14169,
+   "HOLD:in_target_band": 13292,
+   "HOLD:cost_exceeds_advantage": 5543,
+   "HOLD:no_better_candidate": 1528,
+   "HOLD:min_hold": 836,
+   "HOLD:below_min_improvement": 793,
+   "EXIT:net_exposure_trim": 503,
+   "REJECT:below_min_qty:ZEC": 497,
+   "ENTER:pair_entry": 6,
+   "EXIT:neutrality_unwind": 5,
+   "EXIT:stop": 3,
+   "EXIT:ineligible:low_volume": 2,
+   "EXIT:kill_switch": 2
+  },
+  "entry_below_cost": {
+   "n": 14169,
+   "median_expected_usd": 0.212194,
+   "median_cost_usd": 0.315528,
+   "median_ratio": 0.682641,
+   "share_ratio_gt_0.75": 0.371798
+  },
+  "switch_cost_exceeds": {
+   "n": 5543,
+   "median_incremental_usd": 0.09911,
+   "median_cost_usd": 0.125222,
+   "median_ratio": 0.688124,
+   "share_ratio_gt_1": 0.316796
+  },
+  "legs": [
+   {
+    "asset": "BTC",
+    "side": -1,
+    "open": "2025-12-02 04:45:00+00:00",
+    "close": "2026-02-03 15:00:00+00:00",
+    "hours": 1522.25,
+    "notional": 60.849486,
+    "funding": 0.661361,
+    "price": 6.861926,
+    "fees": 0.057418,
+    "ss": 0.025987,
+    "exit_reason": "neutrality_unwind",
+    "exp_c": 7e-06,
+    "r_hold": 7e-06
+   },
+   {
+    "asset": "ENA",
+    "side": 1,
+    "open": "2025-11-11 00:15:00+00:00",
+    "close": "2025-11-12 03:00:00+00:00",
+    "hours": 26.75,
+    "notional": 63.470745,
+    "funding": 0.045522,
+    "price": -4.955186,
+    "fees": 0.060978,
+    "ss": 0.127222,
+    "exit_reason": "ineligible:low_volume",
+    "exp_c": 2.5e-05,
+    "r_hold": 2.8e-05
+   },
+   {
+    "asset": "ENA",
+    "side": 1,
+    "open": "2025-11-17 07:15:00+00:00",
+    "close": "2025-11-18 06:45:00+00:00",
+    "hours": 23.5,
+    "notional": 74.145616,
+    "funding": -0.016998,
+    "price": -3.805948,
+    "fees": 0.072232,
+    "ss": 0.123916,
+    "exit_reason": "ineligible:low_volume",
+    "exp_c": 2.3e-05,
+    "r_hold": -1e-05
+   },
+   {
+    "asset": "ETH",
+    "side": -1,
+    "open": "2026-03-16 07:15:00+00:00",
+    "close": "2026-04-14 07:30:00+00:00",
+    "hours": 696.25,
+    "notional": 67.97997,
+    "funding": -0.038618,
+    "price": -3.448996,
+    "fees": 0.069705,
+    "ss": 0.03138,
+    "exit_reason": "kill_switch",
+    "exp_c": -1e-06,
+    "r_hold": -1e-06
+   },
+   {
+    "asset": "SUI",
+    "side": -1,
+    "open": "2025-11-10 00:15:00+00:00",
+    "close": "2025-11-10 23:15:00+00:00",
+    "hours": 23.0,
+    "notional": 64.364069,
+    "funding": 0.016581,
+    "price": -0.921891,
+    "fees": 0.064826,
+    "ss": 0.038478,
+    "exit_reason": "neutrality_unwind",
+    "exp_c": 2e-05,
+    "r_hold": 1.2e-05
+   },
+   {
+    "asset": "SUI",
+    "side": -1,
+    "open": "2025-11-11 00:15:00+00:00",
+    "close": "2025-12-01 04:15:00+00:00",
+    "hours": 484.0,
+    "notional": 61.958817,
+    "funding": 0.124278,
+    "price": 22.115609,
+    "fees": 0.050887,
+    "ss": 0.049192,
+    "exit_reason": "neutrality_unwind",
+    "exp_c": 2.1e-05,
+    "r_hold": 5e-06
+   },
+   {
+    "asset": "TAO",
+    "side": 1,
+    "open": "2026-03-16 07:15:00+00:00",
+    "close": "2026-04-14 07:30:00+00:00",
+    "hours": 696.25,
+    "notional": 68.322625,
+    "funding": 0.895569,
+    "price": -5.201866,
+    "fees": 0.065736,
+    "ss": 0.073038,
+    "exit_reason": "kill_switch",
+    "exp_c": 3.8e-05,
+    "r_hold": 1.7e-05
+   },
+   {
+    "asset": "UNI",
+    "side": -1,
+    "open": "2025-11-12 01:30:00+00:00",
+    "close": "2025-11-12 03:00:00+00:00",
+    "hours": 1.5,
+    "notional": 62.351682,
+    "funding": -0.000269,
+    "price": -0.098098,
+    "fees": 0.062398,
+    "ss": 0.057066,
+    "exit_reason": "neutrality_unwind",
+    "exp_c": 1.8e-05,
+    "r_hold": -7e-06
+   },
+   {
+    "asset": "UNI",
+    "side": -1,
+    "open": "2025-11-17 07:15:00+00:00",
+    "close": "2025-11-18 06:45:00+00:00",
+    "hours": 23.5,
+    "notional": 74.227424,
+    "funding": 0.000749,
+    "price": 3.17068,
+    "fees": 0.072643,
+    "ss": 0.045543,
+    "exit_reason": "neutrality_unwind",
+    "exp_c": 1.6e-05,
+    "r_hold": 0.0
+   },
+   {
+    "asset": "ZEC",
+    "side": 1,
+    "open": "2025-11-10 00:15:00+00:00",
+    "close": "2025-11-10 23:15:00+00:00",
+    "hours": 23.0,
+    "notional": 62.124389,
+    "funding": 0.025777,
+    "price": -8.695771,
+    "fees": 0.057775,
+    "ss": 0.089855,
+    "exit_reason": "stop",
+    "exp_c": 8.5e-05,
+    "r_hold": 7e-06
+   },
+   {
+    "asset": "ZEC",
+    "side": 1,
+    "open": "2025-11-12 01:30:00+00:00",
+    "close": "2025-12-01 04:15:00+00:00",
+    "hours": 458.75,
+    "notional": 61.726504,
+    "funding": 0.041864,
+    "price": -1.81296,
+    "fees": 0.060829,
+    "ss": 0.122256,
+    "exit_reason": "stop",
+    "exp_c": 7.2e-05,
+    "r_hold": 0.0
+   },
+   {
+    "asset": "ZEC",
+    "side": 1,
+    "open": "2025-12-02 04:45:00+00:00",
+    "close": "2026-02-03 15:00:00+00:00",
+    "hours": 1522.25,
+    "notional": 66.219992,
+    "funding": 0.317523,
+    "price": -3.870699,
+    "fees": 0.064297,
+    "ss": 0.067593,
+    "exit_reason": "stop",
+    "exp_c": 3.3e-05,
+    "r_hold": 3e-06
+   }
+  ],
+  "enter_records": [
+   {
+    "ts": "2025-11-10 00:00:00+00:00",
+    "asset_in": "ZEC+SUI",
+    "expected_carry": 1.1717,
+    "switch_cost": 0.267056,
+    "safety_buffer": 0.06625,
+    "value": 0.704866
+   },
+   {
+    "ts": "2025-11-11 00:00:00+00:00",
+    "asset_in": "ENA+SUI",
+    "expected_carry": 0.489293,
+    "switch_cost": 0.275191,
+    "safety_buffer": 0.063793,
+    "value": 0.012714
+   },
+   {
+    "ts": "2025-11-12 01:15:00+00:00",
+    "asset_in": "ZEC+UNI",
+    "expected_carry": 0.95404,
+    "switch_cost": 0.302932,
+    "safety_buffer": 0.063303,
+    "value": 0.436339
+   },
+   {
+    "ts": "2025-11-17 07:00:00+00:00",
+    "asset_in": "ENA+UNI",
+    "expected_carry": 0.488555,
+    "switch_cost": 0.273657,
+    "safety_buffer": 0.074168,
+    "value": 0.003901
+   },
+   {
+    "ts": "2025-12-02 04:30:00+00:00",
+    "asset_in": "ZEC+BTC",
+    "expected_carry": 0.447103,
+    "switch_cost": 0.232334,
+    "safety_buffer": 0.067269,
+    "value": 0.031333
+   },
+   {
+    "ts": "2026-03-16 07:00:00+00:00",
+    "asset_in": "TAO+ETH",
+    "expected_carry": 0.428605,
+    "switch_cost": 0.235,
+    "safety_buffer": 0.068208,
+    "value": 0.007896
+   }
+  ],
+  "hurdle": {
+   "median_entry_cost_usd": 0.315528,
+   "required_cs_plus_cl_per_hour": 2.8e-05,
+   "required_pair_spread_annual": 0.24834,
+   "universe_book_fl_spread_annual_median": 0.446355,
+   "note": "pair = one short + one long; c_s + c_l = FL_s - FL_l",
+   "best_pair_annual_median": 0.287861,
+   "share_days_best_pair_above_hurdle": 0.584071
+  }
+ },
+ "Q5_Q6_exposure": {
+  "E/PRIMARY": {
+   "hourly_price_pnl_sum": -0.924005,
+   "reported_price_approx_check": "hourly snap of 15m fills",
+   "invested_days": 112,
+   "mean_gross": 0.471797,
+   "mean_abs_net": 0.046318,
+   "max_abs_net": 0.118057,
+   "mean_beta_exposure": 0.098013,
+   "mean_abs_beta_exposure": 0.102596,
+   "mean_vol_signed": 0.262671,
+   "mean_abs_vol_signed": 0.262671,
+   "mean_long_vol": 1.497681,
+   "mean_short_vol": 0.587564,
+   "mean_long_beta": 1.337444,
+   "mean_short_beta": 1.173711,
+   "realized_beta_slope": 0.002064,
+   "r2_btc": 6e-06,
+   "daily_price_pnl_std_usd": 4.742512,
+   "daily_price_pnl_std_pct": 0.017896,
+   "side_pnl": {
+    "long": -28.34243,
+    "long_funding": 1.309257,
+    "short": 27.679229,
+    "short_funding": 0.764082
+   }
+  },
+  "E/S-NOKILL": {
+   "hourly_price_pnl_sum": 10.697634,
+   "reported_price_approx_check": "hourly snap of 15m fills",
+   "invested_days": 175,
+   "mean_gross": 0.479711,
+   "mean_abs_net": 0.036386,
+   "max_abs_net": 0.118057,
+   "mean_beta_exposure": 0.080724,
+   "mean_abs_beta_exposure": 0.09481,
+   "mean_vol_signed": 0.222253,
+   "mean_abs_vol_signed": 0.222253,
+   "mean_long_vol": 1.36167,
+   "mean_short_vol": 0.562171,
+   "mean_long_beta": 1.353182,
+   "mean_short_beta": 1.179517,
+   "realized_beta_slope": 0.037205,
+   "r2_btc": 0.002227,
+   "daily_price_pnl_std_usd": 4.010045,
+   "daily_price_pnl_std_pct": 0.015132,
+   "side_pnl": {
+    "long": -31.492326,
+    "long_funding": 1.677246,
+    "short": 42.815718,
+    "short_funding": 1.096421
+   }
+  },
+  "W/S-NOKILL": {
+   "hourly_price_pnl_sum": -43.358544,
+   "reported_price_approx_check": "hourly snap of 15m fills",
+   "invested_days": 181,
+   "mean_gross": 0.731108,
+   "mean_abs_net": 0.03364,
+   "max_abs_net": 0.117381,
+   "mean_beta_exposure": 0.09545,
+   "mean_abs_beta_exposure": 0.106269,
+   "mean_vol_signed": 0.155515,
+   "mean_abs_vol_signed": 0.163993,
+   "mean_long_vol": 1.072803,
+   "mean_short_vol": 0.647586,
+   "mean_long_beta": 1.350583,
+   "mean_short_beta": 1.139855,
+   "realized_beta_slope": 0.05242,
+   "r2_btc": 0.007192,
+   "daily_price_pnl_std_usd": 3.936586,
+   "daily_price_pnl_std_pct": 0.014855,
+   "side_pnl": {
+    "long": -12.688063,
+    "long_funding": 5.196029,
+    "short": -9.435683,
+    "short_funding": 1.032338
+   }
+  },
+  "D/S-NOKILL": {
+   "hourly_price_pnl_sum": -14.28125,
+   "reported_price_approx_check": "hourly snap of 15m fills",
+   "invested_days": 218,
+   "mean_gross": 0.847444,
+   "mean_abs_net": 0.035069,
+   "max_abs_net": 0.118176,
+   "mean_beta_exposure": 0.116366,
+   "mean_abs_beta_exposure": 0.12789,
+   "mean_vol_signed": 0.182143,
+   "mean_abs_vol_signed": 0.187111,
+   "mean_long_vol": 1.08825,
+   "mean_short_vol": 0.703821,
+   "mean_long_beta": 1.366512,
+   "mean_short_beta": 1.169003,
+   "realized_beta_slope": 0.022431,
+   "r2_btc": 0.000975,
+   "daily_price_pnl_std_usd": 4.446475,
+   "daily_price_pnl_std_pct": 0.016779,
+   "side_pnl": {
+    "long": -12.000174,
+    "long_funding": 7.24268,
+    "short": 1.546816,
+    "short_funding": 1.651534
+   }
+  },
+  "C/S-NOKILL": {
+   "hourly_price_pnl_sum": -27.86219,
+   "reported_price_approx_check": "hourly snap of 15m fills",
+   "invested_days": 117,
+   "mean_gross": 0.477021,
+   "mean_abs_net": 0.038905,
+   "max_abs_net": 0.109442,
+   "mean_beta_exposure": 0.093367,
+   "mean_abs_beta_exposure": 0.098089,
+   "mean_vol_signed": 0.256116,
+   "mean_abs_vol_signed": 0.256116,
+   "mean_long_vol": 1.52854,
+   "mean_short_vol": 0.609825,
+   "mean_long_beta": 1.386538,
+   "mean_short_beta": 1.183665,
+   "realized_beta_slope": 0.023628,
+   "r2_btc": 0.000859,
+   "daily_price_pnl_std_usd": 4.358158,
+   "daily_price_pnl_std_pct": 0.016446,
+   "side_pnl": {
+    "long": -55.341457,
+    "long_funding": 0.93851,
+    "short": 30.114108,
+    "short_funding": 0.84619
+   }
+  }
+ },
+ "Q4_kill": {
+  "peak_day": "2025-12-29 00:00:00+00:00",
+  "peak_equity": 310.123899,
+  "kill_ts": "2026-04-14 07:15:00+00:00",
+  "price_pnl_by_asset_in_window": {
+   "BTC": 7.548742,
+   "ETH": -3.747542,
+   "TAO": -5.256668,
+   "ZEC": -42.980625
+  },
+  "asset_moves_peak_to_kill": {
+   "BTC": -0.151826,
+   "ETH": -0.19495,
+   "TAO": 0.132035,
+   "ZEC": -0.308044
+  },
+  "btc_move": -0.151826,
+  "funding_in_window": 1.480956,
+  "legs": [
+   {
+    "asset": "BTC",
+    "side": -1,
+    "open": "2025-12-02 04:45:00+00:00",
+    "close": "2026-02-03 15:00:00+00:00",
+    "notional": 60.8495,
+    "price": 6.8619,
+    "funding": 0.6614,
+    "exit_reason": "neutrality_unwind"
+   },
+   {
+    "asset": "ETH",
+    "side": -1,
+    "open": "2026-03-16 07:15:00+00:00",
+    "close": "2026-04-14 07:30:00+00:00",
+    "notional": 67.98,
+    "price": -3.449,
+    "funding": -0.0386,
+    "exit_reason": "kill_switch"
+   },
+   {
+    "asset": "TAO",
+    "side": 1,
+    "open": "2026-03-16 07:15:00+00:00",
+    "close": "2026-04-14 07:30:00+00:00",
+    "notional": 68.3226,
+    "price": -5.2019,
+    "funding": 0.8956,
+    "exit_reason": "kill_switch"
+   },
+   {
+    "asset": "ZEC",
+    "side": 1,
+    "open": "2025-12-02 04:45:00+00:00",
+    "close": "2026-02-03 15:00:00+00:00",
+    "notional": 66.22,
+    "price": -3.8707,
+    "funding": 0.3175,
+    "exit_reason": "stop"
+   }
+  ],
+  "equity_path": {
+   "2025-12-26 00:00:00+00:00": 292.32756,
+   "2025-12-27 00:00:00+00:00": 305.26756,
+   "2025-12-28 00:00:00+00:00": 307.723364,
+   "2025-12-29 00:00:00+00:00": 310.123899,
+   "2025-12-30 00:00:00+00:00": 307.5574,
+   "2025-12-31 00:00:00+00:00": 305.198571,
+   "2026-01-01 00:00:00+00:00": 306.736896,
+   "2026-01-02 00:00:00+00:00": 299.661136,
+   "2026-01-03 00:00:00+00:00": 302.99547,
+   "2026-01-04 00:00:00+00:00": 300.794138,
+   "2026-01-05 00:00:00+00:00": 299.377754,
+   "2026-01-06 00:00:00+00:00": 299.239333,
+   "2026-01-07 00:00:00+00:00": 295.464271,
+   "2026-01-08 00:00:00+00:00": 287.498935,
+   "2026-01-09 00:00:00+00:00": 287.22118,
+   "2026-01-10 00:00:00+00:00": 280.044106,
+   "2026-01-11 00:00:00+00:00": 280.677858,
+   "2026-01-12 00:00:00+00:00": 284.785071,
+   "2026-01-13 00:00:00+00:00": 281.440726,
+   "2026-01-14 00:00:00+00:00": 287.585441,
+   "2026-01-15 00:00:00+00:00": 282.997293,
+   "2026-01-16 00:00:00+00:00": 282.591041,
+   "2026-01-17 00:00:00+00:00": 281.039571,
+   "2026-01-18 00:00:00+00:00": 278.085791,
+   "2026-01-19 00:00:00+00:00": 277.621106,
+   "2026-01-20 00:00:00+00:00": 277.339944,
+   "2026-01-21 00:00:00+00:00": 277.647181,
+   "2026-01-22 00:00:00+00:00": 279.173078,
+   "2026-01-23 00:00:00+00:00": 279.611716,
+   "2026-01-24 00:00:00+00:00": 278.584831,
+   "2026-01-25 00:00:00+00:00": 275.267284,
+   "2026-01-26 00:00:00+00:00": 280.556874,
+   "2026-01-27 00:00:00+00:00": 285.459016,
+   "2026-01-28 00:00:00+00:00": 280.549606,
+   "2026-01-29 00:00:00+00:00": 280.856977,
+   "2026-01-30 00:00:00+00:00": 278.861776,
+   "2026-01-31 00:00:00+00:00": 276.402425,
+   "2026-02-01 00:00:00+00:00": 278.107118,
+   "2026-02-02 00:00:00+00:00": 275.127593,
+   "2026-02-03 00:00:00+00:00": 272.832657,
+   "2026-02-04 00:00:00+00:00": 272.832657,
+   "2026-02-05 00:00:00+00:00": 272.832657,
+   "2026-02-06 00:00:00+00:00": 272.832657,
+   "2026-02-07 00:00:00+00:00": 272.832657,
+   "2026-02-08 00:00:00+00:00": 272.832657,
+   "2026-02-09 00:00:00+00:00": 272.832657,
+   "2026-02-10 00:00:00+00:00": 272.832657,
+   "2026-02-11 00:00:00+00:00": 272.832657,
+   "2026-02-12 00:00:00+00:00": 272.832657,
+   "2026-02-13 00:00:00+00:00": 272.832657,
+   "2026-02-14 00:00:00+00:00": 272.832657,
+   "2026-02-15 00:00:00+00:00": 272.832657,
+   "2026-02-16 00:00:00+00:00": 272.832657,
+   "2026-02-17 00:00:00+00:00": 272.832657,
+   "2026-02-18 00:00:00+00:00": 272.832657,
+   "2026-02-19 00:00:00+00:00": 272.832657,
+   "2026-02-20 00:00:00+00:00": 272.832657,
+   "2026-02-21 00:00:00+00:00": 272.832657,
+   "2026-02-22 00:00:00+00:00": 272.832657,
+   "2026-02-23 00:00:00+00:00": 272.832657,
+   "2026-02-24 00:00:00+00:00": 272.832657,
+   "2026-02-25 00:00:00+00:00": 272.832657,
+   "2026-02-26 00:00:00+00:00": 272.832657,
+   "2026-02-27 00:00:00+00:00": 272.832657,
+   "2026-02-28 00:00:00+00:00": 272.832657,
+   "2026-03-01 00:00:00+00:00": 272.832657,
+   "2026-03-02 00:00:00+00:00": 272.832657,
+   "2026-03-03 00:00:00+00:00": 272.832657,
+   "2026-03-04 00:00:00+00:00": 272.832657,
+   "2026-03-05 00:00:00+00:00": 272.832657,
+   "2026-03-06 00:00:00+00:00": 272.832657,
+   "2026-03-07 00:00:00+00:00": 272.832657,
+   "2026-03-08 00:00:00+00:00": 272.832657,
+   "2026-03-09 00:00:00+00:00": 272.832657,
+   "2026-03-10 00:00:00+00:00": 272.832657,
+   "2026-03-11 00:00:00+00:00": 272.832657,
+   "2026-03-12 00:00:00+00:00": 272.832657,
+   "2026-03-13 00:00:00+00:00": 272.832657,
+   "2026-03-14 00:00:00+00:00": 272.832657,
+   "2026-03-15 00:00:00+00:00": 272.832657,
+   "2026-03-16 00:00:00+00:00": 271.900368,
+   "2026-03-17 00:00:00+00:00": 272.021547,
+   "2026-03-18 00:00:00+00:00": 274.677883,
+   "2026-03-19 00:00:00+00:00": 278.947587,
+   "2026-03-20 00:00:00+00:00": 275.58013,
+   "2026-03-21 00:00:00+00:00": 276.9733,
+   "2026-03-22 00:00:00+00:00": 276.402185,
+   "2026-03-23 00:00:00+00:00": 281.342446,
+   "2026-03-24 00:00:00+00:00": 292.050428,
+   "2026-03-25 00:00:00+00:00": 294.470253,
+   "2026-03-26 00:00:00+00:00": 295.587157,
+   "2026-03-27 00:00:00+00:00": 292.246793,
+   "2026-03-28 00:00:00+00:00": 291.990556,
+   "2026-03-29 00:00:00+00:00": 292.347203,
+   "2026-03-30 00:00:00+00:00": 290.071832,
+   "2026-03-31 00:00:00+00:00": 286.397186,
+   "2026-04-01 00:00:00+00:00": 285.754487,
+   "2026-04-02 00:00:00+00:00": 286.399904,
+   "2026-04-03 00:00:00+00:00": 288.601932,
+   "2026-04-04 00:00:00+00:00": 286.365195,
+   "2026-04-05 00:00:00+00:00": 287.2651,
+   "2026-04-06 00:00:00+00:00": 288.059632,
+   "2026-04-07 00:00:00+00:00": 289.696534,
+   "2026-04-08 00:00:00+00:00": 288.604059,
+   "2026-04-09 00:00:00+00:00": 283.654404,
+   "2026-04-10 00:00:00+00:00": 270.153548,
+   "2026-04-11 00:00:00+00:00": 273.171653,
+   "2026-04-12 00:00:00+00:00": 272.233272,
+   "2026-04-13 00:00:00+00:00": 267.360498,
+   "2026-04-14 00:00:00+00:00": 264.798887,
+   "2026-04-15 00:00:00+00:00": 264.798887
+  }
+ },
+ "Q7_assets": {
+  "E/PRIMARY": [
+   {
+    "asset": "BTC",
+    "side": -1,
+    "legs": 1,
+    "hours": 1522.25,
+    "funding": 0.661,
+    "price": 6.862,
+    "costs": 0.083
+   },
+   {
+    "asset": "ENA",
+    "side": 1,
+    "legs": 2,
+    "hours": 50.25,
+    "funding": 0.029,
+    "price": -8.761,
+    "costs": 0.384
+   },
+   {
+    "asset": "ETH",
+    "side": -1,
+    "legs": 1,
+    "hours": 696.25,
+    "funding": -0.039,
+    "price": -3.449,
+    "costs": 0.101
+   },
+   {
+    "asset": "SUI",
+    "side": -1,
+    "legs": 2,
+    "hours": 507.0,
+    "funding": 0.141,
+    "price": 21.194,
+    "costs": 0.203
+   },
+   {
+    "asset": "TAO",
+    "side": 1,
+    "legs": 1,
+    "hours": 696.25,
+    "funding": 0.896,
+    "price": -5.202,
+    "costs": 0.139
+   },
+   {
+    "asset": "UNI",
+    "side": -1,
+    "legs": 2,
+    "hours": 25.0,
+    "funding": 0.0,
+    "price": 3.073,
+    "costs": 0.238
+   },
+   {
+    "asset": "ZEC",
+    "side": 1,
+    "legs": 3,
+    "hours": 2004.0,
+    "funding": 0.385,
+    "price": -14.379,
+    "costs": 0.463
+   }
+  ],
+  "E/S-NOKILL": [
+   {
+    "asset": "BTC",
+    "side": -1,
+    "legs": 1,
+    "hours": 1522.25,
+    "funding": 0.661,
+    "price": 6.862,
+    "costs": 0.083
+   },
+   {
+    "asset": "ENA",
+    "side": 1,
+    "legs": 2,
+    "hours": 50.25,
+    "funding": 0.029,
+    "price": -8.761,
+    "costs": 0.384
+   },
+   {
+    "asset": "ETH",
+    "side": -1,
+    "legs": 2,
+    "hours": 2230.5,
+    "funding": 0.294,
+    "price": 11.687,
+    "costs": 0.144
+   },
+   {
+    "asset": "SUI",
+    "side": -1,
+    "legs": 2,
+    "hours": 507.0,
+    "funding": 0.141,
+    "price": 21.194,
+    "costs": 0.203
+   },
+   {
+    "asset": "TAO",
+    "side": 1,
+    "legs": 1,
+    "hours": 1830.0,
+    "funding": 1.278,
+    "price": -3.832,
+    "costs": 0.15
+   },
+   {
+    "asset": "UNI",
+    "side": -1,
+    "legs": 2,
+    "hours": 25.0,
+    "funding": 0.0,
+    "price": 3.073,
+    "costs": 0.238
+   },
+   {
+    "asset": "ZEC",
+    "side": 1,
+    "legs": 4,
+    "hours": 2404.5,
+    "funding": 0.37,
+    "price": -18.9,
+    "costs": 0.524
+   }
+  ],
+  "W/S-NOKILL": [
+   {
+    "asset": "ADA",
+    "side": 1,
+    "legs": 2,
+    "hours": 439.75,
+    "funding": -0.082,
+    "price": -14.92,
+    "costs": 0.208
+   },
+   {
+    "asset": "AVAX",
+    "side": 1,
+    "legs": 9,
+    "hours": 1384.75,
+    "funding": 0.438,
+    "price": -19.525,
+    "costs": 0.748
+   },
+   {
+    "asset": "BNB",
+    "side": -1,
+    "legs": 7,
+    "hours": 761.75,
+    "funding": -0.148,
+    "price": 4.799,
+    "costs": 0.666
+   },
+   {
+    "asset": "BTC",
+    "side": -1,
+    "legs": 6,
+    "hours": 2033.25,
+    "funding": 0.323,
+    "price": 11.263,
+    "costs": 0.425
+   },
+   {
+    "asset": "DOGE",
+    "side": -1,
+    "legs": 4,
+    "hours": 824.5,
+    "funding": 0.22,
+    "price": 8.051,
+    "costs": 0.372
+   },
+   {
+    "asset": "ENA",
+    "side": 1,
+    "legs": 2,
+    "hours": 63.75,
+    "funding": 0.015,
+    "price": -2.943,
+    "costs": 0.266
+   },
+   {
+    "asset": "ETH",
+    "side": -1,
+    "legs": 5,
+    "hours": 1390.5,
+    "funding": 0.263,
+    "price": 15.15,
+    "costs": 0.383
+   },
+   {
+    "asset": "FET",
+    "side": 1,
+    "legs": 1,
+    "hours": 14.5,
+    "funding": 0.143,
+    "price": 1.396,
+    "costs": 0.289
+   },
+   {
+    "asset": "HYPE",
+    "side": -1,
+    "legs": 10,
+    "hours": 1076.5,
+    "funding": 0.338,
+    "price": -31.911,
+    "costs": 1.235
+   },
+   {
+    "asset": "LINK",
+    "side": -1,
+    "legs": 1,
+    "hours": 39.25,
+    "funding": 0.019,
+    "price": 4.086,
+    "costs": 0.102
+   },
+   {
+    "asset": "LINK",
+    "side": 1,
+    "legs": 1,
+    "hours": 108.5,
+    "funding": -0.026,
+    "price": -7.181,
+    "costs": 0.104
+   },
+   {
+    "asset": "NEAR",
+    "side": 1,
+    "legs": 8,
+    "hours": 1270.25,
+    "funding": 0.614,
+    "price": -14.842,
+    "costs": 0.959
+   },
+   {
+    "asset": "PEPE",
+    "side": -1,
+    "legs": 1,
+    "hours": 92.5,
+    "funding": -0.023,
+    "price": 7.645,
+    "costs": 0.099
+   },
+   {
+    "asset": "PEPE",
+    "side": 1,
+    "legs": 4,
+    "hours": 219.25,
+    "funding": 0.269,
+    "price": 5.527,
+    "costs": 0.444
+   },
+   {
+    "asset": "SOL",
+    "side": 1,
+    "legs": 1,
+    "hours": 21.0,
+    "funding": 0.003,
+    "price": 0.406,
+    "costs": 0.101
+   },
+   {
+    "asset": "SUI",
+    "side": -1,
+    "legs": 6,
+    "hours": 494.75,
+    "funding": 0.01,
+    "price": -7.736,
+    "costs": 0.615
+   },
+   {
+    "asset": "TAO",
+    "side": 1,
+    "legs": 6,
+    "hours": 1589.5,
+    "funding": 2.45,
+    "price": 34.77,
+    "costs": 0.747
+   },
+   {
+    "asset": "UNI",
+    "side": -1,
+    "legs": 4,
+    "hours": 235.75,
+    "funding": 0.034,
+    "price": 1.312,
+    "costs": 0.535
+   },
+   {
+    "asset": "UNI",
+    "side": 1,
+    "legs": 1,
+    "hours": 94.25,
+    "funding": 0.034,
+    "price": 3.19,
+    "costs": 0.129
+   },
+   {
+    "asset": "XLM",
+    "side": -1,
+    "legs": 1,
+    "hours": 58.0,
+    "funding": -0.011,
+    "price": 3.116,
+    "costs": 0.097
+   },
+   {
+    "asset": "XLM",
+    "side": 1,
+    "legs": 4,
+    "hours": 199.0,
+    "funding": 0.004,
+    "price": -0.483,
+    "costs": 0.575
+   },
+   {
+    "asset": "ZEC",
+    "side": -1,
+    "legs": 3,
+    "hours": 155.75,
+    "funding": 0.008,
+    "price": -25.211,
+    "costs": 0.37
+   },
+   {
+    "asset": "ZEC",
+    "side": 1,
+    "legs": 10,
+    "hours": 1758.0,
+    "funding": 1.333,
+    "price": 1.916,
+    "costs": 1.107
+   }
+  ],
+  "D/S-NOKILL": [
+   {
+    "asset": "ADA",
+    "side": 1,
+    "legs": 4,
+    "hours": 167.75,
+    "funding": -0.018,
+    "price": -5.703,
+    "costs": 0.414
+   },
+   {
+    "asset": "AVAX",
+    "side": -1,
+    "legs": 1,
+    "hours": 15.25,
+    "funding": 0.001,
+    "price": 3.616,
+    "costs": 0.107
+   },
+   {
+    "asset": "AVAX",
+    "side": 1,
+    "legs": 16,
+    "hours": 1834.0,
+    "funding": 0.825,
+    "price": -3.968,
+    "costs": 1.448
+   },
+   {
+    "asset": "BNB",
+    "side": -1,
+    "legs": 22,
+    "hours": 1134.0,
+    "funding": -0.126,
+    "price": -10.638,
+    "costs": 1.909
+   },
+   {
+    "asset": "BTC",
+    "side": -1,
+    "legs": 14,
+    "hours": 2385.5,
+    "funding": 0.513,
+    "price": 5.863,
+    "costs": 1.055
+   },
+   {
+    "asset": "DOGE",
+    "side": -1,
+    "legs": 16,
+    "hours": 839.5,
+    "funding": 0.229,
+    "price": -4.345,
+    "costs": 1.458
+   },
+   {
+    "asset": "ENA",
+    "side": -1,
+    "legs": 1,
+    "hours": 2.5,
+    "funding": 0.002,
+    "price": -0.496,
+    "costs": 0.132
+   },
+   {
+    "asset": "ENA",
+    "side": 1,
+    "legs": 11,
+    "hours": 457.5,
+    "funding": 0.43,
+    "price": -23.615,
+    "costs": 1.555
+   },
+   {
+    "asset": "ETH",
+    "side": -1,
+    "legs": 14,
+    "hours": 1533.5,
+    "funding": 0.203,
+    "price": 10.955,
+    "costs": 1.19
+   },
+   {
+    "asset": "FET",
+    "side": 1,
+    "legs": 4,
+    "hours": 134.5,
+    "funding": 0.294,
+    "price": 10.317,
+    "costs": 0.831
+   },
+   {
+    "asset": "HYPE",
+    "side": -1,
+    "legs": 33,
+    "hours": 2370.0,
+    "funding": 0.784,
+    "price": -40.619,
+    "costs": 4.443
+   },
+   {
+    "asset": "HYPE",
+    "side": 1,
+    "legs": 1,
+    "hours": 24.0,
+    "funding": -0.005,
+    "price": 0.748,
+    "costs": 0.122
+   },
+   {
+    "asset": "LINK",
+    "side": -1,
+    "legs": 1,
+    "hours": 24.0,
+    "funding": 0.006,
+    "price": 0.746,
+    "costs": 0.096
+   },
+   {
+    "asset": "LINK",
+    "side": 1,
+    "legs": 3,
+    "hours": 248.0,
+    "funding": -0.012,
+    "price": -7.689,
+    "costs": 0.332
+   },
+   {
+    "asset": "NEAR",
+    "side": 1,
+    "legs": 25,
+    "hours": 1628.0,
+    "funding": 0.771,
+    "price": -4.638,
+    "costs": 2.982
+   },
+   {
+    "asset": "PEPE",
+    "side": -1,
+    "legs": 1,
+    "hours": 24.0,
+    "funding": -0.004,
+    "price": -0.539,
+    "costs": 0.094
+   },
+   {
+    "asset": "PEPE",
+    "side": 1,
+    "legs": 17,
+    "hours": 662.5,
+    "funding": 0.718,
+    "price": -7.352,
+    "costs": 1.848
+   },
+   {
+    "asset": "SOL",
+    "side": -1,
+    "legs": 2,
+    "hours": 216.0,
+    "funding": 0.023,
+    "price": 1.876,
+    "costs": 0.195
+   },
+   {
+    "asset": "SOL",
+    "side": 1,
+    "legs": 1,
+    "hours": 21.0,
+    "funding": 0.003,
+    "price": 0.406,
+    "costs": 0.101
+   },
+   {
+    "asset": "SUI",
+    "side": -1,
+    "legs": 8,
+    "hours": 741.25,
+    "funding": 0.09,
+    "price": 17.086,
+    "costs": 0.765
+   },
+   {
+    "asset": "TAO",
+    "side": -1,
+    "legs": 1,
+    "hours": 35.25,
+    "funding": -0.014,
+    "price": 3.769,
+    "costs": 0.132
+   },
+   {
+    "asset": "TAO",
+    "side": 1,
+    "legs": 11,
+    "hours": 2323.5,
+    "funding": 2.623,
+    "price": 32.214,
+    "costs": 1.264
+   },
+   {
+    "asset": "UNI",
+    "side": -1,
+    "legs": 4,
+    "hours": 442.75,
+    "funding": -0.02,
+    "price": 16.087,
+    "costs": 0.531
+   },
+   {
+    "asset": "UNI",
+    "side": 1,
+    "legs": 3,
+    "hours": 183.5,
+    "funding": 0.085,
+    "price": 1.382,
+    "costs": 0.304
+   },
+   {
+    "asset": "XLM",
+    "side": -1,
+    "legs": 3,
+    "hours": 72.75,
+    "funding": -0.011,
+    "price": 4.083,
+    "costs": 0.317
+   },
+   {
+    "asset": "XLM",
+    "side": 1,
+    "legs": 8,
+    "hours": 182.0,
+    "funding": -0.06,
+    "price": 10.077,
+    "costs": 1.078
+   },
+   {
+    "asset": "ZEC",
+    "side": -1,
+    "legs": 7,
+    "hours": 364.25,
+    "funding": -0.025,
+    "price": -5.896,
+    "costs": 0.723
+   },
+   {
+    "asset": "ZEC",
+    "side": 1,
+    "legs": 19,
+    "hours": 2334.25,
+    "funding": 1.59,
+    "price": -14.179,
+    "costs": 2.321
+   }
+  ],
+  "C/S-NOKILL": [
+   {
+    "asset": "BTC",
+    "side": -1,
+    "legs": 1,
+    "hours": 1458.25,
+    "funding": 0.683,
+    "price": 5.613,
+    "costs": 0.084
+   },
+   {
+    "asset": "ENA",
+    "side": 1,
+    "legs": 1,
+    "hours": 26.75,
+    "funding": 0.046,
+    "price": -4.955,
+    "costs": 0.188
+   },
+   {
+    "asset": "ETH",
+    "side": -1,
+    "legs": 2,
+    "hours": 840.0,
+    "funding": 0.006,
+    "price": 3.898,
+    "costs": 0.181
+   },
+   {
+    "asset": "HYPE",
+    "side": -1,
+    "legs": 1,
+    "hours": 142.0,
+    "funding": 0.017,
+    "price": 4.582,
+    "costs": 0.11
+   },
+   {
+    "asset": "SUI",
+    "side": -1,
+    "legs": 3,
+    "hours": 477.75,
+    "funding": 0.14,
+    "price": 16.021,
+    "costs": 0.307
+   },
+   {
+    "asset": "TAO",
+    "side": 1,
+    "legs": 1,
+    "hours": 696.25,
+    "funding": 0.703,
+    "price": -9.225,
+    "costs": 0.157
+   },
+   {
+    "asset": "ZEC",
+    "side": 1,
+    "legs": 5,
+    "hours": 2195.0,
+    "funding": 0.19,
+    "price": -41.161,
+    "costs": 0.623
+   }
+  ]
+ },
+ "Q8_legs": {
+  "n_legs_unique": 332,
+  "mean_exp_c_annual": 0.086975,
+  "mean_r24_annual": 0.063795,
+  "mean_r72_annual": 0.055455,
+  "mean_r168_annual": 0.04716,
+  "mean_r_hold_annual": 0.043766,
+  "ratio_r24": 0.733484,
+  "ratio_r72": 0.637603,
+  "ratio_r168": 0.542225,
+  "ratio_hold": 0.503202,
+  "by_side": {
+   "1": {
+    "n": 163,
+    "exp": 0.127349,
+    "r168": 0.080688,
+    "hold": 0.061286
+   },
+   "-1": {
+    "n": 169,
+    "exp": 0.048035,
+    "r168": 0.014823,
+    "hold": 0.026868
+   }
+  },
+  "share_r168_sign_flipped": 0.295181
+ },
+ "Q9_age_decay_legs": [
+  {
+   "bucket": "0-24h",
+   "legs": 330.0,
+   "hours": 7080.0,
+   "realized_annual": 0.061,
+   "expected_annual": 0.0886
+  },
+  {
+   "bucket": "24-72h",
+   "legs": 226.0,
+   "hours": 8891.0,
+   "realized_annual": 0.0563,
+   "expected_annual": 0.0908
+  },
+  {
+   "bucket": "72-168h",
+   "legs": 142.0,
+   "hours": 9822.0,
+   "realized_annual": 0.0499,
+   "expected_annual": 0.094
+  },
+  {
+   "bucket": "168-336h",
+   "legs": 60.0,
+   "hours": 7742.0,
+   "realized_annual": 0.0699,
+   "expected_annual": 0.1078
+  },
+  {
+   "bucket": "336-720h",
+   "legs": 32.0,
+   "hours": 5611.0,
+   "realized_annual": 0.0525,
+   "expected_annual": 0.1483
+  },
+  {
+   "bucket": "720-5000h",
+   "legs": 6.0,
+   "hours": 4087.0,
+   "realized_annual": 0.0472,
+   "expected_annual": 0.1677
+  }
+ ],
+ "Q10_universe_book": {
+  "days": 226,
+  "mean_expected_annual_per_gross": 0.129826,
+  "mean_realized_24h_annual": 0.078689,
+  "mean_realized_72h_annual": 0.071747,
+  "mean_realized_168h_annual": 0.061153,
+  "ratio_24h": 0.606113,
+  "ratio_72h": 0.552641,
+  "ratio_168h": 0.47104,
+  "mean_rank_ic_24h": 0.336995,
+  "mean_rank_ic_72h": 0.390645,
+  "mean_rank_ic_168h": 0.425264,
+  "mean_price_rank_ic_24h": 0.028878,
+  "mean_price_rank_ic_72h": 0.027667,
+  "mean_price_rank_ic_168h": 0.016342,
+  "book_price_ret_24h_mean": -0.000491,
+  "book_price_ret_72h_mean": -0.001399,
+  "book_price_ret_168h_mean": -0.004499,
+  "book_price_ret_24h_std": 0.018564,
+  "book_price_ret_72h_std": 0.032003,
+  "book_price_ret_168h_std": 0.054444,
+  "book_funding_24h_mean": 0.000216,
+  "book_funding_72h_mean": 0.00059,
+  "book_funding_168h_mean": 0.001173,
+  "noise_to_carry_168h": 46.422279,
+  "corr_book_px168_btc168": -0.038193,
+  "long_basket_ret168_mean": -0.010563,
+  "short_basket_ret168_mean": -0.001566,
+  "share_days_realized168_lt_half_expected": 0.495575,
+  "by_month": {
+   "2025-11-30 00:00:00+00:00": {
+    "exp": 0.3127,
+    "r168": 0.0305,
+    "px168": -0.0116
+   },
+   "2025-12-31 00:00:00+00:00": {
+    "exp": 0.0968,
+    "r168": 0.0395,
+    "px168": 0.0104
+   },
+   "2026-01-31 00:00:00+00:00": {
+    "exp": 0.0711,
+    "r168": 0.0578,
+    "px168": -0.0315
+   },
+   "2026-02-28 00:00:00+00:00": {
+    "exp": 0.09,
+    "r168": 0.0777,
+    "px168": 0.0209
+   },
+   "2026-03-31 00:00:00+00:00": {
+    "exp": 0.1681,
+    "r168": 0.0621,
+    "px168": 0.0176
+   },
+   "2026-04-30 00:00:00+00:00": {
+    "exp": 0.1442,
+    "r168": 0.1109,
+    "px168": -0.0219
+   },
+   "2026-05-31 00:00:00+00:00": {
+    "exp": 0.0945,
+    "r168": 0.0589,
+    "px168": -0.0112
+   },
+   "2026-06-30 00:00:00+00:00": {
+    "exp": 0.1121,
+    "r168": 0.0395,
+    "px168": -0.0106
+   }
+  }
+ }
+}
