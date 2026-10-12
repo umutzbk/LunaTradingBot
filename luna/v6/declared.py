@@ -48,6 +48,12 @@ DECLARED = {
             "the visible depth is valued at the worst visible level (valuation only, no order).",
     "D-X3": "Forward funding known_at = receive time of the first collector round carrying the period; a later "
             "revision of the same period is ignored; missing periods come from the official API (S-DATA-1).",
+    "D-R5": "D9 V5 W/E holdout reference: the V5 code and config run unchanged; only the V5 modules' cut-off "
+            "constant is moved to the holdout end inside a context manager, only with the V6 holdout token, and "
+            "restored afterwards (V5 files unmodified, tested). V5 run_arm needs a UTC-midnight end, so the "
+            "reference covers [2026-07-01, 2026-10-09 00:00). Verdict-free.",
+    "D-R6": "An entry selection that leaves fewer than 3 legs on a side is INFEASIBLE before the covariance is "
+            "computed (the build would refuse it anyway); covariance needs >= 2 assets and non-zero variance.",
     "D-E2": "V5 ineligibility exit (S-H3-10): a held asset that is ineligible for a holding reason "
             "(no mid, decision-window spread > 40 bps, 24 h volume < 1M USD, funding coverage < 90 %, "
             "newest funding older than 3 h) at two consecutive 15-minute ticks (>= 900 s) is exited; "

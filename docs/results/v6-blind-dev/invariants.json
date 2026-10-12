@@ -1,0 +1,283 @@
+{
+ "window": [
+  "2025-11-10 00:00:00+00:00",
+  "2026-07-01 00:00:00+00:00"
+ ],
+ "data_availability": {
+  "ADA": {
+   "mark_bars": 1.0,
+   "perp_trade_bars": 1.0,
+   "spot_bars": 0.9997317596566524,
+   "spread_snapshots_valid": 1.0,
+   "funding_periods_known": 0.9992846924177397
+  },
+  "AVAX": {
+   "mark_bars": 1.0,
+   "perp_trade_bars": 1.0,
+   "spot_bars": 0.9987035050071531,
+   "spread_snapshots_valid": 1.0,
+   "funding_periods_known": 0.9992846924177397
+  },
+  "BNB": {
+   "mark_bars": 1.0,
+   "perp_trade_bars": 1.0,
+   "spot_bars": 0.999508226037196,
+   "spread_snapshots_valid": 1.0,
+   "funding_periods_known": 0.9992846924177397
+  },
+  "BTC": {
+   "mark_bars": 1.0,
+   "perp_trade_bars": 1.0,
+   "spot_bars": 0.9997317596566524,
+   "spread_snapshots_valid": 1.0,
+   "funding_periods_known": 0.9991058655221745
+  },
+  "DOGE": {
+   "mark_bars": 1.0,
+   "perp_trade_bars": 1.0,
+   "spot_bars": 0.9997317596566524,
+   "spread_snapshots_valid": 1.0,
+   "funding_periods_known": 0.9992846924177397
+  },
+  "ENA": {
+   "mark_bars": 1.0,
+   "perp_trade_bars": 1.0,
+   "spot_bars": 0.958601573676681,
+   "spread_snapshots_valid": 1.0,
+   "funding_periods_known": 0.9992846924177397
+  },
+  "ETH": {
+   "mark_bars": 1.0,
+   "perp_trade_bars": 1.0,
+   "spot_bars": 0.9997317596566524,
+   "spread_snapshots_valid": 1.0,
+   "funding_periods_known": 0.9991058655221745
+  },
+  "FET": {
+   "mark_bars": 1.0,
+   "perp_trade_bars": 1.0,
+   "spot_bars": 0.9938304721030042,
+   "spread_snapshots_valid": 0.9984054601812112,
+   "funding_periods_known": 0.9992846924177397
+  },
+  "HYPE": {
+   "mark_bars": 1.0,
+   "perp_trade_bars": 1.0,
+   "spot_bars": 0.6575912017167382,
+   "spread_snapshots_valid": 1.0,
+   "funding_periods_known": 0.9992846924177397
+  },
+  "LINK": {
+   "mark_bars": 1.0,
+   "perp_trade_bars": 1.0,
+   "spot_bars": 0.9997317596566524,
+   "spread_snapshots_valid": 1.0,
+   "funding_periods_known": 0.9992846924177397
+  },
+  "NEAR": {
+   "mark_bars": 1.0,
+   "perp_trade_bars": 1.0,
+   "spot_bars": 0.9849785407725322,
+   "spread_snapshots_valid": 1.0,
+   "funding_periods_known": 0.9992846924177397
+  },
+  "PEPE": {
+   "mark_bars": 1.0,
+   "perp_trade_bars": 1.0,
+   "spot_bars": 0.9997317596566524,
+   "spread_snapshots_valid": 1.0,
+   "funding_periods_known": 0.9992846924177397
+  },
+  "PUMP": {
+   "mark_bars": 1.0,
+   "perp_trade_bars": 1.0,
+   "spot_bars": 0.9545779685264664,
+   "spread_snapshots_valid": 0.9996274439675727,
+   "funding_periods_known": 0.9992846924177397
+  },
+  "SOL": {
+   "mark_bars": 1.0,
+   "perp_trade_bars": 1.0,
+   "spot_bars": 0.9997317596566524,
+   "spread_snapshots_valid": 1.0,
+   "funding_periods_known": 0.9992846924177397
+  },
+  "SUI": {
+   "mark_bars": 1.0,
+   "perp_trade_bars": 1.0,
+   "spot_bars": 0.9996423462088698,
+   "spread_snapshots_valid": 1.0,
+   "funding_periods_known": 0.9992846924177397
+  },
+  "TAO": {
+   "mark_bars": 1.0,
+   "perp_trade_bars": 1.0,
+   "spot_bars": 0.9997317596566524,
+   "spread_snapshots_valid": 0.9999850977587029,
+   "funding_periods_known": 0.9992846924177397
+  },
+  "UNI": {
+   "mark_bars": 1.0,
+   "perp_trade_bars": 1.0,
+   "spot_bars": 0.9807761087267525,
+   "spread_snapshots_valid": 1.0,
+   "funding_periods_known": 0.9992846924177397
+  },
+  "XLM": {
+   "mark_bars": 1.0,
+   "perp_trade_bars": 1.0,
+   "spot_bars": 0.9997317596566524,
+   "spread_snapshots_valid": 1.0,
+   "funding_periods_known": 0.9992846924177397
+  },
+  "XRP": {
+   "mark_bars": 1.0,
+   "perp_trade_bars": 1.0,
+   "spot_bars": 0.9997317596566524,
+   "spread_snapshots_valid": 1.0,
+   "funding_periods_known": 0.9992846924177397
+  },
+  "ZEC": {
+   "mark_bars": 1.0,
+   "perp_trade_bars": 1.0,
+   "spot_bars": 0.9997317596566524,
+   "spread_snapshots_valid": 1.0,
+   "funding_periods_known": 0.9992846924177397
+  }
+ },
+ "pit_checks": {
+  "h2a_168_fits_checked": 12,
+  "h2a_168_label_after_decision": 0,
+  "h2a_720_fits_checked": 11,
+  "h2a_720_label_after_decision": 0,
+  "inputs_end_before_holdout": true
+ },
+ "configs": {
+  "H3-k4": {
+   "decision_share": {
+    "ok": 0.0,
+    "infeasible": 0.7467811158798283,
+    "model_warmup": 0.2532188841201717
+   },
+   "infeasible_reasons": {
+    "entry rule left fewer than 3 legs on a side": 174
+   },
+   "covariance_unavailable_decisions": 0,
+   "legs_per_ok_decision": {
+    "n": 0
+   },
+   "longs_per_ok_decision": {
+    "n": 0
+   },
+   "shorts_per_ok_decision": {
+    "n": 0
+   },
+   "min_qty_dropped_legs": 0,
+   "risk_checks_satisfied_share": null,
+   "beta_exposure_abs_frac": {
+    "n": 0
+   },
+   "standalone_side_vol_ratio_q": {
+    "n": 0
+   },
+   "dollar_cap_bound_share": null,
+   "ratio_rule_bound_share": null,
+   "beta_scaled_share": null,
+   "euler_long_risk_share": {
+    "n": 0
+   },
+   "accounting_identities": {
+    "residual_daily_sum_vs_equity_change": 0.0,
+    "residual_asset_attribution_vs_daily_sum": 0.0,
+    "residual_component_identity_max": 0.0,
+    "fills_not_at_decision_plus_15m": 0,
+    "max_open_qty_after_terminal_unwind": 0.0
+   }
+  },
+  "H3-k6": {
+   "decision_share": {
+    "ok": 0.0,
+    "infeasible": 0.7467811158798283,
+    "model_warmup": 0.2532188841201717
+   },
+   "infeasible_reasons": {
+    "entry rule left fewer than 3 legs on a side": 174
+   },
+   "covariance_unavailable_decisions": 0,
+   "legs_per_ok_decision": {
+    "n": 0
+   },
+   "longs_per_ok_decision": {
+    "n": 0
+   },
+   "shorts_per_ok_decision": {
+    "n": 0
+   },
+   "min_qty_dropped_legs": 0,
+   "risk_checks_satisfied_share": null,
+   "beta_exposure_abs_frac": {
+    "n": 0
+   },
+   "standalone_side_vol_ratio_q": {
+    "n": 0
+   },
+   "dollar_cap_bound_share": null,
+   "ratio_rule_bound_share": null,
+   "beta_scaled_share": null,
+   "euler_long_risk_share": {
+    "n": 0
+   },
+   "accounting_identities": {
+    "residual_daily_sum_vs_equity_change": 0.0,
+    "residual_asset_attribution_vs_daily_sum": 0.0,
+    "residual_component_identity_max": 0.0,
+    "fills_not_at_decision_plus_15m": 0,
+    "max_open_qty_after_terminal_unwind": 0.0
+   }
+  },
+  "H1-m1.5": {
+   "decision_share": {
+    "model_warmup": 0.351931330472103
+   },
+   "entries": 0,
+   "skipped_for_cash": 0,
+   "skipped_below_min_qty": 0,
+   "unmatched_hedge_qty_entries": 0,
+   "pairs_held_per_tick": {
+    "n": 22370,
+    "min": 0.0,
+    "median": 0.0,
+    "max": 0.0
+   },
+   "accounting_identities": {
+    "residual_daily_sum_vs_equity_change": 0.0,
+    "residual_asset_attribution_vs_daily_sum": 0.0,
+    "residual_component_identity_max": 0.0,
+    "fills_not_at_decision_plus_15m": 0,
+    "max_open_qty_after_terminal_unwind": 0.0
+   }
+  },
+  "H1-m2.5": {
+   "decision_share": {
+    "model_warmup": 0.351931330472103
+   },
+   "entries": 0,
+   "skipped_for_cash": 0,
+   "skipped_below_min_qty": 0,
+   "unmatched_hedge_qty_entries": 0,
+   "pairs_held_per_tick": {
+    "n": 22370,
+    "min": 0.0,
+    "median": 0.0,
+    "max": 0.0
+   },
+   "accounting_identities": {
+    "residual_daily_sum_vs_equity_change": 0.0,
+    "residual_asset_attribution_vs_daily_sum": 0.0,
+    "residual_component_identity_max": 0.0,
+    "fills_not_at_decision_plus_15m": 0,
+    "max_open_qty_after_terminal_unwind": 0.0
+   }
+  }
+ }
+}

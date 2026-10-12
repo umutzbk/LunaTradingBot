@@ -145,3 +145,12 @@ def test_zero_volatility_world_has_zero_price_component_every_day():
     r = run(w, days=5)
     assert r.daily["price"].abs().max() < 1e-6
     assert r.daily["funding"].abs().sum() > 0
+
+
+def test_entry_rule_that_leaves_fewer_than_three_legs_is_reported_before_any_covariance():
+    w = build_world()
+    flat = w.funding_levels * 1e-3  # tiny forecast dispersion: no candidate passes c*168 > 2 cost
+    r = run(w, days=3, model=FixedModel(flat))
+    assert r.fills[r.fills["intent"] == "open"].empty
+    assert all(d.get("reason") == "entry rule left fewer than 3 legs on a side"
+               for d in r.decisions if d.get("status") == "INFEASIBLE")

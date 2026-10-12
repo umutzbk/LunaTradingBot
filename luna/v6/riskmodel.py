@@ -113,12 +113,16 @@ def covariance(prices: pd.DataFrame, vol: pd.DataFrame, names: list, t: pd.Times
     names = list(dict.fromkeys(names))
     if "BTC" not in names:
         raise CovarianceUnavailable("BTC is needed for beta")
+    if len(names) < 2:
+        raise CovarianceUnavailable("fewer than two assets")
     w = _window(prices[names], t)
     if len(w) < COV_HOURS or (w.notna().sum() < MIN_PRESENT * COV_HOURS).any():
         raise CovarianceUnavailable(f"fewer than 90 % of {COV_HOURS} returns for some of {names}")
     full = w.dropna()
     if len(full) < MIN_COMPLETE_ROWS * COV_HOURS:
         raise CovarianceUnavailable("too few complete rows")
+    if (full.std() <= 0).any():
+        raise CovarianceUnavailable("an asset has zero return variance in the window")
     corr, delta = lw_constant_correlation(full.to_numpy())
     sig = vol[names].asof(t) if len(vol.index) and vol.index[0] <= t else pd.Series(np.nan, index=names)
     if not np.isfinite(sig.to_numpy(float)).all() or (sig <= 0).any():

@@ -381,6 +381,8 @@ class H3Engine:
 
         if sel.infeasible:
             return infeasible("k' < 3")
+        if len(sel.long) < bk.K_MIN or len(sel.short) < bk.K_MIN:
+            return infeasible("entry rule left fewer than 3 legs on a side")
         names = list(dict.fromkeys(sel.long + sel.short + list(held) + ["BTC"]))
         try:
             cov = rm.covariance(self.prices, self.vol, names, t)
