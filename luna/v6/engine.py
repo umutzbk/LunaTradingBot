@@ -363,7 +363,7 @@ class H3Engine:
         elig = [a for a in self.m.assets if a in fc.index and self.eligible(a, t, fc)]
         gates.append(GateRecord(t, elig, fc.copy()))
         s = fc[elig]
-        cost = pd.Series({a: self.m.one_way_cost(a, t) for a in set(elig) | set(held)})
+        cost = pd.Series({a: self.m.decision_cost(a, t) for a in set(elig) | set(held)})
         blocked = {a for a, until in st.cooldown.items() if until > t}
         if st.r3_blocked:
             blocked |= set(elig)

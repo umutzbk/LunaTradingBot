@@ -110,7 +110,8 @@ class HistMarket:
     known_after: pd.Timedelta = SNAP
     cost_mult: float = 1.0
     fb_full: dict | None = None  # S-FB-CONS per-asset fallback (full spread)
-    maker_bound: bool = False  # S-MAKER-BOUND (H1 only): maker fees, no spread/slip
+    maker_bound: bool = False  # S-MAKER-BOUND (H1 only): maker fees, no spread/slip, fill at the mid
+    spot_maker: bool = False  # S-MIXED (H1, information): spot leg maker fee, no spot spread/slip
     spot_spread_mult: float = 1.0  # S-SPOTSPREAD2X (information)
     _sp: dict = field(default_factory=dict, repr=False)
     _vol: dict = field(default_factory=dict, repr=False)
@@ -165,12 +166,15 @@ class HistMarket:
     def spot_half(perp_half: float) -> float:
         return max(2 * perp_half, SPOT_HALF_FLOOR)
 
-    def one_way_cost(self, a: str, t: pd.Timestamp, leg: str = "perp") -> float:
-        """Fee + decision-window half spread + slip known at t (S-COST-3), cost multiplier applied."""
+    def decision_cost(self, a: str, t: pd.Timestamp, leg: str = "perp") -> float:
+        """One-way taker cost the strategy estimates at t (S-COST-3): fee + decision-window half spread
+        + slip. Row multipliers (S-COST2X, S-SPOTSPREAD2X) and maker rows change realised fills only;
+        decisions are the PRIMARY ones (declared D-S1). Known-time and fallback rows (S-PIT10,
+        S-FB-CONS) change the information and therefore the decisions."""
         half, _ = self.decision_half(a, t)
         if leg == "spot":
-            return self.cost_mult * (SPOT_TAKER + self.spot_spread_mult * self.spot_half(half) + SLIP)
-        return self.cost_mult * (FUT_TAKER + half + SLIP)
+            return SPOT_TAKER + self.spot_half(half) + SLIP
+        return FUT_TAKER + half + SLIP
 
     # --- fills -------------------------------------------------------------------------------------
     def fill(self, a: str, dq: float, t: pd.Timestamp, leg: str = "perp") -> Fill | None:
@@ -184,7 +188,7 @@ class HistMarket:
             return None
         ph, fb = self.fill_half(a, t)
         s = 1.0 if dq > 0 else -1.0
-        if self.maker_bound:
+        if self.maker_bound or (self.spot_maker and leg == "spot"):
             half, slip = 0.0, 0.0
             fee_rate = SPOT_MAKER if leg == "spot" else FUT_MAKER
         else:
@@ -202,7 +206,7 @@ class HistMarket:
         if not math.isfinite(mid) or q == 0:
             return mid, 0.0, 0.0
         ph, _ = self.decision_half(a, t)
-        if self.maker_bound:
+        if self.maker_bound or (self.spot_maker and leg == "spot"):
             half, slip, fr = 0.0, 0.0, (SPOT_MAKER if leg == "spot" else FUT_MAKER)
         else:
             half = self.spot_spread_mult * self.spot_half(ph) if leg == "spot" else ph

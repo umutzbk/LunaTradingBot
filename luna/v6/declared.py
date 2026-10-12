@@ -36,6 +36,10 @@ DECLARED = {
             "the displayed class is the first in that order; every reason is reported.",
     "D-V2": "P8 and P9 'not evaluable' raise INCONCLUSIVE only when P1 passed (P8 is evaluated only after P1; "
             "with P1 failed the config is NO-GO anyway).",
+    "D-S1": "S-COST2X, S-SPOTSPREAD2X, S-MIXED and S-MAKER-BOUND change realised costs only (fills, terminal "
+            "unwind); decisions keep the PRIMARY cost estimates (as V5 S-COST2X: the strategy does not know "
+            "its costs are mis-estimated). S-PIT10 and S-FB-CONS change the information (spread known time, "
+            "fallback value) and therefore the decisions.",
     "D-E2": "V5 ineligibility exit (S-H3-10): a held asset that is ineligible for a holding reason "
             "(no mid, decision-window spread > 40 bps, 24 h volume < 1M USD, funding coverage < 90 %, "
             "newest funding older than 3 h) at two consecutive 15-minute ticks (>= 900 s) is exited; "
