@@ -26,7 +26,8 @@ class World:
 
 
 def build_world(days=80, names=None, vols=None, rho=0.3, seed=0, spread_bps=2.0, levels=None,
-                shocks=None, volume=5e7) -> World:
+                shocks=None, volume=5e7, t0=None) -> World:
+    T0 = pd.Timestamp(t0) if t0 is not None else globals()["T0"]
     names = names or ["BTC"] + [f"A{i:02d}" for i in range(11)]
     n = len(names)
     rng = np.random.default_rng(seed)

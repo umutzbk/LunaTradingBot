@@ -80,4 +80,7 @@ def run_holdout(inp: Inputs, auth: guard.HoldoutAuthorization) -> dict:
     for name in CONFIGS:
         runs[name] = run_config(inp, name, start, end, models=models)
         evals[name], gates[name] = evaluate_config(inp, name, runs[name], "holdout", end, stats6.B_HOLDOUT)
-    return {"runs": runs, "evals": evals, "gates": gates, "decision": holdout_decision(evals)}
+    from luna.v6.v5ref import v5_reference
+
+    refs = {"cash": {"net": 0.0, "verdict_free": True}, "V5": v5_reference(inp, auth)}
+    return {"runs": runs, "evals": evals, "gates": gates, "decision": holdout_decision(evals), "references": refs}
