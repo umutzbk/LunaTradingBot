@@ -43,3 +43,16 @@ Additional interpretations under AMB-04 (all implementation clarifications):
 - Instance membership is `first_bar_ts <= ts < last_trade_ts` (end-exclusive): a funding record exactly at the final bar close (e.g. a settlement at the cessation time) falls outside the instance and is never used. `instance_of`/`assign` are retrospective and must not be used as-of t; `current_instance` is the PIT function.
 - A record with an explicit interval is reconciled if its spacing equals the previous nominal OR its own explicit interval (spec-literal). So explicit 4 with spacing 8 = previous nominal 8 is reconciled with nominal 4 (no transition flag; flags apply to records without an explicit field).
 - `annotate` on a multi-symbol frame requires a dict covering every symbol and a unique index (ValueError otherwise).
+
+## AMB-05 — USDⓈ-M context phrase list, scheduled-time mapping and the 72 h HALT test (Task 6)
+
+- Spec: S-2.5 (DEC-37, DEC-40), S-5.4.
+- Literal text: "the notice unambiguously refers to Binance USDⓈ-M futures / perpetuals, or to the exact relevant derivatives product"; "a timestamp ... explicitly maps that timestamp to that exact contract"; "not HALTED at any time in [scheduled_delist_ts, scheduled_delist_ts + 72 h]".
+- Options: the spec gives no phrase list, no definition of "explicitly maps", and no sampling grid for "any time".
+- Classification: implementation clarification.
+- Code now (`luna/v7/data/notices.py`):
+  - Symbol: whole token = bounded by non-alphanumeric characters, case-sensitive, on the raw text.
+  - Context (after NFKC + casefold, so "USDⓈ-M" = "usds-m"): `USDM_PHRASES` = {"usds-m", "usdt-margined", "usds-margined"}, or both "perpetual contract" and "futures" present. Any "coin-m" / "coin-margined" mention makes the context ambiguous -> no match. A notice meeting neither condition is no match.
+  - `scheduled_ts` only parses `YYYY-MM-DD HH:MM[:SS] [AM|PM] (UTC)`. Candidates are taken only from sentences containing the symbol token (sentences split at `.;!?` + whitespace or newline): a sentence with one timestamp maps it to every symbol it names (so "A, B and C ... at T" gives T to each); a sentence with several timestamps maps only via an ordered list "A and B ... T1 and T2 respectively" with equal counts and the symbol listed once. Exactly one distinct candidate overall, else None. 12-hour clocks with an hour outside 1-12 make the result None.
+  - 72 h HALT test: `halted_fn` is sampled on a 1-minute grid over [sched, sched + 72 h] inclusive (S-5.4 reference minute); one halted sample means "halted". A later delisting version replaces the previous scheduled time (its own, possibly null).
+  - Terminal classification (`terminal.py`): the R12 `source` must be in `EXACT_SOURCES` = {"official_historical", "official_formula_exact"}; class A also needs `settlement_ts` == the notice's scheduled time (otherwise B).
