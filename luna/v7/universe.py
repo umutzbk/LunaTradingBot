@@ -129,7 +129,7 @@ def assert_pit(row: GateRow, t_ns: int) -> None:
         raise LeakageError(f"max_known_at {row.max_known_at} > t - 1 min ({t_ns - MIN})")
 
 
-def _pit(df: pd.DataFrame, t_ns: int, name: str) -> pd.DataFrame:
+def pit_rows(df: pd.DataFrame, t_ns: int, name: str) -> pd.DataFrame:
     """Rows with known_at <= t - 1 min (required column, validated)."""
     if "known_at" not in df.columns:
         raise ValueError(f"{name}: no known_at column: point-in-time filtering is impossible")
@@ -152,17 +152,30 @@ def _max_ka(df: pd.DataFrame, mask: np.ndarray | None = None) -> int | None:
     return int(ka.max()) if len(ka) else None
 
 
-def _u2(bars: pd.DataFrame, t_ns: int) -> tuple[bool, int | None]:
-    """Median daily quote volume over the 30 UTC days fully ended before t (empty day = 0; AMB-07)."""
+def daily_sums(bars: pd.DataFrame, t_ns: int, days: int, col: str) -> tuple[np.ndarray, np.ndarray]:
+    """Per-UTC-day sums of ``col`` over the ``days`` UTC days fully ended before t (an empty day or a
+    non-finite value counts 0; AMB-07) and the row mask used. The caller passes PIT current-instance bars."""
     d_t = t_ns // D
-    first = d_t - U.u2_days
+    first = d_t - days
     ot = ns_array(bars["open_ts"], "open_ts")
     m = (ot // D >= first) & (ot // D < d_t)
-    q = pd.to_numeric(bars["vol_quote"], errors="coerce").to_numpy(np.float64)[m]
+    q = pd.to_numeric(bars[col], errors="coerce").to_numpy(np.float64)[m]
     q = np.where(np.isfinite(q), q, 0.0)
-    daily = np.zeros(U.u2_days)
+    daily = np.zeros(days)
     np.add.at(daily, (ot[m] // D - first).astype(int), q)
-    return float(np.median(daily)) >= U.u2_min_quote_vol, _max_ka(bars, m)
+    return daily, m
+
+
+def median_daily_quote_volume(bars: pd.DataFrame, t_ns: int, days: int) -> tuple[float, int | None]:
+    """Median daily quote volume over the ``days`` UTC days fully ended before t (U2, F8) and max known_at."""
+    daily, m = daily_sums(bars, t_ns, days, "vol_quote")
+    return float(np.median(daily)), _max_ka(bars, m)
+
+
+def _u2(bars: pd.DataFrame, t_ns: int) -> tuple[bool, int | None]:
+    """Median daily quote volume over the 30 UTC days fully ended before t (empty day = 0; AMB-07)."""
+    med, ka = median_daily_quote_volume(bars, t_ns, U.u2_days)
+    return med >= U.u2_min_quote_vol, ka
 
 
 def _u4(bars: pd.DataFrame, t_ns: int) -> tuple[bool, int | None]:
@@ -185,22 +198,30 @@ def _u8(bars: pd.DataFrame, t_ns: int) -> tuple[bool, int | None]:
     return bool(m.any()), _max_ka(bars, m)
 
 
-def _funding(f: pd.DataFrame, cur: Instance, t_ns: int) -> tuple[bool, bool, int | None]:
-    """(U3, U7, max known_at): records of the current instance known by t - 1 min, selected point-in-time.
+def pit_funding(f: pd.DataFrame, cur: Instance, t_ns: int) -> pd.DataFrame:
+    """Funding records of the current instance known by t - 1 min, annotated point-in-time.
 
     Membership is ``funding_ts >= cur.first_bar_ts`` with no upper bound (the end of the instance is unknown
-    before ``end_known_at``, DEC-44); the interval flags are recomputed on that PIT set with an open-ended
-    instance, so they depend only on earlier records (``intervals.annotate``).
+    before ``end_known_at``, DEC-44); the interval flags (``nominal_h``, ``invalid``, ``r8``, ...) are
+    recomputed on that PIT set with an open-ended instance, so they depend only on earlier records
+    (``intervals.annotate``). Sorted by ``funding_ts`` with a fresh index; may be empty. Used by U3 / U7
+    and by the §9 funding features.
     """
-    f = _pit(f, t_ns, "funding_annot")
+    cols = ["funding_ts", "rate", "interval_h_explicit", "known_at"]
+    f = pit_rows(f, t_ns, "funding_annot")
+    if len(f):
+        f = f[ns_array(f["funding_ts"], "funding_ts") >= cur.first_bar_ts].sort_values("funding_ts")
     if len(f) == 0:
+        return annotate(pd.DataFrame({c: pd.Series(dtype="int64") for c in cols}), [])
+    raw = f[cols].reset_index(drop=True)
+    return annotate(raw, [Instance(cur.idx, cur.first_bar_ts, None, None)])
+
+
+def _funding(f: pd.DataFrame, cur: Instance, t_ns: int) -> tuple[bool, bool, int | None]:
+    """(U3, U7, max known_at) on ``pit_funding``."""
+    a = pit_funding(f, cur, t_ns)
+    if len(a) == 0:
         return False, False, None
-    ft = ns_array(f["funding_ts"], "funding_ts")
-    f = f[ft >= cur.first_bar_ts].sort_values("funding_ts")
-    if len(f) == 0:
-        return False, False, None
-    raw = f[["funding_ts", "rate", "interval_h_explicit", "known_at"]].reset_index(drop=True)
-    a = annotate(raw, [Instance(cur.idx, cur.first_bar_ts, None, None)])
     ts = ns_array(a["funding_ts"], "funding_ts")
     ka = ns_array(a["known_at"], "known_at")
     nom = a["nominal_h"].astype("Float64").to_numpy(dtype=float, na_value=np.nan)
@@ -229,7 +250,7 @@ def gates(sd: SymbolData, t_ns: int) -> GateRow:
     cur = current_instance(sd.insts, t_ns)
     if cur is None:
         return GateRow(*(False,) * 8, ("no_current_instance",), None)
-    b15 = _pit(sd.bars15, t_ns, "bars15")
+    b15 = pit_rows(sd.bars15, t_ns, "bars15")
     if len(b15):
         b15 = b15[ns_array(b15["open_ts"], "open_ts") >= cur.first_bar_ts]
     u1 = cur.first_bar_ts <= t_ns - U.u1_days * D
@@ -243,7 +264,7 @@ def gates(sd: SymbolData, t_ns: int) -> GateRow:
         k5 = _max_ka(b15, ns_array(b15["open_ts"], "open_ts") >= t_ns - FROZEN.spread.window_ns)
     u3, u7, kf = _funding(sd.funding_annot, cur, t_ns)
     b1 = sd.bars1m
-    b1 = _pit(b1, t_ns, "bars1m")
+    b1 = pit_rows(b1, t_ns, "bars1m")
     kn = [n for n in sd.notices if (k := known_at(n)) is not None and k <= t_ns - MIN]
     u6_active = U6State(kn, sd.symbol, sd.insts).active(cur, t_ns, lambda tau: halted(b1, tau))
     k6 = _mx(*(known_at(n) for n in kn))

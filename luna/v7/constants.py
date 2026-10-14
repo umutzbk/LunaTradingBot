@@ -41,6 +41,13 @@ class Spread:  # S-4.5 (proxy, DEC-22)
 
 
 @dataclass(frozen=True)
+class Features:  # §9 feature table (F1-F14; F7 / F15 dropped by Stage 0)
+    funding_windows_h: tuple[int, ...] = (24, 72, 168, 720)  # F1 FL1, FL3, FL7, FL30
+    f13_cap: float = 1e4  # F13: "both capped at 10^4"
+    f13_settlements_per_year: int = 3 * 365  # F13: |FL7| * 3 * 365
+
+
+@dataclass(frozen=True)
 class Universe:  # S-2.3 gates U1..U8
     u1_days: int = 60
     u2_min_quote_vol: int = 20_000_000
@@ -195,6 +202,7 @@ class Frozen:
     costs: Costs = field(default_factory=Costs)
     spread: Spread = field(default_factory=Spread)
     universe: Universe = field(default_factory=Universe)
+    features: Features = field(default_factory=Features)
     instances: Instances = field(default_factory=Instances)
     funding: Funding = field(default_factory=Funding)
     book: Book = field(default_factory=Book)
