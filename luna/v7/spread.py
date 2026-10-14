@@ -18,28 +18,48 @@ from luna.v7.timeutil import MIN, ns_array
 BAR_15M = 15 * MIN
 
 
+def _pairs(bars15: pd.DataFrame, span: tuple[int, int] | None = None
+           ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(open_ts of bar k, pi_k, known_at) arrays over consecutive present bars with valid prices (numpy core).
+
+    ``open_ts`` / ``known_at`` are validated on the whole frame (fail closed: a missing column, a non-finite
+    or out-of-range value raises ValueError even on a bar with an invalid price). ``span`` = [lo, hi): only
+    bars opening in it enter the products (``half_spread``: every pair of its window has bar k opening >= lo
+    and bar k + 1 opening < tau, so trimming first leaves the window's pair set unchanged; performance)."""
+    if "known_at" not in bars15.columns:
+        raise ValueError("bars15 has no known_at column: point-in-time filtering is impossible")
+    t = ns_array(bars15["open_ts"], "open_ts")
+    ka = ns_array(bars15["known_at"], "known_at")  # ValueError on missing / non-finite / out-of-range values
+    h = bars15["h"].to_numpy(np.float64)
+    lo = bars15["l"].to_numpy(np.float64)
+    c = bars15["c"].to_numpy(np.float64)
+    if span is not None:
+        m = (t >= span[0]) & (t < span[1])
+        t, ka, h, lo, c = t[m], ka[m], h[m], lo[m], c[m]
+    order = np.argsort(t, kind="stable")
+    h, lo, c = h[order], lo[order], c[order]
+    ok = np.isfinite(h) & np.isfinite(lo) & np.isfinite(c) & (h > 0) & (lo > 0) & (c > 0)
+    t, ka, h, lo, c = t[order][ok], ka[order][ok], h[ok], lo[ok], c[ok]
+    lc = np.log(c)
+    eta = (np.log(h) + np.log(lo)) / 2.0
+    consec = (t[1:] - t[:-1]) == BAR_15M
+    pi = 4.0 * (lc[:-1] - eta[:-1]) * (lc[:-1] - eta[1:])
+    known = np.maximum(ka[1:], t[1:] + BAR_15M)
+    return t[:-1][consec], pi[consec], known[consec]
+
+
 def pair_products(bars15: pd.DataFrame) -> pd.DataFrame:
     """Pairs (open_ts of bar k, pi_k, known_at) over consecutive present bars with valid prices."""
-    b = bars15.sort_values("open_ts")
-    hlc = b[["h", "l", "c"]].to_numpy(np.float64)
-    b = b[np.isfinite(hlc).all(axis=1) & (hlc > 0).all(axis=1)]
-    t = ns_array(b["open_ts"], "open_ts")
-    c = np.log(b["c"].to_numpy(np.float64))
-    eta = (np.log(b["h"].to_numpy(np.float64)) + np.log(b["l"].to_numpy(np.float64))) / 2.0
-    if "known_at" not in b.columns:
-        raise ValueError("bars15 has no known_at column: point-in-time filtering is impossible")
-    ka = ns_array(b["known_at"], "known_at")  # ValueError on missing / non-finite / out-of-range values
-    consec = (t[1:] - t[:-1]) == BAR_15M
-    pi = 4.0 * (c[:-1] - eta[:-1]) * (c[:-1] - eta[1:])
-    known = np.maximum(ka[1:], t[1:] + BAR_15M)
-    return pd.DataFrame({"open_ts": t[:-1][consec], "pi": pi[consec], "known_at": known[consec]})
+    t, pi, known = _pairs(bars15)
+    return pd.DataFrame({"open_ts": t, "pi": pi, "known_at": known})
 
 
 def half_spread(bars15_instance: pd.DataFrame, tau_ns: int) -> float | None:
     """S-4.5 proxy value h(tau) (decision-time or fill-time); None if the pair set is empty."""
-    p = pair_products(bars15_instance)
-    sel = p[(p["open_ts"] >= tau_ns - FROZEN.spread.window_ns) & (p["known_at"] <= tau_ns - MIN)]
+    lo = tau_ns - FROZEN.spread.window_ns
+    t, pi, known = _pairs(bars15_instance, (lo, tau_ns))
+    sel = pi[(t >= lo) & (known <= tau_ns - MIN)]
     if len(sel) == 0:
         return None
-    s = float(np.sqrt(max(float(sel["pi"].mean()), 0.0)))
+    s = float(np.sqrt(max(float(np.mean(sel)), 0.0)))
     return max(FROZEN.spread.lam * s / 2.0, FROZEN.spread.floor)

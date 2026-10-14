@@ -151,3 +151,43 @@ def test_out_of_range_known_at_raises():
         b.loc[1, "known_at"] = bad
         with pytest.raises(ValueError):
             half_spread(b, T0 + 2 * Q + MIN)
+
+
+def _window_reference(b: pd.DataFrame, tau: int) -> float | None:
+    """The S-4.5 value straight from all pair products of the whole frame (no pre-trimming)."""
+    from luna.v7.constants import FROZEN
+    from luna.v7.spread import pair_products
+
+    p = pair_products(b)
+    sel = p[(p["open_ts"] >= tau - FROZEN.spread.window_ns) & (p["known_at"] <= tau - MIN)]
+    if len(sel) == 0:
+        return None
+    return max(FROZEN.spread.lam * math.sqrt(max(float(sel["pi"].mean()), 0.0)) / 2.0, FROZEN.spread.floor)
+
+
+def test_long_frame_equals_whole_frame_reference():
+    """Task 19 (performance): half_spread trims a long instance frame to the window before the pair products;
+    the value is bit-identical to the products of the whole frame, at every tau (incl. missing bars, an
+    invalid-price bar and bars dated after tau)."""
+    rng = np.random.default_rng(3)
+    rows = [tuple(rng.normal(0, 1e-3, 3)) for _ in range(600)]
+    rows = [(max(r), min(r), r[2]) for r in rows]
+    for k in (100, 101, 350):
+        rows[k] = None
+    b = bars(rows)
+    b.loc[200, "c"] = np.nan  # invalid price: dropped, breaks its pairs
+    for i in (0, 1, 5, 96, 97, 98, 150, 201, 299, 451, 599, 610):
+        tau = T0 + i * Q + 7 * MIN
+        got, ref = half_spread(b, tau), _window_reference(b, tau)
+        assert got == ref, (i, got, ref)
+
+
+def test_invalid_known_at_outside_the_window_still_raises():
+    import pytest
+
+    rng = np.random.default_rng(4)
+    b = bars([(1e-3, -1e-3, float(x)) for x in rng.normal(0, 1e-4, 300)])
+    b["known_at"] = b["known_at"].astype("float64")
+    b.loc[3, "known_at"] = np.nan  # far before the 24 h window of tau
+    with pytest.raises(ValueError):
+        half_spread(b, T0 + 290 * Q)

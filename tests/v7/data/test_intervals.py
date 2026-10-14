@@ -159,3 +159,85 @@ def test_membership_end_exclusive_at_last_close():
                       "interval_h_explicit": pd.array([8, None], dtype="Int64")})
     out = annotate(f, insts)
     assert out["in_instance"].tolist() == [True, False]  # a settlement exactly at the final close is outside
+
+
+def _annotate_reference(df, insts):
+    """Verbatim copy of the per-record loop of ``intervals._annotate_one`` before the Task 19 speed-up
+    (numpy scalar version), kept as the bit-identity reference."""
+    import numpy as np
+
+    from luna.v7.constants import FROZEN
+    from luna.v7.data.instances import instance_of
+
+    tol, std_h = FROZEN.funding.tol_ns, FROZEN.funding.std_intervals_h
+
+    def std_match(sp):
+        best = min(std_h, key=lambda c: abs(c * H - sp))
+        return float(best) if abs(best * H - sp) <= tol else None
+
+    n = len(df)
+    ts = df["funding_ts"].to_numpy(np.int64)
+    ex = df["interval_h_explicit"].astype("Float64").to_numpy(dtype=float, na_value=np.nan)
+    rate = df["rate"].to_numpy(float)
+    inst = [instance_of(insts, int(t)) for t in ts]
+    nom, rec, trans = np.full(n, np.nan), np.zeros(n, bool), np.zeros(n, bool)
+    inv, inherited = np.zeros(n, bool), np.zeros(n, bool)
+    for i in range(n):
+        if inst[i] is None:
+            continue
+        if i == 0 or inst[i - 1] != inst[i]:
+            nom[i] = ex[i]
+            rec[i] = not math.isnan(ex[i])
+            inv[i] = not rec[i]
+            continue
+        sp = int(ts[i] - ts[i - 1])
+        prev = nom[i - 1]
+        has_prev = not math.isnan(prev)
+        match_prev = has_prev and abs(sp - prev * H) <= tol
+        if not math.isnan(ex[i]):
+            if match_prev or abs(sp - ex[i] * H) <= tol:
+                nom[i], rec[i] = ex[i], True
+            else:
+                nom[i], inv[i], inherited[i] = prev, True, True
+            continue
+        std = std_match(sp)
+        if std is not None:
+            nom[i], rec[i], trans[i] = std, True, not match_prev
+        elif match_prev:
+            nom[i], rec[i] = prev, True
+        else:
+            nom[i], inv[i], inherited[i] = prev, True, True
+    ok = rec & ~inv & ~np.isnan(nom)
+    r8 = np.full(n, np.nan)
+    r8[ok] = rate[ok] * 8.0 / nom[ok]
+    return inst, nom, inherited, rec, trans, inv, r8
+
+
+def test_annotate_bit_identical_to_reference_loop():
+    """Task 19 speed-up of ``_annotate_one``: identical output on random frames (explicit / missing intervals,
+    off-schedule spacings, non-standard explicit values, records in dormant gaps, several instances)."""
+    import numpy as np
+
+    rng = np.random.default_rng(11)
+    for trial in range(30):
+        n = int(rng.integers(1, 120))
+        steps = rng.choice([1.0, 2.0, 4.0, 8.0, 8.0, 8.0, 3.0, 8.01, 7.99, 12.0, 0.5], size=n - 1)
+        ts = [T0]
+        for s in steps:
+            ts.append(ts[-1] + int(round(s * H)) + int(rng.integers(-90, 91)) * NS)
+        ex = [None if rng.random() < 0.5 else int(rng.choice([1, 2, 4, 8, 6])) for _ in range(n)]
+        df = pd.DataFrame({"funding_ts": ts, "rate": rng.normal(1e-4, 1e-4, n),
+                           "interval_h_explicit": pd.array(ex, dtype="Int64")})
+        cut = ts[n // 2] if n > 3 else ts[-1] + H
+        insts = [Instance(0, T0 - H, cut, cut + 7 * 24 * H), Instance(1, cut + 30 * H, None, None)] \
+            if trial % 2 else [Instance(0, T0 + 5 * H, None, None)]
+        out = annotate(df, insts)
+        inst, nom, inherited, rec, trans, inv, r8 = _annotate_reference(df, insts)
+        assert out["instance"].tolist() == inst
+        assert out["in_instance"].tolist() == [x is not None for x in inst]
+        got_nom = out["nominal_h"].astype("Float64").to_numpy(dtype=float, na_value=np.nan)
+        assert np.array_equal(got_nom, nom, equal_nan=True)
+        for col, ref in (("nominal_inherited", inherited), ("reconciled", rec),
+                         ("interval_transition", trans), ("invalid", inv)):
+            assert out[col].to_numpy(bool).tolist() == ref.tolist(), (trial, col)
+        assert np.array_equal(out["r8"].to_numpy(float), r8, equal_nan=True)

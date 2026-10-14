@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 
 from luna.v7.constants import FROZEN
-from luna.v7.data.instances import Instance, instance_of
+from luna.v7.data.instances import Instance
 from luna.v7.timeutil import H
 
 TOL = FROZEN.funding.tol_ns
@@ -38,17 +38,33 @@ def _std_match(spacing_ns: int) -> float | None:
     return float(best) if abs(best * H - spacing_ns) <= TOL else None
 
 
+def _instances_of(insts: list[Instance], ts: np.ndarray) -> list[int | None]:
+    """``instances.instance_of`` for every timestamp (first matching instance in list order), vectorised."""
+    out: list[int | None] = [None] * len(ts)
+    free = np.ones(len(ts), bool)
+    for inst in insts:
+        m = free & (ts >= inst.first_bar_ts)
+        if inst.last_trade_ts is not None:
+            m &= ts < inst.last_trade_ts
+        for k in np.flatnonzero(m).tolist():
+            out[k] = inst.idx
+        free &= ~m
+    return out
+
+
 def _annotate_one(df: pd.DataFrame, insts: list[Instance]) -> pd.DataFrame:
     n = len(df)
-    ts = df["funding_ts"].to_numpy(np.int64)
-    ex = df["interval_h_explicit"].astype("Float64").to_numpy(dtype=float, na_value=np.nan)
+    ts_np = df["funding_ts"].to_numpy(np.int64)
+    ex_np = df["interval_h_explicit"].astype("Float64").to_numpy(dtype=float, na_value=np.nan)
     rate = df["rate"].to_numpy(float)
-    inst = [instance_of(insts, int(t)) for t in ts]
-    nom = np.full(n, np.nan)
-    rec = np.zeros(n, bool)
-    trans = np.zeros(n, bool)
-    inv = np.zeros(n, bool)
-    inherited = np.zeros(n, bool)
+    inst = _instances_of(insts, ts_np)
+    # the per-record recursion runs on Python scalars (same IEEE operations as on numpy scalars, faster)
+    ts, ex = ts_np.tolist(), ex_np.tolist()
+    nom = [math.nan] * n
+    rec = [False] * n
+    trans = [False] * n
+    inv = [False] * n
+    inherited = [False] * n
     for i in range(n):
         if inst[i] is None:
             continue
@@ -75,6 +91,8 @@ def _annotate_one(df: pd.DataFrame, insts: list[Instance]) -> pd.DataFrame:
             nom[i], rec[i] = prev, True
         else:
             nom[i], inv[i], inherited[i] = prev, True, True
+    nom = np.array(nom, dtype=float)
+    rec, trans, inv, inherited = (np.array(x, dtype=bool) for x in (rec, trans, inv, inherited))
     out = df.copy()
     out["instance"] = pd.Series(inst, index=df.index, dtype=object)
     out["in_instance"] = [x is not None for x in inst]
