@@ -28,3 +28,11 @@ Entries are appended as they are found, numbered AMB-01, AMB-02, ... Format of o
 - Options: (a) any rate difference; (b) a tolerance. The spec gives no numeric materiality threshold.
 - Classification: implementation clarification.
 - Code now: `funding.merge` matches REST to archive keys within the frozen +-60 s tolerance; rates are parsed to float and conflict when `abs(archive - rest) > 1e-12` (`funding.RATE_ATOL`). Also an `IntegrityBlocker`: a REST record matching several archive records, two REST records mapping to the same archive settlement, or two records of one source within 60 s. On agreement the archive rate, timestamp and `source = "archive"` are kept, and a null `mark_at_settle` is filled from REST with `mark_source = "rest"` (S-4.6 first-tier mark; fills a null, overwrites nothing); REST rows with no archive key within 60 s fill the gap with `source = "rest"`. Kline conflicts (S-2.2 DEC-33) use exact equality of every value column after parsing.
+
+## AMB-04 — Funding records outside any instance and undetermined nominal in the U3 gap test
+
+- Spec: S-2.2, S-2.3 U3, S-2.6 (DEC-29/40/47, EC-9).
+- Literal text: "funding records ... never cross an instance boundary"; "a gap exists when spacing > max(previous nominal interval, current nominal interval) + 60 s".
+- Options: (a) records in a dormant interval (no instance) are treated as invalid; (b) they are excluded from annotation and never used. For `u3_gap` with an undetermined nominal: (a) treat as no gap; (b) use the known one; (c) fail closed.
+- Classification: implementation clarification.
+- Code now: `intervals.annotate` marks records with no instance as `in_instance=False`, `instance=None`, `reconciled=False`, `invalid=False`, `nominal_h` NA and `r8` NaN; they never serve as the previous record of an instance record. An invalid record keeps its timestamp as the spacing anchor for its successor but contributes the inherited previous nominal (never its own explicit/inferred value). `u3_gap` uses the known nominal when only one is undetermined and returns True (gap, fail closed) when both are undetermined.
