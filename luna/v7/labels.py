@@ -35,19 +35,17 @@ import math
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-import numpy as np
 import pandas as pd
 
 from luna.v7 import guard
 from luna.v7.beta import beta_hat, hourly_close_from_15m, hourly_known_at_from_15m
 from luna.v7.constants import FROZEN
 from luna.v7.data.instances import Instance, current_instance
-from luna.v7.data.intervals import u3_gap
 from luna.v7.data.terminal import TerminalEvent
-from luna.v7.market import P, first_bar_within, first_executable_after, halted, mark_at_settle
+from luna.v7.market import first_executable_after, halted
+from luna.v7.refs import FundingProblem, InstView, funding_schedule, pos, ref_price, restrict, trim
 from luna.v7.spread import half_spread
-from luna.v7.timeutil import MIN, H, ns_array
-from luna.v7.universe import pit_funding
+from luna.v7.timeutil import MIN, H
 
 COMPONENTS = ("funding_leg", "price_resid", "fee_in", "fee_out", "ss_in", "ss_out", "hedge_cost",
               "hedge_funding")
@@ -124,127 +122,26 @@ class _Invalid(Exception):
         self.t_x_eff = t_x_eff
 
 
-# --- helpers ------------------------------------------------------------------------------------------
+# --- helpers (shared with the executed book: luna.v7.refs) ---------------------------------------------
+
+def _restrict(d: LegData, cur: Instance, w_end: int) -> InstView:
+    return restrict(d.bars1m, d.bars15, d.mark15, d.funding, cur, w_end)
 
 
-def _pos(x: object) -> float | None:
-    try:
-        v = float(x)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
-    return v if math.isfinite(v) and v > 0 else None
-
-
-def _trim(df: pd.DataFrame, col: str, lo: int | None, hi: int) -> pd.DataFrame:
-    """Rows with lo <= df[col] < hi (lo None: no lower bound)."""
-    if len(df) == 0:
-        return df
-    t = ns_array(df[col], col)
-    m = t < hi
-    if lo is not None:
-        m &= t >= lo
-    return df[m]
-
-
-@dataclass(frozen=True)
-class _Inst:
-    """An instrument restricted to one instance and to timestamps before the window end."""
-
-    inst: Instance
-    b1: pd.DataFrame
-    b15: pd.DataFrame
-    m15: pd.DataFrame
-    funding: pd.DataFrame
-    end: int  # window end
-
-
-def _restrict(d: LegData, cur: Instance, w_end: int) -> _Inst:
-    hi = w_end if cur.last_trade_ts is None else min(w_end, cur.last_trade_ts)
-    return _Inst(
-        cur,
-        _trim(d.bars1m, "open_ts", cur.first_bar_ts, hi),
-        _trim(d.bars15, "open_ts", cur.first_bar_ts, hi),
-        _trim(d.mark15, "open_ts", cur.first_bar_ts, hi),
-        _trim(d.funding, "funding_ts", None, w_end),  # pit_funding applies the instance start
-        w_end,
-    )
-
-
-def _usable_open(b1: pd.DataFrame) -> pd.DataFrame:
-    o = b1["o"].to_numpy(np.float64)
-    return b1[np.isfinite(o) & (o > 0)]
-
-
-def _ref(x: _Inst, tau: int, before_gap=None) -> tuple[float, bool] | None:
-    """Reference price at tau (S-5.2) with the S-5.4 data-gap rule; (price, gap_used) or None.
-    ``before_gap`` (the guard for the extended span) runs before the gap search reads past tau + 1 min."""
-    p = P(x.b1, x.b15, tau)
-    if p is not None:
-        return p, False
-    if before_gap is not None:
-        before_gap()
-    g = first_bar_within(_usable_open(x.b1), tau, H)
-    if g is None:
-        return None
-    return float(g[1]), True
-
-
-def _beta(leg: _Inst, btc: _Inst, t: int) -> float | None:
+def _beta(leg: InstView, btc: InstView, t: int) -> float | None:
     a, b = leg.b15, btc.b15
     return beta_hat(hourly_close_from_15m(a), hourly_close_from_15m(b), t,
                     hourly_known_at_from_15m(a), hourly_known_at_from_15m(b))
 
 
-def _positive_close(bars: pd.DataFrame) -> pd.DataFrame:
-    """Bars whose close is finite and > 0 (a mark fallback never uses an unusable price)."""
-    if len(bars) == 0:
-        return pd.DataFrame({"open_ts": pd.Series(dtype="int64"), "c": pd.Series(dtype="float64")})
-    c = bars["c"].to_numpy(np.float64)
-    return bars[np.isfinite(c) & (c > 0)]
-
-
-def _funding_sum(x: _Inst, lo: int, hi: int, known_by: int) -> float:
-    """Sum of r_k * M(tau_k) over settlements tau_k in (lo, hi] of the instance (S-4.6, S-5.3, S-5.5).
-
-    Missing settlement (DEC-29 gap rule incl. head = last record <= lo and tail up to hi) -> funding_missing;
-    an invalid record (S-2.6) or a non-finite rate in the window -> funding_invalid; no usable mark ->
-    mark_missing. Records count only when ``known_at`` <= ``known_by``.
-    """
-    f = x.funding
-    fts = ns_array(f["funding_ts"], "funding_ts") if len(f) else np.empty(0, np.int64)
-    if np.unique(fts).size != fts.size:
-        raise ValueError("funding: duplicate funding_ts")
-    a = pit_funding(f, x.inst, known_by + MIN)  # known_at <= known_by, instance start applied
-    if len(a) == 0:
-        raise _Invalid("funding_missing")
-    ts = ns_array(a["funding_ts"], "funding_ts")
-    nom = a["nominal_h"].astype("Float64").to_numpy(dtype=float, na_value=np.nan)
-    inv = a["invalid"].to_numpy(bool)
-    rate = a["rate"].astype("Float64").to_numpy(dtype=float, na_value=np.nan)
-    p = int(np.searchsorted(ts, lo, "right")) - 1
-    q = int(np.searchsorted(ts, hi, "right"))
-    if p < 0:
-        raise _Invalid("funding_missing")  # no head record: a missing settlement cannot be excluded
-    for i in range(p + 1, q):
-        if u3_gap(nom[i - 1], nom[i], int(ts[i] - ts[i - 1])):
-            raise _Invalid("funding_missing")
-    if u3_gap(nom[q - 1], nom[q - 1], int(hi - ts[q - 1])):
-        raise _Invalid("funding_missing")
-    if inv[p + 1:q].any() or not np.isfinite(rate[p + 1:q]).all():
-        raise _Invalid("funding_invalid")
-    marks: dict[int, object] = {}
-    if "mark_at_settle" in f.columns:
-        marks = dict(zip(fts.tolist(), f["mark_at_settle"].tolist(), strict=True))
-    m15, l15 = _positive_close(x.m15), _positive_close(x.b15)
-    total = 0.0
-    for i in range(p + 1, q):
-        k = int(ts[i])
-        row = {"mark_at_settle": _pos(marks.get(k))}
-        m = _pos(mark_at_settle(row, m15, l15, k))
-        if m is None:
-            raise _Invalid("mark_missing")
-        total += float(rate[i]) * m
-    return total
+def _funding_sum(x: InstView, lo: int, hi: int, known_by: int) -> float:
+    """Sum of r_k * M(tau_k) over settlements tau_k in (lo, hi] of the instance (S-4.6, S-5.3, S-5.5); the
+    missing / invalid / mark rules are ``refs.FundingSchedule.check``. Records count only when ``known_at``
+    <= ``known_by``."""
+    try:
+        return funding_schedule(x, known_by).window_sum(lo, hi)
+    except FundingProblem as e:
+        raise _Invalid(e.reason) from None
 
 
 # --- the label ----------------------------------------------------------------------------------------
@@ -294,8 +191,8 @@ def _compute(inputs: LabelInputs, t: int, s: int, h: int, t_e: int, t_x: int, w_
         raise _Invalid("entry_halted")
     if halted(btc.b1, t_e):
         raise _Invalid("btc_entry_halted")
-    pe = _ref(leg, t_e)
-    be = _ref(btc, t_e)
+    pe = ref_price(leg, t_e)
+    be = ref_price(btc, t_e)
     if pe is None or be is None:
         raise _Invalid("entry_price_missing")
     P_e, B_e = pe[0], be[0]
@@ -316,7 +213,7 @@ def _compute(inputs: LabelInputs, t: int, s: int, h: int, t_e: int, t_x: int, w_
     terminal = False
     if not ceased and halted(leg.b1, t_x):
         check(w_end)  # the wait may read up to the window end
-        fx = first_executable_after(_trim(leg.b1, "open_ts", None, w_end - MIN), t_x, cur)  # fill < end
+        fx = first_executable_after(trim(leg.b1, "open_ts", None, w_end - MIN), t_x, cur)  # fill < end
         if fx is not None:
             t_xe, P_x = fx
             hf = half_spread(leg.b15, t_xe)
@@ -332,7 +229,7 @@ def _compute(inputs: LabelInputs, t: int, s: int, h: int, t_e: int, t_x: int, w_
         terminal = True
     else:
         t_xe = t_x
-        px = _ref(leg, t_x, lambda: check(t_x + H + MIN))
+        px = ref_price(leg, t_x, lambda: check(t_x + H + MIN))
         if px is None:
             raise _Invalid("exit_price_missing")
         if px[1]:
@@ -351,7 +248,7 @@ def _compute(inputs: LabelInputs, t: int, s: int, h: int, t_e: int, t_x: int, w_
                              "that instance is required")
         if ev.klass != "A":
             raise _Invalid("terminal_not_reconstructible")
-        sp = _pos(ev.settle_price)
+        sp = pos(ev.settle_price)
         if ev.settle_ts is None or sp is None:  # an A event without exact time / price: fail closed
             raise _Invalid("terminal_not_reconstructible")
         st = int(ev.settle_ts)
@@ -366,7 +263,7 @@ def _compute(inputs: LabelInputs, t: int, s: int, h: int, t_e: int, t_x: int, w_
     # --- pro-forma BTC hedge exit at the same time --------------------------------------------------------
     if halted(btc.b1, t_xe):
         raise _Invalid("btc_exit_halted", t_xe)
-    bx = _ref(btc, t_xe, lambda: check(t_xe + H + MIN))
+    bx = ref_price(btc, t_xe, lambda: check(t_xe + H + MIN))
     if bx is None:
         raise _Invalid("exit_price_missing", t_xe)
     if bx[1]:
