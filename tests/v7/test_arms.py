@@ -23,7 +23,8 @@ from luna.v7.arms import (
     ts_ar1_r8,
     ts_ewma_r8,
 )
-from luna.v7.timeutil import H
+from luna.v7.data.instances import Instance
+from luna.v7.timeutil import MIN, D, H
 
 
 def test_a0_formula_units():
@@ -108,35 +109,96 @@ def test_ml_cannot_add_gate_failing_candidates():
         arm_scores("A2", d, 72)
 
 
+T = 1_800_000_000_000_000_000 - 1_800_000_000_000_000_000 % (8 * H) + 8 * H * 100  # 8h-aligned
+INST = Instance(0, T - 100 * D, None, None)
+
+
+def _f(ages_h, rates, known_lag=MIN, interval=8):
+    ts = np.array([T - int(a * H) for a in ages_h], dtype=np.int64)
+    return pd.DataFrame(
+        {
+            "funding_ts": ts,
+            "rate": np.asarray(rates, float),
+            "interval_h_explicit": pd.array([interval] * len(ts), dtype="Int64"),
+            "known_at": ts + known_lag,
+        }
+    )
+
+
 def test_ewma_half_life():
-    t = 1_800_000_000 * 10**9
-    ts = np.array([t - 72 * H, t - 2 * H])
-    # weights 0.5 and 0.5**(2/72)
-    w0, w1 = 0.5, 0.5 ** (2 / 72)
-    assert ts_ewma_r8(ts, [1.0, 0.0], t) == pytest.approx(w0 / (w0 + w1))
-    # an observation inside the 60 s PIT lag is ignored
-    ts2 = np.append(ts, t - 30 * 10**9)
-    assert ts_ewma_r8(ts2, [1.0, 0.0, 99.0], t) == pytest.approx(w0 / (w0 + w1))
-    assert math.isnan(ts_ewma_r8(ts, [float("nan")] * 2, t))
+    # two valid 8 h records 72 h apart (ages 80 h and 8 h, spaced by 72 h is not valid) -> use 8 h grid
+    ages = [80.0, 72.0, 64.0, 56.0, 48.0, 40.0, 32.0, 24.0, 16.0, 8.0]
+    r = [0.0] * 8 + [1.0, 1.0]
+    f = _f(ages, r)
+    w = np.array([0.5 ** (a / 72) for a in ages])
+    assert ts_ewma_r8(f, INST, T) == pytest.approx(float(w @ np.array(r) / w.sum()))
+    # half-life: weight ratio of records 72 h apart is exactly 2
+    assert w[-1] / w[0] == pytest.approx(2.0)
+
+
+def test_ewma_pit_excludes_late_known_record():
+    ages = [40.0, 32.0, 24.0, 16.0, 8.0]
+    f = _f(ages, [0.0, 0.0, 0.0, 0.0, 1.0])
+    base = ts_ewma_r8(f, INST, T)
+    late = f.copy()
+    late.loc[4, "known_at"] = T - 30 * 10**9  # funding_ts <= t - 60 s but known_at > t - 1 min
+    assert ts_ewma_r8(late, INST, T) == 0.0 != base
+    assert ts_ewma_r8(f.iloc[:4], INST, T) == 0.0
+    # records of an earlier instance are not used
+    inst2 = Instance(1, T - 20 * H, None, None)
+    w16, w8 = 0.5 ** (16 / 72), 0.5 ** (8 / 72)
+    assert ts_ewma_r8(f, inst2, T) == pytest.approx(w8 / (w16 + w8))  # only the 16 h / 8 h records
+
+
+def _ar1_frame(n=14):
+    x = [0.001]
+    for _ in range(n - 1):
+        x.append(0.0002 + 0.5 * x[-1])
+    ages = [8.0 * (n - k) for k in range(n)]
+    return _f(ages, x), np.array(x)
 
 
 def test_ar1_projection():
-    # exact AR(1) with intercept: r[k+1] = 0.0002 + 0.5 r[k] (deterministic, no noise)
-    x = [0.001]
-    for _ in range(40):
-        x.append(0.0002 + 0.5 * x[-1])
-    x = np.array(x[:14])  # not yet converged: the fit recovers phi=.5, a=.0002 exactly
+    f, x = _ar1_frame()
     cur, path = x[-1], []
     for _ in range(3):
         cur = 0.0002 + 0.5 * cur
         path.append(cur)
-    assert ts_ar1_r8(x, 3) == pytest.approx(np.mean(path), rel=1e-6)
-    # horizon mean differs from the terminal value
-    assert ts_ar1_r8(x, 3) != pytest.approx(path[-1], rel=1e-9)
-    assert math.isnan(ts_ar1_r8(x[:5], 3)) and math.isnan(ts_ar1_r8(np.full(20, 0.001), 3))
-    # a mean-reverting series with a spike: projection decays towards the mean
-    y = np.array([0.0, 0.002] * 10 + [0.01])
-    assert ts_ar1_r8(y, 9) < 0.01
+    got = ts_ar1_r8(f, INST, T, 3)
+    assert got == pytest.approx(np.mean(path), rel=1e-6)
+    assert got != pytest.approx(path[-1], rel=1e-9)  # horizon mean, not the terminal value
+    # a record known too late is excluded from the fit and from the last state
+    late = f.copy()
+    late.loc[len(f) - 1, "known_at"] = T - 30 * 10**9
+    assert ts_ar1_r8(late, INST, T, 3) != pytest.approx(got, rel=1e-9)
+    # too few pairs / constant series (including all zeros) -> NaN
+    assert math.isnan(ts_ar1_r8(f.iloc[:8], INST, T, 3))
+    assert math.isnan(ts_ar1_r8(_f([8.0 * (14 - k) for k in range(14)], [0.0] * 14), INST, T, 3))
+    assert math.isnan(ts_ar1_r8(_f([8.0 * (14 - k) for k in range(14)], [0.001] * 14), INST, T, 3))
+
+
+def test_ar1_pairs_do_not_span_an_invalid_record():
+    f, _ = _ar1_frame(24)
+    base = ts_ar1_r8(f, INST, T, 3)
+    # shifting one record off-schedule makes it (and its successor) invalid: pairs touching them vanish
+    g = f.copy()
+    g.loc[10, "funding_ts"] -= 2 * H
+    g["known_at"] = g["funding_ts"] + MIN
+    ts, x = arms._valid_r8(g, INST, T)
+    assert np.isnan(x).sum() == 2
+    got = ts_ar1_r8(g, INST, T, 3)
+    assert math.isfinite(got)
+    # reference: pairs formed only from adjacent valid records
+    ok = np.isfinite(x[:-1]) & np.isfinite(x[1:])
+    u, v = x[:-1][ok], x[1:][ok]
+    phi = np.mean((u - u.mean()) * (v - v.mean())) / np.var(u)
+    a = v.mean() - phi * u.mean()
+    cur, path = x[-1], []
+    for _ in range(3):
+        cur = a + phi * cur
+        path.append(cur)
+    assert got == pytest.approx(np.mean(path), rel=1e-9)
+    assert base == pytest.approx(ts_ar1_r8(f, INST, T, 3))
 
 
 def test_a0_v5_reference_uses_frozen_config():

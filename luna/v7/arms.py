@@ -23,12 +23,13 @@ from luna.carry.funding import carry_per_hour
 from luna.carry.signals import AssetSignal
 from luna.carry.strategy import Decision, DecisionInput, HeldLeg, decide
 from luna.v7.constants import FROZEN
-from luna.v7.timeutil import NS, H, ns_array
+from luna.v7.data.instances import Instance
+from luna.v7.timeutil import D, H, ns_array
+from luna.v7.universe import pit_funding
 
 R8_H = 8.0  # hours per r8 unit
 EWMA_HALF_LIFE_H = 72
 AR1_MIN_OBS = 10
-PIT_LAG_NS = 60 * NS
 
 _FAMILY = {"A2": ("en", "logit_en"), "A3": ("lgb_reg", "lgb_clf")}  # ML* -> (regressor, classifier)
 
@@ -153,39 +154,53 @@ def arm_scores(arm: str, cands: pd.DataFrame, h_star: float, ml_star: str | None
 # --- TS references (DEC-20) -------------------------------------------------------------------------
 
 
-def ts_ewma_r8(ts_ns, r8, t_ns: int) -> float:
-    """EWMA of settled valid r8, half-life 72 h on settlement time, using obs with ts <= t - 60 s."""
-    ts = ns_array(ts_ns, "ts_ns")
-    x = np.asarray(r8, np.float64)
-    if len(ts) != len(x):
-        raise ValueError("ts_ns and r8 differ in length")
-    m = np.isfinite(x) & (ts <= int(t_ns) - PIT_LAG_NS)
+def _valid_r8(f: pd.DataFrame, cur: Instance, t_ns: int) -> tuple[np.ndarray, np.ndarray]:
+    """(funding_ts, r8) of the PIT annotated funding records of the current instance (known_at <= t - 1 min,
+    ``universe.pit_funding``) in order, with NaN r8 where the record is invalid (S-2.6)."""
+    a = pit_funding(f, cur, int(t_ns))
+    ts = ns_array(a["funding_ts"], "funding_ts")
+    r8 = a["r8"].astype("Float64").to_numpy(dtype=float, na_value=np.nan)
+    r8 = np.where(a["invalid"].to_numpy(bool), np.nan, r8)
+    return ts, r8
+
+
+def ts_ewma_r8(f: pd.DataFrame, cur: Instance, t_ns: int) -> float:
+    """EWMA of valid r8, half-life 72 h on settlement time, over ``pit_funding(f, cur, t)`` (current instance,
+    known_at <= t - 1 min, L1)."""
+    ts, x = _valid_r8(f, cur, t_ns)
+    m = np.isfinite(x)
     if not m.any():
         return math.nan
     w = 0.5 ** (((int(t_ns) - ts[m]) / H) / EWMA_HALF_LIFE_H)
     return float(w @ x[m] / w.sum())
 
 
-def ts_ar1_r8(series_30d, steps: int) -> float:
-    """AR(1) on r8 (OLS r[k+1] = a + phi r[k]) fitted on the given last-30-d series (oldest first), projected
-    ``steps`` = h*/8 settlements ahead; returns the MEAN of the projected path r_hat[n+1..n+steps], the
-    carry-rate forecast averaged over the horizon (AMB-14). NaN if < 10 finite obs or x constant."""
+def ts_ar1_r8(f: pd.DataFrame, cur: Instance, t_ns: int, steps: int) -> float:
+    """AR(1) on r8 (OLS r[k+1] = a + phi r[k]) fitted on the valid records of ``pit_funding(f, cur, t)`` with
+    funding_ts > t - 30 d, projected ``steps`` = h*/8 settlements ahead; returns the MEAN of the projected
+    path (AMB-14). A (r[k], r[k+1]) pair needs both records adjacent in the record sequence and valid (a
+    dropped / invalid record breaks the pair). NaN if < 10 pairs or the regressor is constant."""
     if steps < 1:
         raise ValueError("steps must be >= 1")
-    x = np.asarray(series_30d, np.float64)
-    x = x[np.isfinite(x)]
-    if len(x) < AR1_MIN_OBS:
+    ts, x = _valid_r8(f, cur, t_ns)
+    keep = ts > int(t_ns) - 30 * D
+    ts, x = ts[keep], x[keep]
+    if len(x) < 2:
         return math.nan
-    u, v = x[:-1], x[1:]
-    if float(np.ptp(u)) <= 1e-12 * float(np.max(np.abs(u))):  # constant regressor: no slope
+    ok = np.isfinite(x[:-1]) & np.isfinite(x[1:])
+    u, v = x[:-1][ok], x[1:][ok]
+    if len(u) < AR1_MIN_OBS:
         return math.nan
-    vu = float(np.var(u))
-    phi = float(np.mean((u - u.mean()) * (v - v.mean())) / vu)
+    if float(np.ptp(u)) <= 1e-12 * float(np.max(np.abs(u))):  # constant regressor (incl. all-zero): no fit
+        return math.nan
+    phi = float(np.mean((u - u.mean()) * (v - v.mean())) / np.var(u))
     a = float(v.mean() - phi * u.mean())
-    cur, path = float(x[-1]), []
+    if not np.isfinite(x[-1]):  # the last record is invalid: no state to project from
+        return math.nan
+    cur_v, path = float(x[-1]), []
     for _ in range(steps):
-        cur = a + phi * cur
-        path.append(cur)
+        cur_v = a + phi * cur_v
+        path.append(cur_v)
     return float(np.mean(path))
 
 
