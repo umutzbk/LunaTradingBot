@@ -10,7 +10,7 @@ import pytest
 
 from luna.v7 import spec, windows
 from luna.v7.constants import FROZEN
-from luna.v7.timeutil import MIN, NS, D, H, from_ms, from_s, to_ns, ts
+from luna.v7.timeutil import MIN, NS, D, H, from_ms, from_s, ns_array, to_ns, ts
 
 
 def test_frozen_constants_values():
@@ -168,3 +168,30 @@ def test_m6_and_w_hold_overlaps_nothing_in_m6():
     assert not windows.overlaps(*windows.W_DEV, (start, end))
     assert windows.overlaps(start - 1, start + 1, (start, end))
     assert windows.overlaps(start + D, start + 2 * D, (start, end))  # open-ended span
+
+
+@pytest.mark.parametrize("bad", [1e30, -1e30, np.inf, -np.inf, np.nan, 1.6e9 + 0.5])
+def test_ns_array_rejects_bad_floats(bad):
+    with pytest.raises(ValueError, match="known_at"):
+        ns_array(np.array([1.7e18, bad]), "known_at")
+
+
+def test_ns_array_rejects_non_integral_ns_float():
+    # 1.5e18 + 0.5 is not representable in float64 (ULP 256 there) and collapses to the valid 1.5e18; every
+    # float64 inside the plausible window is integral, so integrality uses a representable fraction
+    assert np.float64(1.5e18) + 0.5 == np.float64(1.5e18)
+    with pytest.raises(ValueError, match="non-integral"):
+        ns_array(np.array([1.5e18, 1.6e15 + 0.5]), "x")
+
+
+def test_ns_array_accepts_valid():
+    t = to_ns("2024-06-01T00:00:00Z")
+    out = ns_array(pd.Series([float(t), float(t + MIN)]), "known_at")
+    assert out.dtype == np.int64 and list(out) == [t, t + MIN]
+    ints = np.array([0, 5, t], dtype=np.int64)  # integer dtypes are accepted as-is
+    assert ns_array(ints, "open_ts").tolist() == ints.tolist()
+    assert ns_array(np.array([], dtype=np.float64), "x").dtype == np.int64
+    with pytest.raises(ValueError):
+        ns_array(np.array([2**63], dtype=np.uint64), "x")
+    with pytest.raises(ValueError):
+        ns_array(pd.Series(["a"]), "x")

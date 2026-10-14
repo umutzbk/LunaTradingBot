@@ -13,14 +13,14 @@ import numpy as np
 import pandas as pd
 
 from luna.v7.data.instances import Instance
-from luna.v7.timeutil import MIN, H
+from luna.v7.timeutil import MIN, H, ns_array
 
 BAR_15M = 15 * MIN
 
 
 def halted(bars1m: pd.DataFrame, tau_ns: int) -> bool:
     """S-5.4: no volume > 0 1-minute bar opening in the half-open window [tau - 60 min, tau)."""
-    t = bars1m["open_ts"].to_numpy(np.int64)
+    t = ns_array(bars1m["open_ts"], "open_ts")
     v = bars1m["vol_base"].to_numpy(np.float64)
     return not bool(((t >= tau_ns - H) & (t < tau_ns) & (v > 0)).any())
 
@@ -61,7 +61,7 @@ def first_executable_after(
     closed. Bars whose close is not finite and positive are not executable (skipped; no price is invented).
     No usable bar -> None (the caller applies the terminal / invalid rules).
     """
-    t = bars1m["open_ts"].to_numpy(np.int64)
+    t = ns_array(bars1m["open_ts"], "open_ts")
     ok = (t >= tau) & (bars1m["vol_base"].to_numpy(np.float64) > 0) & (t >= instance.first_bar_ts)
     if instance.last_trade_ts is not None:
         ok &= t + MIN <= instance.last_trade_ts

@@ -140,3 +140,14 @@ def test_nan_or_missing_known_at_raises():
         half_spread(b, T0 + 2 * Q + MIN)
     with pytest.raises(ValueError):
         half_spread(bars([A, B]).drop(columns="known_at"), T0 + 2 * Q + MIN)
+
+
+def test_out_of_range_known_at_raises():
+    import pytest
+
+    for bad in (1e30, -1e30, 1.6e9 + 0.5):
+        b = bars([A, B])
+        b["known_at"] = b["known_at"].astype("float64")
+        b.loc[1, "known_at"] = bad
+        with pytest.raises(ValueError):
+            half_spread(b, T0 + 2 * Q + MIN)

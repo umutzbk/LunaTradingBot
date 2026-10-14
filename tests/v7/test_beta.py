@@ -103,7 +103,21 @@ def test_nan_known_at_raises_and_none_args_raise():
     with pytest.raises(ValueError):
         hourly_known_at_from_15m(df)
     a = series(np.zeros(10))
-    with pytest.raises((TypeError, ValueError)):
+    with pytest.raises(TypeError):
         beta_hat(a, a, T, None, None)
-    with pytest.raises((TypeError, ValueError)):
+    with pytest.raises(TypeError):
         beta_hat(a, a, T, kn(a), None)
+
+
+@pytest.mark.parametrize("bad", [1e30, -1e30])
+def test_out_of_range_known_at_raises(bad):
+    t = to_ns("2024-06-01T00:00:00Z")
+    # the out-of-range value is on a non-hour-closing row: every row is validated, intentionally
+    df = pd.DataFrame({"open_ts": [t, t + 45 * MIN], "c": [1.0, 1.0], "known_at": [bad, float(t + 60 * MIN)]})
+    with pytest.raises(ValueError):
+        hourly_known_at_from_15m(df)
+    a = series(np.zeros(10))
+    ka = kn(a).astype("float64")
+    ka.iloc[-1] = bad
+    with pytest.raises(ValueError):
+        beta_hat(a, a, T, ka, kn(a))

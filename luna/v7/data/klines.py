@@ -15,15 +15,14 @@ from typing import Literal
 import pandas as pd
 
 from luna.v7.data.schema import IntegrityBlocker
-from luna.v7.timeutil import MIN
+from luna.v7.timeutil import MIN, NS_HI, NS_LO
 
 RAW_COLUMNS = ("open_time", "open", "high", "low", "close", "volume", "close_time", "quote_volume", "count",
                "taker_buy_volume", "taker_buy_quote_volume", "ignore")
 VALUE_COLUMNS = ("o", "h", "l", "c", "vol_base", "vol_quote", "n_trades", "taker_buy_quote")
 OUT_COLUMNS = ("open_ts", *VALUE_COLUMNS, "known_at")
 _MULT = {"ms": 10**6, "us": 10**3, "ns": 1}
-_LO = float(pd.Timestamp("2017-01-01", tz="UTC").value)
-_HI = float(pd.Timestamp("2100-01-01", tz="UTC").value)
+_LO, _HI = NS_LO, NS_HI  # shared plausibility window (timeutil.ns_array uses the same bounds)
 _RENAME = {"open": "o", "high": "h", "low": "l", "close": "c", "volume": "vol_base",
            "quote_volume": "vol_quote", "count": "n_trades", "taker_buy_quote_volume": "taker_buy_quote"}
 

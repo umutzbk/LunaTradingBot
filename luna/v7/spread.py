@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from luna.v7.constants import FROZEN
-from luna.v7.timeutil import MIN
+from luna.v7.timeutil import MIN, ns_array
 
 BAR_15M = 15 * MIN
 
@@ -23,14 +23,12 @@ def pair_products(bars15: pd.DataFrame) -> pd.DataFrame:
     b = bars15.sort_values("open_ts")
     hlc = b[["h", "l", "c"]].to_numpy(np.float64)
     b = b[np.isfinite(hlc).all(axis=1) & (hlc > 0).all(axis=1)]
-    t = b["open_ts"].to_numpy(np.int64)
+    t = ns_array(b["open_ts"], "open_ts")
     c = np.log(b["c"].to_numpy(np.float64))
     eta = (np.log(b["h"].to_numpy(np.float64)) + np.log(b["l"].to_numpy(np.float64))) / 2.0
     if "known_at" not in b.columns:
         raise ValueError("bars15 has no known_at column: point-in-time filtering is impossible")
-    if not np.isfinite(pd.to_numeric(b["known_at"], errors="coerce").to_numpy(np.float64)).all():
-        raise ValueError("bars15 has a missing / non-finite known_at: point-in-time filtering is impossible")
-    ka = b["known_at"].to_numpy(np.int64)
+    ka = ns_array(b["known_at"], "known_at")  # ValueError on missing / non-finite / out-of-range values
     consec = (t[1:] - t[:-1]) == BAR_15M
     pi = 4.0 * (c[:-1] - eta[:-1]) * (c[:-1] - eta[1:])
     known = np.maximum(ka[1:], t[1:] + BAR_15M)

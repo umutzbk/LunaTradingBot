@@ -16,35 +16,41 @@ import numpy as np
 import pandas as pd
 
 from luna.v7.constants import FROZEN
-from luna.v7.timeutil import MIN, D, H
+from luna.v7.timeutil import MIN, D, H, ns_array
 
 BAR_15M = 15 * MIN
 
 
 def hourly_close_from_15m(bars15: pd.DataFrame) -> pd.Series:
     """Close of the 15m bar closing at each full hour, indexed by that hour (ns)."""
-    end = bars15["open_ts"].to_numpy(np.int64) + BAR_15M
+    end = ns_array(bars15["open_ts"], "open_ts") + BAR_15M
     m = end % H == 0
     return pd.Series(bars15["c"].to_numpy(np.float64)[m], index=end[m]).sort_index()
 
 
 def hourly_known_at_from_15m(bars15: pd.DataFrame) -> pd.Series:
-    """``known_at`` of the 15m bar closing at each full hour, same index as ``hourly_close_from_15m``."""
-    end = bars15["open_ts"].to_numpy(np.int64) + BAR_15M
+    """``known_at`` of the 15m bar closing at each full hour, same index as ``hourly_close_from_15m``.
+
+    Every row's ``known_at`` is validated (``timeutil.ns_array``: finite, integral, plausible ns), not only
+    the hour-closing rows that are returned - intentionally: a corrupt known_at anywhere in the frame means
+    the input is not trustworthy for point-in-time filtering, so it raises ValueError instead of failing open.
+    """
+    end = ns_array(bars15["open_ts"], "open_ts") + BAR_15M
     m = end % H == 0
     if "known_at" not in bars15.columns:
         raise ValueError("bars15 has no known_at column: point-in-time filtering is impossible")
-    raw = pd.to_numeric(bars15["known_at"], errors="coerce").to_numpy(np.float64)
-    if not np.isfinite(raw).all():
-        raise ValueError("bars15 has a missing / non-finite known_at: point-in-time filtering is impossible")
-    ka = bars15["known_at"].to_numpy(np.int64)
+    ka = ns_array(bars15["known_at"], "known_at")
     return pd.Series(ka[m], index=end[m]).sort_index()
 
 
 def _pit(close: pd.Series, known_at: pd.Series, t_ns: int) -> pd.Series:
-    """Keep prices with known_at <= t - 1 min; a price without a known_at entry is dropped."""
+    """Keep prices with known_at <= t - 1 min; a price without a known_at entry is dropped.
+
+    ``known_at`` values are validated with ``timeutil.ns_array`` (ValueError on non-finite / out-of-range).
+    """
     if not isinstance(known_at, pd.Series):
         raise TypeError("known_at must be a pandas Series (point-in-time filter is mandatory)")
+    known_at = pd.Series(ns_array(known_at, "known_at"), index=known_at.index)
     ka = known_at.reindex(close.index)
     return close[(ka <= t_ns - MIN).to_numpy()]
 
