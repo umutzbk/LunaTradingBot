@@ -128,3 +128,15 @@ def test_ar_mixed_sign_positive_mean_hand_worked():
     rows = [A, E, A, B, A, B]
     # pairs: -0.0008, 0, +0.0008, (B,A)=0, +0.0008 -> mean 0.0008/5 = 0.00016 > 0 -> S = sqrt(0.00016)
     assert abs(half_spread(bars(rows), T0 + 6 * Q + MIN) - math.sqrt(0.00016)) < 1e-12
+
+
+def test_nan_or_missing_known_at_raises():
+    import pytest
+
+    b = bars([A, B])
+    b["known_at"] = b["known_at"].astype("float64")
+    b.loc[1, "known_at"] = np.nan
+    with pytest.raises(ValueError):
+        half_spread(b, T0 + 2 * Q + MIN)
+    with pytest.raises(ValueError):
+        half_spread(bars([A, B]).drop(columns="known_at"), T0 + 2 * Q + MIN)

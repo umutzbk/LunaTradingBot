@@ -26,7 +26,11 @@ def pair_products(bars15: pd.DataFrame) -> pd.DataFrame:
     t = b["open_ts"].to_numpy(np.int64)
     c = np.log(b["c"].to_numpy(np.float64))
     eta = (np.log(b["h"].to_numpy(np.float64)) + np.log(b["l"].to_numpy(np.float64))) / 2.0
-    ka = b["known_at"].to_numpy(np.int64) if "known_at" in b.columns else t + BAR_15M
+    if "known_at" not in b.columns:
+        raise ValueError("bars15 has no known_at column: point-in-time filtering is impossible")
+    if not np.isfinite(pd.to_numeric(b["known_at"], errors="coerce").to_numpy(np.float64)).all():
+        raise ValueError("bars15 has a missing / non-finite known_at: point-in-time filtering is impossible")
+    ka = b["known_at"].to_numpy(np.int64)
     consec = (t[1:] - t[:-1]) == BAR_15M
     pi = 4.0 * (c[:-1] - eta[:-1]) * (c[:-1] - eta[1:])
     known = np.maximum(ka[1:], t[1:] + BAR_15M)

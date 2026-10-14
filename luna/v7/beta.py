@@ -34,12 +34,17 @@ def hourly_known_at_from_15m(bars15: pd.DataFrame) -> pd.Series:
     m = end % H == 0
     if "known_at" not in bars15.columns:
         raise ValueError("bars15 has no known_at column: point-in-time filtering is impossible")
+    raw = pd.to_numeric(bars15["known_at"], errors="coerce").to_numpy(np.float64)
+    if not np.isfinite(raw).all():
+        raise ValueError("bars15 has a missing / non-finite known_at: point-in-time filtering is impossible")
     ka = bars15["known_at"].to_numpy(np.int64)
     return pd.Series(ka[m], index=end[m]).sort_index()
 
 
 def _pit(close: pd.Series, known_at: pd.Series, t_ns: int) -> pd.Series:
     """Keep prices with known_at <= t - 1 min; a price without a known_at entry is dropped."""
+    if not isinstance(known_at, pd.Series):
+        raise TypeError("known_at must be a pandas Series (point-in-time filter is mandatory)")
     ka = known_at.reindex(close.index)
     return close[(ka <= t_ns - MIN).to_numpy()]
 

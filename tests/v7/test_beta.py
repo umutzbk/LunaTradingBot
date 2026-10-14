@@ -95,3 +95,15 @@ def test_beta_drops_late_known_at_bars():
             rb = btc.drop(btc.index[late_pos]) if side in ("btc", "both") else btc
             assert abs(got - bh(ra, rb, T)) < 1e-12
             assert got != bh(*tgt, T)  # the leak would change the result
+
+
+def test_nan_known_at_raises_and_none_args_raise():
+    t = to_ns("2024-06-01T00:00:00Z")
+    df = pd.DataFrame({"open_ts": [t + 45 * MIN], "c": [1.0], "known_at": [np.nan]})
+    with pytest.raises(ValueError):
+        hourly_known_at_from_15m(df)
+    a = series(np.zeros(10))
+    with pytest.raises((TypeError, ValueError)):
+        beta_hat(a, a, T, None, None)
+    with pytest.raises((TypeError, ValueError)):
+        beta_hat(a, a, T, kn(a), None)
