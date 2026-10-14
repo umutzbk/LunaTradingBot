@@ -12,6 +12,8 @@
 * ``samples`` (ruling R2): a DataFrame with decision_ts, symbol, side, h, label_known_at, y_reg, y_pos and the
   FEATURES columns; one row per (decision, symbol, side) for one horizon; invalid labels excluded upstream.
 * A "decision date" is the UTC calendar day of ``decision_ts`` (AMB-12).
+* EN and LightGBM regressors are selected separately (S-7.2 A2 / A3); the search space is the frozen one
+  (``models.search_space``); samples are put in canonical order and duplicate keys are rejected.
 """
 
 from __future__ import annotations
@@ -28,10 +30,11 @@ from luna.v7.constants import FROZEN
 from luna.v7.features import FEATURES, Preprocessor, features_for_horizon, raw_matrix
 from luna.v7.models import Config, Fitted
 from luna.v7.timeutil import D, ns_array
-from luna.v7.windows import Fold, final_blocks
+from luna.v7.windows import W_HOLD, Fold, final_blocks
 
 PURGE_NS = FROZEN.cv.purge_ns
 ISO_LO, ISO_HI = FROZEN.cv.iso_clip
+KEY = ["decision_ts", "symbol", "side"]
 REQUIRED = ("decision_ts", "symbol", "side", "h", "label_known_at", "y_reg", "y_pos", *FEATURES)
 
 
@@ -59,9 +62,18 @@ def _validate(samples: pd.DataFrame, horizon: int | None = None) -> None:
             raise ValueError(f"unknown horizon {horizon}")
         if len(samples) and not (samples["h"] == horizon).all():
             raise ValueError("samples hold rows of another horizon than the requested one")
+    if samples.duplicated(KEY).any():
+        raise ValueError("duplicate (decision_ts, symbol, side) keys in samples")
     for c in ("y_reg", "y_pos"):
         if not np.isfinite(samples[c].to_numpy(np.float64)).all():
             raise ValueError(f"{c}: non-finite label (invalid labels are excluded upstream)")
+
+
+def canonical(samples: pd.DataFrame, horizon: int | None = None) -> pd.DataFrame:
+    """Validated samples in the canonical order (decision_ts, symbol, side), index reset (S-17 determinism):
+    the result never depends on the input row order. Duplicate (decision_ts, symbol, side) keys raise."""
+    _validate(samples, horizon)
+    return samples.sort_values(KEY, kind="stable").reset_index(drop=True)
 
 
 def split(samples: pd.DataFrame, fold: Fold) -> dict[str, np.ndarray]:
@@ -200,11 +212,16 @@ class _Clf:
 
 @dataclass
 class FoldModel:
+    """One fold's models. ``reg`` / ``lin_cal`` / ``selection`` are keyed by regressor family (``en`` = the
+    A2 ranker, ``lgb_reg`` = the A3 ranker; each selected only among its own 6 configs); ``clf`` by classifier
+    family (``logit_en`` for A2 / A1, ``lgb_clf`` for A3 / A1). ``test_idx`` are positional indices into the
+    canonically sorted samples (see ``canonical``)."""
+
     fold: Fold
     horizon: int
-    selection: Selection
-    reg: Fitted
-    lin_cal: LinearCalibrator
+    selection: dict[str, Selection]
+    reg: dict[str, Fitted]
+    lin_cal: dict[str, LinearCalibrator]
     clf: dict[str, _Clf]
     pre: Preprocessor
     cols: tuple[str, ...]
@@ -212,10 +229,12 @@ class FoldModel:
     test_pred: pd.DataFrame | None = None
 
     def predict(self, df: pd.DataFrame) -> pd.DataFrame:
-        """yhat / yhat_cal and, per classifier family, ``p_<family>`` and ``p_<family>_cal``."""
+        """``yhat_<fam>`` / ``yhat_cal_<fam>`` per regressor family, ``p_<fam>`` / ``p_<fam>_cal`` per
+        classifier family."""
         out = pd.DataFrame(index=df.index)
-        out["yhat"] = self.reg.predict(_design(self.reg.cfg, df, self.cols, self.pre))
-        out["yhat_cal"] = self.lin_cal.predict(out["yhat"].to_numpy())
+        for fam, f in self.reg.items():
+            out[f"yhat_{fam}"] = f.predict(_design(f.cfg, df, self.cols, self.pre))
+            out[f"yhat_cal_{fam}"] = self.lin_cal[fam].predict(out[f"yhat_{fam}"].to_numpy())
         for fam, c in self.clf.items():
             p = c.fitted.predict(_design(c.fitted.cfg, df, self.cols, self.pre))
             out[f"p_{fam}"] = p
@@ -249,12 +268,19 @@ def select_hparams(
 ) -> Selection:
     """Pick the regressor with the highest T_sel date-level IC (S-10.5; never P&L). Ties -> first in order.
 
-    Candidates are fit on T_tr only (linear preprocessing is fitted on T_tr rows); a candidate whose IC is
-    undefined ranks last. Classifiers are not selected: passing one raises.
+    ``configs`` must be members of one regressor family of the frozen ``search_space(horizon)`` (S-10.5): EN
+    and LightGBM are selected separately (A2 / A3 each have their own model). Candidates are fit on T_tr only
+    (linear preprocessing is fitted on T_tr rows); a candidate whose IC is undefined ranks last.
+    ``samples`` must be canonical (``canonical``) and ``idx`` its ``split``.
     """
     cands = list(configs)
     if not cands or any(not c.is_regressor for c in cands):
         raise ValueError("select_hparams takes regressor configs only (classifiers are not selected)")
+    if len({c.family for c in cands}) != 1:
+        raise ValueError("select_hparams selects within one family (EN and LightGBM are separate rankers)")
+    space = models.search_space(horizon)
+    if any(c not in space for c in cands):
+        raise ValueError("config outside the frozen search space (S-10.5)")
     cols = features_for_horizon(horizon)
     tr, sel = samples.iloc[idx["tr"]], samples.iloc[idx["sel"]]
     if len(tr) == 0 or len(sel) == 0:
@@ -275,67 +301,61 @@ def select_hparams(
     return Selection(best[1].cfg, best[1].best_iteration, float(best[0]), tuple(scores))
 
 
-def _build(
-    fold: Fold,
-    samples: pd.DataFrame,
-    horizon: int,
-    reg_cfgs: Sequence[Config],
-    clf_cfgs: Sequence[Config],
-    fixed_reg: Config | None,
-) -> FoldModel:
-    _validate(samples, horizon)
+def _build(fold: Fold, samples: pd.DataFrame, horizon: int, families: Sequence[str]) -> FoldModel:
+    samples = canonical(samples, horizon)
     idx = split(samples, fold)
     if min(len(idx[k]) for k in ("tr", "sel", "cal")) == 0:
         raise ValueError("empty T_tr / T_sel / T_cal after the purge")
+    space = models.search_space(horizon)
     cols = features_for_horizon(horizon)
     tr, sel, cal = (samples.iloc[idx[k]] for k in ("tr", "sel", "cal"))
     fit_df = samples.iloc[np.concatenate([idx["tr"], idx["sel"]])]
     pre_tr = Preprocessor(cols).fit(tr, _ts(tr), fold)
-
-    if fixed_reg is None:
-        selection = select_hparams(reg_cfgs, samples, idx, fold, horizon)
-    else:  # final model: the early-stopped count still comes from T_sel
-        f = _fit_tr(fixed_reg, "y_reg", tr, sel, cols, pre_tr)
-        selection = Selection(fixed_reg, f.best_iteration, _sel_ic(f, sel, cols, pre_tr), ())
-
     pre = Preprocessor(cols).fit(fit_df, _ts(fit_df), fold)  # T_fit only (L5)
     cal_dates = decision_dates(cal["decision_ts"])
 
-    rc = selection.cfg
-    reg = models.refit(rc, selection.best_iter, _design(rc, fit_df, cols, pre), fit_df["y_reg"].to_numpy())
-    lin = LinearCalibrator().fit(reg.predict(_design(rc, cal, cols, pre)), cal["y_reg"], cal_dates)
+    selection: dict[str, Selection] = {}
+    reg: dict[str, Fitted] = {}
+    lin: dict[str, LinearCalibrator] = {}
+    for fam in families:
+        s = select_hparams([c for c in space if c.family == fam], samples, idx, fold, horizon)
+        rc = s.cfg
+        r = models.refit(rc, s.best_iter, _design(rc, fit_df, cols, pre), fit_df["y_reg"].to_numpy())
+        selection[fam], reg[fam] = s, r
+        lin[fam] = LinearCalibrator().fit(r.predict(_design(rc, cal, cols, pre)), cal["y_reg"], cal_dates)
 
     clf: dict[str, _Clf] = {}
-    for c in clf_cfgs:
-        if c.is_regressor:
-            raise ValueError("classifier slot holds a regressor config")
-        stop = _fit_tr(c, "y_pos", tr, sel, cols, pre_tr)
-        r = models.refit(c, stop.best_iteration, _design(c, fit_df, cols, pre), fit_df["y_pos"].to_numpy())
+    for c in (c for c in space if not c.is_regressor):
+        n_trees = None
+        if c.family == "lgb_clf":  # tree count early-stopped on T_sel; logit_en has no stop phase
+            n_trees = _fit_tr(c, "y_pos", tr, sel, cols, pre_tr).best_iteration
+        r = models.refit(c, n_trees, _design(c, fit_df, cols, pre), fit_df["y_pos"].to_numpy())
         iso = IsotonicCalibrator().fit(r.predict(_design(c, cal, cols, pre)), cal["y_pos"], cal_dates)
         clf[c.family] = _Clf(r, iso)
     return FoldModel(fold, horizon, selection, reg, lin, clf, pre, cols)
 
 
-def run_fold(
-    fold: Fold, samples: pd.DataFrame, horizon: int, *, configs: Sequence[Config] | None = None
-) -> FoldModel:
-    """Select (T_sel IC), refit on T_fit, calibrate on T_cal only, predict the test quarter (S-10.4 1-5)."""
-    cfgs = list(models.search_space(horizon) if configs is None else configs)
-    regs = [c for c in cfgs if c.is_regressor]
-    clfs = [c for c in cfgs if not c.is_regressor]
-    m = _build(fold, samples, horizon, regs, clfs, None)
-    m.test_idx = split(samples, fold)["test"]
-    m.test_pred = m.predict(samples.iloc[m.test_idx])
+def run_fold(fold: Fold, samples: pd.DataFrame, horizon: int) -> FoldModel:
+    """Per regressor family select (T_sel IC over its own 6 configs), refit on T_fit, calibrate on T_cal only;
+    fixed classifiers likewise; predict the test quarter (S-10.4 1-5, S-7.2 A2 = EN, A3 = LightGBM)."""
+    m = _build(fold, samples, horizon, models.REGRESSORS)
+    canon = canonical(samples, horizon)
+    m.test_idx = split(canon, fold)["test"]
+    m.test_pred = m.predict(canon.iloc[m.test_idx])
     return m
 
 
-def final_model(
-    samples: pd.DataFrame, horizon: int, cfg: Config, *, classifiers: Sequence[Config] | None = None
-) -> FoldModel:
-    """Final model before W_HOLD (S-10.4 step 6): blocks from ``windows.final_blocks()``; ``cfg`` is the
-    pre-selected regressor (its tree count is early-stopped on T_sel). No test prediction is made and no row
-    at or after the holdout start is used: there is no refit inside the holdout."""
-    if not cfg.is_regressor:
-        raise ValueError("final_model takes a regressor config")
-    pool = models.search_space(horizon) if classifiers is None else classifiers
-    return _build(final_blocks(), samples, horizon, [cfg], [c for c in pool if not c.is_regressor], cfg)
+def final_model(samples: pd.DataFrame, horizon: int, family: str) -> FoldModel:
+    """Final model before W_HOLD (S-10.4 step 6) for one regressor family: hyperparameters selected on the
+    FINAL T_sel (``windows.final_blocks()``), refit on the final T_fit, calibrators on the final T_cal. No
+    test prediction is made. Any row with ``decision_ts`` or ``label_known_at`` at or after the holdout start
+    is refused (sealing, fail closed): there is no refit inside the holdout."""
+    if family not in models.REGRESSORS:
+        raise ValueError(f"final_model family must be one of {models.REGRESSORS}")
+    _validate(samples, horizon)
+    seal = W_HOLD[0]
+    if (ns_array(samples["decision_ts"], "decision_ts") >= seal).any() or (
+        ns_array(samples["label_known_at"], "label_known_at") >= seal
+    ).any():
+        raise ValueError("final_model refuses rows at or after the W_HOLD start (sealed)")
+    return _build(final_blocks(), samples, horizon, (family,))

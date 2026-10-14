@@ -25,13 +25,19 @@ from luna.v7.windows import D0, W_HOLD, outer_folds
 
 FOLD = outer_folds(D0)[0]
 SMALL = {"num_leaves": 4, "min_data_in_leaf": 20}
-CONFIGS = [
+TINY = [  # test-only stand-in for the frozen search space (tiny min_data for tiny synthetic data)
     Config("en", {"alpha": 1e-2, "l1_ratio": 0.2}),
     Config("en", {"alpha": 1e-1, "l1_ratio": 0.8}),
     Config("lgb_reg", SMALL),
+    Config("lgb_reg", {"num_leaves": 8, "min_data_in_leaf": 40}),
     Config("logit_en", {"alpha": 1e-2, "l1_ratio": 0.5}),
     Config("lgb_clf", SMALL),
 ]
+
+
+@pytest.fixture(autouse=True)
+def _tiny_space(monkeypatch):
+    monkeypatch.setattr(models, "search_space", lambda h: list(TINY))
 
 
 @functools.lru_cache(maxsize=4)
@@ -116,7 +122,7 @@ def test_cal_never_used_for_fit_or_selection(monkeypatch):
 
     monkeypatch.setattr(models, "fit", spy_fit)
     monkeypatch.setattr(models, "refit", spy_refit)
-    m = run_fold(FOLD, df, 24, configs=CONFIGS)
+    m = run_fold(FOLD, df, 24)
     tr, sel = set(df.index[idx["tr"]]), set(df.index[idx["sel"]])
     assert calls
     for kind, _fam, xs, xsel in calls:
@@ -127,60 +133,142 @@ def test_cal_never_used_for_fit_or_selection(monkeypatch):
             assert xs == tr | sel  # refit on T_fit
     assert {k for k, *_ in calls} == {"fit", "refit"}
     assert m.test_pred is not None and set(m.test_pred.index) == test_rows
+    # the logistic EN has no stop phase: one fit per candidate (4) + the LightGBM classifier = 5 fits
+    assert sum(k == "fit" for k, *_ in calls) == 5 and sum(k == "refit" for k, *_ in calls) == 4
 
-    # corrupting the T_cal and test labels cannot change selection or the base model, only the calibrators
+    # corrupting the T_cal and test labels cannot change selection or the base models, only the calibrators
     d2 = df.copy()
     d2.loc[d2.index[idx["cal"]], ["y_reg", "y_pos"]] = [500.0, 1.0]
     d2.loc[d2.index[idx["test"]], "y_reg"] = -999.0
     monkeypatch.setattr(models, "fit", real_fit)
     monkeypatch.setattr(models, "refit", real_refit)
-    m2 = run_fold(FOLD, d2, 24, configs=CONFIGS)
-    assert m2.selection.cfg == m.selection.cfg and m2.selection.scores == m.selection.scores
-    assert np.array_equal(m2.test_pred["yhat"], m.test_pred["yhat"])
+    m2 = run_fold(FOLD, d2, 24)
+    for fam in ("en", "lgb_reg"):
+        assert m2.selection[fam].cfg == m.selection[fam].cfg
+        assert m2.selection[fam].scores == m.selection[fam].scores
+        assert np.array_equal(m2.test_pred[f"yhat_{fam}"], m.test_pred[f"yhat_{fam}"])
     assert np.array_equal(m2.test_pred["p_lgb_clf"], m.test_pred["p_lgb_clf"])
-    assert m2.lin_cal.a != m.lin_cal.a
+    assert m2.lin_cal["en"].a != m.lin_cal["en"].a
 
 
 def test_calibrators_fit_on_cal_from_refit_model():
     df = _full()
     idx = split(df, FOLD)
-    m = run_fold(FOLD, df, 24, configs=CONFIGS)
+    m = run_fold(FOLD, df, 24)
     cal = df.iloc[idx["cal"]]
-    yhat = m.predict(cal)["yhat"].to_numpy()
-    ref = LinearCalibrator().fit(yhat, cal["y_reg"], decision_dates(cal["decision_ts"]))
-    assert (m.lin_cal.a, m.lin_cal.b) == (ref.a, ref.b)
-    assert set(m.test_pred.columns) >= {"yhat", "yhat_cal", "p_logit_en_cal", "p_lgb_clf_cal"}
+    for fam in ("en", "lgb_reg"):
+        yhat = m.predict(cal)[f"yhat_{fam}"].to_numpy()
+        ref = LinearCalibrator().fit(yhat, cal["y_reg"], decision_dates(cal["decision_ts"]))
+        assert (m.lin_cal[fam].a, m.lin_cal[fam].b) == (ref.a, ref.b)
+    assert set(m.test_pred.columns) >= {"yhat_en", "yhat_cal_lgb_reg", "p_logit_en_cal", "p_lgb_clf_cal"}
     for c in ("p_logit_en_cal", "p_lgb_clf_cal"):
         assert m.test_pred[c].between(0.001, 0.999).all()
-    assert m.selection.cfg.is_regressor and m.selection.ic > 0  # signal exists in the fixture
+    assert m.selection["en"].ic > 0 and m.selection["lgb_reg"].ic > 0  # signal exists in the fixture
 
 
-def test_selection_uses_date_ic_not_pnl():
+def test_each_family_selected_only_among_its_own_configs():
     df = _full()
+    m = run_fold(FOLD, df, 24)
+    assert set(m.reg) == set(m.selection) == set(m.lin_cal) == {"en", "lgb_reg"}
+    assert set(m.clf) == {"logit_en", "lgb_clf"}
+    for fam in ("en", "lgb_reg"):
+        s = m.selection[fam]
+        own = [c for c in TINY if c.family == fam]
+        assert s.cfg.family == fam and m.reg[fam].cfg == s.cfg
+        assert [c for c, _ in s.scores] == own  # scored exactly its own configs, none of the other family
+        assert s.ic == max(ic for _, ic in s.scores)
+    # LightGBM's pick is its own best even if EN would have scored higher overall
+    en_best, lgb_best = (max(ic for _, ic in m.selection[f].scores) for f in ("en", "lgb_reg"))
+    assert (m.selection["en"].ic, m.selection["lgb_reg"].ic) == (en_best, lgb_best)
+    assert m.selection["lgb_reg"].best_iter >= 1 and m.selection["en"].best_iter is None
+
+
+def test_select_hparams_guards():
+    df = cv.canonical(_full(), 24)
     idx = split(df, FOLD)
-    sel = select_hparams(CONFIGS[:3], df, idx, FOLD, 24)
-    assert max(ic for _, ic in sel.scores) == sel.ic
-    assert dict((id(c), ic) for c, ic in sel.scores)[id(sel.cfg)] == sel.ic
     with pytest.raises(ValueError, match="classifiers"):
-        select_hparams(CONFIGS, df, idx, FOLD, 24)
-    if sel.cfg.family == "lgb_reg":
-        assert sel.best_iter and sel.best_iter >= 1
+        select_hparams(TINY, df, idx, FOLD, 24)
+    with pytest.raises(ValueError, match="one family"):
+        select_hparams(TINY[:4], df, idx, FOLD, 24)
+    with pytest.raises(ValueError, match="frozen search space"):
+        select_hparams([Config("en", {"alpha": 0.5, "l1_ratio": 0.5})], df, idx, FOLD, 24)
+    with pytest.raises(ValueError, match="unknown params"):
+        Config("en", {"alpha": 0.1, "l1_ratio": 0.5, "max_iter": 5})
 
 
-def test_final_model_blocks_and_no_holdout():
+def test_final_model_selects_on_final_blocks_and_refuses_holdout():
     fb = final_blocks()
     df = _samples(D0, fb.test_hi, step_days=9)
-    m = cv.final_model(df, 24, Config("en", {"alpha": 1e-2, "l1_ratio": 0.5}), classifiers=CONFIGS[3:])
-    assert m.fold == fb and m.test_pred is None and m.test_idx is None
-    # the holdout rows can be corrupted without changing the frozen model
     ts = df["decision_ts"].to_numpy()
-    d2 = df.copy()
-    d2.loc[ts >= W_HOLD[0], ["y_reg", "y_pos"]] = [1e6, 1.0]
-    m2 = cv.final_model(d2, 24, Config("en", {"alpha": 1e-2, "l1_ratio": 0.5}), classifiers=CONFIGS[3:])
-    probe = df.iloc[:50]
-    assert np.array_equal(m.predict(probe)["yhat_cal"], m2.predict(probe)["yhat_cal"])
+    pre = df[ts < W_HOLD[0] - 2 * D].copy()  # sealed input: nothing at or after the holdout start
+    m = cv.final_model(pre, 24, "lgb_reg")
+    assert m.fold == fb and m.test_pred is None and m.test_idx is None
+    assert set(m.reg) == {"lgb_reg"} and m.selection["lgb_reg"].cfg.family == "lgb_reg"
+    assert [c for c, _ in m.selection["lgb_reg"].scores] == [c for c in TINY if c.family == "lgb_reg"]
+    # selection really ran on the FINAL T_sel: corrupting those labels changes the scores
+    idx = split(cv.canonical(pre, 24), fb)
+    canon = cv.canonical(pre, 24)
+    d2 = canon.copy()
+    d2.loc[idx["sel"], "y_reg"] = -d2.loc[idx["sel"], "y_reg"]
+    m2 = cv.final_model(d2, 24, "lgb_reg")
+    assert m2.selection["lgb_reg"].scores != m.selection["lgb_reg"].scores
+    with pytest.raises(ValueError, match="sealed"):
+        cv.final_model(df, 24, "en")  # holds decision times inside the holdout
+    late = pre.copy()
+    late.loc[late.index[-1], "label_known_at"] = W_HOLD[0]
+    with pytest.raises(ValueError, match="sealed"):
+        cv.final_model(late, 24, "en")
     with pytest.raises(ValueError):
-        cv.final_model(df, 24, CONFIGS[3])
+        cv.final_model(pre, 24, "lgb_clf")
+
+
+def test_decision_dates_pool_three_decisions_per_day():
+    day = to_ns("2023-03-05")
+    ts = np.array([day + 5 * MIN, day + 485 * MIN, day + 965 * MIN, day + D + 5 * MIN])
+    d = decision_dates(ts)
+    assert len(set(d[:3])) == 1 and d[0] == day and d[3] == day + D
+
+
+def test_shuffled_input_gives_identical_models():
+    df = _full()
+    shuf = df.sample(frac=1.0, random_state=3).reset_index(drop=True)
+    a, b = run_fold(FOLD, df, 24), run_fold(FOLD, shuf, 24)
+    assert a.selection["en"].scores == b.selection["en"].scores
+    assert a.selection["lgb_reg"].scores == b.selection["lgb_reg"].scores
+    pd.testing.assert_frame_equal(a.test_pred, b.test_pred)
+    assert (a.lin_cal["en"].a, a.lin_cal["en"].b) == (b.lin_cal["en"].a, b.lin_cal["en"].b)
+    dup = pd.concat([df, df.iloc[:1]], ignore_index=True)
+    with pytest.raises(ValueError, match="duplicate"):
+        run_fold(FOLD, dup, 24)
+
+
+def _permute_within_dates(df: pd.DataFrame, seed: int) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    out = df.copy()
+    yr, yp = out["y_reg"].to_numpy().copy(), out["y_pos"].to_numpy().copy()
+    for rows in out.groupby(decision_dates(out["decision_ts"])).indices.values():
+        perm = rng.permutation(rows)
+        out.loc[rows, "y_reg"], out.loc[rows, "y_pos"] = yr[perm], yp[perm]
+    return out
+
+
+def test_permutation_canary_run_fold_ic_near_zero():
+    """L9(a): labels permuted within decision dates -> out-of-fold (test-quarter) date IC within +-2 SE of 0,
+    SE = std of the per-date ICs / sqrt(n_dates); the unpermuted fixture has a significantly positive IC."""
+    df = _samples(D0, FOLD.test_hi, step_days=1)
+    for variant, perm in (("real", False), ("permuted", True)):
+        d = _permute_within_dates(df, 17) if perm else df
+        m = run_fold(FOLD, d, 24)
+        te = cv.canonical(d, 24).iloc[m.test_idx]
+        dates = decision_dates(te["decision_ts"])
+        for fam in ("en", "lgb_reg"):
+            p = m.test_pred[f"yhat_{fam}"].to_numpy()
+            ic, se = date_ic(p, te["y_reg"], dates), date_ic_se(p, te["y_reg"], dates)
+            assert se > 0
+            if perm:
+                assert abs(ic) <= 2 * se, (variant, fam, ic, se)
+            else:
+                assert ic > 2 * se, (variant, fam, ic, se)
 
 
 def test_linear_calibrator_b_clip_and_date_weights():
@@ -262,5 +350,5 @@ def test_validate_rejects_bad_samples():
     with pytest.raises(ValueError, match="non-finite"):
         split(bad, FOLD)
     with pytest.raises(ValueError, match="horizon"):
-        run_fold(FOLD, df, 72, configs=CONFIGS)
+        run_fold(FOLD, df, 72)
     assert FROZEN.cv.purge_ns == 24 * H and to_ns("2021-01-01") == D0

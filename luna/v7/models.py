@@ -51,6 +51,9 @@ class Config:
         missing = [k for k in need if k not in self.params]
         if missing:
             raise ValueError(f"{self.family}: missing params {missing}")
+        extra = sorted(set(self.params) - set(need))
+        if extra:
+            raise ValueError(f"{self.family}: unknown params {extra} (only the frozen S-10.5 ones)")
 
     @property
     def is_regressor(self) -> bool:
