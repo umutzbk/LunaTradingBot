@@ -20,3 +20,11 @@ Entries are appended as they are found, numbered AMB-01, AMB-02, ... Format of o
 - Options: (a) allow only `delimiter` and `prefix`; (b) also allow S3 paging parameters (`marker`, `max-keys`), which a listing of more than 1000 keys needs in practice.
 - Classification: normative amendment required (if paging is needed).
 - Code now: `netguard.check` allows exactly `delimiter` and `prefix`; any other N2 parameter is refused.
+
+## AMB-03 — Numeric materiality threshold for a funding source conflict
+
+- Spec: S-2.6 (Overlap), DEC-32.
+- Literal text: "keys, rates and timestamps are compared. If they agree, archive provenance is kept. A material conflict is reported as a data-integrity blocker."
+- Options: (a) any rate difference; (b) a tolerance. The spec gives no numeric materiality threshold.
+- Classification: implementation clarification.
+- Code now: `funding.merge` matches REST to archive keys within the frozen +-60 s tolerance; rates are parsed to float and conflict when `abs(archive - rest) > 1e-12` (`funding.RATE_ATOL`). Also an `IntegrityBlocker`: a REST record matching several archive records, two REST records mapping to the same archive settlement, or two records of one source within 60 s. On agreement the archive row is kept unchanged (no field such as `mark_at_settle` is borrowed from REST); REST rows with no archive key within 60 s fill the gap with `source = "rest"`. Kline conflicts (S-2.2 DEC-33) use exact equality of every value column after parsing.
