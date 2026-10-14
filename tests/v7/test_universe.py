@@ -52,6 +52,7 @@ def make(b15=None, fund=None, insts=None, notices=(), ident=ID_OK, symbol="ABCUS
     fa = annotate(funding() if fund is None else fund, insts)
     fa["known_at"] = fa["funding_ts"] + MIN
     b1 = pd.DataFrame(dict(open_ts=np.arange(T - 2 * H, T, MIN, dtype=np.int64), vol_base=1.0))
+    b1["known_at"] = b1["open_ts"] + MIN
     return SymbolData(symbol, b15, b1, fa, insts, list(notices), ident)
 
 
@@ -172,11 +173,6 @@ def test_u7_freshness():
         f = f[f["funding_ts"] <= last].reset_index(drop=True)
         f.loc[f.index[-1], "funding_ts"] = last
         assert gates(make(fund=f), T).u7 is expect, age
-    f = funding()
-    f = f[f["funding_ts"] <= T - 2 * H].reset_index(drop=True)
-    sd = make(fund=f)
-    sd.funding_annot.loc[sd.funding_annot.index[-1], "nominal_h"] = pd.NA  # undetermined: fail closed
-    assert not gates(sd, T).u7
 
 
 def test_known_at_assertion():
@@ -272,3 +268,58 @@ def test_d0_rule():
     assert d0_month(_month_counts(2020, 12, 99)) is None
     assert g_d0(GateRow(True, True, True, True, False, False, False, False, (), None))
     assert not g_d0(GateRow(True, True, False, True, True, True, True, True, (), None))
+
+
+def test_u7_invalid_last_record_is_missing():
+    f = funding()
+    f = f[f["funding_ts"] <= T - 10 * H].reset_index(drop=True)  # last valid record 10 h old: stale
+    extra = pd.DataFrame(dict(funding_ts=[f["funding_ts"].iloc[-1] + 6 * H], rate=1e-4,
+                              interval_h_explicit=pd.array([None], dtype="Int64")))
+    f2 = pd.concat([f, extra], ignore_index=True)  # a fresh 6 h off-schedule record -> invalid
+    sd = make(fund=f2)
+    assert bool(sd.funding_annot["invalid"].iloc[-1])
+    r = gates(sd, T)
+    assert not r.u7 and r.u3  # U7 judged on the last valid record; U3 unaffected
+
+
+def test_bars1m_requires_known_at():
+    sd = make()
+    b1 = sd.bars1m.drop(columns="known_at")
+    bad = SymbolData(sd.symbol, sd.bars15, b1, sd.funding_annot, sd.insts, [], ID_OK)
+    with pytest.raises(ValueError):
+        gates(bad, T)
+
+
+def test_funding_after_last_trade_ts_counts_before_end_known_at():
+    b = bars15(end=T - 3 * D)
+    b = b[b["open_ts"] < T - 3 * D]
+    insts = build_instances(b, T + 10 * D)  # last_trade_ts = t - 3 d, end_known_at = t + 4 d > t
+    assert insts[0].last_trade_ts < T - 2 * D and insts[0].end_known_at > T
+    sd = make(b15=b, insts=insts)
+    assert not bool(sd.funding_annot["in_instance"].iloc[-1])  # retrospective membership drops the tail
+    r = gates(sd, T)
+    assert r.u3 and r.u7  # the tail records are known at t and the end is not yet known
+
+
+def test_future_dated_rows_change_no_gate():
+    base = gates(make(), T)
+    b = bars15()
+    fut = b["open_ts"] >= T - Q
+    b.loc[fut, ["vol_quote", "vol_base"]] = 1e15
+    b.loc[fut, "c"] = 1.0
+    sd = make(b15=b)
+    fa = sd.funding_annot
+    far = fa["funding_ts"] > T
+    assert far.any()
+    fa.loc[far, "rate"] = 9.0
+    assert gates(sd, T) == base
+
+
+def test_boundaries_u1_60d_and_u3_30d():
+    b = bars15(start=T - 60 * D)
+    insts = build_instances(b, T + 3 * H)
+    assert gates(make(b15=b, insts=insts, fund=funding(start=T - 60 * D)), T).u1
+    b = bars15(start=T - 60 * D + Q)
+    assert not gates(make(b15=b, fund=funding(start=T - 60 * D)), T).u1
+    assert gates(make(fund=funding(start=T - 30 * D)), T).u3
+    assert not gates(make(fund=funding(start=T - 30 * D + 1)), T).u3

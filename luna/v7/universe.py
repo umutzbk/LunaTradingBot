@@ -23,7 +23,7 @@ import pandas as pd
 
 from luna.v7.constants import FROZEN
 from luna.v7.data.instances import Instance, current_instance
-from luna.v7.data.intervals import u3_gap
+from luna.v7.data.intervals import annotate, u3_gap
 from luna.v7.data.notices import NoticeVersion, U6State, known_at
 from luna.v7.market import halted
 from luna.v7.spread import half_spread
@@ -186,25 +186,30 @@ def _u8(bars: pd.DataFrame, t_ns: int) -> tuple[bool, int | None]:
 
 
 def _funding(f: pd.DataFrame, cur: Instance, t_ns: int) -> tuple[bool, bool, int | None]:
-    """(U3, U7, max known_at) from the current instance's funding records known by t - 1 min."""
+    """(U3, U7, max known_at): records of the current instance known by t - 1 min, selected point-in-time.
+
+    Membership is ``funding_ts >= cur.first_bar_ts`` with no upper bound (the end of the instance is unknown
+    before ``end_known_at``, DEC-44); the interval flags are recomputed on that PIT set with an open-ended
+    instance, so they depend only on earlier records (``intervals.annotate``).
+    """
     f = _pit(f, t_ns, "funding_annot")
     if len(f) == 0:
         return False, False, None
-    inst = f["instance"].to_numpy(object)
-    in_cur = np.array([x is not None and not pd.isna(x) and int(x) == cur.idx for x in inst], bool)
-    f = f[in_cur & f["in_instance"].to_numpy(bool)].sort_values("funding_ts")
+    ft = ns_array(f["funding_ts"], "funding_ts")
+    f = f[ft >= cur.first_bar_ts].sort_values("funding_ts")
     if len(f) == 0:
         return False, False, None
-    ts = ns_array(f["funding_ts"], "funding_ts")
-    ka = ns_array(f["known_at"], "known_at")
-    nom = f["nominal_h"].astype("Float64").to_numpy(dtype=float, na_value=np.nan)
-    inv = f["invalid"].to_numpy(bool)
-    # U7: last settled record (any validity; an undetermined nominal fails closed)
-    u7 = bool(not np.isnan(nom[-1]) and t_ns - ts[-1] <= nom[-1] * H + U.u7_slack_min * MIN)
-    # U3: invalid records are missing (S-2.6)
-    tv, nv = ts[~inv], nom[~inv]
+    raw = f[["funding_ts", "rate", "interval_h_explicit", "known_at"]].reset_index(drop=True)
+    a = annotate(raw, [Instance(cur.idx, cur.first_bar_ts, None, None)])
+    ts = ns_array(a["funding_ts"], "funding_ts")
+    ka = ns_array(a["known_at"], "known_at")
+    nom = a["nominal_h"].astype("Float64").to_numpy(dtype=float, na_value=np.nan)
+    ok = ~a["invalid"].to_numpy(bool)  # invalid records are missing (S-2.6), for U3 and U7 alike
+    tv, nv = ts[ok], nom[ok]
     if len(tv) == 0:
-        return False, u7, int(ka.max())
+        return False, False, int(ka.max())
+    # U7: the last valid settled record; an undetermined nominal fails closed
+    u7 = bool(not np.isnan(nv[-1]) and t_ns - tv[-1] <= nv[-1] * H + U.u7_slack_min * MIN)
     u3 = bool(tv[0] <= t_ns - U.u3_days * D)
     if u3:
         lo = max(int(np.searchsorted(tv, t_ns - U.u3_gap_lookback_days * D, "left")), 1)
@@ -238,10 +243,7 @@ def gates(sd: SymbolData, t_ns: int) -> GateRow:
         k5 = _max_ka(b15, ns_array(b15["open_ts"], "open_ts") >= t_ns - FROZEN.spread.window_ns)
     u3, u7, kf = _funding(sd.funding_annot, cur, t_ns)
     b1 = sd.bars1m
-    if len(b1):
-        if "known_at" not in b1.columns:
-            b1 = b1.assign(known_at=ns_array(b1["open_ts"], "open_ts") + MIN)
-        b1 = _pit(b1, t_ns, "bars1m")
+    b1 = _pit(b1, t_ns, "bars1m")
     kn = [n for n in sd.notices if (k := known_at(n)) is not None and k <= t_ns - MIN]
     u6_active = U6State(kn, sd.symbol, sd.insts).active(cur, t_ns, lambda tau: halted(b1, tau))
     k6 = _mx(*(known_at(n) for n in kn))

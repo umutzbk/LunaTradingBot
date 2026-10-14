@@ -79,4 +79,7 @@ Additional interpretations under AMB-04 (all implementation clarifications):
   - U7: the last in-instance record known by t - 1 min (any validity), its own nominal interval; undetermined nominal fails.
   - U8: bar close = open_ts + 15 min in [t - 60 min, t - 1 min] inclusive.
   - Gate values are True = pass (U6 passes when inactive). d0_month requires all three decisions of every day of a month to be present and each >= 30; returns the month start YYYY-MM-DD.
-  - 1m bars for the U6 72 h HALT test are filtered to known_at <= t - 1 min (default open + 1 min).
+  - 1m bars for the U6 72 h HALT test are filtered to known_at <= t - 1 min; a missing known_at column raises ValueError (fix round 1).
+  - Fix round 1: U7 uses the last VALID (non-invalid) record of the current instance (invalid = missing, S-2.6). U3/U7 select funding PIT: funding_ts >= cur.first_bar_ts, known_at <= t - 1 min, no upper bound from last_trade_ts (DEC-44); interval flags are recomputed by intervals.annotate on that set with an open-ended instance, so the retrospective in_instance/instance columns are not used.
+  - gates() drops rows with known_at > t - 1 min rather than raising LeakageError; LeakageError remains an invariant check (assert_pit) on max_known_at.
+  - Missing, non-finite or non-positive multiplier => excluded (fail closed; not literal in S-2.1).
