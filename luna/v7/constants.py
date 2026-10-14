@@ -128,6 +128,7 @@ class Search:  # S-10.5 (DEC-9): 14 configurations per horizon
     lgb_min_data: tuple[int, ...] = (500, 2000)
     logit: tuple[float, float] = (1e-2, 0.5)  # (alpha, l1_ratio), fixed
     lgb_clf: tuple[int, int] = (15, 2000)  # (num_leaves, min_data_in_leaf), fixed
+    seed: int = 20261014  # S-10.5 "Seeds are fixed": one seed for all model / bagging seeds
     lgb_fixed: dict = field(
         default_factory=lambda: dict(
             learning_rate=0.03, lambda_l2=5, feature_fraction=0.8, bagging_fraction=0.8, bagging_freq=1,
