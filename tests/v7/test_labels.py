@@ -37,6 +37,22 @@ def b15(px0, k, start=S0, end=T + 4 * D):
     return pd.DataFrame(dict(open_ts=ts, o=c, h=c, l=c, c=c, vol_base=1.0, known_at=ts + Q))
 
 
+def b15s(px0, k, a1, a2):
+    """15m bars whose Abdi-Ranaldo products are hand-computable. Up to 08:00 of t's day minus 24 h the path
+    is as in ``b15`` (flat OHLC, pi = 0, beta 1.7 path); from 08:15 the day before t the close is frozen at
+    C and every bar has h = C, l = C * exp(-2 a), so c - eta = a for every bar, pi_k = 4 a_k a_{k+1} and
+    the proxy is lam * sqrt(4 a^2) / 2 = 2 a. a = a1 for bars opening <= 08:00 on t's day (exactly the
+    pairs of h(t_e)'s window), a = a2 afterwards (every pair of h(t_x)'s and h_fill's windows)."""
+    b = b15(px0, k)
+    ts = b["open_ts"].to_numpy(np.int64)
+    seg = ts >= TE - 24 * H - 5 * MIN
+    cfz = float(b.loc[b["open_ts"] == TE - 24 * H - 20 * MIN, "c"].iloc[0])
+    a = np.where(ts <= TE - 20 * MIN, a1, a2)
+    c = np.where(seg, cfz, b["c"].to_numpy(np.float64))
+    lo = np.where(seg, cfz * np.exp(-2 * a), c)
+    return b.assign(o=c, h=c, l=lo, c=c)
+
+
 def m1(px, over=None, start=TE - 3 * H, end=TX + 12 * H, vol=None):
     """1m bars with o = c = px; ``over`` maps ts -> (o, c); ``vol`` maps ts -> volume (default 1)."""
     ts = np.arange(start, end, MIN, dtype=np.int64)
@@ -78,18 +94,22 @@ def btc(**kw):
     return LegData(**d)
 
 
+M6 = windows.m6()  # read once (git); every label gets the span, so no label runs git
+
+
 def inputs(lg=None, bt=None, window=WIN):
-    return LabelInputs("ABCUSDT", lg or leg(), bt or btc(), window, NOW)
+    return LabelInputs("ABCUSDT", lg or leg(), bt or btc(), window, NOW, M6)
 
 
-def hand(s, Pe, Px, Be, Bx, fl, fb, ha_e=HMIN, ha_x=HMIN, sl_x=SLIP, hb_x=HMIN, sb_x=SLIP, beta=BETA):
+def hand(s, Pe, Px, Be, Bx, fl, fb, ha_e=HMIN, ha_x=HMIN, sl_x=SLIP, hb_x=HMIN, sb_x=SLIP, beta=BETA,
+         hb_e=HMIN):
     """S-5.3 written out by hand (fl / fb = sum r_k * M(tau_k) of the leg / BTC)."""
     q, qb = 1 / Pe, beta / Be
     E, X = Pe * (1 + s * (ha_e + SLIP)), Px * (1 - s * (ha_x + sl_x))
-    EB, XB = Be * (1 - s * (HMIN + SLIP)), Bx * (1 + s * (hb_x + sb_x))
+    EB, XB = Be * (1 - s * (hb_e + SLIP)), Bx * (1 + s * (hb_x + sb_x))
     c = dict(funding_leg=-s * q * fl, price_resid=s * ((Px / Pe - 1) - beta * (Bx / Be - 1)),
              fee_in=F * q * E, fee_out=F * q * X, ss_in=q * Pe * (ha_e + SLIP), ss_out=q * Px * (ha_x + sl_x),
-             hedge_cost=F * qb * EB + F * qb * XB + qb * Be * (HMIN + SLIP) + qb * Bx * (hb_x + sb_x),
+             hedge_cost=F * qb * EB + F * qb * XB + qb * Be * (hb_e + SLIP) + qb * Bx * (hb_x + sb_x),
              hedge_funding=s * qb * fb)
     return c
 
@@ -426,3 +446,68 @@ def test_exit_gap_bar_after_cessation_not_used():
     bars = bars[(bars["open_ts"] < TX) | (bars["open_ts"] >= last)]
     lg = leg(bars1m=bars, insts=[inst0], terminal=TerminalEvent(inst0, last, "C", None, None, None))
     assert leg_label(inputs(lg), T, +1, 24).invalid_reason == "exit_price_missing"
+
+
+def test_half_spreads_at_fill_times():
+    # leg: h_a(t_e) = 6 bps, h_a(t_x) = h_fill = 40 bps; BTC: h_B(t_e) = 2 bps, h_B(t_x) = 5 bps
+    lg = leg(bars15=b15s(10.0, 2.0, 3e-4, 20e-4))
+    bt = btc(bars15=b15s(100.0, 1.0, 1e-4, 2.5e-4))
+    r = leg_label(inputs(lg, bt), T, +1, 24)
+    assert r.beta == pytest.approx(BETA, rel=1e-9) and r.flags == ()
+    # by hand: q = 0.1, q_B = 0.017
+    exp = dict(funding_leg=-3e-4, price_resid=0.066,
+               fee_in=F * 0.1 * 10 * (1 + 8e-4), fee_out=F * 0.1 * 11 * (1 - 42e-4),
+               ss_in=0.1 * 10 * 8e-4, ss_out=0.1 * 11 * 42e-4,
+               hedge_cost=F * 0.017 * 100 * (1 - 4e-4) + F * 0.017 * 102 * (1 + 7e-4)
+               + 0.017 * 100 * 4e-4 + 0.017 * 102 * 7e-4,
+               hedge_funding=1.02e-3)
+    assert_components(r, exp)
+    rs = leg_label(inputs(lg, bt), T, -1, 24)
+    assert_components(rs, hand(-1, 10.0, 11.0, 100.0, 102.0, 3e-3, 3 * 2e-2, ha_e=6e-4, ha_x=40e-4,
+                               hb_e=2e-4, hb_x=5e-4))
+    # halted exit: max(h_fill = 40 bps, 25 bps) = 40 bps, 3 x slip; BTC exits at t_x_eff at its own 5 bps
+    fill = TX + 7 * H + 39 * MIN
+    lgh = replace(_halted_leg(fill), bars15=b15s(10.0, 2.0, 3e-4, 20e-4))
+    bth = replace(bt, bars1m=m1(100.0, {TX: (102.0, 102.0), fill + MIN: (104.0, 104.0)}))
+    rh = leg_label(inputs(lgh, bth), T, +1, 24)
+    assert "halted_exit" in rh.flags and rh.t_x_eff == fill + MIN
+    assert rh.components["ss_out"] == pytest.approx(0.1 * 12.5 * (40e-4 + 6e-4), rel=1e-9)
+    assert rh.components["fee_out"] == pytest.approx(F * 0.1 * 12.5 * (1 - 46e-4), rel=1e-9)
+    assert_components(rh, hand(+1, 10.0, 12.5, 100.0, 104.0, 4e-3, 4 * 2e-2, ha_e=6e-4, ha_x=40e-4,
+                               sl_x=3 * SLIP, hb_e=2e-4, hb_x=5e-4))
+    # below 25 bps the stress floor binds: a2 = 10 bps -> h_fill = 20 bps -> 25 bps
+    lgl = replace(_halted_leg(fill), bars15=b15s(10.0, 2.0, 3e-4, 10e-4))
+    rl = leg_label(inputs(lgl, bth), T, +1, 24)
+    assert rl.components["ss_out"] == pytest.approx(0.1 * 12.5 * (25e-4 + 6e-4), rel=1e-9)
+
+
+def test_terminal_a_without_settle_time_fails_closed():
+    last = TX - 2 * H
+    inst = Instance(0, S0, last, last + 7 * D)
+    for st, px in ((None, 9.0), (last - 10 * MIN, None), (last - 10 * MIN, float("nan"))):
+        ev = TerminalEvent(inst, last, "A", st, px, "official_historical")
+        lg = replace(_ending_leg(last, "C"), terminal=ev)
+        assert leg_label(inputs(lg), T, +1, 24).invalid_reason == "terminal_not_reconstructible"
+
+
+def test_label_runs_no_git(monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("git / V6 artefacts read during a label computation")
+
+    monkeypatch.setattr(windows, "m6", boom)
+    monkeypatch.setattr("luna.v7.spec._git", boom)
+    monkeypatch.setattr("luna.v7.spec._git_show", boom)
+    assert leg_label(inputs(), T, +1, 24).invalid_reason is None
+    fill = TX + 7 * H + 39 * MIN
+    bt = btc(bars1m=m1(100.0, {TX: (102.0, 102.0), fill + MIN: (104.0, 104.0)}))
+    assert leg_label(inputs(_halted_leg(fill), bt), T, +1, 24).invalid_reason is None
+    with pytest.raises(guard.HoldoutBlocked):
+        leg_label(inputs(window=windows.W_HOLD), windows.W_HOLD[0] + 10 * D + 5 * MIN, +1, 24)
+
+
+def test_m6_span_required_and_validated():
+    with pytest.raises(TypeError):
+        LabelInputs("ABCUSDT", leg(), btc(), WIN, NOW)  # type: ignore[call-arg]
+    for bad in (None, (M6[0],), ("x", None), (M6[0], M6[0] - 1)):
+        with pytest.raises(ValueError):
+            leg_label(LabelInputs("ABCUSDT", leg(), btc(), WIN, NOW, bad), T, +1, 24)  # type: ignore[arg-type]
