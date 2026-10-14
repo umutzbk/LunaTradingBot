@@ -65,7 +65,12 @@ def current_instance(insts: list[Instance], t_ns: int) -> Instance | None:
 
 
 def instance_of(insts: list[Instance], ts_ns: int) -> int | None:
-    """Membership of a row timestamp: ``first_bar_ts <= ts < last_trade_ts``; dormant intervals -> None."""
+    """Membership of a row timestamp: ``first_bar_ts <= ts < last_trade_ts``; dormant intervals -> None.
+
+    Retrospective: ``last_trade_ts`` is knowable only at ``end_known_at``, so this must not be used as-of t
+    (use ``current_instance`` for point-in-time decisions). A timestamp exactly at the final bar close is
+    outside the instance (AMB-04).
+    """
     for i in insts:
         if i.first_bar_ts <= ts_ns and (i.last_trade_ts is None or ts_ns < i.last_trade_ts):
             return i.idx

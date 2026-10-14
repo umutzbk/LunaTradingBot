@@ -112,3 +112,50 @@ def test_u3_gap_adjacent_rule():
     assert u3_gap(4, 2, 4 * H + MIN + 1)
     assert u3_gap(float("nan"), float("nan"), 8 * H)  # fail closed when both undetermined
     assert not u3_gap(float("nan"), 8, 8 * H)
+
+
+def test_u3_gap_accepts_pd_na_and_annotate_output():
+    assert not u3_gap(pd.NA, 8, 8 * H)
+    assert u3_gap(pd.NA, pd.NA, 8 * H)
+    out = annotate(_f([8]), INSTS)  # record 0 undetermined (pd.NA), record 1 nominal 8
+    assert not u3_gap(out["nominal_h"].iloc[0], out["nominal_h"].iloc[1], 8 * H)
+    assert u3_gap(out["nominal_h"].iloc[0], out["nominal_h"].iloc[1], 8 * H + 61 * NS)
+
+
+def test_multi_symbol_annotation_and_errors():
+    import pytest
+
+    a = _f([8, 8], explicit=[8, None, None])
+    b = _f([4, 4], explicit=[4, None, None], first_offset=H)
+    a["symbol"], b["symbol"] = "AAA", "BBB"
+    f = pd.concat([b, a], ignore_index=True)  # interleaved order, unique index
+    out = annotate(f, {"AAA": INSTS, "BBB": INSTS})
+    assert out.index.tolist() == f.index.tolist()
+    assert out["nominal_h"].tolist() == [4, 4, 4, 8, 8, 8]
+    assert not out["invalid"].any()
+    with pytest.raises(ValueError):
+        annotate(f, {"AAA": INSTS})  # BBB missing
+    with pytest.raises(ValueError):
+        annotate(f, INSTS)  # symbol column needs a dict
+    with pytest.raises(ValueError):
+        annotate(f.set_axis([0, 0, 1, 2, 3, 4]), {"AAA": INSTS, "BBB": INSTS})
+    with pytest.raises(ValueError):
+        annotate(_f([8]), {"AAA": INSTS})
+
+
+def test_explicit_bearing_cases_pinned():
+    # explicit 4 with spacing 4 after nominal 8: reconciled via own explicit, no transition flag
+    out = annotate(_f([8, 4], explicit=[8, 8, 4]), INSTS)
+    assert out.loc[2, "reconciled"] and not out.loc[2, "invalid"] and not out.loc[2, "interval_transition"]
+    assert out.loc[2, "nominal_h"] == 4
+    # explicit 4 with spacing 8 equal to previous nominal 8: reconciled (spec-literal), nominal 4
+    out = annotate(_f([8, 8], explicit=[8, 8, 4]), INSTS)
+    assert out.loc[2, "reconciled"] and not out.loc[2, "invalid"] and out.loc[2, "nominal_h"] == 4
+
+
+def test_membership_end_exclusive_at_last_close():
+    insts = [Instance(0, T0 - H, T0 + 8 * H, T0 + 8 * H + 168 * H)]
+    f = pd.DataFrame({"funding_ts": [T0, T0 + 8 * H], "rate": 0.0001,
+                      "interval_h_explicit": pd.array([8, None], dtype="Int64")})
+    out = annotate(f, insts)
+    assert out["in_instance"].tolist() == [True, False]  # a settlement exactly at the final close is outside

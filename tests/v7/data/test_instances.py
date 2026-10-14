@@ -1,6 +1,6 @@
 import pandas as pd
 
-from luna.v7.data.instances import Instance, assign, build_instances, current_instance, instance_of
+from luna.v7.data.instances import assign, build_instances, current_instance, instance_of
 from luna.v7.timeutil import MIN, NS, D, to_ns
 
 DAY0 = to_ns("2022-05-01")
@@ -85,4 +85,3 @@ def test_dormant_rows_belong_to_no_instance():
 
 def test_no_active_bars_gives_no_instances():
     assert build_instances(pd.DataFrame({"open_ts": [DAY0], "vol_base": [0.0]}), END) == []
-    assert isinstance(Instance(0, 1, None, None), Instance)

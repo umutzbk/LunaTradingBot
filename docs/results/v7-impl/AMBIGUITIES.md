@@ -36,3 +36,10 @@ Entries are appended as they are found, numbered AMB-01, AMB-02, ... Format of o
 - Options: (a) records in a dormant interval (no instance) are treated as invalid; (b) they are excluded from annotation and never used. For `u3_gap` with an undetermined nominal: (a) treat as no gap; (b) use the known one; (c) fail closed.
 - Classification: implementation clarification.
 - Code now: `intervals.annotate` marks records with no instance as `in_instance=False`, `instance=None`, `reconciled=False`, `invalid=False`, `nominal_h` NA and `r8` NaN; they never serve as the previous record of an instance record. An invalid record keeps its timestamp as the spacing anchor for its successor but contributes the inherited previous nominal (never its own explicit/inferred value). `u3_gap` uses the known nominal when only one is undetermined and returns True (gap, fail closed) when both are undetermined.
+
+Additional interpretations under AMB-04 (all implementation clarifications):
+- `last_trade_ts` is the close (open + 15 min) of the last volume > 0 15m bar; `end_known_at = last_trade_ts + 7*24 h` (EC-1).
+- A trailing dormancy ends the last instance only when 7 complete UTC calendar days lie between the last active day and `data_end_ns`.
+- Instance membership is `first_bar_ts <= ts < last_trade_ts` (end-exclusive): a funding record exactly at the final bar close (e.g. a settlement at the cessation time) falls outside the instance and is never used. `instance_of`/`assign` are retrospective and must not be used as-of t; `current_instance` is the PIT function.
+- A record with an explicit interval is reconciled if its spacing equals the previous nominal OR its own explicit interval (spec-literal). So explicit 4 with spacing 8 = previous nominal 8 is reconciled with nominal 4 (no transition flag; flags apply to records without an explicit field).
+- `annotate` on a multi-symbol frame requires a dict covering every symbol and a unique index (ValueError otherwise).

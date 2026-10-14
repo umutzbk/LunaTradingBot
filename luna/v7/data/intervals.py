@@ -97,19 +97,26 @@ def annotate(funding: pd.DataFrame, insts: list[Instance] | dict[str, list[Insta
     keyed by symbol; each symbol is annotated separately.
     """
     if "symbol" in funding.columns:
-        assert isinstance(insts, dict)
+        if not isinstance(insts, dict):
+            raise ValueError("a funding frame with a symbol column needs insts as a dict keyed by symbol")
+        if not funding.index.is_unique:
+            raise ValueError("multi-symbol annotate needs a unique index")
+        missing = sorted({str(x) for x in funding["symbol"].unique()} - set(insts))
+        if missing:
+            raise ValueError(f"no instances given for symbols {missing}")
         parts = [
-            _annotate_one(g.sort_values("funding_ts"), insts.get(str(sym), []))
+            _annotate_one(g.sort_values("funding_ts"), insts[str(sym)])
             for sym, g in funding.groupby("symbol", sort=True)
         ]
         return pd.concat(parts).loc[funding.index] if parts else funding.copy()
-    assert isinstance(insts, list)
+    if not isinstance(insts, list):
+        raise ValueError("a single-symbol funding frame needs insts as a list")
     return _annotate_one(funding, insts)
 
 
 def u3_gap(prev_nominal_h: float, cur_nominal_h: float, spacing_ns: int) -> bool:
     """U3 adjacent-interval gap: spacing > max(previous, current nominal)*H + 60 s (S-2.3, DEC-29)."""
-    known = [float(x) for x in (prev_nominal_h, cur_nominal_h) if x is not None and not math.isnan(x)]
+    known = [float(x) for x in (prev_nominal_h, cur_nominal_h) if not pd.isna(x)]
     if not known:
         return True  # both undetermined: fail closed (AMB-04)
     return spacing_ns > max(known) * H + TOL
