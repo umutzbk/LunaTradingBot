@@ -94,11 +94,8 @@ def btc(**kw):
     return LegData(**d)
 
 
-M6 = windows.m6()  # read once (git); every label gets the span, so no label runs git
-
-
 def inputs(lg=None, bt=None, window=WIN):
-    return LabelInputs("ABCUSDT", lg or leg(), bt or btc(), window, NOW, M6)
+    return LabelInputs("ABCUSDT", lg or leg(), bt or btc(), window, NOW)
 
 
 def hand(s, Pe, Px, Be, Bx, fl, fb, ha_e=HMIN, ha_x=HMIN, sl_x=SLIP, hb_x=HMIN, sb_x=SLIP, beta=BETA,
@@ -491,6 +488,8 @@ def test_terminal_a_without_settle_time_fails_closed():
 
 
 def test_label_runs_no_git(monkeypatch):
+    windows.m6_cached()  # the canonical span is read once per process (hash-checked), then cached
+
     def boom(*a, **k):
         raise AssertionError("git / V6 artefacts read during a label computation")
 
@@ -503,11 +502,3 @@ def test_label_runs_no_git(monkeypatch):
     assert leg_label(inputs(_halted_leg(fill), bt), T, +1, 24).invalid_reason is None
     with pytest.raises(guard.HoldoutBlocked):
         leg_label(inputs(window=windows.W_HOLD), windows.W_HOLD[0] + 10 * D + 5 * MIN, +1, 24)
-
-
-def test_m6_span_required_and_validated():
-    with pytest.raises(TypeError):
-        LabelInputs("ABCUSDT", leg(), btc(), WIN, NOW)  # type: ignore[call-arg]
-    for bad in (None, (M6[0],), ("x", None), (M6[0], M6[0] - 1)):
-        with pytest.raises(ValueError):
-            leg_label(LabelInputs("ABCUSDT", leg(), btc(), WIN, NOW, bad), T, +1, 24)  # type: ignore[arg-type]

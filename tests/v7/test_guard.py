@@ -66,13 +66,47 @@ def test_m6_overlap_refused_even_with_auth(repo, tmp_path):
     guard.check_outcome_window(M6_START - D, M6_START, auth=auth, now_ns=NOW)
 
 
-def test_m6_lifted_only_when_release_known_and_reached():
+def test_m6_lifted_only_when_release_known_and_reached(monkeypatch):
     span = (M6_START, M6_START + 10 * D)
+    # a finite R_V6 is accepted only when the canonical (hash-checked) source provides it
+    monkeypatch.setattr(windows, "m6_cached", lambda repo=None: span)
     with pytest.raises(guard.EmbargoBlocked):
         guard.check_outcome_window(M6_START, M6_START + D, now_ns=M6_START + 5 * D, m6_span=span)
     guard.check_outcome_window(M6_START, M6_START + D, now_ns=M6_START + 10 * D, m6_span=span)
+    guard.check_outcome_window(M6_START, M6_START + D, now_ns=M6_START + 10 * D)
+    with pytest.raises(guard.EmbargoBlocked):  # a span differing from the canonical one
+        guard.check_outcome_window(M6_START, M6_START + D, now_ns=NOW * 100, m6_span=(M6_START, None))
+    monkeypatch.undo()
     with pytest.raises(guard.EmbargoBlocked):  # R_V6 undetermined: never lifted
         guard.check_outcome_window(M6_START, M6_START + D, now_ns=NOW * 100, m6_span=(M6_START, None))
+
+
+def test_forged_m6_span_refused():
+    canon = windows.m6_cached()
+    assert canon == windows.m6() == (M6_START, None)
+    lo, hi = M6_START + D, M6_START + 2 * D
+    for forged in ((windows.W_HOLD[1] + 30 * D, None), (M6_START, NOW - D), (M6_START, NOW),
+                   (M6_START - D, None), (M6_START, M6_START + D)):
+        with pytest.raises(guard.EmbargoBlocked, match="canonical"):
+            guard.check_outcome_window(lo, hi, now_ns=NOW, m6_span=forged)
+    with pytest.raises(guard.EmbargoBlocked, match="canonical"):  # even for a window outside M6
+        guard.check_outcome_window(windows.W_DEV[0], windows.W_DEV[0] + D, now_ns=NOW,
+                                   m6_span=(windows.W_HOLD[1] + D, None))
+    assert canon == (windows.W_HOLD[1], None)  # M6 starts at the W_HOLD end: that span is the canonical one
+    guard.check_outcome_window(windows.W_DEV[0], windows.W_DEV[0] + D, now_ns=NOW, m6_span=canon)
+
+
+def test_m6_cached_reads_git_once(monkeypatch):
+    windows.m6_cached()  # primed
+
+    def boom(*a, **k):
+        raise AssertionError("git read after the cache was primed")
+
+    monkeypatch.setattr("luna.v7.spec._git", boom)
+    monkeypatch.setattr("luna.v7.spec._git_show", boom)
+    assert windows.m6_cached() == (M6_START, None)
+    with pytest.raises(guard.EmbargoBlocked):
+        guard.check_outcome_window(M6_START, M6_START + D, now_ns=NOW)
 
 
 def test_marker_exclusivity(repo, tmp_path):

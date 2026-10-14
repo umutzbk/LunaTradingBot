@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -9,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from luna.v7.constants import FROZEN
-from luna.v7.spec import v6_artifacts
+from luna.v7.spec import code_repo, v6_artifacts
 from luna.v7.timeutil import MIN, D, to_ns
 
 D0 = to_ns(FROZEN.d0)
@@ -80,6 +81,17 @@ def final_blocks() -> Fold:
 def m6(repo: Path | None = None) -> tuple[int, int | None]:
     """M6 = [V6 holdout start, R_V6); the end is None while R_V6 is undetermined (S-1.2)."""
     return v6_artifacts(repo).holdout_start, None
+
+
+@functools.cache
+def _m6_by_repo(repo_key: str) -> tuple[int, int | None]:
+    return m6(Path(repo_key))
+
+
+def m6_cached(repo: Path | None = None) -> tuple[int, int | None]:
+    """``m6(repo)`` read once per process and resolved repository (the hash-checked V6 artefacts via git);
+    a failure (SpecMismatch) is not cached. This is the canonical span every guard compares against."""
+    return _m6_by_repo(str(Path(repo or code_repo()).resolve()))
 
 
 def overlaps(lo: int, hi: int, span: tuple[int, int | None]) -> bool:

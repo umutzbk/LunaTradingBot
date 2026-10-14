@@ -93,10 +93,8 @@ class LabelInputs:
     leg: LegData
     btc: LegData
     window: tuple[int, int]  # the outcome window [lo, end) the label belongs to (W_DEV, W_HOLD, W_FWD7)
-    now_ns: int  # passed to the guard (lifts M6 only once R_V6 is known)
-    # M6 = [V6 holdout start, R_V6) as returned by ``windows.m6()`` - read ONCE by the caller (git), then
-    # handed to every ``guard.check_outcome_window`` call so that labels never run git (required).
-    m6_span: tuple[int, int | None]
+    now_ns: int  # passed to the guard (lifts M6 only once R_V6 is known); M6 itself is the guard's
+    # canonical span (windows.m6_cached: hash-checked V6 artefacts read once per process, no git per label)
     auth: guard.HoldoutAuthorization | None = None
 
 
@@ -252,18 +250,6 @@ def _funding_sum(x: _Inst, lo: int, hi: int, known_by: int) -> float:
 # --- the label ----------------------------------------------------------------------------------------
 
 
-def _m6(span: object) -> tuple[int, int | None]:
-    """Validate the caller-supplied M6 span (fail closed: anything malformed raises ValueError)."""
-    if not isinstance(span, tuple) or len(span) != 2:
-        raise ValueError(f"m6_span must be (start_ns, end_ns | None) from windows.m6(), got {span!r}")
-    lo, hi = span
-    if isinstance(lo, bool) or not isinstance(lo, int | np.integer):
-        raise ValueError(f"m6_span start must be an int ns timestamp, got {lo!r}")
-    if hi is not None and (isinstance(hi, bool) or not isinstance(hi, int | np.integer) or hi <= lo):
-        raise ValueError(f"m6_span end must be None or an int ns timestamp > start, got {hi!r}")
-    return int(lo), None if hi is None else int(hi)
-
-
 def leg_label(inputs: LabelInputs, t: int, side: int, h: int) -> LabelResult | None:
     """S-5.3 / S-5.4 leg label for decision t, side s in {+1, -1}, horizon h (hours); see module docstring."""
     if side not in (1, -1):
@@ -277,10 +263,8 @@ def leg_label(inputs: LabelInputs, t: int, side: int, h: int) -> LabelResult | N
     t_e = t + FROZEN.decision.fill_delay_min * MIN
     t_x = t_e + h * H
 
-    span = _m6(inputs.m6_span)
-
     def check(hi: int) -> None:
-        guard.check_outcome_window(t, min(hi, w_end), auth=inputs.auth, now_ns=inputs.now_ns, m6_span=span)
+        guard.check_outcome_window(t, min(hi, w_end), auth=inputs.auth, now_ns=inputs.now_ns)
 
     if t_x >= w_end:  # S-1.5 / S-5.4: no label; the guard still sees the call (no data is read)
         check(w_end)

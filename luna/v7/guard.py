@@ -89,10 +89,16 @@ def historical_field(name: str) -> str:
 def check_outcome_window(lo: int, hi: int, *, auth: HoldoutAuthorization | None = None, now_ns: int,
                          repo: Path | None = None, m6_span: tuple[int, int | None] | None = None) -> None:
     """Refuse an outcome window [lo, hi): M6 overlap before R_V6 (EmbargoBlocked, even with auth), then
-    W_HOLD overlap without authorisation (HoldoutBlocked). ``now_ns`` lifts M6 only once R_V6 is known."""
+    W_HOLD overlap without authorisation (HoldoutBlocked). ``now_ns`` lifts M6 only once R_V6 is known.
+
+    M6 always comes from the canonical, hash-checked V6 artefacts (``windows.m6_cached``, read once per
+    process). A supplied ``m6_span`` is only a cross-check: anything differing from the canonical span (a
+    later start, a finite end the canonical source does not provide, ...) raises EmbargoBlocked."""
     if hi <= lo:
         raise ValueError(f"empty outcome window [{lo}, {hi})")
-    span = m6_span if m6_span is not None else windows.m6(repo)
+    span = windows.m6_cached(repo)
+    if m6_span is not None and tuple(m6_span) != tuple(span):
+        raise EmbargoBlocked(f"m6_span {m6_span} differs from the canonical M6 {span} (S-1.2, S-1.3)")
     released = span[1] is not None and now_ns >= span[1]
     if not released and windows.overlaps(lo, hi, span):
         raise EmbargoBlocked(f"outcome window [{lo}, {hi}) overlaps M6 {span} before R_V6 (S-1.3)")
