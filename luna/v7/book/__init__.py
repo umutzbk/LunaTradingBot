@@ -72,8 +72,9 @@ class Order:
     ``side`` is the leg's side, not the trade direction. ``notional``: open = the target size, close = the
     whole current leg, reduce = the amount removed. ``target``: the leg notional after the order (close: 0).
     ``forced``: a risk / forced exit (taker under every execution model, S-6.2). ``halted``: the instrument is
-    halted at the order time: the engine must defer the exit (``Pending`` until the first executable bar of
-    the same instance, S-5.4), never fill it now. Only exits carry ``halted=True`` (opens / reduces of a
+    halted at the decision time t (PIT, AMB-16 (j)); the engine still applies the S-5.4 check at the fill
+    time. A halted exit is deferred (``Pending`` until the first executable bar of the same instance, S-5.4),
+    never filled now. Only exits carry ``halted=True`` (opens / reduces of a
     halted instrument are never emitted: no order of any kind while halted, S-7.1). ``trigger_ts``: forced
     exits only, the risk trigger time (``ForcedExit.trigger_ts``) so the engine can apply S-4.2 (forced risk
     exit: first 1-minute bar after trigger + 1 min) versus a decision exit / U6 exit (t + 15 min); None

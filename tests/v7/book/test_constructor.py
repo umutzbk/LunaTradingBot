@@ -191,10 +191,12 @@ def test_min_hold_blocks_non_risk_exit():
 
 
 def test_resize_drift_rule():
+    """Resizes only on drift > 25 %, reduce-only (S-7.1); the caps bind targets / entries, not the marked
+    book (controller ruling R24, AMB-16 (e))."""
     shorts = tuple(leg(f"S{i}", SHORT) for i in range(1, 6))
     longs = (
         leg("L1", LONG, 0.126),  # +26 % > 25 % -> reduce to the target
-        leg("L2", LONG, 0.125),  # +25 % is not > 25 % (drift) but above the per-leg hard cap 0.1
+        leg("L2", LONG, 0.125),  # +25 % is not > 25 %: no resize, although above the per-leg cap 0.1
         leg("L3", LONG, 0.07),  # -30 %: increases are never made (reduce-only)
         leg("L4", LONG, 0.13),  # halted: no order of any kind
         leg("L5", LONG, 0.1),
@@ -203,18 +205,17 @@ def test_resize_drift_rule():
     tg = run(longs + shorts, rows, halted={"L4": True})
     assert [(o.symbol, o.kind, round(o.notional, 12), o.target, o.reason) for o in tg.orders] == [
         ("L1", "reduce", 0.026, 0.1, "drift"),
-        ("L2", "reduce", 0.025, 0.1, "cap_leg"),
     ]
     assert "no_increase:L3" in tg.notes and "halted_resize:L4" in tg.notes
-    assert tg.post["L1"] == 0.1 and tg.post["L3"] == 0.07 and tg.post["L4"] == 0.13
-    # inside the drift band and under the caps: no resize (5 longs vs 4 shorts: long targets 0.08, held 0.1)
+    assert tg.post["L1"] == 0.1 and tg.post["L2"] == 0.125 and tg.post["L3"] == 0.07 and tg.post["L4"] == 0.13
+    # inside the drift band: no resize (5 longs vs 4 shorts: long targets 0.08, held 0.1 = +25 %)
     tg = run(tuple(leg(f"L{i}", LONG) for i in range(1, 6)) + shorts[:4], rows[:5] + rows[5:9])
     assert tg.orders == ()
     # equity 0.4 -> per-leg 0.04; 2 longs vs 1 short -> longs scaled to 0.02 each
     tg = run((leg("L1", LONG, 0.1), leg("L2", LONG, 0.1001), leg("S1", SHORT, 0.1)),
              [("L1", LONG, 2.0, True), ("L2", LONG, 1.0, True), ("S1", SHORT, 1.0, True)], equity=0.4)
-    assert {(o.symbol, o.kind, round(o.target, 12)) for o in tg.orders} == {
-        ("L1", "reduce", 0.02), ("L2", "reduce", 0.02), ("S1", "reduce", 0.04)
+    assert {(o.symbol, o.kind, round(o.target, 12), o.reason) for o in tg.orders} == {
+        ("L1", "reduce", 0.02, "drift"), ("L2", "reduce", 0.02, "drift"), ("S1", "reduce", 0.04, "drift")
     }
 
 
@@ -287,23 +288,29 @@ def test_u8_unscored_held_leg_is_not_rank_exited():
     assert "u8_unscored_hold:UUU" in tg.notes and tg.post["UUU"] == 0.1
 
 
-def test_hard_caps_on_marked_book():
-    """S-7.3 caps are hard limits on the marked book (AMB-16 (e)): per leg, liquidity, gross."""
+def test_caps_bind_targets_and_entries_not_marked_book():
+    """Controller ruling R24 (AMB-16 (e) interim): the S-7.3 caps (per leg, liquidity, gross) bind targets and
+    entries; the marked book may drift within the 25 % band without cap reduces."""
     shorts = tuple(leg(f"S{i}", SHORT) for i in range(1, 6))
     rows = side_rows("L", LONG, 5) + side_rows("S", SHORT, 5)
-    # liquidity cap 0.08 (qv 160,000 USD): target 0.08, held 0.09 is inside the drift band but above the cap
+    # liquidity cap 0.08 (qv 160,000 USD): target 0.08, held 0.09 is inside the drift band -> no order
     longs = tuple(leg(f"L{i}", LONG) for i in range(2, 6)) + (leg("L1", LONG, 0.09),)
     tg = run(longs + shorts, rows, qv={"L1": 160_000.0})
-    red = [(o.symbol, round(o.target, 12), o.reason) for o in tg.orders if o.kind == "reduce"]
-    assert red == [("L1", 0.08, "cap_liquidity")]
-    # gross > 1.0 E with a halted leg above its cap: the halted leg cannot trade, the 9 others are scaled
+    assert tg.orders == () and tg.post["L1"] == 0.09
+    # gross 1.2 E with a halted leg at 0.3: nothing the drift rule does not ask for is traded
     longs = tuple(leg(f"L{i}", LONG) for i in range(2, 6)) + (leg("L1", LONG, 0.3),)
     tg = run(longs + shorts, rows, halted={"L1": True})
-    red = {o.symbol: (round(o.target, 12), o.reason) for o in tg.orders}
-    assert "L1" not in red and len(red) == 9
-    assert set(red.values()) == {(round(0.1 * 0.7 / 0.9, 12), "cap_gross")}
+    assert tg.orders == () and "halted_resize:L1" in tg.notes
+    assert sum(abs(v) for v in tg.post.values()) == pytest.approx(1.2, abs=1e-12)
+    # an entry is capped: held gross 0.98 (four longs drifted to 0.12) leaves 0.02 E for the entrant L5
+    longs = tuple(leg(f"L{i}", LONG, 0.12) for i in range(1, 5))
+    tg = run(longs + shorts, rows)
+    assert opens(tg) == {("L5", LONG): pytest.approx(0.02, abs=1e-12)}
+    assert [o.kind for o in tg.orders] == ["open"] and "cap_gross_entry" in tg.notes
     assert sum(abs(v) for v in tg.post.values()) == pytest.approx(1.0, abs=1e-12)
-    assert "halted_resize:L1" in tg.notes and "cap_gross" in tg.notes
+    # the per-leg and liquidity caps bind an entrant's target
+    tg = run(tuple(leg(f"L{i}", LONG) for i in range(1, 5)) + shorts, rows, qv={"L5": 100_000.0})
+    assert opens(tg) == {("L5", LONG): pytest.approx(0.05, abs=1e-12)}
 
 
 def test_halted_flag_required_for_held_legs():

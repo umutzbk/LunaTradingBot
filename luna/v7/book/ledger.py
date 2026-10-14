@@ -38,6 +38,7 @@ class Position:
     p_last: float | None = None  # latest event price (fill ref mid / tick mark)
     pending_exit: str | None = None  # exit reason once an exit is issued
     waiting: bool = False  # S-5.4 wait without any executable bar before the window end
+    maker_exit: bool = False  # the exit rests as an E_M maker order (a forced exit may replace it)
 
 
 @dataclass

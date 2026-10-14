@@ -21,15 +21,16 @@ One constructor for every arm; only the scores change. At decision t, in this or
    usd_per_unit = E_ref = 10,000 USD per unit of E, §14). Neutrality: if ``|L - S| > 0.05 (L + S)``, every
    target of the heavier side is scaled by S/L (or L/S) so the target book is dollar-neutral; an empty side
    therefore makes the other side's targets 0 (flat), including legs inside the minimum hold (AMB-16 (d)).
-5. **Resizes**: a kept leg is resized to its target when ``|n - T| > 25 % T``, only downward (reduce-only
-   between entries, AMB-16 (f)); a target of 0 closes the leg (reason ``neutrality``). The S-7.3 caps are
-   HARD limits on the marked book (AMB-16 (e)): inside the drift band a leg above min(0.5 E / K, liquidity
-   cap) is reduced to that cap (``cap_leg`` / ``cap_liquidity``), and if the post-decision gross exceeds
-   1.0 E every reducible leg (kept, non-halted, and entrants) is scaled down proportionally (``cap_gross``).
-   Halted: no resize.
+5. **Resizes**: a kept leg is resized to its target only when ``|n - T| > 25 % T``, only downward
+   (reduce-only between entries, AMB-16 (f)); a target of 0 closes the leg (reason ``neutrality``). The S-7.3
+   caps (per leg 0.5 E / K, liquidity, gross 1.0 E) bind the TARGETS and the ENTRIES only (controller ruling
+   R24, AMB-16 (e)): the marked book may drift within the 25 % band; an entrant is sized at its capped
+   target, and entrants are scaled down together when the post-decision gross (held legs at their marked /
+   resized notional plus entrants) would exceed 1.0 E (``cap_gross_entry``). Halted: no resize.
 
-Halted instruments (``halted`` evaluated by the engine at the order time; required for every held leg): no
-open and no reduce is emitted; an exit is emitted with ``halted=True`` so the engine defers it (S-5.4).
+Halted instruments (``halted`` evaluated by the engine AT the decision time t, point-in-time: 1m bars opening
+in [t - 60 min, t), AMB-16 (j); required for every held leg): no open and no reduce is emitted; an exit is
+emitted with ``halted=True`` so the engine defers it (S-5.4).
 ``Targets.post`` holds the signed leg notionals after this decision's orders (pending / halted legs at their
 current notional), the input of ``hedge.decide``. ML enters only through ``scores`` (order + hurdle flag): it
 cannot add a gate-failing candidate, change a size or cancel a forced exit (S-0.6).
@@ -135,8 +136,9 @@ def targets(
 
     ``scores``: ``arms.arm_scores`` output (symbol, side, rank_key, passes_hurdle) over the gate-passing
     candidates of both sides; ``gates``: GateRow per held / candidate symbol; ``risk``:
-    ``RiskLayer.pre_decision`` actions for the same t; ``halted``: S-5.4 halt flag per symbol at the order
-    time (required for every held leg; a candidate without one is not entered); ``betas``: beta_hat(t) per
+    ``RiskLayer.pre_decision`` actions for the same t; ``halted``: S-5.4 halt flag per symbol at the decision
+    time t (PIT; the fill-time check at t + 15 min is the engine's; required for every held leg; a candidate
+    without one is not entered); ``betas``: beta_hat(t) per
     symbol; ``quote_vol_24h``: trailing 24 h quote volume (USD) known at t - 1 min; ``equity``: E in book
     units (L-norm: the marked equity, starting at 1); ``usd_per_unit``: USD per book unit for the liquidity
     cap (L-norm: ``FROZEN.deploy.E_ref``; USD layers: 1).
@@ -277,35 +279,33 @@ def targets(
     if sum(tgt.values()) > FROZEN.risk.gross_max * e * (1 + EPS):
         raise RuntimeError("internal: the target book exceeds the gross cap")
 
-    # 5. resizes, S-7.3 hard caps on the marked book, neutrality closes, opens ----------------------------
+    # 5. resizes (drift only), neutrality closes, opens capped by the gross cap (R24, AMB-16 (e)) -----------
     neutral_close: list[Order] = []
-    new: dict[str, tuple[float, str]] = {}  # reducible kept legs / entrants -> (notional after, reason)
+    new: dict[str, tuple[float, str]] = {}  # kept non-halted legs / entrants -> (notional after, reason)
     for lg in kept:
         T = tgt[lg.symbol]
         n = lg.notional
         if T <= EPS * e:
             neutral_close.append(order(lg, "close", n, 0.0, "neutrality", False))
             continue
-        cap = min(per_leg, liq_cap[lg.symbol])
         drift = abs(n - T) > BK.resize_drift * T * (1 + EPS)
         if is_halted[lg.symbol]:
-            if (drift and n > T) or n > cap * (1 + EPS):
+            if drift and n > T:
                 notes.append(f"halted_resize:{lg.symbol}")
             continue
         if drift and n > T:
             new[lg.symbol] = (T, "drift")
-        elif n > cap * (1 + EPS):  # S-7.3 hard cap inside the drift band (AMB-16 (e))
-            new[lg.symbol] = (cap, "cap_leg" if cap == per_leg else "cap_liquidity")
         else:
             if drift:
                 notes.append(f"no_increase:{lg.symbol}")
             new[lg.symbol] = (n, "")
+    entries: dict[str, float] = {}
     for s in SIDES:
         for sym in qualified[s]:
             if tgt[sym] <= EPS * e:
                 notes.append(f"neutrality:{sym}")
             else:
-                new[sym] = (tgt[sym], "entry")
+                entries[sym] = tgt[sym]
     post: dict[str, float] = {}
     fixed = 0.0  # gross no order can change at t: halted kept legs, pending exits, halted closes
     for lg in held:
@@ -313,24 +313,26 @@ def targets(
             post[lg.symbol] = lg.signed
             fixed += lg.notional
     gmax = FROZEN.risk.gross_max * e
-    total = fixed + sum(v for v, _ in new.values())
-    if new and total > gmax * (1 + EPS):  # S-7.3 gross hard cap: reducible legs scaled proportionally
-        f = max(gmax - fixed, 0.0) / sum(v for v, _ in new.values())
-        new = {k: (v * f, r if r == "entry" else "cap_gross") for k, (v, r) in new.items()}
-        notes.append("cap_gross")
+    held_after = fixed + sum(v for v, _ in new.values())
+    if entries and held_after + sum(entries.values()) > gmax * (1 + EPS):  # S-7.3 gross cap binds entries
+        f = max(gmax - held_after, 0.0) / sum(entries.values())
+        entries = {k: v * f for k, v in entries.items()}
+        notes.append("cap_gross_entry")
     reduces: list[Order] = []
     opens: list[Order] = []
     by_sym = {x.symbol: x for x in kept}
     for sym, (v, r) in new.items():
-        if r == "entry":
-            s = side_of[sym]
-            opens.append(Order(sym, s, "open", v, v, "entry", False, False, None, None))
-            post[sym] = s * v
-            continue
         lg = by_sym[sym]
         if v < lg.notional * (1 - EPS):
             reduces.append(order(lg, "reduce", lg.notional - v, v, r, False))
         post[sym] = lg.side * v
+    for sym, v in entries.items():
+        if v <= EPS * e:
+            notes.append(f"cap_gross:{sym}")
+            continue
+        s = side_of[sym]
+        opens.append(Order(sym, s, "open", v, v, "entry", False, False, None, None))
+        post[sym] = s * v
 
     def srt(xs: list[Order]) -> list[Order]:
         return sorted(xs, key=lambda o: (o.symbol, o.side))

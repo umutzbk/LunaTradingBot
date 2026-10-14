@@ -219,11 +219,14 @@ class _Sim:
             self.invalid_detail = f"{r.symbol}#{r.instance}@{r.ts}" + (f": {r.detail}" if r.detail else "")
 
     def legs(self) -> list[Leg]:
+        """Held legs. A leg whose exit rests as an E_M maker order is passed as active (``pending_exit``
+        None): a forced exit replaces it with a taker exit (S-6.2: forced exits are always taker)."""
         out = []
         for p in sorted(self.led.pos.values(), key=lambda x: x.symbol):
             if p.role == "leg" and p.q != 0 and p.p_last is not None:
+                pend = None if p.maker_exit else p.pending_exit
                 out.append(Leg(p.symbol, p.side, abs(p.q) * p.p_last, p.avg_entry, p.entry_decision_ts, p.pid,
-                               p.pending_exit))
+                               pend))
         return out
 
     def leg_pos(self, sym: str) -> Position:
@@ -250,6 +253,8 @@ class _Sim:
                 self.push(o.ts, EV_FILL, tk)
             elif isinstance(o, NoTrade):
                 self.notes.append(f"no_trade_{o.reason}:{o.trade.symbol}")
+                if o.reason == "after_unwind":  # an E_M order still resting at the unwind is cancelled
+                    self.integrity.append(f"order_cancelled_at_unwind:{pid}")
             elif isinstance(o, Pending):
                 if kind != "exit" or p is None:
                     self.notes.append(f"unfilled_{kind}:{o.trade.symbol}")
@@ -265,6 +270,7 @@ class _Sim:
              h_hat: float | None = None) -> None:
         self.cancel(p.pid)
         p.pending_exit = reason
+        p.maker_exit = False
         tr = Trade(p.symbol, -1 if p.q > 0 else 1, abs(p.q), None, False, reason, p.pid)
         if forced and reason in FORCED_TIMING:
             if trigger_ts is None:
@@ -273,7 +279,8 @@ class _Sim:
         elif forced or self.exe == "E_T" or p.role == "hedge":
             outs = [taker_at(p.view, tr, t_e)]
         else:
-            outs = maker_at(p.view, tr, t_e, h_hat, self.upu)
+            outs = maker_at(p.view, tr, t_e, h_hat, self.upu, self.unwind_ts)
+            p.maker_exit = True
         self.schedule(outs, p.pid, "exit", min(t_e, trigger_ts if trigger_ts is not None else t_e), p)
 
     def open_position(self, f: Fill, pid: str, role: str, side: int, decision_ts: int, beta: float | None,
@@ -374,7 +381,7 @@ class _Sim:
                         self.integrity.append(f"entry_cancelled_by_kill:{pid}")
         for fx in acts.forced:
             p = self.leg_pos(fx.symbol)
-            if p.pending_exit is None:
+            if p.pending_exit is None or p.maker_exit:  # a resting maker exit is replaced (S-6.2)
                 self.exit(p, fx.reason, True, fx.trigger_ts, t_e)
         h = self.hedge_pos()
         if acts.killed and h is not None and h.pending_exit is None:  # "exit everything" incl. the hedge
@@ -398,6 +405,10 @@ class _Sim:
 
     def on_unwind(self) -> None:
         u = self.unwind_ts
+        for pid in sorted(self.tokens):  # orders due after the unwind (E_M remainders) never fill
+            if pid not in self.led.pos and any(not tk.cancelled for tk in self.tokens[pid]):
+                self.integrity.append(f"order_cancelled_at_unwind:{pid}")
+                self.cancel(pid)
         order = sorted(self.led.pos.values(), key=lambda x: (x.role != "leg", x.symbol))
         for p in order:
             if p.waiting:
@@ -413,7 +424,9 @@ class _Sim:
                 r = halted_exit(p.view, out)
                 out = r if isinstance(r, Fill) else None  # type: ignore[assignment]
             if not isinstance(out, Fill) or out.ts >= self.end:
-                self.fail(RunInvalid(INVALID_NO_EXIT, p.symbol, p.view.inst.idx, u, "halted at the unwind"))
+                why = ("halted at the unwind" if p.view.halted(u)
+                       else "no reference price at the unwind minute (data gap, not halted; AMB-20)")
+                self.fail(RunInvalid(INVALID_NO_EXIT, p.symbol, p.view.inst.idx, u, why))
                 return
             self.on_fill_now(out, p)
         self.led.close_day(u, self.led.equity(), final=True)
@@ -438,10 +451,12 @@ class _Sim:
         marks = {s: m for s, m in self.fresh.items() if s in held}
         self.state, acts = self.risk.pre_decision(self.state, t, legs, v.gates, v.h_hat, marks, v.stale)
         scores = self.scores(t, v.cands)
-        halted = {lg.symbol: self.leg_pos(lg.symbol).view.halted(t_e) for lg in legs}
+        # PIT (AMB-16 (j)): the S-5.4 halt flag AT t (1m bars opening in [t - 60 min, t)); the fill-time
+        # check at t_e is execution's (pending exit / no order)
+        halted = {lg.symbol: self.leg_pos(lg.symbol).view.halted(t) for lg in legs}
         for sym in sorted(set(scores["symbol"].astype(str)) - held):
             cv = self.view_of(sym, t)
-            halted[sym] = True if cv is None else cv.halted(t_e)
+            halted[sym] = True if cv is None else cv.halted(t)
         eq = self.led.equity()
         tg = targets(t=t, equity=eq, held=tuple(legs), scores=scores, gates=v.gates, risk=acts, halted=halted,
                      betas=v.betas, quote_vol_24h=v.qv24, h_star_h=float(self.h_star), usd_per_unit=self.upu)
@@ -478,15 +493,15 @@ class _Sim:
             self.open_meta[pid] = (t, v.betas.get(sym))
             tr = Trade(sym, o.side, None, o.notional, True, o.reason, pid)
             outs = [taker_at(cv, tr, t_e)] if self.exe == "E_T" else maker_at(cv, tr, t_e, v.h_hat.get(sym),
-                                                                                self.upu)
+                                                                                self.upu, self.unwind_ts)
             self.schedule(outs, pid, "open", t_e, None)
             return
         p = self.leg_pos(sym)
         if o.kind == "reduce" and o.target > EPS * E0:
             leg_n = abs(p.q) * p.p_last  # type: ignore[operator]
             tr = Trade(sym, -o.side, abs(p.q) * o.notional / leg_n, None, False, o.reason, p.pid)
-            outs = [taker_at(p.view, tr, t_e)] if self.exe == "E_T" else maker_at(p.view, tr, t_e,
-                                                                                 v.h_hat.get(sym), self.upu)
+            outs = [taker_at(p.view, tr, t_e)] if self.exe == "E_T" else maker_at(
+                p.view, tr, t_e, v.h_hat.get(sym), self.upu, self.unwind_ts)
             self.schedule(outs, p.pid, "reduce", t_e, None)
             return
         self.exit(p, o.reason, o.forced, o.trigger_ts, t_e, v.h_hat.get(sym))  # close (or reduce to 0)
@@ -586,7 +601,7 @@ def run(arm: str, inputs: EngineInputs, window: tuple[int, int], h_star: int, mo
         arm=arm, h_star=h_star, execution=execution, layer=layer, window=(lo, end),
         fills=_frame(led.fills), marks=_frame(led.marks), positions=_frame(led.positions),
         funding_flows=_frame(led.funding), daily=_frame(led.daily), decisions=_frame(sim.decisions),
-        integrity=tuple(sim.integrity), invalid=sim.invalid, invalid_detail=sim.invalid_detail,
+        integrity=tuple(dict.fromkeys(sim.integrity)), invalid=sim.invalid, invalid_detail=sim.invalid_detail,
     )
 
 

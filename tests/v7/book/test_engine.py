@@ -49,13 +49,13 @@ def test_plain_run_hand_values():
     assert first["AAAUSDT"] == pytest.approx(0.001 * 100 * 1e-4)  # long receives a negative rate
     assert first["BBBUSDT"] == pytest.approx(0.002 * 50 * 1e-4)  # short receives a positive rate
     assert first[BTC] == pytest.approx(1e-4 * 1000 * 5e-5)
-    # S-7.3 hard per-leg cap 0.5 E / K on the marked book (AMB-16 (e)): equity < 1 after the entry costs, so
-    # the 08:05 decision cuts each leg to 0.1 E(08:05) (reduce-only); later decisions do not re-increase
-    e2 = r.decisions.loc[r.decisions["t"] == LO + 8 * H + 5 * MIN, "equity"].iloc[0]
-    red = f[f["reason"] == "cap_leg"].set_index("symbol")
-    assert red.loc["AAAUSDT", "qty"] * 100 == pytest.approx(0.1 - 0.1 * e2, rel=1e-9)
-    assert red.loc["BBBUSDT", "qty"] * 50 == pytest.approx(0.1 - 0.1 * e2, rel=1e-9)
-    assert red["ts"].eq(LO + 8 * H + 20 * MIN).all() and len(f[f["reason"].str.startswith("cap")]) == 2
+    by = fl.groupby("symbol")["cash"].sum()
+    assert by["AAAUSDT"] == pytest.approx(5 * 0.001 * 100 * 1e-4)
+    assert by["BBBUSDT"] == pytest.approx(5 * 0.002 * 50 * 1e-4)
+    assert by[BTC] == pytest.approx(5 * 1e-4 * 1000 * 5e-5)
+    # R24 (AMB-16 (e)): equity < 1 after the entry costs lowers the per-leg TARGET cap 0.1 E, but the marked
+    # legs stay inside the 25 % drift band: no resize at all
+    assert set(f["reason"]) == {"entry", "hedge", "terminal_unwind"}
     # terminal unwind: every leg and the hedge, taker at end - 1 min, nothing at / after the end
     un = f[f["reason"] == "terminal_unwind"]
     assert set(un["symbol"]) == {"AAAUSDT", "BBBUSDT", BTC} and set(un["ts"]) == {U}
@@ -67,7 +67,7 @@ def test_plain_run_hand_values():
     final = r.daily["equity_end"].iloc[-1]
     costs = (f["fee"] + f["spread_cost"] + f["slip_cost"]).sum()
     assert final == pytest.approx(1.0 + fl["cash"].sum() - costs, rel=0, abs=1e-15)
-    assert final == pytest.approx(1.0 + 5 * 2.5e-5 - 6 * 0.1 * C - 3 * F_T * 0.2, rel=1e-5)
+    assert final == pytest.approx(1.0 + 5 * 2.5e-5 - 6 * 0.1 * C - 3 * F_T * 0.2, rel=1e-12)
 
 
 def test_daily_table_and_price_identity():
@@ -120,6 +120,17 @@ def test_halted_leg_at_unwind_is_invalid_run():
     resumed = instrument("AAAUSDT", 100.0, -1e-4, dead=((END - 3 * H, END - 30 * MIN),))
     ok = run("A0", base_inputs(aaa=resumed), (LO, END), 24)
     assert ok.valid
+    assert "halted at the unwind" in r.invalid_detail
+
+
+def test_unwind_minute_data_gap_is_invalid_not_halted():
+    """Only the 1m bar at end - 1 min is missing (not halted): interim INVALID RUN (AMB-20, pre-run blocker),
+    reported as a data gap, not as a halt."""
+    gap = instrument("AAAUSDT", 100.0, -1e-4, dead=((END - MIN, END),))
+    r = run("A0", base_inputs(aaa=gap), (LO, END), 24)
+    assert r.invalid == INVALID_NO_EXIT
+    assert "data gap" in r.invalid_detail and "halted at the unwind" not in r.invalid_detail
+    assert not (legs_of(r, "AAAUSDT")["reason"] == "terminal_unwind").any()
 
 
 def test_halted_pending_exit_no_synthetic_fill():
@@ -144,6 +155,14 @@ def test_halted_pending_exit_no_synthetic_fill():
     # the leg stayed held (and marked) while it waited; funding accrued through the wait
     held = r.positions[(r.positions["symbol"] == "AAAUSDT") & (r.positions["ts"] > t2 + 15 * MIN)]
     assert len(held) and (held["pending_exit"] == "gate").all()
+    # PIT (AMB-16 (j)): the halt starts after t2 - 60 min, so AAA is not halted AT t2; the decision is the
+    # one made without any halt (same orders, same hedge target); only the fill at t2 + 15 min waits
+    clean = run("A0", base_inputs(aaa=instrument("AAAUSDT", path, -1e-4), gates=gates), (LO, END), 24)
+    cols = ["t", "orders", "hedge_target", "beta_book"]
+    pd.testing.assert_frame_equal(r.decisions.loc[r.decisions["t"] <= t2, cols],
+                                  clean.decisions.loc[clean.decisions["t"] <= t2, cols])
+    cx = legs_of(clean, "AAAUSDT")
+    assert cx.loc[cx["reason"] == "gate", "ts"].tolist() == [t2 + 15 * MIN]
 
 
 def test_terminal_bc_held_invalidates_run():
@@ -292,10 +311,9 @@ def test_drawdown_kill_flattens_book_and_cancels_entries():
     assert any(x.startswith("entry_cancelled_by_kill:DDDUSDT") for x in r.integrity)
     d = r.decisions.set_index("t")
     # 08:05: AAA halves for neutrality (2 long vs 1 short), DDD enters, hedge grows to -0.15; all cancelled
-    assert d.loc[up + 5 * MIN, "orders"] == ("reduce:drift:AAAUSDT", "reduce:cap_leg:BBBUSDT",
-                                             "open:entry:DDDUSDT")
+    assert d.loc[up + 5 * MIN, "orders"] == ("reduce:drift:AAAUSDT", "open:entry:DDDUSDT")
     assert d.loc[up + 5 * MIN, "hedge_target"] == pytest.approx(-0.15, rel=1e-3)
-    assert not (r.fills["reason"].isin(["drift", "cap_leg", "hedge"]) & (r.fills["ts"] > up)).any()
+    assert not (r.fills["reason"].isin(["drift", "hedge"]) & (r.fills["ts"] > up)).any()
     later = d[d.index > up + 15 * MIN]
     assert later["killed"].all() and all("entries_blocked:kill" in n for n in later["notes"])
 
@@ -318,3 +336,44 @@ def test_ml_arm_through_model():
                                   a0.fills[["ts", "symbol", "direction", "qty"]])
     with pytest.raises(ValueError):
         run("A0", base_inputs(), (LO, END), 24, model=_FakeModel())
+
+
+def test_forced_exit_replaces_inflight_maker_exit():
+    """S-6.2: a forced exit is always taker; a leg stop inside an E_M decision exit's maker window replaces
+    the resting maker order (no taker remainder at t_e + 30 min)."""
+    t2 = LO + D + 5 * MIN
+
+    def gates(t, s):
+        return gate_row(t, u2=False) if (s == "AAAUSDT" and t >= t2) else gate_row(t)
+
+    path = lambda ts: np.where(ts < t2 + 10 * MIN, 100.0, 80.0)  # noqa: E731
+    none = pd.DataFrame({"ts": pd.Series(dtype="int64"), "price": [], "qty": []})
+    inp = base_inputs(aaa=instrument("AAAUSDT", path, -1e-4, trades=none),
+                      bbb=instrument("BBBUSDT", 50.0, 1e-4, trades=none), gates=gates)
+    r = run("A0", inp, (LO, END), 24, execution="E_M")
+    assert r.valid
+    a = legs_of(r, "AAAUSDT")
+    ex = a[a["direction"] == -1]
+    assert ex[["ts", "reason", "liquidity"]].values.tolist() == [[t2 + 26 * MIN, "leg_stop", "taker"]]
+
+
+def test_inflight_maker_entry_cancelled_at_unwind():
+    """An E_M entry still resting at the terminal unwind is cancelled (integrity note): no maker fill at or
+    after the unwind (a trade-through at 16:39:30 is ignored) and no remainder due at 16:50 > 16:39."""
+    end = LO + 16 * H + 40 * MIN
+
+    def gates(t, s):
+        return gate_row(t, u2=False) if (s == "DDDUSDT" and t < LO + 16 * H) else gate_row(t)
+
+    none = pd.DataFrame({"ts": pd.Series(dtype="int64"), "price": [], "qty": []})
+    late = pd.DataFrame({"ts": [end - MIN + 30 * 10**9], "price": [9.0], "qty": [1e9]})
+    ddd = instrument("DDDUSDT", 10.0, -1e-4, trades=late)
+    inp = base_inputs(aaa=instrument("AAAUSDT", 100.0, -1e-4, trades=none),
+                      bbb=instrument("BBBUSDT", 50.0, 1e-4, trades=none), extra={"DDDUSDT": ddd},
+                      fl30={"DDDUSDT": -0.004}, gates=gates)
+    r = run("A0", inp, (LO, end), 24, execution="E_M")
+    assert r.valid
+    assert "open:entry:DDDUSDT" in r.decisions.set_index("t").loc[LO + 16 * H + 5 * MIN, "orders"]
+    assert "DDDUSDT" not in set(r.fills["symbol"])
+    assert any(x.startswith("order_cancelled_at_unwind:DDDUSDT") for x in r.integrity)
+    assert r.fills["ts"].max() == end - MIN and len(r.integrity) == len(set(r.integrity))

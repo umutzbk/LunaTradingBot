@@ -179,6 +179,17 @@ class ExecView:
     def m15(self, lo: int, hi: int) -> pd.DataFrame:
         return self._cut(self.x.m15, self._tm, lo, hi)
 
+    @cached_property
+    def _tt(self) -> np.ndarray:
+        t = self.trades
+        return ns_array(t["ts"], "ts") if t is not None and len(t) else np.empty(0, np.int64)
+
+    def trades_in(self, lo: int, hi: int) -> pd.DataFrame:
+        """aggTrades with lo <= ts < hi (sorted, searchsorted slice)."""
+        if self.trades is None:
+            raise ValueError(f"no aggTrades for {self.symbol}")
+        return self._cut(self.trades, self._tt, lo, hi)
+
     def halted(self, tau: int) -> bool:
         return halted(self.b1(tau - H, tau), tau)
 
@@ -293,13 +304,16 @@ def _adverse(v: ExecView, ts: int, price: float, d: int) -> tuple[float | None, 
     return tuple(out)
 
 
-def maker_at(v: ExecView, tr: Trade, t_e: int, h_hat: float | None, usd_per_unit: float) -> list[Outcome]:
+def maker_at(v: ExecView, tr: Trade, t_e: int, h_hat: float | None, usd_per_unit: float,
+             cutoff: int | None = None) -> list[Outcome]:
     """S-6.2 E_M: post at t_e at the touch L = P(t_e) (1 - d h-hat(t)); fill only from aggTrades strictly
     through L (buy: price < L; sell: price > L) with t_e < ts <= t_e + 30 min, filled qty = min(remaining,
     cumulative trade-through qty) at L with the maker fee; the remainder fills taker at t_e + 30 min.
     Trade quantities are compared at ``usd_per_unit`` USD per book unit (L-norm: E_ref; AMB-19 (g)).
     Halted at t_e or no P(t_e): S-5.4 (exit ``Pending``, entry ``NoTrade``); h-hat(t) missing: no limit can
-    be posted, the order goes taker at t_e (AMB-19 (g))."""
+    be posted, the order goes taker at t_e (AMB-19 (g)). ``cutoff`` (the terminal unwind): no maker fill at or
+    after it, and a remainder due at or after it is ``NoTrade("after_unwind")`` (the unwind closes a held
+    position; an entry stays partial)."""
     if v.trades is None:
         raise ValueError(f"E_M needs aggTrades for {v.symbol}")
     if v.halted(t_e):
@@ -313,12 +327,15 @@ def maker_at(v: ExecView, tr: Trade, t_e: int, h_hat: float | None, usd_per_unit
     lim = r[0] * (1 - d * float(h_hat))
     qty = tr.qty if tr.qty is not None else tr.notional / r[0]  # type: ignore[operator]
     rem = float(qty) * usd_per_unit
-    t = v.trades
+    hi = t_e + MAKER_WINDOW
+    if cutoff is not None:
+        hi = min(hi, int(cutoff) - 1)
+    t = v.trades_in(t_e + 1, hi + 1)  # t_e < ts <= hi
     ts = ns_array(t["ts"], "ts") if len(t) else np.empty(0, np.int64)
     px = t["price"].to_numpy(np.float64) if len(t) else np.empty(0)
     qq = t["qty"].to_numpy(np.float64) if len(t) else np.empty(0)
     through = (px < lim) if d > 0 else (px > lim)
-    sel = (ts > t_e) & (ts <= t_e + MAKER_WINDOW) & through & np.isfinite(qq) & (qq > 0)
+    sel = through & np.isfinite(qq) & (qq > 0)
     out: list[Outcome] = []
     for k in np.unique(ts[sel]):
         if rem <= EPS * qty * usd_per_unit:
@@ -329,5 +346,8 @@ def maker_at(v: ExecView, tr: Trade, t_e: int, h_hat: float | None, usd_per_unit
         out.append(replace(f, adverse=_adverse(v, int(k), lim, d)))
     if rem > EPS * qty * usd_per_unit:
         rest = replace(tr, qty=rem / usd_per_unit, notional=None)
-        out.append(taker_at(v, rest, t_e + MAKER_WINDOW))
+        if cutoff is not None and t_e + MAKER_WINDOW >= cutoff:
+            out.append(NoTrade(rest, t_e + MAKER_WINDOW, "after_unwind"))
+        else:
+            out.append(taker_at(v, rest, t_e + MAKER_WINDOW))
     return out
