@@ -58,7 +58,7 @@ class HoldoutAuthorization:
 
 # --- pure helpers -------------------------------------------------------------------------------------
 
-_PERIOD = re.compile(r"-(\d{4})-(\d{2})(?:-(\d{2}))?\.zip(?:\.CHECKSUM)?$")
+_PERIOD = re.compile(r"-(\d{4})-(\d{2})(?:-(\d{2}))?\.zip(?:\.CHECKSUM)?\Z", re.ASCII)
 
 
 def file_period(name: str) -> tuple[int, int] | None:
@@ -101,11 +101,17 @@ def check_outcome_window(lo: int, hi: int, *, auth: HoldoutAuthorization | None 
             raise HoldoutBlocked("the sealed W_HOLD needs the user's explicit approval (authorize_holdout)")
 
 
-def check_listing_only(path: str, *, read_content: bool = False) -> None:
-    """S-1.7: file listings (name, size, checksum) of W_HOLD / M6 are allowed; their content is refused."""
-    per = file_period(path)
-    if per is None or not read_content:
+def check_listing_only(path: str, *, access: str) -> None:
+    """S-1.7: file listings (name, size, checksum) of W_HOLD / M6 are allowed; their content is refused.
+    ``access`` is "listing" or "content" (required). Content access fails closed: refused when the period
+    reaches W_HOLD / M6 and also when it cannot be parsed from the name."""
+    if access == "listing":
         return
+    if access != "content":
+        raise ValueError(f"access must be 'listing' or 'content', got {access!r}")
+    per = file_period(path)
+    if per is None:
+        raise HoldoutBlocked(f"content of {path}: period not parseable from the name, refused")
     if per[1] > windows.W_HOLD[0]:
         raise HoldoutBlocked(f"content of {path} (period reaches W_HOLD / M6) is sealed: listing only")
 

@@ -25,7 +25,8 @@ from luna.v7.guard import GuardFailure
 from luna.v7.timeutil import D
 
 __all__ = ["Allowed", "EndpointRefused", "GuardFailure", "Request", "cdx_pair_registry", "check",
-           "check_wayback_response", "drop_m6_keys"]
+           "check_wayback_response", "drop_m6_keys",
+           "partition_m6_keys"]
 
 
 class EndpointRefused(RuntimeError):
@@ -45,14 +46,14 @@ class Allowed:
 
 _BOUND_MS = windows.W_HOLD[0] // 10**6  # 2025-07-01T00:00:00Z in ms
 _BOUND_TS = "20250701000000"  # first Wayback timestamp that is refused
-_TS14 = re.compile(r"^\d{14}$")
-_DIGITS = re.compile(r"^\d{1,16}$")
+_TS14 = re.compile(r"\d{14}", re.ASCII)
+_DIGITS = re.compile(r"\d{1,16}", re.ASCII)
 
 _N1_PATH = re.compile(
-    r"^/data/futures/um/(?P<freq>monthly|daily)/(?P<dataset>[A-Za-z]+)/(?P<symbol>[A-Z0-9_]+)/"
-    r"(?:(?P<interval>\d+[mhdwM])/)?(?P<file>[A-Za-z0-9_\-]+)\.zip(?:\.CHECKSUM)?$")
-_N2_PREFIX = re.compile(r"^data/futures/um/[A-Za-z0-9_\-/]*$")
-_N6 = re.compile(r"^https://web\.archive\.org/web/(\d{14})id_/(.+)$")
+    r"/data/futures/um/(?P<freq>monthly|daily)/(?P<dataset>[A-Za-z]+)/(?P<symbol>[A-Z0-9_]+)/"
+    r"(?:(?P<interval>\d+[mhdwM])/)?(?P<file>[A-Za-z0-9_\-]+)\.zip(?:\.CHECKSUM)?", re.ASCII)
+_N2_PREFIX = re.compile(r"data/futures/um/[A-Za-z0-9_\-/]*", re.ASCII)
+_N6 = re.compile(r"https://web\.archive\.org/web/(\d{14})id_/(.+)", re.ASCII)
 _N5_ALLOWED = {"url", "matchType", "from", "filter", "fl", "collapse", "limit", "to"}
 
 
@@ -60,9 +61,13 @@ def _refuse(why: str, req: Request) -> EndpointRefused:
     return EndpointRefused(f"{why}: {req.url} {dict(req.params)}")
 
 
+def _has_control(s: str) -> bool:
+    return any(ord(c) <= 0x20 or ord(c) == 0x7F or c.isspace() for c in s)
+
+
 def _int_param(v: object) -> int | None:
     s = str(v)
-    return int(s) if _DIGITS.match(s) else None
+    return int(s) if _DIGITS.fullmatch(s) else None
 
 
 class CdxPairRegistry:
@@ -78,7 +83,7 @@ class CdxPairRegistry:
         for r in rows:
             ts, orig = (r["timestamp"], r["original"]) if isinstance(r, dict) else (r[0], r[1])
             ts = str(ts)
-            if not _TS14.match(ts) or ts >= _BOUND_TS:
+            if not _TS14.fullmatch(ts) or ts >= _BOUND_TS:
                 raise GuardFailure(f"CDX row timestamp {ts!r} is outside the bound < {_BOUND_TS}")
             batch.append((ts, str(orig)))
         self._pairs.update(batch)
@@ -126,7 +131,9 @@ def check(req: Request) -> Allowed:
     url = req.url
     if not isinstance(url, str) or not url:
         raise _refuse("empty URL", req)
-    m = _N6.match(url)
+    if _has_control(url) or any(_has_control(str(k)) or _has_control(str(v)) for k, v in req.params.items()):
+        raise _refuse("control characters or whitespace in URL / parameters", req)
+    m = _N6.fullmatch(url)
     if m:  # the original URL carries its own '?' / '#': match on the raw string
         if req.params:
             raise _refuse("N6 takes no parameters", req)
@@ -145,7 +152,7 @@ def check(req: Request) -> Allowed:
     p = _merged_params(req, u.query)
 
     if host == "data.binance.vision":
-        n1 = _N1_PATH.match(path)
+        n1 = _N1_PATH.fullmatch(path)
         per = guard.file_period(path) if n1 else None
         if not n1 or per is None or p:
             raise _refuse("N1 path not recognised or parameters given", req)
@@ -160,7 +167,7 @@ def check(req: Request) -> Allowed:
     if host == "s3-ap-northeast-1.amazonaws.com":
         if path.rstrip("/") != "/data.binance.vision" or set(p) != {"delimiter", "prefix"}:
             raise _refuse("N2 takes exactly delimiter and prefix", req)
-        if p["delimiter"] != "/" or not _N2_PREFIX.match(p["prefix"]) or ".." in p["prefix"]:
+        if p["delimiter"] != "/" or not _N2_PREFIX.fullmatch(p["prefix"]) or ".." in p["prefix"]:
             raise _refuse("N2 delimiter must be '/' and prefix under data/futures/um/", req)
         return Allowed("N2")
 
@@ -185,21 +192,32 @@ def check(req: Request) -> Allowed:
 
     if host == "web.archive.org" and path == "/cdx/search/cdx":
         to = p.get("to")
-        if to is None or not _TS14.match(to) or to > "20250630235959" or not set(p) <= _N5_ALLOWED:
+        if to is None or not _TS14.fullmatch(to) or to > "20250630235959" or not set(p) <= _N5_ALLOWED:
             raise _refuse("N5 requires a 14-digit `to` <= 20250630235959 and only allowed parameters", req)
         return Allowed("N5")
 
     raise _refuse("endpoint not on the S-1.7 allowlist", req)
 
 
-def drop_m6_keys(keys: list[str], m6_span: tuple[int, int | None] | None = None) -> list[str]:
-    """N2: drop, in memory, keys whose period overlaps M6; W_HOLD keys stay (name only, nothing else is
-    read from them); keys without a period (directories) stay."""
-    span = m6_span if m6_span is not None else windows.m6()
-    out = []
+def partition_m6_keys(keys: list[str], m6_span: tuple[int, int | None]
+                      ) -> tuple[list[str], list[str], list[str]]:
+    """N2, fail closed: (kept, dropped_m6, dropped_unparseable). A key is kept only if it is a directory
+    prefix (ends with '/') or has a parseable period that does not overlap M6. W_HOLD keys stay (name only,
+    nothing else is read from them). The M6 span is supplied by the caller (no I/O here)."""
+    kept: list[str] = []
+    m6_dropped: list[str] = []
+    unparseable: list[str] = []
     for k in keys:
         per = guard.file_period(k)
-        if per is not None and windows.overlaps(per[0], per[1], span):
-            continue
-        out.append(k)
-    return out
+        if per is None:
+            (kept if k.endswith("/") else unparseable).append(k)
+        elif windows.overlaps(per[0], per[1], m6_span):
+            m6_dropped.append(k)
+        else:
+            kept.append(k)
+    return kept, m6_dropped, unparseable
+
+
+def drop_m6_keys(keys: list[str], m6_span: tuple[int, int | None]) -> list[str]:
+    """N2: the keys that survive ``partition_m6_keys`` (M6 and unparseable keys dropped in memory)."""
+    return partition_m6_keys(keys, m6_span)[0]

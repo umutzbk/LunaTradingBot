@@ -128,11 +128,21 @@ def test_pin_manifest_once(repo, tmp_path):
 
 def test_check_listing_only():
     hold = "data/futures/um/monthly/klines/BTCUSDT/15m/BTCUSDT-15m-2025-08.zip"
-    guard.check_listing_only(hold)  # listing: allowed
+    guard.check_listing_only(hold, access="listing")  # listing: allowed
     with pytest.raises(guard.HoldoutBlocked):
-        guard.check_listing_only(hold, read_content=True)
+        guard.check_listing_only(hold, access="content")
+    with pytest.raises(guard.HoldoutBlocked):  # M6 period
+        guard.check_listing_only("X-15m-2026-08.zip", access="content")
+    with pytest.raises(guard.HoldoutBlocked):  # unparseable period: fail closed
+        guard.check_listing_only("X-15m-2026-13.zip", access="content")
+    with pytest.raises(guard.HoldoutBlocked):
+        guard.check_listing_only("no-period.zip", access="content")
+    with pytest.raises(TypeError):  # access is required
+        guard.check_listing_only(hold)  # type: ignore[call-arg]
+    with pytest.raises(ValueError):
+        guard.check_listing_only(hold, access="read")
     guard.check_listing_only("data/futures/um/monthly/klines/BTCUSDT/15m/BTCUSDT-15m-2025-06.zip",
-                             read_content=True)
+                             access="content")
 
 
 def test_file_period():

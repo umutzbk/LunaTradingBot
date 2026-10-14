@@ -12,6 +12,7 @@ FAPI = "https://fapi.binance.com/fapi/v1/"
 BVIS = "https://data.binance.vision/data/futures/um"
 MS_OK = str(to_ns("2025-06-30T23:59:59") // 10**6)
 MS_BAD = str(to_ns("2025-07-01") // 10**6)
+SPAN = (to_ns("2026-07-01"), None)  # fixed M6 span, no git
 
 
 def test_refuses_cms_catalog_and_detail():
@@ -133,11 +134,11 @@ def test_n2_drops_m6_keys():
     keys = [d + "BTCUSDT-15m-2025-06.zip", d + "BTCUSDT-15m-2025-08.zip", d + "BTCUSDT-15m-2026-06.zip",
             d + "BTCUSDT-15m-2026-07.zip", d + "BTCUSDT-15m-2026-07.zip.CHECKSUM",
             d + "BTCUSDT-15m-2026-09.zip", "data/futures/um/monthly/klines/BTCUSDT/"]
-    out = netguard.drop_m6_keys(keys)
+    out = netguard.drop_m6_keys(keys, SPAN)
     assert out == [keys[0], keys[1], keys[2], keys[6]]
     assert keys[1] in out  # W_HOLD key kept (name only)
     # a daily file the day before M6 stays, the first M6 day goes
-    assert netguard.drop_m6_keys(["X-2026-06-30.zip", "X-2026-07-01.zip"]) == ["X-2026-06-30.zip"]
+    assert netguard.drop_m6_keys(["X-2026-06-30.zip", "X-2026-07-01.zip"], SPAN) == ["X-2026-06-30.zip"]
 
 
 def test_exchangeinfo_status_fields_refused_as_history():
@@ -161,3 +162,47 @@ def test_query_in_url_is_checked_like_params():
     with pytest.raises(EndpointRefused):  # same key twice
         both = {"symbol": "B", "startTime": 1, "endTime": MS_OK}
         check(Request(FAPI + f"fundingRate?endTime={MS_BAD}", both))
+
+
+def test_n2_unparseable_keys_fail_closed():
+    d = "data/futures/um/monthly/klines/BTCUSDT/15m/"
+    keys = [d + "BTCUSDT-15m-2026-13.zip", d + "BTCUSDT-15m-2025-06.zip", d + "junk.zip", d,
+            d + "BTCUSDT-15m-2026-08.zip"]
+    kept, m6, bad = netguard.partition_m6_keys(keys, SPAN)
+    assert kept == [keys[1], keys[3]] and m6 == [keys[4]] and bad == [keys[0], keys[2]]
+    assert netguard.drop_m6_keys(keys, SPAN) == kept
+    with pytest.raises(TypeError):
+        netguard.drop_m6_keys(keys)  # type: ignore[call-arg]
+
+
+def test_trailing_newline_and_non_ascii_digits_refused():
+    base = {"symbol": "BTCUSDT", "startTime": "1"}
+    with pytest.raises(EndpointRefused):
+        check(Request(FAPI + "fundingRate", {**base, "endTime": "5\n"}))
+    with pytest.raises(EndpointRefused):
+        check(Request(FAPI + "fundingRate", {**base, "endTime": "\u0665"}))  # Arabic-indic digit
+    u = "https://web.archive.org/cdx/search/cdx"
+    with pytest.raises(EndpointRefused):
+        check(Request(u, {"to": "20250630235959\n"}))
+    with pytest.raises(EndpointRefused):
+        check(Request(u, {"to": "\u0662" * 14}))
+    orig = "https://www.binance.com/x"
+    netguard.cdx_pair_registry.clear()
+    netguard.cdx_pair_registry.register_cdx_result([("20250101000000", orig)])
+    with pytest.raises(EndpointRefused):
+        check(Request(f"https://web.archive.org/web/20250101000000id_/{orig}\n", {}))
+    netguard.cdx_pair_registry.clear()
+    ok = f"{BVIS}/monthly/klines/BTCUSDT/15m/BTCUSDT-15m-2025-06.zip"
+    with pytest.raises(EndpointRefused):
+        check(Request(ok + "\n", {}))
+
+
+def test_control_characters_in_url_or_params_refused():
+    for u in (FAPI + "fund\ningRate", FAPI + "fund\tingRate", FAPI + "fundingRate\r", FAPI + "exchange Info",
+              "https://fapi.binance.com/fapi/v1/exchangeInfo\x00"):
+        with pytest.raises(EndpointRefused):
+            check(Request(u, {}))
+    ok = {"symbol": "BTCUSDT", "startTime": "1", "endTime": MS_OK}
+    for bad in ({**ok, "symbol": "BTC\nUSDT"}, {**ok, "limit": "1 "}, {**ok, "x\n": "1"}):
+        with pytest.raises(EndpointRefused):
+            check(Request(FAPI + "fundingRate", bad))
