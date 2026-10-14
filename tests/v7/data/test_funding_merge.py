@@ -43,6 +43,11 @@ def test_funding_merge_archive_wins_rest_fills_gap():
     gap = out.iloc[3]
     assert gap["mark_at_settle"] == 100.5 and pd.isna(gap["interval_h_explicit"])
     assert out.iloc[1]["funding_ts"] == from_ms(T0_MS + H_MS)  # archive timestamp kept
+    # overlapping rows: archive rate/ts/source kept, null mark filled from REST with explicit provenance
+    assert out.iloc[1]["mark_at_settle"] == 100.5 and out.iloc[1]["mark_source"] == "rest"
+    assert out.iloc[1]["source"] == "archive"
+    assert pd.isna(out.iloc[0]["mark_at_settle"]) and out.iloc[0]["mark_source"] is None
+    assert out.iloc[3]["mark_source"] == "rest"
 
 
 def test_funding_conflict_raises():
@@ -55,11 +60,11 @@ def test_funding_conflict_raises():
 def test_funding_timestamp_mapping_conflicts():
     a = _archive(3)
     r = funding.normalise_rest(pd.DataFrame([
-        {"fundingTime": T0_MS + H_MS - 30_000, "fundingRate": "0.000101", "markPrice": "1"},
-        {"fundingTime": T0_MS + H_MS + 30_000, "fundingRate": "0.000101", "markPrice": "1"},
+        {"fundingTime": T0_MS + H_MS - 50_000, "fundingRate": "0.000101", "markPrice": "1"},
+        {"fundingTime": T0_MS + H_MS + 50_000, "fundingRate": "0.000101", "markPrice": "1"},
     ]), "ms")
     with pytest.raises(IntegrityBlocker):
-        funding.merge(a, r)  # two REST records map to one archive settlement
+        funding.merge(a, r)  # two REST records map to one archive settlement (100 s apart)
     # a REST record 61 s off is a distinct key and fills (not silently merged)
     r2 = funding.normalise_rest(pd.DataFrame([
         {"fundingTime": T0_MS + H_MS + 61_000, "fundingRate": "0.000101", "markPrice": "1"}]), "ms")

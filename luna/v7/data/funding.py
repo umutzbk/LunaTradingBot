@@ -1,8 +1,9 @@
 """Funding archive + REST merge (spec S-3 R2, S-2.6 DEC-32/DEC-29, S-4.6).
 
 Archive monthly ``fundingRate`` files are primary; REST fills only keys the archive lacks (match within the
-frozen +-60 s tolerance). Overlapping keys are compared: agreeing -> archive row kept (archive provenance,
-no field borrowed from REST); a material conflict -> ``IntegrityBlocker`` (never picked silently).
+frozen +-60 s tolerance). Overlapping keys are compared: agreeing -> archive rate / timestamp / source kept
+and a null ``mark_at_settle`` filled from REST (``mark_source = "rest"``; overwrites nothing); a material
+conflict -> ``IntegrityBlocker`` (never picked silently).
 "Material" is an implementation clarification (AMB-03): rate differing by more than ``RATE_ATOL`` = 1e-12,
 or an ambiguous / many-to-one timestamp mapping.
 """
@@ -21,7 +22,8 @@ from luna.v7.data.schema import IntegrityBlocker
 from luna.v7.timeutil import MIN
 
 RATE_ATOL = 1e-12
-OUT_COLUMNS = ("funding_ts", "rate", "interval_h_explicit", "mark_at_settle", "source", "known_at")
+OUT_COLUMNS = ("funding_ts", "rate", "interval_h_explicit", "mark_at_settle", "mark_source", "source",
+               "known_at")
 
 
 def parse_archive_csv(text: str, unit: Literal["ms", "us", "ns"]) -> pd.DataFrame:
@@ -79,6 +81,7 @@ def _merge_one(archive: pd.DataFrame, rest: pd.DataFrame, tol: int) -> pd.DataFr
     a_ts = np.sort(archive["funding_ts"].to_numpy())
     a_rate = dict(zip(archive["funding_ts"].tolist(), archive["rate"].tolist(), strict=True))
     claimed: set[int] = set()
+    rest_mark: dict[int, float] = {}
     fill = []
     for i, (ts, rate) in enumerate(zip(rest["funding_ts"].tolist(), rest["rate"].tolist(), strict=True)):
         lo = int(np.searchsorted(a_ts, ts - tol, side="left"))
@@ -92,9 +95,20 @@ def _merge_one(archive: pd.DataFrame, rest: pd.DataFrame, tol: int) -> pd.DataFr
         if k in claimed:
             raise IntegrityBlocker(f"two REST records map to the same archive settlement {k}")
         claimed.add(k)
+        rest_mark[k] = float(rest["mark_at_settle"].iloc[i])
         if not abs(a_rate[k] - rate) <= RATE_ATOL:
             raise IntegrityBlocker(f"funding rate conflict at {k}: archive {a_rate[k]!r} vs REST {rate!r}")
-    parts = [archive.assign(source="archive"), rest.iloc[fill].assign(source="rest")]
+    a = archive.assign(source="archive")
+    a["mark_source"] = np.where(a["mark_at_settle"].notna(), "archive", None)
+    # agreeing overlap: archive rate/ts/source kept; a null mark is filled from REST (overwrites nothing)
+    for k, m in rest_mark.items():
+        row = a["funding_ts"] == k
+        if not np.isnan(m) and a.loc[row, "mark_at_settle"].isna().all():
+            a.loc[row, "mark_at_settle"] = m
+            a.loc[row, "mark_source"] = "rest"
+    f = rest.iloc[fill].assign(source="rest")
+    f["mark_source"] = np.where(f["mark_at_settle"].notna(), "rest", None)
+    parts = [a, f]
     parts = [p for p in parts if len(p)]
     out = pd.concat(parts, ignore_index=True) if parts else archive.assign(source="archive")
     out = out.sort_values("funding_ts", kind="stable")
