@@ -33,7 +33,8 @@ def _open_at(bars: pd.DataFrame, tau_ns: int) -> float | None:
 
 
 def P(bars1m: pd.DataFrame, bars15: pd.DataFrame, tau: int) -> float | None:  # noqa: N802
-    """S-5.2: open of the 1m bar starting at tau; fallback only if that bar is absent: the 15m bar open."""
+    """S-5.2: open of the 1m bar starting at tau; if that bar is absent or its open is unusable (NaN /
+    non-positive), the open of the 15m bar starting at tau; else None."""
     v = _open_at(bars1m, tau)
     if v is None or v <= 0:
         v = _open_at(bars15, tau)  # 1m bar absent or its open unusable (NaN / non-positive)
@@ -57,7 +58,8 @@ def first_executable_after(
     Returns (fill_ts = bar close time, price = bar close). Bars outside the instance (E10) are ignored: the
     bar must open at/after ``first_bar_ts`` and close by ``last_trade_ts``. The instance end used is the
     reconstructed (retrospective) one; this is admissible because the fill is booked only once the bar has
-    closed. No bar -> None (the caller applies the terminal / invalid rules).
+    closed. Bars whose close is not finite and positive are not executable (skipped; no price is invented).
+    No usable bar -> None (the caller applies the terminal / invalid rules).
     """
     t = bars1m["open_ts"].to_numpy(np.int64)
     ok = (t >= tau) & (bars1m["vol_base"].to_numpy(np.float64) > 0) & (t >= instance.first_bar_ts)

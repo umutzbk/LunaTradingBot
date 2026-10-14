@@ -1,11 +1,16 @@
 import numpy as np
 import pandas as pd
+import pytest
 
-from luna.v7.beta import beta_hat, hourly_close_from_15m
+from luna.v7.beta import beta_hat, hourly_close_from_15m, hourly_known_at_from_15m
 from luna.v7.timeutil import MIN, H, to_ns
 
 T = to_ns("2024-06-01T00:00:30Z")
 LAST = ((T - MIN) // H) * H
+
+
+def kn(s):
+    return pd.Series(s.index.to_numpy(), index=s.index)
 
 
 def series(rets, last=LAST):
@@ -18,17 +23,17 @@ def series(rets, last=LAST):
 def test_beta_requires_500_obs():
     rng = np.random.default_rng(0)
     b = rng.normal(0, 0.01, 720)
-    assert beta_hat(series(b * 2), series(b), T) is not None
-    assert beta_hat(series(b[-499:] * 2), series(b[-499:]), T) is None
-    assert beta_hat(series(b[-500:] * 2), series(b[-500:]), T) is not None
+    assert bh(series(b * 2), series(b), T) is not None
+    assert bh(series(b[-499:] * 2), series(b[-499:]), T) is None
+    assert bh(series(b[-500:] * 2), series(b[-500:]), T) is not None
 
 
 def test_beta_shrink_and_clip():
     rng = np.random.default_rng(1)
     b = rng.normal(0, 0.01, 720)
-    assert abs(beta_hat(series(b * 2), series(b), T) - (0.7 * 2 + 0.3)) < 1e-9
-    assert beta_hat(series(b * 10), series(b), T) == 3.0
-    assert beta_hat(series(-b * 2), series(b), T) == 0.0
+    assert abs(bh(series(b * 2), series(b), T) - (0.7 * 2 + 0.3)) < 1e-9
+    assert bh(series(b * 10), series(b), T) == 3.0
+    assert bh(series(-b * 2), series(b), T) == 0.0
 
 
 def test_beta_window_ends_before_t_minus_1min():
@@ -40,7 +45,7 @@ def test_beta_window_ends_before_t_minus_1min():
     a2.loc[t_on] = 1e9
     btc = series(b).copy()
     btc.loc[t_on] = 1.0
-    assert abs(beta_hat(a2, btc, t_on) - beta_hat(a, series(b), t_on)) < 1e-9
+    assert abs(bh(a2, btc, t_on) - bh(a, series(b), t_on)) < 1e-9
 
 
 def test_hourly_close_from_15m():
@@ -50,17 +55,43 @@ def test_hourly_close_from_15m():
     assert list(s.index) == [t + H] and s.iloc[0] == 3.0
 
 
-def test_beta_drops_late_known_at_bars():
+def bh(a, b, t):
+    """beta_hat with every price known at its own hour (nothing late)."""
+    return beta_hat(a, b, t, kn(a), kn(b))
+
+
+def test_beta_requires_known_at():
+    a = series(np.zeros(10))
+    with pytest.raises(TypeError):
+        beta_hat(a, a, T)
+    with pytest.raises(TypeError):
+        beta_hat(a, a, T, kn(a))
+    with pytest.raises(ValueError):
+        hourly_known_at_from_15m(pd.DataFrame({"open_ts": [0], "c": [1.0]}))
+
+
+def _late_case():
     rng = np.random.default_rng(3)
     b = rng.normal(0, 0.01, 720)
-    a, btc = series(b * 2), series(b)
-    ka = pd.Series(a.index.to_numpy(), index=a.index)
-    ok = beta_hat(a, btc, T, ka, ka)
-    late = ka.copy()
-    late.iloc[-1] = T  # last hourly close received after t - 1 min
-    a_bad = a.copy()
-    a_bad.iloc[-1] = a_bad.iloc[-1] * 5  # would change beta if used
-    got = beta_hat(a_bad, btc, T, late, ka)
-    assert ok is not None and got is not None
-    assert beta_hat(a_bad, btc, T) != beta_hat(a, btc, T)  # without known_at it leaks
-    assert abs(got - beta_hat(a.iloc[:-1], btc, T)) < 1e-12
+    a, btc = series(b * 2 + rng.normal(0, 0.003, 720)), series(b)
+    return a, btc
+
+
+def test_beta_drops_late_known_at_bars():
+    a, btc = _late_case()
+    for late_pos in (-1, -300):
+        for side in ("asset", "btc", "both"):
+            ka, kb = kn(a), kn(btc)
+            tgt = a.copy(), btc.copy()
+            if side in ("asset", "both"):
+                ka.iloc[late_pos] = T  # received after t - 1 min
+                tgt[0].iloc[late_pos] *= 5
+            if side in ("btc", "both"):
+                kb.iloc[late_pos] = T
+                tgt[1].iloc[late_pos] *= 5
+            got = beta_hat(tgt[0], tgt[1], T, ka, kb)
+            # reference: the late price is absent
+            ra = a.drop(a.index[late_pos]) if side in ("asset", "both") else a
+            rb = btc.drop(btc.index[late_pos]) if side in ("btc", "both") else btc
+            assert abs(got - bh(ra, rb, T)) < 1e-12
+            assert got != bh(*tgt, T)  # the leak would change the result

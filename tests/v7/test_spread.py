@@ -121,10 +121,10 @@ def test_ar_tau_trims_leading_pairs_matches_reference():
 
 
 def test_ar_mixed_sign_positive_mean_hand_worked():
-    E = (0.05, 0.03, 0.04)  # eta 0.04, c 0.04 ; after A: pi=4*(0.01)*(0.02-0.04)... see below
+    E = (0.05, 0.03, 0.04)  # eta 0.04, c 0.04
     rows = [A, E, A, B]
-    # (A,E)=4*0.01*(0.02-0.04)=-0.0008 ; (E,A)=4*(0.04-0.04)*(0.04-0.01)=0 ; (A,B)=0.0008 -> mean 0 -> floor
+    # (A,E)=4*0.01*(0.02-0.04)=-0.0008 ; (E,A)=4*(0.04-0.04)*(0.04-0.01)=0 ; (A,B)=+0.0008 -> mean 0 -> floor
     assert half_spread(bars(rows), T0 + 4 * Q + MIN) == 1e-4
     rows = [A, E, A, B, A, B]
-    # pairs: -0.0008, 0, 0.0008, (B,A)=0, (A,B)=0.0008 -> mean 0.0008/5 -> S = sqrt(0.00016)
+    # pairs: -0.0008, 0, +0.0008, (B,A)=0, +0.0008 -> mean 0.0008/5 = 0.00016 > 0 -> S = sqrt(0.00016)
     assert abs(half_spread(bars(rows), T0 + 6 * Q + MIN) - math.sqrt(0.00016)) < 1e-12

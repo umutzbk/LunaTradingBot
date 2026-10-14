@@ -5,8 +5,8 @@ price at that hour). Build them from 15m last-price bars with ``hourly_close_fro
 CLOSES at each full hour). Returns are hourly log returns between consecutive hours; joint observations are
 hours where both the asset and BTC returns exist, over the 30 d ending at the last full hour <= t - 1 min.
 The caller passes only the bars of the asset's current instance (S-2.2; no cross-instance returns). Prices
-whose ``known_at`` (see ``hourly_known_at_from_15m``) is after t - 1 min are dropped inside ``beta_hat``
-when the known_at series are given. Fewer than 500 joint observations -> None.
+whose ``known_at`` (``hourly_known_at_from_15m``, required for both series) is after t - 1 min are dropped
+inside ``beta_hat``. Fewer than 500 joint observations -> None.
 beta = clip(0.7 * OLS + 0.3 * 1.0, 0, 3).
 """
 
@@ -32,13 +32,14 @@ def hourly_known_at_from_15m(bars15: pd.DataFrame) -> pd.Series:
     """``known_at`` of the 15m bar closing at each full hour, same index as ``hourly_close_from_15m``."""
     end = bars15["open_ts"].to_numpy(np.int64) + BAR_15M
     m = end % H == 0
-    ka = bars15["known_at"].to_numpy(np.int64) if "known_at" in bars15.columns else end
+    if "known_at" not in bars15.columns:
+        raise ValueError("bars15 has no known_at column: point-in-time filtering is impossible")
+    ka = bars15["known_at"].to_numpy(np.int64)
     return pd.Series(ka[m], index=end[m]).sort_index()
 
 
-def _pit(close: pd.Series, known_at: pd.Series | None, t_ns: int) -> pd.Series:
-    if known_at is None:
-        return close
+def _pit(close: pd.Series, known_at: pd.Series, t_ns: int) -> pd.Series:
+    """Keep prices with known_at <= t - 1 min; a price without a known_at entry is dropped."""
     ka = known_at.reindex(close.index)
     return close[(ka <= t_ns - MIN).to_numpy()]
 
@@ -56,8 +57,8 @@ def beta_hat(
     asset_close_1h: pd.Series,
     btc_close_1h: pd.Series,
     t_ns: int,
-    asset_known_at: pd.Series | None = None,
-    btc_known_at: pd.Series | None = None,
+    asset_known_at: pd.Series,
+    btc_known_at: pd.Series,
 ) -> float | None:
     cfg = FROZEN.beta
     asset_close_1h = _pit(asset_close_1h, asset_known_at, t_ns)
