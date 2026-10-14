@@ -136,3 +136,27 @@ def test_match_binds_to_instance_live_at_known_at():
 
     assert st.active(insts[1], T0 + 22 * D, halted)
     assert not st.active(insts[0], T0 + 22 * D, halted)
+
+
+def test_each_version_evaluated_by_itself():
+    i = INSTS[0]
+    v1 = _v(CTX.format(s="XXXUSDT"), nid="a")  # null time: only postponement clears
+    v2 = _v(_txt(), nid="b", release=T0 + 7 * D, capture=T0 + 7 * D)
+    st = U6State([v1, v2], "XXXUSDT", INSTS)
+    assert st.active(i, SCHED + 30 * D, never)  # v1 still in force after v2's 72 h
+    t1 = _v(_txt(t="2024-06-11 09:00 (UTC)"), nid="c")
+    t2 = _v(_txt(t="2024-06-20 09:00 (UTC)"), nid="d", release=T0 + 7 * D, capture=T0 + 7 * D)
+    st2 = U6State([t1, t2], "XXXUSDT", INSTS)
+    assert st2.active(i, SCHED + 80 * H, lambda ts: ts >= to_ns("2024-06-20"))  # t1 cleared? t1 halted-test
+    only_t2 = to_ns("2024-06-20 09:00") + 72 * H
+    assert not st2.active(i, only_t2, never)
+    post = _v(CTX.format(s="XXXUSDT") + "Cancelled.", kind="cancellation", nid="e",
+              release=T0 + 8 * D, capture=T0 + 8 * D)
+    assert not U6State([v1, v2, post], "XXXUSDT", INSTS).active(i, T0 + 9 * D, never)
+
+
+def test_seconds_exact_and_token_continuation():
+    assert scheduled_ts(_v(_txt(t="2024-06-11 09:00:30 (UTC)")), "XXXUSDT") == SCHED + 30 * 10**9
+    assert not confident_match(_v(_txt("XXXUSDT_240628")), "XXXUSDT")
+    assert not confident_match(_v(_txt("XXXUSDT-240628")), "XXXUSDT")
+    assert confident_match(_v(_txt("XXXUSDT") + " Also XXXUSDT."), "XXXUSDT")

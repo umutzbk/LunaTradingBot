@@ -41,7 +41,7 @@ def test_terminal_class_b_c():
     c_late = classify(_ev(SCHED + 15 * MIN + 1), NOTICE, _row(), "XXXUSDT")  # conflict
     assert c_late.klass == "C" and c_late.settle_price is None
     assert classify(_ev(SCHED - 1), NOTICE, _row(), "XXXUSDT").klass == "C"
-    assert classify(_ev(), NOTICE, _row(), "YYYUSDT").klass == "C"  # notice does not match this symbol
+    assert classify(_ev(), NOTICE, None, "YYYUSDT").klass == "C"  # notice does not match this symbol
     post = NoticeVersion("n", 2, "postponement", 1, 1, TXT, "h")
     assert classify(_ev(), post, None, "XXXUSDT").klass == "C"
 
@@ -72,3 +72,20 @@ def test_r12_empty_is_valid():
     validate_r12(pd.DataFrame([_row()]))
     with pytest.raises(IntegrityBlocker):
         validate_r12(pd.DataFrame([_row(source="approx")]))
+
+
+def test_notice_without_known_at_is_c():
+    cur = NoticeVersion("n", 1, "delisting", SCHED - D, None, TXT, "h")
+    assert classify(_ev(), cur, _row(), "XXXUSDT").klass == "C"
+
+
+def test_row_bound_to_instance():
+    with pytest.raises(IntegrityBlocker):
+        classify(_ev(), NOTICE, _row(contract_instance_id="XXXUSDT#1"), "XXXUSDT")
+    with pytest.raises(IntegrityBlocker):
+        classify(_ev(), NOTICE, _row(venue="other"), "XXXUSDT")
+
+
+def test_non_numeric_price_is_blocker():
+    with pytest.raises(IntegrityBlocker):
+        reject_approximate(_row(settlement_price="n/a"))

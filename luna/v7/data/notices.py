@@ -36,7 +36,7 @@ CLEAR_AFTER_NS = 72 * H
 HALT_GRID_NS = MIN  # the 72 h "not HALTED at any time" test samples halted_fn on this grid (AMB-05)
 
 _TS_RE = re.compile(
-    r"(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?\s*\(UTC\)", re.IGNORECASE
+    r"(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?\s*\(UTC\)", re.IGNORECASE
 )
 _SYM_RE = re.compile(r"(?<![A-Za-z0-9])[A-Z0-9]{2,}(?:USDT|USDC|BUSD)(?![A-Za-z0-9])")
 _SENT_RE = re.compile(r"(?<=[.;!?])\s+|\n+")
@@ -64,7 +64,8 @@ def known_at(v: NoticeVersion) -> int | None:
 
 
 def _token_re(symbol: str) -> re.Pattern[str]:
-    return re.compile(r"(?<![A-Za-z0-9])" + re.escape(symbol) + r"(?![A-Za-z0-9])")
+    # '_' and '-'/'.' followed by an alphanumeric continue the token (XXXUSDT_240628): no match
+    return re.compile(r"(?<![A-Za-z0-9_])" + re.escape(symbol) + r"(?![A-Za-z0-9_])(?![-.][A-Za-z0-9])")
 
 
 def _usdm_context(text: str) -> bool:
@@ -79,14 +80,15 @@ def confident_match(v: NoticeVersion, symbol: str) -> bool:
 
 
 def _parse_ts(m: re.Match[str]) -> int | None:
-    hour, minute, ampm = int(m.group(2)), int(m.group(3)), (m.group(4) or "").upper()
+    hour, minute, sec = int(m.group(2)), int(m.group(3)), int(m.group(4) or 0)
+    ampm = (m.group(5) or "").upper()
     if ampm:
         if not 1 <= hour <= 12:
             return None
         hour = hour % 12 + (12 if ampm == "PM" else 0)
-    if hour > 23 or minute > 59:
+    if hour > 23 or minute > 59 or sec > 59:
         return None
-    return to_ns(f"{m.group(1)} {hour:02d}:{minute:02d}:00")
+    return to_ns(f"{m.group(1)} {hour:02d}:{minute:02d}:{sec:02d}")
 
 
 def scheduled_ts(v: NoticeVersion, symbol: str) -> int | None:
@@ -168,17 +170,15 @@ class U6State:
             instance.end_known_at is not None and t_ns >= instance.end_known_at
         ):
             return False  # U6 ends with its instance
-        on = False
-        sched: int | None = None
+        inforce: list[int | None] = []  # sched of each in-force version
         for e in self._events.get(instance.idx, []):
             if e.ka > t_ns:
                 break
-            if on and self._cleared(sched, e.ka, halted_fn):
-                on = False  # auto-cleared before this event
+            inforce = [x for x in inforce if not self._cleared(x, e.ka, halted_fn)]
             if e.kind != "delisting":
-                on, sched = False, None
+                inforce = []  # a matched postponement / cancellation clears every earlier in-force version
                 continue
             if self._cleared(e.sched, e.ka, halted_fn):
                 continue  # the 72 h test already passed at known_at: never activates
-            on, sched = True, e.sched
-        return on and not self._cleared(sched, t_ns, halted_fn)
+            inforce.append(e.sched)
+        return any(not self._cleared(x, t_ns, halted_fn) for x in inforce)

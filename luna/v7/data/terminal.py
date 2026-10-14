@@ -18,7 +18,7 @@ from typing import Any, Literal
 import pandas as pd
 
 from luna.v7.data.instances import Instance
-from luna.v7.data.notices import NoticeVersion, confident_match, scheduled_ts
+from luna.v7.data.notices import NoticeVersion, confident_match, known_at, scheduled_ts
 from luna.v7.data.schema import IntegrityBlocker, validate
 from luna.v7.timeutil import MIN
 
@@ -51,7 +51,10 @@ def reject_approximate(row: Mapping[str, Any]) -> None:
             raise IntegrityBlocker(f"R12: missing {c}; no placeholder rows")
     if row["source"] not in EXACT_SOURCES:
         raise IntegrityBlocker(f"R12: source {row['source']!r} is not an exact official source")
-    p = float(row["settlement_price"])
+    try:
+        p = float(row["settlement_price"])
+    except (TypeError, ValueError):
+        raise IntegrityBlocker("R12: settlement_price is not numeric") from None
     if not math.isfinite(p) or p <= 0:
         raise IntegrityBlocker("R12: settlement_price must be finite and > 0")
 
@@ -68,15 +71,24 @@ def classify(
     notice: NoticeVersion | None,
     settlement_source: Mapping[str, Any] | None,
     symbol: str,
+    venue: str = "binance",
 ) -> TerminalEvent:
     """Classify a terminal event (``event.cessation_ts`` = observed last traded 15m close)."""
+    if settlement_source is not None:
+        reject_approximate(settlement_source)
+        want = f"{symbol}#{event.instance.idx}"  # E10: a row binds to exactly one instance
+        if settlement_source.get("contract_instance_id") != want or settlement_source.get("venue") != venue:
+            raise IntegrityBlocker(
+                f"R12 row for {settlement_source.get('venue')}/"
+                f"{settlement_source.get('contract_instance_id')} supplied for {venue}/{want}"
+            )
     sched = None
-    if notice is not None and notice.kind == "delisting" and confident_match(notice, symbol):
+    ok = notice is not None and known_at(notice) is not None and notice.kind == "delisting"
+    if ok and confident_match(notice, symbol):
         sched = scheduled_ts(notice, symbol)
     if sched is None or not (sched <= event.cessation_ts <= sched + CESSATION_TOL_NS):
         return replace(event, klass="C", settle_ts=None, settle_price=None, source=None)
     if settlement_source is not None:
-        reject_approximate(settlement_source)
         if int(settlement_source["settlement_ts"]) == sched:
             return replace(
                 event,
