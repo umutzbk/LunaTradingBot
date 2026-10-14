@@ -1,0 +1,217 @@
+{
+ "population": "G_D0 grid (U1-U4) minus 5 unknown-type symbols; W_DEV decisions; h in {24,72,168}; t_x < 2025-07-01",
+ "symbols": 381,
+ "totals": {
+  "labels": 1538625,
+  "A_entry_missing": 3,
+  "B_exit_missing": 0,
+  "B_exit_exact": 1538309,
+  "B_via_gap60": 0,
+  "B_via_s54": 316,
+  "exit_at_or_before_entry": 111,
+  "D_funding_missing": 33,
+  "E_mark_missing": 0,
+  "btc_input_missing": 0,
+  "invalid_total": 36,
+  "daily_fill_minutes": 298080,
+  "daily_files_requested": 286,
+  "funding_rest_fill_records": 4875,
+  "funding_unexplained_interval_records": 1
+ },
+ "mark_tiers_settlements": {
+  "markPrice": 10387858,
+  "mark15_or_last15": 9347359,
+  "missing": 0
+ },
+ "invalid_rate": 2.3397514014135996e-05,
+ "by_year_h": [
+  [
+   2021,
+   24,
+   0,
+   101502
+  ],
+  [
+   2021,
+   72,
+   0,
+   101502
+  ],
+  [
+   2021,
+   168,
+   0,
+   101502
+  ],
+  [
+   2022,
+   24,
+   4,
+   101650
+  ],
+  [
+   2022,
+   72,
+   10,
+   101650
+  ],
+  [
+   2022,
+   168,
+   22,
+   101650
+  ],
+  [
+   2023,
+   24,
+   0,
+   100499
+  ],
+  [
+   2023,
+   72,
+   0,
+   100499
+  ],
+  [
+   2023,
+   168,
+   0,
+   100499
+  ],
+  [
+   2024,
+   24,
+   0,
+   142902
+  ],
+  [
+   2024,
+   72,
+   0,
+   142902
+  ],
+  [
+   2024,
+   168,
+   0,
+   142902
+  ],
+  [
+   2025,
+   24,
+   0,
+   67157
+  ],
+  [
+   2025,
+   72,
+   0,
+   66539
+  ],
+  [
+   2025,
+   168,
+   0,
+   65270
+  ]
+ ],
+ "btc": {
+  "symbol": "BTCUSDT",
+  "labels": 14745,
+  "A_entry_missing": 0,
+  "B_exit_missing": 0,
+  "B_exit_exact": 14745,
+  "B_via_gap60": 0,
+  "B_via_s54": 0,
+  "exit_at_or_before_entry": 0,
+  "D_funding_missing": 0,
+  "E_mark_missing": 0,
+  "mark_tiers": {
+   "markPrice": 60009,
+   "mark15_or_last15": 102018,
+   "missing": 0
+  },
+  "daily_fill_minutes": 0,
+  "daily_files_requested": 0,
+  "funding_rest_fill_records": 338,
+  "funding_unexplained_interval_records": 0
+ },
+ "worst_symbols": [
+  [
+   0.006578947368421052,
+   "BNXUSDT",
+   5016
+  ],
+  [
+   0.0008250825082508251,
+   "LUNAUSDT",
+   3636
+  ],
+  [
+   0.0,
+   "ZRXUSDT",
+   6345
+  ],
+  [
+   0.0,
+   "ZROUSDT",
+   2805
+  ],
+  [
+   0.0,
+   "ZKUSDT",
+   1722
+  ],
+  [
+   0.0,
+   "ZILUSDT",
+   9003
+  ],
+  [
+   0.0,
+   "ZETAUSDT",
+   1668
+  ],
+  [
+   0.0,
+   "ZEREBROUSDT",
+   939
+  ],
+  [
+   0.0,
+   "ZENUSDT",
+   6189
+  ],
+  [
+   0.0,
+   "ZECUSDT",
+   10176
+  ],
+  [
+   0.0,
+   "YGGUSDT",
+   3480
+  ],
+  [
+   0.0,
+   "YFIUSDT",
+   9636
+  ],
+  [
+   0.0,
+   "YFIIUSDT",
+   2970
+  ],
+  [
+   0.0,
+   "XVSUSDT",
+   477
+  ],
+  [
+   0.0,
+   "XVGUSDT",
+   822
+  ]
+ ]
+}

@@ -1,0 +1,544 @@
+{
+ "daily_bookDepth": {
+  "symbols": 891,
+  "first": "2023-01-01",
+  "last_pre_m6": "2026-06-30",
+  "dev_symbols": 493,
+  "dev_files": 239717,
+  "dev_GB": 97.839,
+  "dev_symbols_with_holes": 228,
+  "dev_hole_count": 1134,
+  "dev_hole_examples": [
+   [
+    "1000LUNCUSDT",
+    [
+     "2023-02-08",
+     "2023-02-09",
+     "2024-04-18"
+    ]
+   ],
+   [
+    "1000PEPEUSDT",
+    [
+     "2024-04-18"
+    ]
+   ],
+   [
+    "1000RATSUSDT",
+    [
+     "2024-04-18"
+    ]
+   ],
+   [
+    "1000SATSUSDT",
+    [
+     "2024-04-18"
+    ]
+   ],
+   [
+    "1000SHIBUSDT",
+    [
+     "2023-02-08",
+     "2023-02-09"
+    ]
+   ]
+  ],
+  "hold_symbols": 724,
+  "hold_files": 194834,
+  "hold_GB": 87.135,
+  "hold_symbols_with_holes": 236,
+  "hold_hole_count": 482,
+  "hold_hole_examples": [
+   [
+    "1000XUSDT",
+    [
+     "2025-11-15",
+     "2025-11-16",
+     "2025-11-17"
+    ]
+   ],
+   [
+    "AI16ZUSDT",
+    [
+     "2025-11-07",
+     "2025-11-08",
+     "2025-11-09"
+    ]
+   ],
+   [
+    "AIAUSDT",
+    [
+     "2025-12-12",
+     "2025-12-13",
+     "2025-12-14"
+    ]
+   ],
+   [
+    "DEFIUSDT",
+    [
+     "2025-08-12",
+     "2025-08-13",
+     "2025-08-14"
+    ]
+   ],
+   [
+    "FLMUSDT",
+    [
+     "2025-11-22",
+     "2025-11-23",
+     "2025-11-24"
+    ]
+   ]
+  ],
+  "zero_size_files": 0
+ },
+ "daily_bookTicker": {
+  "symbols": 270,
+  "first": "2023-05-16",
+  "last_pre_m6": "2024-03-30",
+  "dev_symbols": 270,
+  "dev_files": 70232,
+  "dev_GB": 1055.162,
+  "dev_symbols_with_holes": 18,
+  "dev_hole_count": 18,
+  "dev_hole_examples": [
+   [
+    "BELUSDT",
+    [
+     "2023-11-08"
+    ]
+   ],
+   [
+    "BICOUSDT",
+    [
+     "2023-11-16"
+    ]
+   ],
+   [
+    "BONDUSDT",
+    [
+     "2023-11-16"
+    ]
+   ],
+   [
+    "CHZUSDT",
+    [
+     "2023-11-16"
+    ]
+   ],
+   [
+    "DODOXUSDT",
+    [
+     "2023-11-16"
+    ]
+   ]
+  ],
+  "hold_symbols": 0,
+  "hold_files": 0,
+  "hold_GB": 0.0,
+  "hold_symbols_with_holes": 0,
+  "hold_hole_count": 0,
+  "hold_hole_examples": [],
+  "zero_size_files": 0
+ },
+ "daily_metrics": {
+  "symbols": 907,
+  "first": "2020-09-01",
+  "last_pre_m6": "2026-06-30",
+  "dev_symbols": 509,
+  "dev_files": 302085,
+  "dev_GB": 3.321,
+  "dev_symbols_with_holes": 77,
+  "dev_hole_count": 10863,
+  "dev_hole_examples": [
+   [
+    "1000BTTCUSDT",
+    [
+     "2022-04-12",
+     "2022-04-13",
+     "2022-04-14"
+    ]
+   ],
+   [
+    "AERGOUSDT",
+    [
+     "2025-03-28",
+     "2025-03-29",
+     "2025-03-30"
+    ]
+   ],
+   [
+    "AGIXUSDT",
+    [
+     "2024-06-27",
+     "2024-06-28",
+     "2024-06-29"
+    ]
+   ],
+   [
+    "AKROUSDT",
+    [
+     "2022-05-29",
+     "2022-05-30",
+     "2022-05-31"
+    ]
+   ],
+   [
+    "ANCUSDT",
+    [
+     "2022-05-14",
+     "2022-05-15",
+     "2022-05-16"
+    ]
+   ]
+  ],
+  "hold_symbols": 732,
+  "hold_files": 202094,
+  "hold_GB": 2.113,
+  "hold_symbols_with_holes": 27,
+  "hold_hole_count": 2552,
+  "hold_hole_examples": [
+   [
+    "42USDT",
+    [
+     "2026-04-29",
+     "2026-04-30",
+     "2026-05-01"
+    ]
+   ],
+   [
+    "AGIXUSDT",
+    [
+     "2025-08-22",
+     "2025-08-23",
+     "2025-08-24"
+    ]
+   ],
+   [
+    "AI16ZUSDT",
+    [
+     "2026-01-24",
+     "2026-01-25",
+     "2026-01-26"
+    ]
+   ],
+   [
+    "ALPACAUSDT",
+    [
+     "2025-07-27",
+     "2025-09-25",
+     "2025-11-25"
+    ]
+   ],
+   [
+    "BIDUSDT",
+    [
+     "2026-01-22",
+     "2026-01-23",
+     "2026-01-24"
+    ]
+   ]
+  ],
+  "zero_size_files": 0
+ },
+ "monthly_aggTrades": {
+  "symbols": 900,
+  "first": "2020-01",
+  "last_pre_m6": "2026-06",
+  "dev_symbols": 511,
+  "dev_files": 11751,
+  "dev_GB": 705.737,
+  "dev_symbols_with_holes": 5,
+  "dev_hole_count": 52,
+  "dev_hole_examples": [
+   [
+    "CTKUSDT",
+    [
+     "2024-05",
+     "2024-06",
+     "2024-07"
+    ]
+   ],
+   [
+    "CVCUSDT",
+    [
+     "2022-12",
+     "2023-01",
+     "2023-02"
+    ]
+   ],
+   [
+    "ICPUSDT",
+    [
+     "2022-07",
+     "2022-08"
+    ]
+   ],
+   [
+    "MAVIAUSDT",
+    [
+     "2025-01",
+     "2025-02"
+    ]
+   ],
+   [
+    "TLMUSDT",
+    [
+     "2022-07",
+     "2022-08",
+     "2022-09"
+    ]
+   ]
+  ],
+  "hold_symbols": 724,
+  "hold_files": 6587,
+  "hold_GB": 298.038,
+  "hold_symbols_with_holes": 0,
+  "hold_hole_count": 0,
+  "hold_hole_examples": [],
+  "zero_size_files": 0
+ },
+ "monthly_bookTicker": {
+  "symbols": 270,
+  "first": "2023-05",
+  "last_pre_m6": "2024-04",
+  "dev_symbols": 270,
+  "dev_files": 2704,
+  "dev_GB": 1064.632,
+  "dev_symbols_with_holes": 7,
+  "dev_hole_count": 7,
+  "dev_hole_examples": [
+   [
+    "RADUSDT",
+    [
+     "2023-12"
+    ]
+   ],
+   [
+    "RUNEUSDT",
+    [
+     "2023-12"
+    ]
+   ],
+   [
+    "SNXUSDT",
+    [
+     "2023-12"
+    ]
+   ],
+   [
+    "STPTUSDT",
+    [
+     "2023-12"
+    ]
+   ],
+   [
+    "TLMUSDT",
+    [
+     "2023-12"
+    ]
+   ]
+  ],
+  "hold_symbols": 0,
+  "hold_files": 0,
+  "hold_GB": 0.0,
+  "hold_symbols_with_holes": 0,
+  "hold_hole_count": 0,
+  "hold_hole_examples": [],
+  "zero_size_files": 0
+ },
+ "monthly_fundingRate": {
+  "symbols": 901,
+  "first": "2020-01",
+  "last_pre_m6": "2026-06",
+  "dev_symbols": 511,
+  "dev_files": 12312,
+  "dev_GB": 0.011,
+  "dev_symbols_with_holes": 2,
+  "dev_hole_count": 28,
+  "dev_hole_examples": [
+   [
+    "BNTUSDT",
+    [
+     "2021-05",
+     "2021-06",
+     "2021-07"
+    ]
+   ],
+   [
+    "BTCSTUSDT",
+    [
+     "2022-01"
+    ]
+   ]
+  ],
+  "hold_symbols": 729,
+  "hold_files": 6642,
+  "hold_GB": 0.008,
+  "hold_symbols_with_holes": 0,
+  "hold_hole_count": 0,
+  "hold_hole_examples": [],
+  "zero_size_files": 0
+ },
+ "monthly_indexPriceKlines_15m": {
+  "symbols": 892,
+  "first": "2020-01",
+  "last_pre_m6": "2026-06",
+  "dev_symbols": 511,
+  "dev_files": 12592,
+  "dev_GB": 0.847,
+  "dev_symbols_with_holes": 0,
+  "dev_hole_count": 0,
+  "dev_hole_examples": [],
+  "hold_symbols": 773,
+  "hold_files": 6987,
+  "hold_GB": 0.413,
+  "hold_symbols_with_holes": 2,
+  "hold_hole_count": 6,
+  "hold_hole_examples": [
+   [
+    "EOSUSDT",
+    [
+     "2025-08"
+    ]
+   ],
+   [
+    "LITUSDT",
+    [
+     "2025-08",
+     "2025-09",
+     "2025-10"
+    ]
+   ]
+  ],
+  "zero_size_files": 0
+ },
+ "monthly_klines_15m": {
+  "symbols": 900,
+  "first": "2020-01",
+  "last_pre_m6": "2026-06",
+  "dev_symbols": 511,
+  "dev_files": 12312,
+  "dev_GB": 1.384,
+  "dev_symbols_with_holes": 0,
+  "dev_hole_count": 0,
+  "dev_hole_examples": [],
+  "hold_symbols": 763,
+  "hold_files": 7437,
+  "hold_GB": 0.774,
+  "hold_symbols_with_holes": 0,
+  "hold_hole_count": 0,
+  "hold_hole_examples": [],
+  "zero_size_files": 0
+ },
+ "monthly_klines_1d": {
+  "symbols": 900,
+  "first": "2020-01",
+  "last_pre_m6": "2026-06",
+  "dev_symbols": 511,
+  "dev_files": 12312,
+  "dev_GB": 0.022,
+  "dev_symbols_with_holes": 0,
+  "dev_hole_count": 0,
+  "dev_hole_examples": [],
+  "hold_symbols": 763,
+  "hold_files": 7437,
+  "hold_GB": 0.012,
+  "hold_symbols_with_holes": 0,
+  "hold_hole_count": 0,
+  "hold_hole_examples": [],
+  "zero_size_files": 0
+ },
+ "monthly_klines_1m": {
+  "symbols": 900,
+  "first": "2020-01",
+  "last_pre_m6": "2026-06",
+  "dev_symbols": 511,
+  "dev_files": 12312,
+  "dev_GB": 17.31,
+  "dev_symbols_with_holes": 0,
+  "dev_hole_count": 0,
+  "dev_hole_examples": [],
+  "hold_symbols": 763,
+  "hold_files": 7437,
+  "hold_GB": 9.395,
+  "hold_symbols_with_holes": 0,
+  "hold_hole_count": 0,
+  "hold_hole_examples": [],
+  "zero_size_files": 0
+ },
+ "monthly_markPriceKlines_15m": {
+  "symbols": 896,
+  "first": "2020-01",
+  "last_pre_m6": "2026-06",
+  "dev_symbols": 511,
+  "dev_files": 12539,
+  "dev_GB": 0.77,
+  "dev_symbols_with_holes": 0,
+  "dev_hole_count": 0,
+  "dev_hole_examples": [],
+  "hold_symbols": 776,
+  "hold_files": 7477,
+  "hold_GB": 0.407,
+  "hold_symbols_with_holes": 0,
+  "hold_hole_count": 0,
+  "hold_hole_examples": [],
+  "zero_size_files": 0
+ },
+ "monthly_premiumIndexKlines_15m": {
+  "symbols": 895,
+  "first": "2020-01",
+  "last_pre_m6": "2026-06",
+  "dev_symbols": 511,
+  "dev_files": 12264,
+  "dev_GB": 0.662,
+  "dev_symbols_with_holes": 3,
+  "dev_hole_count": 29,
+  "dev_hole_examples": [
+   [
+    "CVCUSDT",
+    [
+     "2023-08",
+     "2023-09",
+     "2023-10"
+    ]
+   ],
+   [
+    "ICPUSDT",
+    [
+     "2022-08"
+    ]
+   ],
+   [
+    "TLMUSDT",
+    [
+     "2022-08",
+     "2022-09",
+     "2022-10"
+    ]
+   ]
+  ],
+  "hold_symbols": 766,
+  "hold_files": 6698,
+  "hold_GB": 0.321,
+  "hold_symbols_with_holes": 2,
+  "hold_hole_count": 5,
+  "hold_hole_examples": [
+   [
+    "EWYUSDT",
+    [
+     "2026-05"
+    ]
+   ],
+   [
+    "LITUSDT",
+    [
+     "2025-08",
+     "2025-09",
+     "2025-10"
+    ]
+   ]
+  ],
+  "zero_size_files": 0
+ }
+}

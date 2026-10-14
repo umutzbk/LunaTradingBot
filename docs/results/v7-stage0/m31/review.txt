@@ -1,0 +1,212 @@
+
+######## AGIXUSDT inst0 last_trade_close=2024-06-25T09:15:00 last_elig_dec=2024-06-25T08:05:00 slugfail=False
+  * 20240613203727 hits=13/0 settle=True idx30=False | Updates on the Leverage & Margin Tiers of FETUSDT, AGIXUSDT, and OCEANUSDT USDⓈ-M Perpetual Contracts (2024-06
+        2024-06-13 10:30 (UTC) :: ght:400;font-size:12px;} Fellow Binancians, Binance Futures will update the leverage and margin tiers of FETUSDT, AGIXUSDT, and OCEANUSDT USDⓈ-M Perpetual Contracts at 2024-06-13 10:30 (UTC) , as per the tables below. Please note 
+
+######## AKROUSDT inst0 last_trade_close=2022-05-27T07:00:00 last_elig_dec=2022-05-27T00:05:00 slugfail=False
+  * 20221119131449 hits=0/10 settle=True idx30=False | Binance Futures Will Delist AKRO and DODO USDT-Margined Contracts
+        2022-05-26 09:00 AM (UTC) :: g":"span","attr":{"style":"color:#000000;"},"child":[{"node":"text","text":"Binance Futures will conduct automatic settlements on the AKRO USDT-Margined Contract at 2022-05-26 09:00 AM (UTC) and DODO USDT-Margined Contract at 2022
+        2022-05-27 09:00 AM (UTC) :: "text","text":"Binance Futures will conduct automatic settlements on the AKRO USDT-Margined Contract at 2022-05-26 09:00 AM (UTC) and DODO USDT-Margined Contract at 2022-05-27 09:00 AM (UTC). Both contracts will be delisted after 
+  * 20220518143101 hits=0/12 settle=True idx30=False | Binance Futures Will Delist AKRO and DODO USDT-Margined Contracts
+        2022-05-26 09:00 AM (UTC) :: g":"span","attr":{"style":"color:#000000;"},"child":[{"node":"text","text":"Binance Futures will conduct automatic settlements on the AKRO USDT-Margined Contract at 2022-05-26 09:00 AM (UTC) and DODO USDT-Margined Contract at 2022
+        2022-05-27 09:00 AM (UTC) :: "text","text":"Binance Futures will conduct automatic settlements on the AKRO USDT-Margined Contract at 2022-05-26 09:00 AM (UTC) and DODO USDT-Margined Contract at 2022-05-27 09:00 AM (UTC). Both contracts will be delisted after 
+
+######## ANCUSDT inst0 last_trade_close=2022-05-13T04:15:00 last_elig_dec=2022-05-13T00:05:00 slugfail=False
+  * 20220513023034 hits=0/13 settle=True idx30=False | Binance Futures Will Delist USDT-Margined ANC Perpetual Contract
+        2022-05-13 04:00 AM (UTC) ::  an automatic settlement on the USDT-Margined ANC Perpetual Contract and delist this contract at "},{"node":"element","tag":"strong","child":[{"node":"text","text":"2022-05-13 04:00 AM (UTC)"}]},{"node":"text","text":"."}]}]},{"no
+  * 20221012065346 hits=0/10 settle=True idx30=False | Binance Futures Will Delist USDT-Margined ANC Perpetual Contract
+        2022-05-13 04:00 AM (UTC) ::  an automatic settlement on the USDT-Margined ANC Perpetual Contract and delist this contract at "},{"node":"element","tag":"strong","child":[{"node":"text","text":"2022-05-13 04:00 AM (UTC)"}]},{"node":"text","text":"."}]}]},{"no
+  * 20221113215248 hits=0/10 settle=True idx30=False | Binance Futures Will Delist USDT-Margined ANC Perpetual Contract
+        2022-05-13 04:00 AM (UTC) ::  an automatic settlement on the USDT-Margined ANC Perpetual Contract and delist this contract at "},{"node":"element","tag":"strong","child":[{"node":"text","text":"2022-05-13 04:00 AM (UTC)"}]},{"node":"text","text":"."}]}]},{"no
+
+######## BNXUSDT inst0 last_trade_close=2023-02-01T00:00:00 last_elig_dec=2023-02-01T00:05:00 slugfail=False
+  * 20221118084719 hits=0/5 settle=True idx30=False | Binance Futures Will Launch USDT-Margined BNX Perpetual Contracts with Up to 25X Leverage
+        2022-04-01 03:30 AM (UTC) :: t":"Binance Futures will launch USDT-margined BNX perpetual contracts with up to 25x leverage at "},{"node":"element","tag":"strong","child":[{"node":"text","text":"2022-04-01 03:30 AM (UTC)"}]},{"node":"text","text":"."}]}]},{"no
+        2022-03-31 03:00 PM (UTC) :: with Up to 25X Leverage","seoKeywords":"","seoDesc":"Fellow Binancians, Binance Futures will launch USDT-margined BNX perpetual contracts with up to 25x leverage at 2022-03-31 03:00 PM (UTC) . Please note: BNX perpetual contracts 
+  * 20221208114605 hits=3/0 settle=True idx30=False | Binance Margin Will Delist BNX, TORN and More Margin Pairs on Cross Margin & Isolated Margin
+        2022-12-22 03:00 (UTC) :: Pairs on Cross Margin & Isolated Margin","seoKeywords":"","seoDesc":"Fellow Binancians , Binance will remove and cease trading on the following margin trading pairs at 2022-12-22 03:00 (UTC) : Cross Margin Pairs: BNX/BTC, BNX/BUSD
+        2022-12-10 03:00 (UTC) :: nd (min-width:767px){.css-usuhj8{margin-bottom:16px;}}@media screen and (min-width:1023px){.css-usuhj8{margin-bottom:16px;}}.css-usuhj8:last-child{margin-bottom:0;} At 2022-12-10 03:00 (UTC), Binance will suspend BNX/BTC, BNX/BUSD
+  * 20230210043740 hits=0/4 settle=True idx30=False | Binance Will Support the BinaryX (BNX) Token Swap and Redenomination Plan
+        2023-02-13 06:00 (UTC) :: ode":"text","text":"For existing subscriptions, BNX balances in Simple Earn Flexible Products will be automatically redeemed and credited to users’ spot wallets before 2023-02-13 06:00 (UTC). "}]}]},{"node":"element","tag":"li","c
+        2023-02-10 14:00 (UTC) :: -02-13 06:00 (UTC)."}]}]}]}]},{"node":"element","tag":"li","child":[{"node":"element","tag":"span","attr":{"style":"color:#1e2026;"},"child":[{"node":"text","text":"At 2023-02-10 14:00 (UTC), Binance Futures will suspend trading f
+        2023-02-11 04:00 (UTC) :: "element","tag":"ul","child":[{"node":"element","tag":"li","child":[{"node":"element","tag":"span","attr":{"style":"color:#1e2026;"},"child":[{"node":"text","text":"At 2023-02-11 04:00 (UTC), Binance Futures will close all positio
+        2023-02-12 03:00 (UTC) :: ate the Mark Price."}]}]}]}]},{"node":"element","tag":"li","child":[{"node":"element","tag":"span","attr":{"style":"color:#1e2026;"},"child":[{"node":"text","text":"At 2023-02-12 03:00 (UTC), Binance will suspend BNX/USDT, BNX/BTC
+        2023-02-14 03:00 (UTC) :: "element","tag":"ul","child":[{"node":"element","tag":"li","child":[{"node":"element","tag":"span","attr":{"style":"color:#1e2026;"},"child":[{"node":"text","text":"At 2023-02-14 03:00 (UTC), we will close all BNX margin positions
+        2023-02-16 03:00 (UTC) :: "element","tag":"span","attr":{"style":"color:#1e2026;"},"child":[{"node":"text","text":"While users may proceed to redeem any unredeemed BNX Gift Cards for BNX before 2023-02-16 03:00 (UTC), please note that the redeemed tokens w
+        2023-02-16 03:30 (UTC) :: rencies on Binance Pay."}]}]},{"node":"element","tag":"li","child":[{"node":"element","tag":"span","attr":{"style":"color:#1e2026;"},"child":[{"node":"text","text":"At 2023-02-16 03:30 (UTC), deposits and withdrawals of BNX will b
+        2023-02-24 08:00 (UTC) :: {"node":"element","tag":"span","attr":{"style":"color:#1e2026;"},"child":[{"node":"text","text":"At "},{"node":"element","tag":"strong","child":[{"node":"text","text":"2023-02-24 08:00 (UTC)"}]},{"node":"text","text":", trading wi
+        2023-02-15 03:00 (UTC) :: announcement will be made for relisting. Users are strongly advised to close their positions prior to the cessation of margin trading to avoid any potential losses. At 2023-02-15 03:00 (UTC), Binance will no longer support the cre
+  * 20221120045045 hits=5/14 settle=True idx30=False | Trade BNX USDⓈ-M Futures & Join a Trading Tournament to Share 50,000 BUSD!
+        2022-04-12 23:59 (UTC) :: alogId":null,"seoTitle":"Trade BNX USDⓈ-M Futures & Join a Trading Tournament to Share 50,000 BUSD!","seoKeywords":"","seoDesc":"Promotion Period : 2022-04-06 00:00 to 2022-04-12 23:59 (UTC) To celebrate the addition of the BNX/US
+  * 20221204165220 hits=34/0 settle=True idx30=False | Updates on Leverage, Margin Tiers, Funding Rate Settlement Frequency and Capped Funding Rate Multiplier of USD
+        2022-12-04 12:00 (UTC) :: :0.9375ptsolidt.primary;border-right:0.9375ptsolidt.primary;border-top:0.9375ptsolidt.primary;padding:2pt;} Time Max Funding Rate of USDⓈ-M BNXUSDT Perpetual Contracts 2022-12-04 12:00 (UTC) +2.50% / -2.50% 2022-12-04 14:00 (UTC) 
+        2022-12-04 14:00 (UTC) :: 9375ptsolidt.primary;border-top:0.9375ptsolidt.primary;padding:2pt;} Time Max Funding Rate of USDⓈ-M BNXUSDT Perpetual Contracts 2022-12-04 12:00 (UTC) +2.50% / -2.50% 2022-12-04 14:00 (UTC) +2.50% / -2.50% 2022-12-04 16:00 (UTC) 
+        2022-12-04 16:00 (UTC) :: tsolidt.primary;padding:2pt;} Time Max Funding Rate of USDⓈ-M BNXUSDT Perpetual Contracts 2022-12-04 12:00 (UTC) +2.50% / -2.50% 2022-12-04 14:00 (UTC) +2.50% / -2.50% 2022-12-04 16:00 (UTC) +2.50% / -2.50% 2022-12-04 18:00 (UTC) 
+        2022-12-04 18:00 (UTC) :: Funding Rate of USDⓈ-M BNXUSDT Perpetual Contracts 2022-12-04 12:00 (UTC) +2.50% / -2.50% 2022-12-04 14:00 (UTC) +2.50% / -2.50% 2022-12-04 16:00 (UTC) +2.50% / -2.50% 2022-12-04 18:00 (UTC) +2.50% / -2.50% 2022-12-04 20:00 (UTC) 
+        2022-12-04 20:00 (UTC) :: l Contracts 2022-12-04 12:00 (UTC) +2.50% / -2.50% 2022-12-04 14:00 (UTC) +2.50% / -2.50% 2022-12-04 16:00 (UTC) +2.50% / -2.50% 2022-12-04 18:00 (UTC) +2.50% / -2.50% 2022-12-04 20:00 (UTC) +2.50% / -2.50% 2022-12-04 22:00 (UTC) 
+        2022-12-04 22:00 (UTC) :: 0% / -2.50% 2022-12-04 14:00 (UTC) +2.50% / -2.50% 2022-12-04 16:00 (UTC) +2.50% / -2.50% 2022-12-04 18:00 (UTC) +2.50% / -2.50% 2022-12-04 20:00 (UTC) +2.50% / -2.50% 2022-12-04 22:00 (UTC) +2.50% / -2.50% … +2.50% / -2.50% Exist
+  * 20221204105603 hits=22/0 settle=True idx30=False | Updates on Leverage & Margin Tiers of USDⓈ-M BNXUSDT and SPELLUSDT Perpetual Contracts (2022-12-02)
+  * 20221205030326 hits=26/0 settle=True idx30=False | Updates on Leverage & Margin Tiers of USDⓈ-M BNXUSDT Perpetual Contracts (2022-12-04)
+
+######## BNXUSDT inst1 last_trade_close=2025-03-17T09:15:00 last_elig_dec=2025-03-17T08:05:00 slugfail=False
+
+######## BTTUSDT inst0 last_trade_close=2022-01-14T02:15:00 last_elig_dec=2022-01-14T00:05:00 slugfail=False
+
+######## BZRXUSDT inst0 last_trade_close=2021-12-19T02:00:00 last_elig_dec=2021-12-19T00:05:00 slugfail=False
+
+######## COCOSUSDT inst0 last_trade_close=2023-05-25T09:15:00 last_elig_dec=2023-05-25T08:05:00 slugfail=False
+  * 20230228071729 hits=10/7 settle=True idx30=False | Binance Futures Will Launch USDⓈ-M STX and COCOS Perpetual Contracts with Up to 20X Leverage
+        2023-02-21 14:30 (UTC) :: ld":[{"node":"text","text":"Binance Futures will launch USDⓈ-M STX and COCOS perpetual contracts on "},{"node":"element","tag":"strong","child":[{"node":"text","text":"2023-02-21 14:30 (UTC) "}]},{"node":"text","text":"and"},{"nod
+        2023-02-21 14:45 (UTC) :: ag":"strong","child":[{"node":"text","text":"2023-02-21 14:30 (UTC) "}]},{"node":"text","text":"and"},{"node":"element","tag":"strong","child":[{"node":"text","text":" 2023-02-21 14:45 (UTC) "}]},{"node":"text","text":"respectivel
+  * 20230602083525 hits=0/0 settle=True idx30=False | Binance Has Completed the Cocos-BCX (COCOS) Token Swap & Rebranding Plan to COMBO (COMBO)
+  * 20230113064756 hits=0/0 settle=True idx30=False | Binance Margin Will Delist FLM, KMD as Borrowable Assets From Cross Margin and COCOS, CREAM, SCRT From Isolate
+  * 20230518081658 hits=0/11 settle=True idx30=False | Binance Will Support the Cocos-BCX (COCOS) Token Swap & Rebranding Plan to COMBO (COMBO)
+        2023-05-18 09:00 (UTC) :: ract at "}]},{"node":"element","tag":"strong","child":[{"node":"element","tag":"span","attr":{"style":["color:","rgb(30,","32,","38)"]},"child":[{"node":"text","text":"2023-05-18 09:00 (UTC)"}]}]},{"node":"element","tag":"span","a
+        2023-05-25 08:00 (UTC) ::  before "}]},{"node":"element","tag":"strong","child":[{"node":"element","tag":"span","attr":{"style":["color:","rgb(30,","32,","38)"]},"child":[{"node":"text","text":"2023-05-25 08:00 (UTC)"}]}]},{"node":"element","tag":"span","a
+        2023-05-29 06:00 (UTC) ::  before "}]},{"node":"element","tag":"strong","child":[{"node":"element","tag":"span","attr":{"style":["color:","rgb(30,","32,","38)"]},"child":[{"node":"text","text":"2023-05-29 06:00 (UTC)"}]}]},{"node":"element","tag":"span","a
+        2023-05-25 08:30 (UTC) ::  COMBO (COMBO)","seoKeywords":"","seoDesc":"Fellow Binancians, Binance will support the Cocos-BCX (COCOS) token swap and rebranding plan to COMBO (COMBO). Timeline: At 2023-05-25 08:30 (UTC) , Binance Futures will suspend trading 
+        2023-05-25 09:00 (UTC) ::  before the update will be affected. It is strongly advised to adjust the position and leverage prior to the adjustment in order to avoid any potential liquidation. At 2023-05-25 09:00 (UTC) , Binance Futures will close all positi
+        2023-05-19 08:00 (UTC) :: interest rate, premium and capped funding rate, changing the constituents of the price index, and using the Last Price Protected mechanism to update the Mark Price. At 2023-05-19 08:00 (UTC) , Binance will suspend COCOS/USDT cross
+
+######## DARUSDT inst0 last_trade_close=2024-12-26T09:15:00 last_elig_dec=2024-12-26T08:05:00 slugfail=False
+
+######## DODOUSDT inst0 last_trade_close=2022-05-27T09:00:00 last_elig_dec=2022-05-27T08:05:00 slugfail=False
+  * 20221119131449 hits=0/10 settle=True idx30=False | Binance Futures Will Delist AKRO and DODO USDT-Margined Contracts
+        2022-05-26 09:00 AM (UTC) :: g":"span","attr":{"style":"color:#000000;"},"child":[{"node":"text","text":"Binance Futures will conduct automatic settlements on the AKRO USDT-Margined Contract at 2022-05-26 09:00 AM (UTC) and DODO USDT-Margined Contract at 2022
+        2022-05-27 09:00 AM (UTC) :: "text","text":"Binance Futures will conduct automatic settlements on the AKRO USDT-Margined Contract at 2022-05-26 09:00 AM (UTC) and DODO USDT-Margined Contract at 2022-05-27 09:00 AM (UTC). Both contracts will be delisted after 
+  * 20220518143101 hits=0/12 settle=True idx30=False | Binance Futures Will Delist AKRO and DODO USDT-Margined Contracts
+        2022-05-26 09:00 AM (UTC) :: g":"span","attr":{"style":"color:#000000;"},"child":[{"node":"text","text":"Binance Futures will conduct automatic settlements on the AKRO USDT-Margined Contract at 2022-05-26 09:00 AM (UTC) and DODO USDT-Margined Contract at 2022
+        2022-05-27 09:00 AM (UTC) :: "text","text":"Binance Futures will conduct automatic settlements on the AKRO USDT-Margined Contract at 2022-05-26 09:00 AM (UTC) and DODO USDT-Margined Contract at 2022-05-27 09:00 AM (UTC). Both contracts will be delisted after 
+
+######## EOSUSDT inst0 last_trade_close=2025-05-21T09:00:00 last_elig_dec=2025-05-21T08:05:00 slugfail=False
+
+######## FTMUSDT inst0 last_trade_close=2025-01-06T09:15:00 last_elig_dec=2025-01-06T08:05:00 slugfail=False
+
+######## ICPUSDT inst0 last_trade_close=2022-06-10T09:15:00 last_elig_dec=2022-06-10T08:05:00 slugfail=False
+  * 20220602113539 hits=0/12 settle=True idx30=False | Binance Futures Will Delist TLM and ICP USDT-Margined Contracts
+        2022-06-09 09:00 (UTC) :: "tag":"span","attr":{"style":"color:#000000;"},"child":[{"node":"text","text":"Binance Futures will conduct automatic settlements on the TLM USDT-Margined Contracts at 2022-06-09 09:00 (UTC) and ICP USDT-Margined Contracts at 2022
+        2022-06-10 09:00 (UTC) :: node":"text","text":"Binance Futures will conduct automatic settlements on the TLM USDT-Margined Contracts at 2022-06-09 09:00 (UTC) and ICP USDT-Margined Contracts at 2022-06-10 09:00 (UTC). "}]},{"node":"element","tag":"span","a
+  * 20221123044325 hits=0/11 settle=True idx30=False | Binance Futures Will Delist TLM and ICP USDT-Margined Contracts
+        2022-06-09 09:00 (UTC) :: "tag":"span","attr":{"style":"color:#000000;"},"child":[{"node":"text","text":"Binance Futures will conduct automatic settlements on the TLM USDT-Margined Contracts at 2022-06-09 09:00 (UTC) and ICP USDT-Margined Contracts at 2022
+        2022-06-10 09:00 (UTC) :: node":"text","text":"Binance Futures will conduct automatic settlements on the TLM USDT-Margined Contracts at 2022-06-09 09:00 (UTC) and ICP USDT-Margined Contracts at 2022-06-10 09:00 (UTC). "}]},{"node":"element","tag":"span","a
+
+######## KEEPUSDT inst0 last_trade_close=2022-02-15T02:15:00 last_elig_dec=2022-02-15T00:05:00 slugfail=False
+
+######## LUNAUSDT inst0 last_trade_close=2022-05-12T15:45:00 last_elig_dec=2022-05-12T16:05:00 slugfail=False
+  * 20220512045317 hits=0/21 settle=True idx30=False | Binance Futures to Delist Coin-Margined LUNA Perpetual Contracts and Update the Leverage & Margin Tiers for US
+  * 20221109184917 hits=0/21 settle=True idx30=False | Binance Futures to Delist Coin-Margined LUNA Perpetual Contracts and Update the Leverage & Margin Tiers for US
+  * 20221109184914 hits=0/14 settle=True idx30=False | Binance Futures Will Delist LUNA USDT-Margined Contract
+        2022-05-12 15:30 (UTC) :: lor:#000000;"},"child":[{"node":"text","text":"Binance Futures will conduct an automatic settlement on the LUNA USDT-Margined Contract and then delist this contract at 2022-05-12 15:30 (UTC) "}]},{"node":"element","tag":"a","attr"
+  * 20220512150146 hits=0/25 settle=True idx30=False | Binance Futures Will Delist LUNA USDT-Margined Contract
+        2022-05-12 15:30 (UTC) :: lor:#000000;"},"child":[{"node":"text","text":"Binance Futures will conduct an automatic settlement on the LUNA USDT-Margined Contract and then delist this contract at 2022-05-12 15:30 (UTC) "}]},{"node":"element","tag":"a","attr"
+  * 20221012065336 hits=0/14 settle=True idx30=False | Binance Futures Will Delist LUNA USDT-Margined Contract
+        2022-05-12 15:30 (UTC) :: lor:#000000;"},"child":[{"node":"text","text":"Binance Futures will conduct an automatic settlement on the LUNA USDT-Margined Contract and then delist this contract at 2022-05-12 15:30 (UTC) "}]},{"node":"element","tag":"a","attr"
+
+######## MATICUSDT inst0 last_trade_close=2024-09-04T09:00:00 last_elig_dec=2024-09-04T08:05:00 slugfail=False
+  * 20240429141201 hits=0/8 settle=True idx30=False | Binance Futures Will Launch USDC-Margined BOME, TIA, and MATIC Perpetual Contracts With Up to 75x Leverage
+  * 20240828094940 hits=9/0 settle=True idx30=False | Binance Will Support the Polygon (MATIC) Token Swap to Polygon (POL)
+        2024-09-10 03:00 (UTC) :: Products and services referred to here may not be available in your region. Fellow Binancians, Binance will support the Polygon (MATIC) token swap to Polygon (POL). At 2024-09-10 03:00 (UTC) , Binance will delist all existing MATI
+        2024-09-13 10:00 (UTC) :: IC/BNB, MATIC/BRL, MATIC/BTC, MATIC/ETH, MATIC/EUR, MATIC/FDUSD, MATIC/JPY, MATIC/TRY, MATIC/USDC, and MATIC/USDT) and cancel all pending MATIC spot trading orders. At 2024-09-13 10:00 (UTC) , Binance will open trading for the POL
+        2024-09-10 03:30 (UTC) :: -top:16px;margin-bottom:16px;list-style:inherit;}.css-orkytx *:not(a,a *){color:#B7BDC6;}.css-orkytx p{padding-top:0px;padding-bottom:0px;} Deposits and Withdrawals At 2024-09-10 03:30 (UTC) , deposits and withdrawals of MATIC tok
+        2024-09-04 09:00 (UTC) :: 24-09-13 10:00 (UTC). Futures Binance Futures will close all positions and conduct an automatic settlement on the MATICUSDT and MATICUSDC USDⓈ-M Perpetual Contracts at 2024-09-04 09:00 (UTC) , and MATICUSD COIN-M Perpetual Contrac
+        2024-09-04 09:30 (UTC) :: ons and conduct an automatic settlement on the MATICUSDT and MATICUSDC USDⓈ-M Perpetual Contracts at 2024-09-04 09:00 (UTC) , and MATICUSD COIN-M Perpetual Contract at 2024-09-04 09:30 (UTC) . The contracts will be delisted after 
+        2024-09-04 08:30 (UTC) :: or to the delisting time to avoid automatic settlement. Users are not allowed to open new positions for the aforementioned contracts starting from the following times: 2024-09-04 08:30 (UTC): MATICUSDT and MATICUSDC USDⓈ-M Perpetu
+        2024-09-05 11:00 (UTC) :: will close all arbitrage strategies and conduct an automatic settlement on the MATIC symbols. Margin Binance Margin will delist MATIC from Cross and Isolated Margin at 2024-09-05 11:00 (UTC) . The MATIC/BTC, MATIC/FDUSD, MATIC/USD
+        2024-09-02 06:00 (UTC) :: nd Isolated Margin at 2024-09-05 11:00 (UTC) . The MATIC/BTC, MATIC/FDUSD, MATIC/USDC, and MATIC/USDT cross and isolated margin pair(s) will be removed from Margin. At 2024-09-02 06:00 (UTC) , Binance Margin will suspend isolated 
+        2024-09-04 03:00 (UTC) :: standing loan positions for MATIC (both loanable tokens and collateral tokens will be closed). Users are strongly advised to repay their outstanding MATIC loans before 2024-09-04 03:00 (UTC) to avoid any potential losses. Please r
+        2024-09-09 03:00 (UTC) :: ans ( Flexible Rates ) and VIP Loan FAQs for more information. More details are also available in the Binance Loans and VIP Loan Terms and Conditions. Simple Earn From 2024-09-09 03:00 (UTC) , Binance Simple Earn will cease suppor
+        2024-09-27 04:00 (UTC) :: e reset to 30 days till expiry for the new POL 30-Day Locked Product Position. After the resubscription, users can early redeem the POL Locked Product Positions before 2024-09-27 04:00 (UTC) without deduction of any accrued reward
+
+######## MAVIAUSDT inst0 last_trade_close=2024-12-16T09:15:00 last_elig_dec=2024-12-11T16:05:00 slugfail=False
+  * 20241206174323 hits=15/0 settle=True idx30=False | Binance Futures Will Delist USDⓈ-M MAVIAUSDT, OMGUSDT, and BONDUSDT Perpetual Contracts (2024-12-16)
+        2024-12-16 09:00 (UTC) :: w Binancians, Binance Futures will close all positions and conduct an automatic settlement on the USDⓈ-M MAVIAUSDT, OMGUSDT, and BONDUSDT USDⓈ-M perpetual contracts at 2024-12-16 09:00 (UTC). The contracts will be delisted after t
+  * 20250428050527 hits=13/0 settle=True idx30=False | Binance Futures Will Delist USDⓈ-M MAVIAUSDT, OMGUSDT, and BONDUSDT Perpetual Contracts (2024-12-16)
+        2024-12-16 09:00 (UTC) :: w Binancians, Binance Futures will close all positions and conduct an automatic settlement on the USDⓈ-M MAVIAUSDT, OMGUSDT, and BONDUSDT USDⓈ-M perpetual contracts at 2024-12-16 09:00 (UTC). The contracts will be delisted after t
+
+######## RNDRUSDT inst0 last_trade_close=2024-07-16T09:00:00 last_elig_dec=2024-07-16T08:05:00 slugfail=False
+  * 20230202051805 hits=12/9 settle=True idx30=False | Binance Futures Will Launch USDⓈ-M RNDR Perpetual Contracts with Up to 20X Leverage
+        2023-02-03 02:30 (UTC) :: 0;"},"child":[{"node":"text","text":"Binance Futures will launch USDⓈ-M RNDR perpetual contracts on "},{"node":"element","tag":"strong","child":[{"node":"text","text":"2023-02-03 02:30 (UTC)"}]},{"node":"text","text":" with up to 
+  * 20240726095901 hits=0/0 settle=True idx30=False | Binance Has Completed the Render (RNDR) Token Swap and Rebranding to Render (RENDER)
+  * 20240710075935 hits=9/0 settle=True idx30=False | Binance Will Support the Render (RNDR) Token Swap and Rebranding to Render (RENDER)
+        2024-07-22 03:00 (UTC) :: height:20px;}.css-83xnqe p2{font-weight:400;font-size:12px;} Fellow Binancians, Binance will support the Render (RNDR) token swap and rebranding to Render (RENDER). At 2024-07-22 03:00 (UTC) , Binance will delist all existing RNDR
+        2024-07-26 08:00 (UTC) :: sting RNDR spot trading pairs (i.e., RNDR/BTC, RNDR/USDT, RNDR/FDUSD, RNDR/USDC, RNDR/TRY, RNDR/EUR, and RNDR/BRL ) and cancel all pending RNDR spot trading orders. At 2024-07-26 08:00 (UTC) , Binance will open trading for the REN
+        2024-07-16 09:00 (UTC) :: ng pairs at 2024-07-26 08:00 (UTC) . Futures Binance Futures will close all positions and conduct an automatic settlement on the RNDRUSDT USDⓈ-M Perpetual Contracts at 2024-07-16 09:00 (UTC) . The contracts will be delisted after 
+        2024-07-17 06:00 (UTC) :: n the RNDRUSDT symbol. Margin Binance Margin will delist the RNDR/BTC, RNDR/USDC, and RNDR/USDT cross margin pairs, and RNDR/BTC and RNDR/USDT isolated margin pairs at 2024-07-17 06:00 (UTC) . At 2024-07-12 06:00 (UTC) , Binance M
+        2024-07-12 06:00 (UTC) :: n Binance Margin will delist the RNDR/BTC, RNDR/USDC, and RNDR/USDT cross margin pairs, and RNDR/BTC and RNDR/USDT isolated margin pairs at 2024-07-17 06:00 (UTC) . At 2024-07-12 06:00 (UTC) , Binance Margin will suspend isolated 
+        2024-07-17 03:00 (UTC) :: utstanding loan positions for RNDR (both loanable tokens and collateral tokens will be closed). Users are strongly advised to repay their outstanding RNDR loans before 2024-07-17 03:00 (UTC) to avoid any potential losses. Please r
+        2024-07-19 03:00 (UTC) ::  ( Stable and Flexible Rates) and VIP Loan FAQs for more information. More details are also available in the Binance Loans and VIP Loan Terms and Conditions. Earn From 2024-07-19 03:00 (UTC) , Binance Simple Earn will cease suppor
+        2024-07-18 03:00 (UTC) :: med RNDR Gift Cards will be automatically converted to RENDER tokens. Convert Binance Convert will maintain a sell-only function for RNDR and all associated pairs from 2024-07-18 03:00 (UTC) to 2024-07-22 02:00 (UTC). Binance Conv
+        2024-07-22 02:00 (UTC) :: e automatically converted to RENDER tokens. Convert Binance Convert will maintain a sell-only function for RNDR and all associated pairs from 2024-07-18 03:00 (UTC) to 2024-07-22 02:00 (UTC). Binance Convert will subsequently deli
+        2024-07-16 03:00 (UTC) ::  02:00 (UTC). Binance Convert will subsequently delist RNDR and all associated pairs at 2024-07-22 02:00 (UTC) . Auto-Invest Binance Auto-Invest will delist RNDR after 2024-07-16 03:00 (UTC) . Users may choose to remove the plan(s
+
+######## SRMUSDT inst0 last_trade_close=2022-11-15T04:45:00 last_elig_dec=2022-11-15T00:05:00 slugfail=False
+  * 20221114091646 hits=12/4 settle=True idx30=False | Binance Futures Will Delist RAYUSDT and SRMUSDT Perpetual Futures Contracts
+        2022-11-15 04:30 (UTC) :: nt","tag":"strong","child":[{"node":"text","text":"2022-11-15 04:00 "}]},{"node":"text","text":"and"},{"node":"element","tag":"strong","child":[{"node":"text","text":" 2022-11-15 04:30 (UTC) "}]},{"node":"text","text":"respectivel
+  * 20221124190829 hits=1/7 settle=True idx30=False | Binance Futures Will Launch SRM and BZRX USDT-Margined Perpetual Contracts With Up to 50x Leverage
+  * 20221109190426 hits=0/4 settle=True idx30=False | Binance Staking to Delist SRM
+        2021-10-08 12:00 PM (UTC) :: ","text":" on 2021-09-28 that SRM is evolving into a DAO, and SRM Staking and Staking rewards will be discontinued on 2021-10-05, Binance Staking will delist SRM at 2021-10-08 12:00 PM (UTC) to protect our users. For users who hav
+        2021-10-07 03:59 PM (UTC) :: de":"element","tag":"li","child":[{"node":"element","tag":"span","attr":{"style":"color:#0e101a;"},"child":[{"node":"text","text":"Interest calculation will stop at 2021-10-07 03:59 PM (UTC), and the staking interest will be paid 
+        2021-10-08 03:00 PM (UTC) :: g interest will be paid without being impacted. Users can view their Locked Staking assets by going to Wallets > Earn > Locked Staking > Locked. Asset arrival time: 2021-10-08 03:00 PM (UTC). After the asset is cleared by Binance 
+  * 20221117020041 hits=2/2 settle=True idx30=False | Binance Will Delist SRM and RAY Margin Pairs and Binance Earn Products
+        2022-11-23 03:00 (UTC) :: Y Margin Pairs and Binance Earn Products","seoKeywords":"","seoDesc":"Fellow Binancians, Binance will remove and cease trading on the following margin trading pairs at 2022-11-23 03:00 (UTC) : Cross Margin Pairs : SRM/BTC, SRM/BUS
+  * 20221114070213 hits=2/17 settle=True idx30=False | Updates on Leverage and Margin Tiers of USDⓈ-M SRM Perpetual Contracts (2022-11-14)
+  * 20221109100618 hits=2/14 settle=True idx30=False | Updates on Maintenance Margin Tiers of USDⓈ-M SOL, APT and SRM Perpetual Contracts (2022-11-09)
+
+######## STRAXUSDT inst0 last_trade_close=2024-03-15T09:00:00 last_elig_dec=2024-03-15T08:05:00 slugfail=False
+  * 20240328162148 hits=1/0 settle=True idx30=False | Binance Has Completed the Stratis (STRAX) Token Swap and Redenomination
+        2024-03-28 08:00 (UTC) :: tx *:not(a,a *){color:#B7BDC6;}.css-orkytx p{padding-top:0px;padding-bottom:0px;} Spot trading opened for the STRAX/BTC, STRAX/USDT and STRAX/TRY spot trading pairs at 2024-03-28 08:00 (UTC) . STRAX was added to Binance Simple Ear
+        2024-03-28 13:00 (UTC) :: STRAX Flexible Products . Binance will add STRAX as a new borrowable asset on Cross and Isolated Margin, as well as the STRAX/USDT pair on Cross and Isolated Margin at 2024-03-28 13:00 (UTC) . Binance will add STRAX as a new borro
+        2024-03-29 08:00 (UTC) :: ll as the STRAX/USDT pair on Cross and Isolated Margin at 2024-03-28 13:00 (UTC) . Binance will add STRAX as a new borrowable asset on Binance Loans (Flexible Rate) at 2024-03-29 08:00 (UTC) . Please note: The distribution was con
+  * 20230223065127 hits=0/0 settle=True idx30=False | Binance Margin Will Delist LOOM, STRAX as Borrowable Assets From Cross Margin and OG From Isolated Margin
+  * 20230612062315 hits=0/0 settle=True idx30=False | Binance Margin Will Delist the BNT/BUSD, CVX/BTC, POLS/BUSD, POWR/BUSD, STPT/BUSD & STRAX/BUSD Isolated Margin
+  * 20240308095620 hits=7/0 settle=True idx30=False | Binance Will Support the Stratis (STRAX) Token Swap and Redenomination Plan
+        2024-03-20 03:30 (UTC) :: -top:16px;margin-bottom:16px;list-style:inherit;}.css-orkytx *:not(a,a *){color:#B7BDC6;}.css-orkytx p{padding-top:0px;padding-bottom:0px;} Deposits and Withdrawals At 2024-03-20 03:30 (UTC) , deposits and withdrawals of old STRAX
+        2024-03-08 10:30 (UTC) :: STRAX tokens at a ratio of 1 old STRAX = 10 new STRAX . Futures Binance Futures will adjust the leverage and margin tiers of the USDⓈ-M STRAXUSDT Perpetual Contract at 2024-03-08 10:30 (UTC) , as per the table below. Existing posi
+        2024-03-15 09:00 (UTC) :: inance Futures will suspend trading for the USDⓈ-M STRAXUSDT Perpetual Contract. Please note that users are allowed to close any existing positions after this time. At 2024-03-15 09:00 (UTC) , Binance Futures will close all positi
+        2024-03-15 06:00 (UTC) :: echanism to update the Mark Price. Margin Binance Margin will delist the STRAX/USDT cross margin pair, as well as the STRAX/USDT and STRAX/BTC isolated margin pairs at 2024-03-15 06:00 (UTC) . At 2024-03-12 06:00 (UTC) , Binance M
+        2024-03-12 06:00 (UTC) :: Price. Margin Binance Margin will delist the STRAX/USDT cross margin pair, as well as the STRAX/USDT and STRAX/BTC isolated margin pairs at 2024-03-15 06:00 (UTC) . At 2024-03-12 06:00 (UTC) , Binance Margin will suspend isolated 
+        2024-03-18 03:00 (UTC) ::  (Flexible and Stable Rates) and VIP Loan will close all outstanding loan positions for STRAX. Users are strongly advised to repay their outstanding STRAX loans before 2024-03-18 03:00 (UTC) to avoid any potential losses and the 2
+        2024-03-19 01:00 (UTC) :: nd VIP Loan Terms and Conditions. Binance Pay At 2024-03-18 03:00 (UTC) , Binance will remove STRAX from the list of supported cryptocurrencies on Binance Pay. Earn At 2024-03-19 01:00 (UTC) , Binance Simple Earn will cease suppor
+        2024-03-19 04:00 (UTC) :: iptions will no longer be available. For existing subscriptions, STRAX balances in Simple Earn will be automatically redeemed and credited to users’ Spot Wallets after 2024-03-19 04:00 (UTC) . Binance Simple Earn will assist impac
+        2024-03-20 03:00 (UTC) :: tions with STRAX after the event is complete. Users may also choose to redeem their assets from STRAX Flexible Products anytime before 2024-03-19 04:00 (UTC) . Spot At 2024-03-20 03:00 (UTC) , Binance will delist all existing STRA
+        2024-03-28 08:00 (UTC) :: ere applicable. Users are strongly advised to update and/or cancel their Trading Bots prior to the cessation of Trading Bots services to avoid any potential losses. At 2024-03-28 08:00 (UTC) , trading will open for the STRAX/BTC, 
+
+######## TLMUSDT inst0 last_trade_close=2022-06-09T09:00:00 last_elig_dec=2022-06-09T08:05:00 slugfail=False
+  * 20220602113539 hits=0/12 settle=True idx30=False | Binance Futures Will Delist TLM and ICP USDT-Margined Contracts
+        2022-06-09 09:00 (UTC) :: "tag":"span","attr":{"style":"color:#000000;"},"child":[{"node":"text","text":"Binance Futures will conduct automatic settlements on the TLM USDT-Margined Contracts at 2022-06-09 09:00 (UTC) and ICP USDT-Margined Contracts at 2022
+        2022-06-10 09:00 (UTC) :: node":"text","text":"Binance Futures will conduct automatic settlements on the TLM USDT-Margined Contracts at 2022-06-09 09:00 (UTC) and ICP USDT-Margined Contracts at 2022-06-10 09:00 (UTC). "}]},{"node":"element","tag":"span","a
+  * 20221123044325 hits=0/10 settle=True idx30=False | Binance Futures Will Delist TLM and ICP USDT-Margined Contracts
+        2022-06-09 09:00 (UTC) :: "tag":"span","attr":{"style":"color:#000000;"},"child":[{"node":"text","text":"Binance Futures will conduct automatic settlements on the TLM USDT-Margined Contracts at 2022-06-09 09:00 (UTC) and ICP USDT-Margined Contracts at 2022
+        2022-06-10 09:00 (UTC) :: node":"text","text":"Binance Futures will conduct automatic settlements on the TLM USDT-Margined Contracts at 2022-06-09 09:00 (UTC) and ICP USDT-Margined Contracts at 2022-06-10 09:00 (UTC). "}]},{"node":"element","tag":"span","a
+
+######## TOMOUSDT inst0 last_trade_close=2023-11-14T09:00:00 last_elig_dec=2023-11-14T08:05:00 slugfail=False
+  * 20221109193255 hits=0/5 settle=True idx30=False | Binance Futures Will Launch TOMO USDT-Margined Perpetual Contract With Up to 50x Leverage
+  * 20231124193617 hits=0/0 settle=True idx30=False | Binance Has Completed the TomoChain (TOMO) Rebranding to Viction (VIC)
+
+######## UNFIUSDT inst0 last_trade_close=2024-10-30T09:15:00 last_elig_dec=2024-10-30T08:05:00 slugfail=False
+  * 20241101134821 hits=6/0 settle=True idx30=False | Binance Will Delist IDRT, KP3R, OOKI, UNFI on 2024-11-06
+        2024-10-31 03:00 (UTC) :: oducts positions will be automatically redeemed at the above-mentioned time, and subsequently transferred to users’ Spot Wallets, together with any accrued rewards. At 2024-10-31 03:00 (UTC) , KP3R, OOKI, UNFI of VIP Loan will clo
+        2024-10-30 09:00 (UTC) :: avoid any potential losses, where applicable. Binance Futures will close all positions and conduct an automatic settlement on the UNFIUSDT USDⓈ-M Perpetual Contract at 2024-10-30 09:00 (UTC). The contracts will be delisted after t
+        2024-10-31 06:00 (UTC) :: The pair will no longer be available for opening new arbitrage strategies upon delisting. Binance Margin will delist KP3R, OOKI, UNFI from Cross and Isolated Margin at 2024-10-31 06:00 (UTC) . The KP3R/USDT, OOKI/USDT, UNFI/BTC, U
+        2024-10-25 06:00 (UTC) :: m Cross and Isolated Margin at 2024-10-31 06:00 (UTC) . The KP3R/USDT, OOKI/USDT, UNFI/BTC, UNFI/USDT cross and isolated margin pair(s) will be removed from Margin. At 2024-10-25 06:00 (UTC) , Binance Margin will suspend isolated 
+
+######## VIDTUSDT inst0 last_trade_close=2025-04-14T09:15:00 last_elig_dec=2025-04-14T08:05:00 slugfail=False
+
+######## WAVESUSDT inst0 last_trade_close=2024-06-11T09:00:00 last_elig_dec=2024-06-11T08:05:00 slugfail=False
+  * 20221117093824 hits=0/5 settle=True idx30=False | Binance Futures Will Launch BUSD-Margined WAVES and LINK Perpetual Contracts with Up to 20X Leverage
+        2022-06-29 02:45 (UTC) :: ttr":{"style":"color:#000000;"},"child":[{"node":"text","text":"Binance Futures will launch BUSD-margined WAVES and LINK perpetual contracts with up to 20x leverage on 2022-06-29 02:45 (UTC) and 2022-06-30 02:45 (UTC) respectively
+        2022-06-30 02:45 (UTC) :: 0;"},"child":[{"node":"text","text":"Binance Futures will launch BUSD-margined WAVES and LINK perpetual contracts with up to 20x leverage on 2022-06-29 02:45 (UTC) and 2022-06-30 02:45 (UTC) respectively. More details may be found
+  * 20240603030208 hits=10/0 settle=True idx30=False | Binance Will Delist OMG, WAVES, WNXM, XEM on 2024-06-17
+        2024-06-18 03:00 (UTC) :: ding pair. To view your assets after trading ceases, please ensure you have not selected “Hide Small Balances” in all of your wallets. Deposits of these token(s) after 2024-06-18 03:00 (UTC) will not be credited to your account. W
+        2024-06-03 10:30 (UTC) :: 11 03:00 (UTC) to avoid any potential losses, where applicable. Binance Futures will adjust the leverage and margin tiers of the USDⓈ-M WAVESUSDT perpetual contract at 2024-06-03 10:30 (UTC) , as per the table below. Existing posi
+        2024-06-11 09:00 (UTC) :: table-header) .bn-table-tbody{border-top:0;} Binance Futures will close all positions and conduct an automatic settlement on the USDⓈ-M WAVESUSDT Perpetual Contract at 2024-06-11 09:00 (UTC) . The contract will be delisted after t
+        2024-06-12 06:00 (UTC) :: s may continue trading USDⓈ-M OMGUSDT and XEMUSDT Perpetual Contracts. Binance Margin will delist the OMG, WAVES, WNXM, XEM cross margin and isolated margin pair(s) at 2024-06-12 06:00 (UTC) . At 2024-06-05 06:00 (UTC) , Binance M
+        2024-06-05 06:00 (UTC) :: M OMGUSDT and XEMUSDT Perpetual Contracts. Binance Margin will delist the OMG, WAVES, WNXM, XEM cross margin and isolated margin pair(s) at 2024-06-12 06:00 (UTC) . At 2024-06-05 06:00 (UTC) , Binance Margin will suspend isolated 
+
+######## XEMUSDT inst0 last_trade_close=2024-12-09T09:15:00 last_elig_dec=2024-12-09T08:05:00 slugfail=False
+  * 20240603030208 hits=2/0 settle=True idx30=False | Binance Will Delist OMG, WAVES, WNXM, XEM on 2024-06-17
+        2024-06-18 03:00 (UTC) :: ding pair. To view your assets after trading ceases, please ensure you have not selected “Hide Small Balances” in all of your wallets. Deposits of these token(s) after 2024-06-18 03:00 (UTC) will not be credited to your account. W
+        2024-06-12 06:00 (UTC) :: s may continue trading USDⓈ-M OMGUSDT and XEMUSDT Perpetual Contracts. Binance Margin will delist the OMG, WAVES, WNXM, XEM cross margin and isolated margin pair(s) at 2024-06-12 06:00 (UTC) . At 2024-06-05 06:00 (UTC) , Binance M
+        2024-06-05 06:00 (UTC) :: M OMGUSDT and XEMUSDT Perpetual Contracts. Binance Margin will delist the OMG, WAVES, WNXM, XEM cross margin and isolated margin pair(s) at 2024-06-12 06:00 (UTC) . At 2024-06-05 06:00 (UTC) , Binance Margin will suspend isolated 
+  * 20250429054216 hits=13/0 settle=True idx30=False | Binance Futures Will Delist USDⓈ-M XEMUSDT, ORBSUSDT and LOOMUSDT Perpetual Contracts (2024-12-09)
+        2024-12-09 09:00 (UTC) :: ow Binancians, Binance Futures will close all positions and conduct an automatic settlement on the USDⓈ-M XEMUSDT, ORBSUSDT, and LOOMUSDT USDⓈ-M perpetual contracts at 2024-12-09 09:00 (UTC). The contracts will be delisted after t

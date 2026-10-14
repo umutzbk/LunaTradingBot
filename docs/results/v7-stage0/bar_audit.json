@@ -1,0 +1,108 @@
+{
+ "totals": {
+  "files": 12312,
+  "checksum_fail": 0,
+  "dupes": 0,
+  "misaligned": 0,
+  "non_monotonic": 0,
+  "bars": 35115108,
+  "missing_bars": 31314,
+  "zero_volume_bars": 1729161
+ },
+ "ts_units": {
+  "ms": 12312
+ },
+ "header_present": {
+  "True": 10336,
+  "False": 1976
+ },
+ "symbols": 511,
+ "delisted_in_wdev": 27,
+ "delisted_absent_from_current_exchangeInfo": 27,
+ "delisted_underlyingType_unknown": 27,
+ "coverage_quantiles": {
+  "0.0": 0.97758,
+  "0.01": 0.99595,
+  "0.05": 0.99708,
+  "0.5": 1.0
+ },
+ "worst_gaps": [
+  [
+   "TLMUSDT",
+   2834,
+   1,
+   2834
+  ],
+  [
+   "ICPUSDT",
+   2506,
+   1,
+   2506
+  ],
+  [
+   "BNXUSDT",
+   2075,
+   4,
+   2555
+  ],
+  [
+   "RLCUSDT",
+   288,
+   2,
+   480
+  ],
+  [
+   "MANAUSDT",
+   288,
+   2,
+   480
+  ],
+  [
+   "WAVESUSDT",
+   288,
+   2,
+   480
+  ],
+  [
+   "PEOPLEUSDT",
+   288,
+   2,
+   480
+  ],
+  [
+   "MASKUSDT",
+   288,
+   2,
+   480
+  ],
+  [
+   "FILUSDT",
+   288,
+   2,
+   480
+  ],
+  [
+   "TRBUSDT",
+   288,
+   2,
+   480
+  ]
+ ],
+ "current_type_mix": [
+  [
+   "PERPETUAL",
+   "COIN",
+   477
+  ],
+  [
+   "PERPETUAL",
+   "INDEX",
+   2
+  ],
+  [
+   NaN,
+   NaN,
+   32
+  ]
+ ]
+}

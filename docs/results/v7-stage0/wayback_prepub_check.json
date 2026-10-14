@@ -1,0 +1,106 @@
+[
+ {
+  "code": "5150d4f0ee1546d7ae6382ba7cda3ffe",
+  "catalog_title": "Binance Futures Will Delist and Update the Leverage & Margin Tiers of COIN-M KNCUSD, ICXUSD, XTZUSD, ROSEUSD and APEUSD Perpetual Contracts",
+  "capture_ts": "20240510093802",
+  "lag_h": 0.8,
+  "sha256": "5fcfcb039e9672e2a300bba0192663a5a3d948db072e8b5138077fe0930c1d5a",
+  "captured_title": "Binance Futures Will Delist and Update the Leverage & Margin Tiers of COIN-M KNCUSD, ICXUSD, XTZUSD, ROSEUSD and APEUSD Perpetual Contracts",
+  "title_equal": true,
+  "code_in_page": true
+ },
+ {
+  "code": "7fd48887590649699ad65419023bacfb",
+  "refused": 302
+ },
+ {
+  "code": "edab50e09da64814970d9fb86a740617",
+  "catalog_title": "Binance Futures Will Delist and Update the Leverage & Margin Tiers of USDⓈ-M CVXBUSD, GALBUSD and WAVESBUSD Perpetual Contracts",
+  "capture_ts": "20230313063519",
+  "lag_h": 0.3,
+  "sha256": "62feb78331b1490a4c5743f1041ac69c07d2ad1bf30fce9da424ac06c65ed987",
+  "captured_title": "Binance Futures Will Delist and Update the Leverage & Margin Tiers of USDⓈ-M CVXBUSD, GALBUSD and WAVESBUSD Perpetual Contracts",
+  "title_equal": true,
+  "code_in_page": true
+ },
+ {
+  "code": "3188e26f14a1464b91487abad452c04f",
+  "catalog_title": "Binance Futures Will Delist and Update the Leverage & Margin Tiers of CVCUSDT Perpetual Futures Contract",
+  "capture_ts": "20221128034534",
+  "lag_h": 0.3,
+  "sha256": "e50f7a007ce339b8e10a6cee31c81795c95e03e645aa0a5eae0395aadaccb9ed",
+  "captured_title": "Binance Futures Will Delist and Update the Leverage & Margin Tiers of CVCUSDT Perpetual Futures Contract",
+  "title_equal": true,
+  "code_in_page": true
+ },
+ {
+  "code": "3b4c7c08479b48d48189191e37a7adca",
+  "catalog_title": "Binance Will Delist FTT Margin Pairs, USDⓈ-M Futures Contracts and Binance Flexible Products",
+  "capture_ts": "20221113094906",
+  "lag_h": 0.0,
+  "sha256": "3a6f3ea3cb86b7e1a0b97bb57476fbb7c3445a16d4f5f6293d4bcf1751471ebc",
+  "captured_title": "Binance Will Delist FTT Margin Pairs, USDⓈ-M Futures Contracts and Binance Flexible Products",
+  "title_equal": true,
+  "code_in_page": true
+ },
+ {
+  "code": "b312715afbff4d7493b77089967303b1",
+  "catalog_title": "Binance Futures Will Delist USDT-Margined BLZ Perpetual Contract",
+  "capture_ts": "20220817102103",
+  "lag_h": 0.4,
+  "sha256": "aeab5a80d69fb4c4a84af575c90f5edfc69287e1b7a7066ecea8913061e84d76",
+  "captured_title": "Binance Futures Will Delist USDT-Margined BLZ Perpetual Contract",
+  "title_equal": true,
+  "code_in_page": true
+ },
+ {
+  "code": "6ce355dedc5d438abde7b5dc99b3a56d",
+  "catalog_title": "Binance Futures Will Delist USDT-Margined SC Perpetual Contract",
+  "capture_ts": "20220610100959",
+  "lag_h": 0.1,
+  "sha256": "515249654d8809704996730b0b53a5b64e68b221cbda52b5152650581f7aca5a",
+  "captured_title": "Binance Futures Will Delist SC USDT-Margined Contract",
+  "title_equal": false,
+  "code_in_page": true
+ },
+ {
+  "code": "0bfb6cfd10aa4d26926260c0159ef58d",
+  "catalog_title": "Binance Futures Will Delist USDT-Margined ANC Perpetual Contract",
+  "capture_ts": "20220513023034",
+  "lag_h": 0.1,
+  "sha256": "2e71e914a448f2245923f56400d6ec8599c9007b49b15a4f3c8026c49bc09af9",
+  "captured_title": "Binance Futures Will Delist USDT-Margined ANC Perpetual Contract",
+  "title_equal": true,
+  "code_in_page": true
+ },
+ {
+  "code": "ef3ce76d5c2d45ee9b6dc3f281cde744",
+  "catalog_title": "Binance Futures Will Delist LUNA USDT-Margined Contract",
+  "capture_ts": "20220512150146",
+  "lag_h": 0.0,
+  "sha256": "30455c1b9ac0fb97c51ca047d4a9264ff612e8e8890691ca991c6db02652eee2",
+  "captured_title": "Binance Futures Will Delist LUNA USDT-Margined Contract",
+  "title_equal": true,
+  "code_in_page": true
+ },
+ {
+  "code": "1b73e64616ee4e769c29e70c66728d1a",
+  "catalog_title": "Binance Futures to Delist Coin-Margined LUNA Perpetual Contracts and Update the Leverage & Margin Tiers for USDT-Margined LUNA Perpetual Contracts",
+  "capture_ts": "20220512045317",
+  "lag_h": 0.1,
+  "sha256": "f7caaf5dfa423edb6422035d32f3b7962f1c4b44990e92ea08214488d3fe39cf",
+  "captured_title": "Binance Futures to Delist Coin-Margined LUNA Perpetual Contracts and Update the Leverage & Margin Tiers for USDT-Margined LUNA Perpetual Contracts",
+  "title_equal": true,
+  "code_in_page": true
+ },
+ {
+  "code": "4baf8d70485c46e38637bd063c58c4d8",
+  "catalog_title": "Binance Futures Will Delist 1000BTTC and YFII USDT-Margined Contracts",
+  "capture_ts": "20220404052158",
+  "lag_h": 0.0,
+  "sha256": "b51f6f75eca68ea1a42d1122755ee43359f3fe8f2f405c36588c53bc8c4a4b05",
+  "captured_title": "Binance Futures Will Delist 1000BTTC and YFII USDT-Margined Contracts",
+  "title_equal": true,
+  "code_in_page": true
+ }
+]

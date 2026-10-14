@@ -1,0 +1,15 @@
+{
+ "F7_bookDepth": {
+  "candidate_level": 0.6003,
+  "decision_level_all_eligible_covered": 0.4359,
+  "eligible_symbol_decisions": 514252
+ },
+ "F15_metrics": {
+  "candidate_level": 0.8178,
+  "decision_level_all_eligible_covered": 0.6279,
+  "eligible_symbol_decisions": 514252
+ },
+ "W_DEV_decisions": 4926,
+ "first": "2021-01-01",
+ "last": "2025-06-30"
+}

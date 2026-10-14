@@ -1,0 +1,52 @@
+retrieved_utc: 2026-10-14T14:30:18Z
+== data/futures/um/daily/
+data/futures/um/daily/aggTrades/
+data/futures/um/daily/bookDepth/
+data/futures/um/daily/bookTicker/
+data/futures/um/daily/indexPriceKlines/
+data/futures/um/daily/klines/
+data/futures/um/daily/markPriceKlines/
+data/futures/um/daily/metrics/
+data/futures/um/daily/premiumIndexKlines/
+data/futures/um/daily/trades/
+== data/futures/um/monthly/
+data/futures/um/monthly/aggTrades/
+data/futures/um/monthly/bookTicker/
+data/futures/um/monthly/fundingRate/
+data/futures/um/monthly/indexPriceKlines/
+data/futures/um/monthly/klines/
+data/futures/um/monthly/markPriceKlines/
+data/futures/um/monthly/premiumIndexKlines/
+data/futures/um/monthly/trades/
+== data/futures/um/daily/indexPriceKlines/BTCUSDT/
+data/futures/um/daily/indexPriceKlines/BTCUSDT/12h/
+data/futures/um/daily/indexPriceKlines/BTCUSDT/15m/
+data/futures/um/daily/indexPriceKlines/BTCUSDT/1d/
+data/futures/um/daily/indexPriceKlines/BTCUSDT/1h/
+data/futures/um/daily/indexPriceKlines/BTCUSDT/1m/
+data/futures/um/daily/indexPriceKlines/BTCUSDT/1mo/
+data/futures/um/daily/indexPriceKlines/BTCUSDT/1w/
+data/futures/um/daily/indexPriceKlines/BTCUSDT/2h/
+data/futures/um/daily/indexPriceKlines/BTCUSDT/30m/
+data/futures/um/daily/indexPriceKlines/BTCUSDT/3d/
+data/futures/um/daily/indexPriceKlines/BTCUSDT/3m/
+data/futures/um/daily/indexPriceKlines/BTCUSDT/4h/
+data/futures/um/daily/indexPriceKlines/BTCUSDT/5m/
+data/futures/um/daily/indexPriceKlines/BTCUSDT/6h/
+data/futures/um/daily/indexPriceKlines/BTCUSDT/8h/
+== data/futures/um/monthly/indexPriceKlines/BTCUSDT/
+data/futures/um/monthly/indexPriceKlines/BTCUSDT/12h/
+data/futures/um/monthly/indexPriceKlines/BTCUSDT/15m/
+data/futures/um/monthly/indexPriceKlines/BTCUSDT/1d/
+data/futures/um/monthly/indexPriceKlines/BTCUSDT/1h/
+data/futures/um/monthly/indexPriceKlines/BTCUSDT/1m/
+data/futures/um/monthly/indexPriceKlines/BTCUSDT/1mo/
+data/futures/um/monthly/indexPriceKlines/BTCUSDT/1w/
+data/futures/um/monthly/indexPriceKlines/BTCUSDT/2h/
+data/futures/um/monthly/indexPriceKlines/BTCUSDT/30m/
+data/futures/um/monthly/indexPriceKlines/BTCUSDT/3d/
+data/futures/um/monthly/indexPriceKlines/BTCUSDT/3m/
+data/futures/um/monthly/indexPriceKlines/BTCUSDT/4h/
+data/futures/um/monthly/indexPriceKlines/BTCUSDT/5m/
+data/futures/um/monthly/indexPriceKlines/BTCUSDT/6h/
+data/futures/um/monthly/indexPriceKlines/BTCUSDT/8h/

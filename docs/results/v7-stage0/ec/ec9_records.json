@@ -1,0 +1,470 @@
+[
+ {
+  "symbol": "ALGOUSDT",
+  "funding_ts": "2020-05-26T16:00:00",
+  "instance": -1,
+  "spacing_h": null,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "first record of instance, no explicit interval (undetermined)"
+ },
+ {
+  "symbol": "ALGOUSDT",
+  "funding_ts": "2020-05-27T00:00:00",
+  "instance": -1,
+  "spacing_h": 8.0,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "transition"
+ },
+ {
+  "symbol": "BCHUSDT",
+  "funding_ts": "2019-12-19T16:00:00",
+  "instance": -1,
+  "spacing_h": null,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "first record of instance, no explicit interval (undetermined)"
+ },
+ {
+  "symbol": "BCHUSDT",
+  "funding_ts": "2019-12-20T00:00:00",
+  "instance": -1,
+  "spacing_h": 8.0,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "transition"
+ },
+ {
+  "symbol": "BNTUSDT",
+  "funding_ts": "2020-12-28T08:00:00.019000",
+  "instance": -1,
+  "spacing_h": null,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "first record of instance, no explicit interval (undetermined)"
+ },
+ {
+  "symbol": "BNTUSDT",
+  "funding_ts": "2020-12-28T16:00:00",
+  "instance": -1,
+  "spacing_h": 8.0,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "transition"
+ },
+ {
+  "symbol": "BNTUSDT",
+  "funding_ts": "2023-08-09T08:00:00",
+  "instance": -1,
+  "spacing_h": 20016.0,
+  "prev_nominal_h": 8.0,
+  "explicit_h": 8.0,
+  "kind": "genuinely unreconciled"
+ },
+ {
+  "symbol": "BNXUSDT",
+  "funding_ts": "2022-03-31T16:00:00.015000",
+  "instance": -1,
+  "spacing_h": null,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "first record of instance, no explicit interval (undetermined)"
+ },
+ {
+  "symbol": "BNXUSDT",
+  "funding_ts": "2022-04-01T00:00:00",
+  "instance": -1,
+  "spacing_h": 8.0,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "transition"
+ },
+ {
+  "symbol": "BNXUSDT",
+  "funding_ts": "2022-04-01T08:00:00",
+  "instance": 0,
+  "spacing_h": null,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "first record of instance, no explicit interval (undetermined)"
+ },
+ {
+  "symbol": "BNXUSDT",
+  "funding_ts": "2022-04-01T16:00:00.018000",
+  "instance": 0,
+  "spacing_h": 8.0,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "transition"
+ },
+ {
+  "symbol": "BNXUSDT",
+  "funding_ts": "2022-12-04T12:00:00.001000",
+  "instance": 0,
+  "spacing_h": 4.0,
+  "prev_nominal_h": 8.0,
+  "explicit_h": null,
+  "kind": "transition"
+ },
+ {
+  "symbol": "BNXUSDT",
+  "funding_ts": "2022-12-04T14:00:00.001000",
+  "instance": 0,
+  "spacing_h": 2.0,
+  "prev_nominal_h": 4.0,
+  "explicit_h": null,
+  "kind": "transition"
+ },
+ {
+  "symbol": "BNXUSDT",
+  "funding_ts": "2022-12-14T08:00:00.015000",
+  "instance": 0,
+  "spacing_h": 6.0,
+  "prev_nominal_h": 2.0,
+  "explicit_h": null,
+  "kind": "genuinely unreconciled"
+ },
+ {
+  "symbol": "BNXUSDT",
+  "funding_ts": "2022-12-14T16:00:00.004000",
+  "instance": 0,
+  "spacing_h": 8.0,
+  "prev_nominal_h": 2.0,
+  "explicit_h": null,
+  "kind": "transition"
+ },
+ {
+  "symbol": "BTTUSDT",
+  "funding_ts": "2020-09-14T16:00:00",
+  "instance": -1,
+  "spacing_h": null,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "first record of instance, no explicit interval (undetermined)"
+ },
+ {
+  "symbol": "BTTUSDT",
+  "funding_ts": "2020-09-15T00:00:00",
+  "instance": -1,
+  "spacing_h": 8.0,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "transition"
+ },
+ {
+  "symbol": "CHZUSDT",
+  "funding_ts": "2020-12-28T08:00:00.019000",
+  "instance": -1,
+  "spacing_h": null,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "first record of instance, no explicit interval (undetermined)"
+ },
+ {
+  "symbol": "CHZUSDT",
+  "funding_ts": "2020-12-28T16:00:00",
+  "instance": -1,
+  "spacing_h": 8.0,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "transition"
+ },
+ {
+  "symbol": "ETHUSDT",
+  "funding_ts": "2019-11-27T08:00:00",
+  "instance": -1,
+  "spacing_h": null,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "first record of instance, no explicit interval (undetermined)"
+ },
+ {
+  "symbol": "ETHUSDT",
+  "funding_ts": "2019-11-27T16:00:00",
+  "instance": -1,
+  "spacing_h": 8.0,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "transition"
+ },
+ {
+  "symbol": "FLMUSDT",
+  "funding_ts": "2023-09-05T20:00:00.001000",
+  "instance": 0,
+  "spacing_h": 4.0,
+  "prev_nominal_h": 8.0,
+  "explicit_h": 2.0,
+  "kind": "genuinely unreconciled"
+ },
+ {
+  "symbol": "FTTUSDT",
+  "funding_ts": "2022-11-10T04:00:00.011000",
+  "instance": 0,
+  "spacing_h": 4.0,
+  "prev_nominal_h": 8.0,
+  "explicit_h": 2.0,
+  "kind": "genuinely unreconciled"
+ },
+ {
+  "symbol": "ICPUSDT",
+  "funding_ts": "2021-05-11T08:00:00",
+  "instance": 0,
+  "spacing_h": null,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "first record of instance, no explicit interval (undetermined)"
+ },
+ {
+  "symbol": "ICPUSDT",
+  "funding_ts": "2021-05-11T16:00:00.002000",
+  "instance": 0,
+  "spacing_h": 8.0,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "transition"
+ },
+ {
+  "symbol": "ICPUSDT",
+  "funding_ts": "2022-06-10T16:00:00.006000",
+  "instance": -1,
+  "spacing_h": null,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "first record of instance, no explicit interval (undetermined)"
+ },
+ {
+  "symbol": "ICPUSDT",
+  "funding_ts": "2022-06-11T00:00:00.018000",
+  "instance": -1,
+  "spacing_h": 8.0,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "transition"
+ },
+ {
+  "symbol": "OMGUSDT",
+  "funding_ts": "2020-05-26T16:00:00",
+  "instance": -1,
+  "spacing_h": null,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "first record of instance, no explicit interval (undetermined)"
+ },
+ {
+  "symbol": "OMGUSDT",
+  "funding_ts": "2020-05-27T00:00:00",
+  "instance": -1,
+  "spacing_h": 8.0,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "transition"
+ },
+ {
+  "symbol": "OMGUSDT",
+  "funding_ts": "2021-11-11T14:00:00.004000",
+  "instance": 0,
+  "spacing_h": 6.0,
+  "prev_nominal_h": 8.0,
+  "explicit_h": 2.0,
+  "kind": "genuinely unreconciled"
+ },
+ {
+  "symbol": "QTUMUSDT",
+  "funding_ts": "2020-02-19T16:00:00",
+  "instance": -1,
+  "spacing_h": null,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "first record of instance, no explicit interval (undetermined)"
+ },
+ {
+  "symbol": "QTUMUSDT",
+  "funding_ts": "2020-02-20T00:00:00.004000",
+  "instance": -1,
+  "spacing_h": 8.0,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "transition"
+ },
+ {
+  "symbol": "QTUMUSDT",
+  "funding_ts": "2020-02-20T08:00:00",
+  "instance": 0,
+  "spacing_h": null,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "first record of instance, no explicit interval (undetermined)"
+ },
+ {
+  "symbol": "QTUMUSDT",
+  "funding_ts": "2020-02-20T16:00:00",
+  "instance": 0,
+  "spacing_h": 8.0,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "transition"
+ },
+ {
+  "symbol": "RIFUSDT",
+  "funding_ts": "2023-05-09T08:00:00",
+  "instance": -1,
+  "spacing_h": null,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "first record of instance, no explicit interval (undetermined)"
+ },
+ {
+  "symbol": "RIFUSDT",
+  "funding_ts": "2023-05-09T16:00:00",
+  "instance": -1,
+  "spacing_h": 8.0,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "transition"
+ },
+ {
+  "symbol": "RIFUSDT",
+  "funding_ts": "2023-10-21T08:00:00",
+  "instance": -1,
+  "spacing_h": 3608.0,
+  "prev_nominal_h": 8.0,
+  "explicit_h": 8.0,
+  "kind": "genuinely unreconciled"
+ },
+ {
+  "symbol": "STMXUSDT",
+  "funding_ts": "2023-07-25T16:00:00",
+  "instance": 0,
+  "spacing_h": 4.0,
+  "prev_nominal_h": 2.0,
+  "explicit_h": 8.0,
+  "kind": "genuinely unreconciled"
+ },
+ {
+  "symbol": "TLMUSDT",
+  "funding_ts": "2021-07-16T08:00:00",
+  "instance": 0,
+  "spacing_h": null,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "first record of instance, no explicit interval (undetermined)"
+ },
+ {
+  "symbol": "TLMUSDT",
+  "funding_ts": "2021-07-16T16:00:00.001000",
+  "instance": 0,
+  "spacing_h": 8.0,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "transition"
+ },
+ {
+  "symbol": "TLMUSDT",
+  "funding_ts": "2022-06-09T16:00:00",
+  "instance": -1,
+  "spacing_h": null,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "first record of instance, no explicit interval (undetermined)"
+ },
+ {
+  "symbol": "TLMUSDT",
+  "funding_ts": "2022-06-10T00:00:00.009000",
+  "instance": -1,
+  "spacing_h": 8.0,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "transition"
+ },
+ {
+  "symbol": "TUSDT",
+  "funding_ts": "2023-01-31T16:00:00.007000",
+  "instance": -1,
+  "spacing_h": null,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "first record of instance, no explicit interval (undetermined)"
+ },
+ {
+  "symbol": "TUSDT",
+  "funding_ts": "2025-04-18T14:00:00.001000",
+  "instance": 0,
+  "spacing_h": 6.0,
+  "prev_nominal_h": 8.0,
+  "explicit_h": 2.0,
+  "kind": "genuinely unreconciled"
+ },
+ {
+  "symbol": "UNFIUSDT",
+  "funding_ts": "2020-12-28T08:00:00.019000",
+  "instance": -1,
+  "spacing_h": null,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "first record of instance, no explicit interval (undetermined)"
+ },
+ {
+  "symbol": "UNFIUSDT",
+  "funding_ts": "2020-12-28T16:00:00",
+  "instance": -1,
+  "spacing_h": 8.0,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "transition"
+ },
+ {
+  "symbol": "XMRUSDT",
+  "funding_ts": "2020-01-19T16:00:00",
+  "instance": -1,
+  "spacing_h": null,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "first record of instance, no explicit interval (undetermined)"
+ },
+ {
+  "symbol": "XMRUSDT",
+  "funding_ts": "2020-01-20T00:00:00",
+  "instance": -1,
+  "spacing_h": 8.0,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "transition"
+ },
+ {
+  "symbol": "YGGUSDT",
+  "funding_ts": "2023-08-07T14:00:00",
+  "instance": 0,
+  "spacing_h": 6.0,
+  "prev_nominal_h": 8.0,
+  "explicit_h": 2.0,
+  "kind": "genuinely unreconciled"
+ },
+ {
+  "symbol": "YGGUSDT",
+  "funding_ts": "2023-08-08T16:00:00",
+  "instance": 0,
+  "spacing_h": 4.0,
+  "prev_nominal_h": 2.0,
+  "explicit_h": 8.0,
+  "kind": "genuinely unreconciled"
+ },
+ {
+  "symbol": "BTCUSDT",
+  "funding_ts": "2019-09-10T08:00:00",
+  "instance": -1,
+  "spacing_h": null,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "first record of instance, no explicit interval (undetermined)"
+ },
+ {
+  "symbol": "BTCUSDT",
+  "funding_ts": "2019-09-10T16:00:00",
+  "instance": -1,
+  "spacing_h": 8.0,
+  "prev_nominal_h": null,
+  "explicit_h": null,
+  "kind": "transition"
+ }
+]
