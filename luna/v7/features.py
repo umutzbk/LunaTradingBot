@@ -9,13 +9,16 @@ S-10.4, L1, L5, L7).
   no price there and is missing, never bridged.
 * Funding: r8 = rate * 8 / nominal interval (S-2.6, ``intervals.annotate``); invalid records are missing.
 * Side adjustment: the ``CARRY_DIRECTION`` features are multiplied by -s; ``side`` = s (+1 long, -1 short).
+  Literal reading: F10 momentum and the F11 BTC return are NOT side-adjusted, so a linear model cannot use
+  directional price information; whether to change that is a pending user decision (AMB-09).
 * F11 / F12 use the eligible universe at t: ``XSInput`` rows built by ``xs_input`` at the same t; a row is
   in the cross-section iff ``universe.eligible(row.gate)``.
 * F7 and F15 are dropped (Stage 0 coverage rule). Missing inputs give NaN (fail closed, never a leak).
 * ``Preprocessor`` (linear models): fitted on T_fit rows only (L5, refuses calibration / test rows):
   winsorize at the fit 1 / 99 % quantiles, standardize (constant column -> 0), median-impute plus one
   missing indicator per feature. LightGBM gets ``raw_matrix`` (raw values, NaN native).
-Every interpretation the §9 table leaves open is logged as AMB-08 in docs/results/v7-impl/AMBIGUITIES.md.
+Every interpretation the §9 table leaves open is logged as AMB-08 (and AMB-09) in
+docs/results/v7-impl/AMBIGUITIES.md.
 """
 
 from __future__ import annotations
@@ -73,7 +76,8 @@ FEATURES: tuple[str, ...] = (
 )
 
 # Carry-direction features (x -s): every feature whose value is a signed funding / premium level or change
-# of the candidate, the market-wide funding direction, or a rank of such a value (AMB-08).
+# of the candidate, the market-wide funding direction, or a rank of such a value (AMB-08). Directional price
+# features (F10, F11 BTC return) are deliberately excluded - literal reading pending a user decision (AMB-09).
 CARRY_DIRECTION: tuple[str, ...] = tuple(
     c for c in FEATURES
     if c.startswith(("f1_", "f3_", "f5_", "f12_")) or c in ("f11_xs_median_fl1", "f11_xs_share_fl1_pos")
@@ -426,10 +430,15 @@ class Preprocessor:
     (``numpy.quantile``, linear), standardize with the mean and population std of the winsorized values
     (a constant column maps to 0), impute missing (NaN / +-inf) with the median of the standardized fit
     values (0 for an all-missing column) and add a ``<col>__missing`` indicator (1.0 / 0.0).
+
+    ``columns`` must be one horizon's model columns (``features_for_horizon(h)``): a column set with more
+    than one F14 carry/cost horizon column raises ValueError.
     """
 
-    def __init__(self, columns: Sequence[str] = FEATURES) -> None:
+    def __init__(self, columns: Sequence[str]) -> None:
         self.columns = tuple(columns)
+        if sum(c in F14_COLS for c in self.columns) > 1:
+            raise ValueError("Preprocessor columns hold several F14 horizons: pass features_for_horizon(h)")
         self._params: dict[str, _ColParams] | None = None
 
     def fit(self, X_fit: pd.DataFrame, decision_ts, fold: Fold) -> Preprocessor:  # noqa: N803

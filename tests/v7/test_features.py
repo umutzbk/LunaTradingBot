@@ -181,6 +181,24 @@ def test_funding_features_hand_values():
     assert v["f13_r8_std_over_fl30"] == pytest.approx(min(np.std(x, ddof=1) / abs(fl[720]), 1e4))
 
 
+def test_funding_record_exactly_at_window_start_excluded():
+    t = T - 5 * MIN + 8 * H  # 08:00: the record at 08:00 yesterday is exactly at t - 24 h
+    v = base(side=-1, t=t)
+    f = funding()
+    ts, r = f["funding_ts"].to_numpy(), f["rate"].to_numpy()
+    assert (ts == t - 24 * H).any()
+    used = (ts > t - 24 * H) & (ts + MIN <= t - MIN)  # (t - 24 h, t], known by t - 1 min: 16:00, 00:00
+    assert used.sum() == 2
+    assert v["f1_fl1"] == pytest.approx(r[used].mean())
+    assert v["f1_fl1"] != pytest.approx(r[(ts >= t - 24 * H) & (ts + MIN <= t - MIN)].mean())
+
+
+def test_preprocessor_needs_one_horizon():
+    with pytest.raises(ValueError):
+        Preprocessor(FEATURES)
+    assert Preprocessor(features_for_horizon(24)).columns == features_for_horizon(24)
+
+
 def test_r8_normalisation_4h_records():
     f4h = funding(step_h=4)
     v8 = base(side=-1)
