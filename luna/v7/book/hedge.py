@@ -83,5 +83,6 @@ def decide(
     if miss:
         return HedgeDecision(None, False, None, "beta_missing:" + ",".join(miss))
     tgt = target(legs, betas, e)
-    assert tgt is not None
+    if tgt is None:
+        raise RuntimeError("internal: hedge target missing after the beta check")
     return HedgeDecision(tgt, should_trade(tgt, current, e), beta_book(legs, betas), "beta")
