@@ -64,3 +64,19 @@ Additional interpretations under AMB-04 (all implementation clarifications):
 - Options: R/CRAN is not installed here, so equality against R output cannot be run; the hourly price series source (1m vs 15m) and the inclusivity of the 60 min data-gap window are unstated.
 - Classification: implementation clarification.
 - Code now: R/CRAN not available; equality is checked against a Python transcription of `ar.R` (`tests/v7/ar_reference.py`, transcribed from the CRAN GitHub mirror source of bidask 2.1.5 `R/ar.R`; the R `shift`/`rmean(na.rm)`/signed-sqrt steps reproduced, negatives then set to 0); a run against R output is pending before code freeze. `beta.hourly_close_from_15m` takes the close of the 15m last-price bar that closes at each full hour; returns need two consecutive full-hour prices; joint observations = hours with both returns, hours in (L - 30 d, L] with L = floor((t - 1 min)/1 h)*1 h (max 720), OLS slope = cov/var(BTC) (None if var = 0). `first_bar_within` uses the closed interval [tau, tau + 60 min]. `first_executable_after` requires the bar to open >= `first_bar_ts` and close <= `last_trade_ts` of the (retrospective) instance; this is admissible because the fill is booked only after the bar closes. `spread.half_spread` takes `known_at(pi_k)` = max(bar k+1 `known_at`, its open + 15 min) and relies on the caller passing one instance's bars only. `beta.beta_hat` requires the `known_at` series of both prices (`hourly_known_at_from_15m`, which raises if the bars have no `known_at`) and drops any price with `known_at > t - 1 min`, or without a known_at entry; the caller passes only the current instance's bars.
+
+## AMB-07 - Universe gate interpretations U2/U3/U4/U6/U7 (Task 8)
+
+- Spec: S-2.2, S-2.3, S-2.5, S-1.8.
+- Literal text: "median daily quote volume over the 30 UTC days fully ended before t"; "30 d of settled funding records of the current instance known by t, with no gap in the last 7 d"; "95 % of last-price 15-minute bars present in the last 24 h"; "the last settled funding record is at most 1 nominal interval + 15 min old".
+- Options: U2 per instance or per symbol, empty day 0 or skipped; U3 span/tail gap; U4 window edges; U7 record validity.
+- Classification: implementation clarification (the U2 empty-day rule and the U7 record choice could alter the universe: flagged for review).
+- Code now (luna/v7/universe.py), consistent with the Stage-0 evaluation (d0_eval.py):
+  - All inputs are filtered to known_at <= t - 1 min (notices too) before use.
+  - U2: daily sums of vol_quote of the current instance's 15m bars; a day with no bars counts 0 (Stage 0 "zero" primary); median over the 30 UTC days d-30..d-1. Instance-restricted (conservative reading of the S-2.2 reset wording).
+  - U3: current-instance records, invalid records dropped (missing). Pass = first valid record ts <= t - 30 d (Stage 0) and every adjacent valid pair whose later record is in the last 7 d passes u3_gap (the earlier record of the pair may precede the window). No tail gap (last record to t): freshness is U7 (Stage 0 had none either).
+  - U4: the 96 bars opening in [L - 24 h, L) where L = last 15m grid close <= t - 1 min; present = finite close > 0 (zero volume counts); pass = count/96 >= 0.95 (at least 92).
+  - U7: the last in-instance record known by t - 1 min (any validity), its own nominal interval; undetermined nominal fails.
+  - U8: bar close = open_ts + 15 min in [t - 60 min, t - 1 min] inclusive.
+  - Gate values are True = pass (U6 passes when inactive). d0_month requires all three decisions of every day of a month to be present and each >= 30; returns the month start YYYY-MM-DD.
+  - 1m bars for the U6 72 h HALT test are filtered to known_at <= t - 1 min (default open + 1 min).
