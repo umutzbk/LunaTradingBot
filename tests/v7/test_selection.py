@@ -99,6 +99,14 @@ def test_simplicity_and_tiebreak():
     assert (c.arm, c.h) == ("A2", 168)
     c = ch(_lbs(A2_24=2 * BP, A2_72=1.85 * BP))
     assert (c.arm, c.h) == ("A2", 24)
+    # float-rounded boundaries stay inclusive: (3e-4 - 2e-4) / 1e-4 < 1 and (2e-4 - 1.9e-4) / 1e-4 < 0.1
+    assert ch(_lbs(A2_24=2e-4, A3_24=3e-4)).arm == "A3"
+    c = ch(_lbs(A2_24=2e-4, A2_72=1.9e-4))
+    assert (c.arm, c.h) == ("A2", 72)
+    c = ch(_lbs(A2_24=26 * 1e-5, A2_72=25 * 1e-5))  # (2.6e-4 - 2.5e-4) / 1e-4 = 0.10000000000000026
+    assert (c.arm, c.h) == ("A2", 72)
+    c = ch(_lbs(A2_24=2e-4, A2_168=1.89e-4))
+    assert (c.arm, c.h) == ("A2", 24)
     # exact boundary: |dLB| = 0.1 bp/day is a tie
     c = ch(_lbs(A2_24=0.0, A2_168=-1e-5))
     assert (c.arm, c.h) == ("A2", 168)

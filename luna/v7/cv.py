@@ -128,7 +128,7 @@ def date_ic_se(pred, y, dates) -> float:
 # ------------------------------------------------------------------------------------ calibrators
 
 
-def _date_weights(dates) -> np.ndarray:
+def date_weights(dates) -> np.ndarray:
     """Each decision date carries total weight 1 / #dates (rows within a date are equal)."""
     d = np.asarray(dates)
     if len(d) == 0:
@@ -152,7 +152,7 @@ class LinearCalibrator:
         x, t = np.asarray(yhat, np.float64), np.asarray(y, np.float64)
         if not (len(x) == len(t) == len(dates)) or not (np.isfinite(x).all() and np.isfinite(t).all()):
             raise ValueError("LinearCalibrator: lengths differ or non-finite input")
-        w = _date_weights(dates)
+        w = date_weights(dates)
         mx, my = float(w @ x), float(w @ t)
         vx = float(w @ (x - mx) ** 2)
         b = float(w @ ((x - mx) * (t - my))) / vx if vx > 1e-300 else 0.0
@@ -184,7 +184,7 @@ class IsotonicCalibrator:
         if not (len(x) == len(t) == len(dates)) or not (np.isfinite(x).all() and np.isfinite(t).all()):
             raise ValueError("IsotonicCalibrator: lengths differ or non-finite input")
         self._iso = IsotonicRegression(y_min=ISO_LO, y_max=ISO_HI, increasing=True, out_of_bounds="clip")
-        self._iso.fit(x, t, sample_weight=_date_weights(dates))
+        self._iso.fit(x, t, sample_weight=date_weights(dates))
         return self
 
     def predict(self, p) -> np.ndarray:

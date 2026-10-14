@@ -215,8 +215,16 @@ def test_p8_classifier_ece():
 
 
 # --- holdout end to end ---------------------------------------------------------------------------------
+NO_K8 = V.K8Rates(0.0, 0.0)
+
+
 def _nets(mu, seed, n=N):
     return np.random.default_rng(seed).normal(mu, 0.002, n)
+
+
+def _alt(mu, amp, n=N):
+    """Deterministic mu ± amp alternating (mean mu, std amp)."""
+    return [mu + (amp if i % 2 == 0 else -amp) for i in range(n)]
 
 
 def _ic_data(seed=0, n_dates=40, signal=1.0):
@@ -228,17 +236,21 @@ def _ic_data(seed=0, n_dates=40, signal=1.0):
 
 def _inputs(ml_mu=0.002, ml_m_mu=None, a0_mu=0.0, **kw):
     ml_m_mu = ml_mu if ml_m_mu is None else ml_m_mu
+    _, y, dts = _ic_data(1)
     base = dict(
         ml_T=funding_run(_nets(ml_mu, 1), arm="A2", h=72),
         a0_T=funding_run(_nets(a0_mu, 2), arm="A0", h=72),
         ml_M=funding_run(_nets(ml_m_mu, 3), arm="A2", h=72, execution="E_M"),
         a0_M=funding_run(_nets(a0_mu, 4), arm="A0", h=72, execution="E_M"),
-        quarter_edges=EDGES, ic=_ic_data(), dev_mean_daily_net=0.001, B=2000, seed=7,
+        quarter_edges=EDGES, ic=_ic_data(), calib=(y, y, dts),  # slope exactly 1
+        dev_mean_daily_net=0.001, dev_kill=(), leakage=(), integrity=(), k8=NO_K8, B=2000, seed=7,
     )
-    _, y, dts = _ic_data(1)
-    base["calib"] = (y, y, dts)  # slope exactly 1
     base.update(kw)
     return V.HoldoutInputs(**base)
+
+
+def _ml(nets, **kw):
+    return funding_run(nets, arm="A2", h=72, **kw)
 
 
 def test_holdout_inconclusive_when_only_p4_fails():
@@ -252,20 +264,71 @@ def test_holdout_inconclusive_when_only_p4_fails():
     assert v.details["p8_slope"] == pytest.approx(1.0)
     assert v.details["sharpe"] == stats.sharpe(r)
     assert v.details["mean_daily_net"] == acc.mean_daily_net(led)
+    # each required / secondary run's engine integrity notes are copied into the details
+    inp = _inputs()
+    inp = replace(inp, ml_T=replace(inp.ml_T, integrity=("funding_missing:X",)),
+                  a0_M=replace(inp.a0_M, integrity=("mark_missing:Y",)))
+    v = V.holdout(inp)
+    assert v.details["run_integrity"] == {"ML* E_T": ("funding_missing:X",), "A0 E_T": (),
+                                          "ML* E_M": (), "A0 E_M": ("mark_missing:Y",)}
+
+
+def _fails(v):
+    return {p for p in V.P_IDS if not v.criteria[p]}
+
+
+def _flip(p):
+    """With every other criterion holding, this criterion alone turns ADVANCE into NO-GO."""
+    return V.classify(invalid=False, leakage=False, dev_kill=False, criteria={**ALLP, p: False}, p1_em=True)
+
+
+def test_holdout_negative_wiring_p2_p3_p5_p9_p11():
+    # P2: C_exec / F_net = 0.62 > 0.60 (fees on hedge round trips), everything else as before
+    v = V.holdout(_inputs(ml_T=_ml(_alt(0.002, 0.0005), costs=[0.00124] * N)))
+    assert _fails(v) == {"P2", "P4"} and v.details["C_exec_over_F_net"] == pytest.approx(0.62, rel=1e-6)
+    assert _flip("P2") == V.NOGO
+    v = V.holdout(_inputs(ml_T=_ml(_alt(0.002, 0.0005), costs=[0.00118] * N)))  # ratio 0.59 holds
+    assert _fails(v) == {"P4"}
+    # P3: a 20 % drawdown of the 15-minute marked equity; and a drawdown kill alone
+    base = _inputs()
+    m = base.ml_T.marks.copy()
+    m.loc[100, "equity"] = 0.8
+    v = V.holdout(replace(base, ml_T=replace(base.ml_T, marks=m)))
+    assert _fails(v) == {"P3", "P4"} and v.details["mdd"] == pytest.approx(0.2)
+    killed = pd.DataFrame(dict(t=[LO, LO + D], killed=[False, True]))
+    v = V.holdout(replace(base, ml_T=replace(base.ml_T, decisions=killed)))
+    assert _fails(v) == {"P3", "P4"} and v.details["killed"]
+    with pytest.raises(ValueError, match="killed"):
+        V.holdout(replace(base, ml_T=replace(base.ml_T, decisions=pd.DataFrame(dict(t=[LO])))))
+    assert _flip("P3") == V.NOGO
+    # P5: all net in the first quarter
+    v = V.holdout(_inputs(ml_T=_ml(_alt(0.004, 0.0005, 30) + _alt(0.0007, 0.0005, 90))))
+    q = v.details["p5"]["quarters"]
+    assert q[0] > 0.6 * v.details["p5"]["NET"] and all(x > 0 for x in q)
+    assert _fails(v) == {"P5", "P4"}
+    assert _flip("P5") == V.NOGO
+    # P9: Sharpe < 1 (the mean is then too small for P1 as well)
+    v = V.holdout(_inputs(ml_T=_ml(_alt(0.0001, 0.002))))
+    assert "P9" in _fails(v) and v.details["sharpe"].value < 1.0
+    assert v.details["sharpe"].value == pytest.approx(stats.sharpe(stats.ledger_returns(
+        acc.account(_ml(_alt(0.0001, 0.002))))).value)
+    assert _flip("P9") == V.NOGO
+    # P11: CAC <= 0 (costs = funding; with no clusters NET_trim = CAC, so P2 fails with it)
+    v = V.holdout(_inputs(ml_T=_ml(_alt(0.002, 0.0005), costs=_alt(0.002, 0.0005))))
+    assert {"P11", "P2"} <= _fails(v)
+    assert _flip("P11") == V.NOGO
 
 
 def test_holdout_p1_execution_classes():
     v = V.holdout(_inputs(ml_mu=0.0, ml_m_mu=0.002))
     assert not v.criteria["P1"] and v.p1_em and v.cls == V.MAKER
     v = V.holdout(_inputs(ml_mu=0.0, ml_m_mu=0.0))
-    assert not v.criteria["P1"] and not v.p1_em and v.cls == V.NO_EDGE
+    assert not v.criteria["P1"] and v.p1_em is False and v.cls == V.NO_EDGE
     # P1 needs BOTH legs of the IUT: ML* strongly positive but not better than A0
     v = V.holdout(_inputs(ml_mu=0.002, a0_mu=0.002))
     assert v.details["p1"].p_abs < 0.05 and v.details["p1"].p_diff >= 0.05 and not v.criteria["P1"]
     v = V.holdout(_inputs(leakage=("L3: label spike",)))
     assert v.cls == V.LEAKAGE and "leakage: L3: label spike" in v.reasons
-    v = V.holdout(_inputs(dev_kill=("CAC <= 0",)))
-    assert v.cls == V.NO_EDGE
     v = V.holdout(_inputs(dev_mean_daily_net=0.0))
     assert not v.criteria["P10"] and v.cls == V.INCONCLUSIVE  # P4 still fails -> INCONCLUSIVE outranks NO-GO
     v = V.holdout(_inputs(ic=_ic_data(signal=0.0)))
@@ -280,19 +343,54 @@ def test_holdout_p1_execution_classes():
     assert v.details["stressed_mean_daily_net"] == acc.mean_daily_net(acc.stressed(inp.ml_T))
 
 
+def _bad_funding_role(run):
+    f = run.funding_flows.copy()
+    f.loc[0, "role"] = "bogus"  # account() raises on it
+    return replace(run, funding_flows=f)
+
+
+def test_em_runs_are_secondary():
+    good = _inputs()
+    for field_ in ("ml_M", "a0_M"):
+        for spoil in (lambda r: replace(r, invalid=INVALID_TERMINAL), _bad_funding_role):
+            # P1(E_T) holds: the class is unaffected, P1(E_M) unavailable, no flag
+            v = V.holdout(replace(good, **{field_: spoil(getattr(good, field_))}))
+            assert v.cls == V.INCONCLUSIVE and v.p1_em is None and not v.maker_split_undecidable
+            assert v.details["p1_em_unavailable"]
+            # P1(E_T) fails, E_M unavailable: NO-GO with the explicit flag (never MAKER / NO_EDGE / ADVANCE);
+            # it outranks the INCONCLUSIVE of the failing P4 (both candidate classes would)
+            weak = _inputs(ml_mu=0.0, ml_m_mu=0.002)
+            v = V.holdout(replace(weak, **{field_: spoil(getattr(weak, field_))}))
+            assert v.cls == V.NOGO and v.maker_split_undecidable and v.p1_em is None
+            assert any(s.startswith("maker_split_undecidable") for s in v.reasons)
+    # an E_M run on other days is not comparable: unavailable as well
+    v = V.holdout(replace(good, a0_M=funding_run(_nets(0.0, 4), arm="A0", h=72, execution="E_M", lo=LO + D)))
+    assert v.p1_em is None and v.cls == V.INCONCLUSIVE
+    # classify: P1 fails and P1(E_M) unavailable -> NO-GO, never ADVANCE
+    for p4 in (True, False):
+        crit = {**ALLP, "P1": False, "P4": p4}
+        assert V.classify(invalid=False, leakage=False, dev_kill=False, criteria=crit, p1_em=None) == V.NOGO
+    assert V.classify(invalid=False, leakage=True, dev_kill=False, criteria={**ALLP, "P1": False},
+                      p1_em=None) == V.LEAKAGE
+    assert V.classify(invalid=False, leakage=False, dev_kill=True, criteria={**ALLP, "P1": False},
+                      p1_em=None) == V.NO_EDGE
+
+
 def test_holdout_invalid_required_arm():
     good = _inputs()
-    for field_ in ("ml_T", "a0_T", "ml_M", "a0_M"):
+    for field_ in ("ml_T", "a0_T"):
         for why in (INVALID_TERMINAL, INVALID_NO_EXIT):
             run = replace(getattr(good, field_), invalid=why)
             v = V.holdout(replace(good, **{field_: run}, leakage=("L1",)))
             assert v.cls == V.INVALID and any(why in s for s in v.reasons)
             assert v.applicable[:2] == (V.INVALID, V.LEAKAGE) and v.criteria == {}
+            assert set(v.details["run_integrity"]) == {"ML* E_T", "A0 E_T", "ML* E_M", "A0 E_M"}
     # EC-11: A0 alone invalid on W_HOLD is INVALID RUN (no forward-style relaxation)
     v = V.holdout(replace(good, a0_T=replace(good.a0_T, invalid=INVALID_TERMINAL)))
     assert v.cls == V.INVALID and v.reasons[0] == f"A0 E_T: {INVALID_TERMINAL}"
     # integrity findings and K10 / daily-identity failures
-    assert V.holdout(replace(good, integrity=("K8: missing funding 0.6 %",))).cls == V.INVALID
+    v = V.holdout(replace(good, integrity=("guard: refused endpoint",)))
+    assert v.cls == V.INVALID and v.reasons == ("integrity: guard: refused endpoint",)
     d = good.ml_T.daily.copy()
     d.loc[3, "price"] = 1e-6
     v = V.holdout(replace(good, ml_T=replace(good.ml_T, daily=d)))
@@ -304,6 +402,28 @@ def test_holdout_invalid_required_arm():
         V.holdout(replace(good, ml_M=good.ml_T))
     with pytest.raises(ValueError):
         V.holdout(replace(good, a0_T=funding_run(_nets(0.0, 2), arm="A0", h=24)))
+
+
+def test_k8_and_required_findings_inputs():
+    good = _inputs()
+    assert V.holdout(replace(good, k8=V.K8Rates(0.005, 0.005))).cls == V.INCONCLUSIVE  # 0.5 % is allowed
+    v = V.holdout(replace(good, k8=V.K8Rates(0.0051, 0.0)))
+    assert v.cls == V.INVALID and v.reasons[0].startswith("K8: invalid labels")
+    v = V.holdout(replace(good, k8=V.K8Rates(0.0, 0.006)))
+    assert v.cls == V.INVALID and v.reasons[0].startswith("K8: missing funding")
+    for bad in (V.K8Rates(float("nan"), 0.0), V.K8Rates(-0.1, 0.0), V.K8Rates(0.0, 1.5), None):
+        with pytest.raises(ValueError):
+            V.holdout(replace(good, k8=bad))
+    # findings are required (no defaults); None / a bare string is refused, an empty tuple means "checked"
+    with pytest.raises(TypeError):
+        V.HoldoutInputs(good.ml_T, good.a0_T, good.ml_M, good.a0_M, EDGES, good.ic, good.calib, 0.001)
+    for name in ("leakage", "integrity", "dev_kill"):
+        for bad in (None, "L1"):
+            with pytest.raises(ValueError):
+                V.holdout(replace(good, **{name: bad}))
+    # an S-10.7 kill never opens the holdout
+    with pytest.raises(ValueError, match="never opened"):
+        V.holdout(replace(good, dev_kill=("CAC <= 0",)))
 
 
 def test_holdout_misaligned_days_refused():
@@ -331,13 +451,20 @@ def test_secondary_family_holm_and_a1_claim():
     # P8-classifier fails -> no A1 claim; missing -> no claim
     assert not V.secondary_family(pairs, bad_cal, 2000, 7)[1]
     assert not V.secondary_family(pairs, None, 2000, 7)[1]
-    # an invalid secondary arm voids only its own comparison; it stays in the Holm family (m = 6)
+    # an invalid / non-accountable / misaligned secondary arm voids only its own comparison; it stays in the
+    # Holm family (m = 6); an exception while accounting it never aborts the family
     p2 = dict(pairs)
     p2["ML* Binance vs Kraken"] = (weak[0], replace(weak[1], invalid=INVALID_TERMINAL))
     p2["ML* E_M vs E_T"] = None
+    p2["non-selected ML family vs ML*"] = (_bad_funding_role(weak[2]), weak[3])
+    shifted = funding_run(_nets(0.0, 5), arm="A0", h=24, lo=LO + D)
+    p2["ML* at non-selected horizon 1 vs A0"] = (weak[4], shifted)
     sec2, a1b = V.secondary_family(p2, good_cal, 2000, 7)
-    assert not sec2["ML* Binance vs Kraken"]["available"] and sec2["ML* Binance vs Kraken"]["p_holm"] is None
-    assert not sec2["ML* E_M vs E_T"]["available"]
+    for name in ("ML* Binance vs Kraken", "ML* E_M vs E_T", "non-selected ML family vs ML*",
+                 "ML* at non-selected horizon 1 vs A0"):
+        assert not sec2[name]["available"] and sec2[name]["p_holm"] is None and sec2[name]["why"]
+    assert sec2["non-selected ML family vs ML*"]["why"].startswith("not accountable: ValueError")
+    assert sec2["ML* at non-selected horizon 1 vs A0"]["why"].startswith("not comparable")
     assert sec2["A1 vs A0"]["p_holm"] == pytest.approx(6 / 2001) and a1b
     # A1 pair invalid -> unavailable, no claim
     p3 = {**pairs, "A1 vs A0": (replace(strong, invalid=INVALID_NO_EXIT), a0)}

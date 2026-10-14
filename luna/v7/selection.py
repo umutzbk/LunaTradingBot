@@ -11,7 +11,8 @@
 * **LB (S-10.6 step 2):** LB = r̄ − q₀.₉₅(r̄* − r̄) of the S-13.1 daily returns, CBB with ℓ = 14, B = 10,000.
 * **Choice (steps 3–5, AMB-22 (f)):** the A3 family is chosen only if its best LB ≥ the best A2 LB + 1 bp/day;
   within the chosen family the highest LB wins, and every candidate within 0.1 bp/day of that highest LB is
-  tied, the longest horizon among them wins. LBs are daily returns, 1 bp/day = 1e-4.
+  tied, the longest horizon among them wins. LBs are daily returns, 1 bp/day = 1e-4; both comparisons are made
+  in bp/day with a 1e-12 bp tolerance so the inclusive boundaries survive float rounding.
 * **Development kill (S-10.7):** on the ML* out-of-fold ledger: mean daily net ≤ 0 (``accounting.
   mean_daily_net``, AMB-21 (d)); F_net ≤ 0; C_exec / F_net > 1.0; CAC ≤ 0; fewer than 30 % of outer folds with
   positive net.
@@ -36,6 +37,7 @@ REFERENCE_ARMS = ("A0-V5", "TS")
 INVALID_DEV = "INVALID RUN — historical terminal execution not reconstructible"  # S-10.6 exact text
 INVALID_K10 = "INVALID RUN — K10 / accounting integrity failure"  # S-13.4 integrity / K10 (AMB-22 (e))
 BP = 1e-4
+BP_EPS = 1e-12  # comparisons in bp/day; the spec boundaries (≥ 1 bp, ≤ 0.1 bp) are inclusive
 
 
 @dataclass(frozen=True)
@@ -73,8 +75,8 @@ def choose_from_lbs(lbs: Mapping[tuple[str, int], float], *, ell: int = FROZEN.s
         if not math.isfinite(v):
             raise ValueError(f"non-finite LB for {k}")
     best = {a: max(lbs[(a, h)] for h in HORIZONS) for a in ML_ARMS}
-    fam = "A3" if (best["A3"] - best["A2"]) / BP >= FROZEN.select.a3_margin_bpd else "A2"
-    tied = [h for h in HORIZONS if (best[fam] - lbs[(fam, h)]) / BP <= FROZEN.select.tie_bpd]
+    fam = "A3" if (best["A3"] - best["A2"]) / BP >= FROZEN.select.a3_margin_bpd - BP_EPS else "A2"
+    tied = [h for h in HORIZONS if (best[fam] - lbs[(fam, h)]) / BP <= FROZEN.select.tie_bpd + BP_EPS]
     return Choice(fam, max(tied), dict(lbs), int(ell), int(B), int(seed))
 
 

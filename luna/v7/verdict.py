@@ -4,12 +4,17 @@
 Pure: every input is already computed (executed ``BookRun``s, IC / calibration arrays, the ``W_DEV`` facts,
 leakage / integrity findings). No I/O, no data access, no training.
 
-* **Required arms on `W_HOLD` (S-13.4, K11, EC-11):** ML* and A0, under ``E_T`` and ``E_M`` (both execution
-  models of a required arm, AMB-22 (g)). Any of them ``invalid`` → ``INVALID RUN`` with the run's S-5.4 text
-  (B / C: ``INVALID RUN — terminal settlement not reconstructible``). The forward relaxation of EC-11 (A0
-  alone becomes unavailable) never applies here. A required ledger failing ``accounting.k10_ok`` (K10, incl.
-  the summation-by-parts ``q_breaks``) or ``accounting.daily_ok`` (S-8.1 daily identity) is an integrity
-  failure → ``INVALID RUN``; so is any caller-supplied integrity / guard / K8 finding.
+* **Required arms on `W_HOLD` (S-13.4, K11, EC-11):** ML* and A0 under ``E_T`` (the acceptance execution
+  model, S-13.2 / S-6.1). Either ``invalid`` → ``INVALID RUN`` with the run's S-5.4 text (B / C: ``INVALID RUN
+  — terminal settlement not reconstructible``); the forward relaxation of EC-11 never applies here. A required
+  ledger failing ``accounting.k10_ok`` (K10, incl. the summation-by-parts ``q_breaks``) or
+  ``accounting.daily_ok`` (S-8.1 daily identity) is an integrity failure → ``INVALID RUN``; so is any
+  caller-supplied integrity / guard finding and a K8 rate (invalid labels, missing funding) > 0.5 %.
+  Leakage, integrity, K8 and the S-10.7 result are REQUIRED inputs (an empty tuple means "checked, nothing
+  found"); a non-empty S-10.7 kill refuses the call (the holdout is never opened, DEC-19).
+* **E_M runs are secondary (S-6.2; AMB-22 (g), normative amendment required):** an invalid or non-accountable
+  ML* / A0 ``E_M`` run voids only P1(E_M) and comparison 4; when P1(E_T) fails and P1(E_M) is unavailable the
+  class is ``NO-GO`` (above INCONCLUSIVE, see ``classify``) with the flag ``maker_split_undecidable``.
 * **P1–P11** exactly as S-13.2 tables them (helpers below; P4 / P5 / P8 conventions in AMB-22 (h)–(k)).
   P6 / P10 use ``accounting.mean_daily_net`` (AMB-21 (d)); P1 / P9 use the S-13.1 daily returns.
 * **S-13.4 classes**, most severe first: INVALID RUN > NO-GO: leakage > NO-GO: no viable edge (S-10.7 kill, or
@@ -45,8 +50,8 @@ from luna.v7.accounting import (
 )
 from luna.v7.book.engine import BookRun
 from luna.v7.constants import FROZEN
-from luna.v7.cv import _date_weights, date_ics
-from luna.v7.timeutil import D
+from luna.v7.cv import date_ics, date_weights
+from luna.v7.timeutil import D, ns_array
 
 ACC = FROZEN.accept
 
@@ -100,7 +105,9 @@ K_TABLE: dict[str, tuple[str, str]] = {  # §16 (trigger, consequence)
 # --- precedence ---------------------------------------------------------------------------------------------
 def applicable(*, invalid: bool, leakage: bool, dev_kill: bool, criteria: Mapping[str, bool],
                p1_em: bool | None) -> list[str]:
-    """Every S-13.4 class that applies (most severe first). ``criteria`` holds P1..P11 (P1 under E_T)."""
+    """Every S-13.4 class that applies (most severe first). ``criteria`` holds P1..P11 (P1 under E_T);
+    ``p1_em`` None = P1(E_M) unavailable: a failing P1(E_T) then gives NO-GO (maker split undecidable,
+    AMB-22 (g))."""
     out: list[str] = []
     if invalid:
         out.append(INVALID)
@@ -110,13 +117,13 @@ def applicable(*, invalid: bool, leakage: bool, dev_kill: bool, criteria: Mappin
         if set(criteria) != set(P_IDS):
             raise ValueError("criteria must hold exactly P1..P11")
         p1 = bool(criteria["P1"])
-        if dev_kill or (not p1 and not p1_em):
+        if dev_kill or (not p1 and p1_em is False):
             out.append(NO_EDGE)
-        if not p1 and p1_em:
+        if not p1 and p1_em is True:
             out.append(MAKER)
         if not criteria["P4"]:
             out.append(INCONCLUSIVE)
-        if not all(criteria[p] for p in P_IDS if p not in ("P1", "P4")):
+        if not all(criteria[p] for p in P_IDS if p not in ("P1", "P4")) or (not p1 and p1_em is None):
             out.append(NOGO)
         if all(criteria[p] for p in P_IDS):
             out.append(ADVANCE)
@@ -126,11 +133,18 @@ def applicable(*, invalid: bool, leakage: bool, dev_kill: bool, criteria: Mappin
 
 
 def classify(**kw) -> str:
-    """The most severe applicable S-13.4 class."""
+    """The most severe applicable S-13.4 class. Interim rule (AMB-22 (g)): when P1(E_T) fails and P1(E_M) is
+    unavailable, both candidate classes (no viable edge / maker-dependent) outrank INCONCLUSIVE and NO-GO, so
+    the class is NO-GO (maker split undecidable) unless INVALID RUN, leakage or an S-10.7 kill applies."""
     app = applicable(**kw)
     if not app:
         raise RuntimeError("internal: no class applies")
-    return min(app, key=CLASSES.index)
+    best = min(app, key=CLASSES.index)
+    crit = kw.get("criteria") or {}
+    if (not kw.get("invalid") and crit and not crit["P1"] and kw.get("p1_em") is None
+            and CLASSES.index(best) > CLASSES.index(MAKER)):
+        return NOGO
+    return best
 
 
 # --- P helpers -------------------------------------------------------------------------------------------
@@ -148,7 +162,7 @@ def active_days(marks: pd.DataFrame) -> int:
     ticks (AMB-22 (h))."""
     if marks is None or len(marks) == 0:
         return 0
-    ts = np.asarray(marks["ts"].to_numpy(), dtype=np.int64)
+    ts = ns_array(marks["ts"].to_numpy(), "marks.ts")
     g, e = _col(marks, "gross_legs", "marks"), _col(marks, "equity", "marks")
     on = g >= ACC.p4["gross_frac"] * e
     days = ts // D
@@ -179,9 +193,12 @@ def max_drawdown(run: BookRun, led: Ledger) -> float:
 
 
 def drawdown_killed(run: BookRun) -> bool:
-    """A drawdown kill happened: a decision saw ``killed`` or any fill has reason ``kill``."""
+    """A drawdown kill happened: a decision saw ``killed`` or any fill has reason ``kill``. A decisions table
+    without the ``killed`` column is refused (fail closed)."""
     dec = run.decisions
-    k = bool(dec is not None and "killed" in dec.columns and dec["killed"].any())
+    if dec is None or "killed" not in dec.columns:
+        raise ValueError("decisions table without the 'killed' column (P3 kill check)")
+    k = bool(dec["killed"].astype(bool).any())
     if run.fills is not None and len(run.fills) and "reason" in run.fills.columns:
         k |= bool((run.fills["reason"] == "kill").any())
     return k
@@ -213,7 +230,7 @@ def p8_slope(yhat_cal, y, dates) -> float:
     if not (len(x) == len(t) == len(dates)) or len(x) == 0 or not (np.isfinite(x).all()
                                                                     and np.isfinite(t).all()):
         raise ValueError("P8: lengths differ, empty or non-finite input")
-    w = _date_weights(dates)
+    w = date_weights(dates)
     mx, my = float(w @ x), float(w @ t)
     vx = float(w @ (x - mx) ** 2)
     return float(w @ ((x - mx) * (t - my))) / vx if vx > 1e-300 else float("nan")
@@ -232,7 +249,7 @@ def ece(p, y_pos, dates, bins: int = ACC.ece_bins) -> float:
         raise ValueError("ECE: lengths differ or fewer rows than bins")
     if not (np.isfinite(pa).all() and np.isin(ya, (0.0, 1.0)).all()):
         raise ValueError("ECE: non-finite P-hat or non-binary y_pos")
-    w = _date_weights(dates)
+    w = date_weights(dates)
     order = np.argsort(pa, kind="stable")
     return float(sum(abs(float(w[b] @ (ya[b] - pa[b]))) for b in np.array_split(order, bins)))
 
@@ -249,18 +266,27 @@ def p7(pred, y, dates, B: int, seed: int) -> tuple[bool, dict]:
 
 # --- verdict ---------------------------------------------------------------------------------------------
 @dataclass(frozen=True)
+class K8Rates:
+    """K8 inputs for the holdout run: shares (0..1) of invalid labels and of missing funding records."""
+
+    invalid_label_rate: float
+    missing_funding_rate: float
+
+
+@dataclass(frozen=True)
 class HoldoutInputs:
     ml_T: BookRun
     a0_T: BookRun
-    ml_M: BookRun
-    a0_M: BookRun
+    ml_M: BookRun  # secondary (S-6.2): P1(E_M) and comparison 4 only
+    a0_M: BookRun  # secondary (S-6.2)
     quarter_edges: Sequence[int]
     ic: tuple  # (pred, y_reg, dates) of the ML* regression model on W_HOLD (P7)
     calib: tuple  # (ŷ_cal, y_reg(h*), dates) over every eligible W_HOLD candidate (P8-primary)
     dev_mean_daily_net: float  # P10: ML* out-of-fold mean daily net on W_DEV
-    dev_kill: Sequence[str] = ()
-    leakage: Sequence[str] = ()
-    integrity: Sequence[str] = ()  # guard / K8 / Stage 0-type findings (any -> INVALID RUN)
+    dev_kill: Sequence[str]  # S-10.7 result (must be empty: a kill never opens the holdout)
+    leakage: Sequence[str]  # L1–L14 findings, any model
+    integrity: Sequence[str]  # guard / Stage 0-type integrity findings (any -> INVALID RUN)
+    k8: K8Rates
     secondary: Mapping[str, tuple[BookRun | Ledger, BookRun | Ledger] | None] | None = None
     a1_calib: tuple | None = None  # (P̂_cal, y_pos, dates) of the A1 classifier on W_HOLD (P8-classifier)
     B: int = stats.B_DEFAULT
@@ -273,13 +299,20 @@ class Verdict:
     reasons: tuple[str, ...]
     applicable: tuple[str, ...] = ()
     criteria: dict[str, bool] = field(default_factory=dict)
-    p1_em: bool | None = None
+    p1_em: bool | None = None  # None: unavailable (an E_M run invalid / not accountable)
+    maker_split_undecidable: bool = False
     details: dict = field(default_factory=dict)
     secondary: dict = field(default_factory=dict)
     a1_better: bool | None = None
 
 
-def _check_roles(x: HoldoutInputs) -> None:
+def _seq(v, what: str) -> tuple[str, ...]:
+    if v is None or isinstance(v, str) or not isinstance(v, Sequence):
+        raise ValueError(f"{what} must be a sequence of findings (empty = checked, nothing found)")
+    return tuple(str(s) for s in v)
+
+
+def _check_inputs(x: HoldoutInputs) -> None:
     if x.ml_T.arm not in ("A2", "A3") or x.ml_M.arm != x.ml_T.arm:
         raise ValueError("ML* must be the A2 / A3 run under both E_T and E_M")
     if x.a0_T.arm != "A0" or x.a0_M.arm != "A0":
@@ -291,36 +324,55 @@ def _check_roles(x: HoldoutInputs) -> None:
         raise ValueError("execution models must be E_T, E_T, E_M, E_M")
     if not math.isfinite(x.dev_mean_daily_net):
         raise ValueError("dev_mean_daily_net must be finite")
+    if _seq(x.dev_kill, "dev_kill"):
+        raise ValueError("S-10.7 development kill: the holdout is never opened (NO-GO: no viable edge, K3)")
+    _seq(x.leakage, "leakage")
+    _seq(x.integrity, "integrity")
+    if not isinstance(x.k8, K8Rates):
+        raise ValueError("k8 must be K8Rates")
+    for v in (x.k8.invalid_label_rate, x.k8.missing_funding_rate):
+        if isinstance(v, bool) or not (isinstance(v, int | float) and math.isfinite(v) and 0.0 <= v <= 1.0):
+            raise ValueError(f"K8 rate must be a share in [0, 1], got {v!r}")
 
 
-def _usable(obj: BookRun | Ledger) -> Ledger | None:
-    if isinstance(obj, BookRun):
-        if not obj.valid:
-            return None
-        obj = account(obj)
-    return obj if (k10_ok(obj) and daily_ok(obj)) else None
+def _usable(obj: BookRun | Ledger | None) -> tuple[Ledger | None, str | None]:
+    """A secondary run's ledger, or (None, why): not supplied, invalid, not accountable (any exception, e.g. a
+    missing B) or failing K10 / the daily identity. Voids only its own comparison (S-13.4)."""
+    if obj is None:
+        return None, "not supplied"
+    if isinstance(obj, BookRun) and not obj.valid:
+        return None, str(obj.invalid)
+    try:
+        led = obj if isinstance(obj, Ledger) else account(obj)
+        ok = k10_ok(led) and daily_ok(led)
+    except Exception as e:  # a non-accountable secondary run voids only its own comparison
+        return None, f"not accountable: {type(e).__name__}: {e}"
+    return (led, None) if ok else (None, INTEGRITY_K10)
 
 
 def secondary_family(pairs: Mapping[str, tuple | None], a1_calib: tuple | None, B: int, seed: int
                      ) -> tuple[dict, bool]:
     """S-13.3: the CBB diff test (max p over ℓ ∈ {14, 28}) of each of the 6 pairs, Holm across the 6; the A1
-    claim needs Holm rejection and P8-classifier."""
+    claim needs Holm rejection and P8-classifier. An unusable or misaligned pair is "unavailable"."""
     if set(pairs) != set(SECONDARY):
         raise ValueError(f"the secondary family must be exactly {SECONDARY}")
     out: dict[str, dict] = {}
     raw: dict[str, float | None] = {}
     for name in SECONDARY:
         pair = pairs[name]
-        la = lb = None
-        if pair is not None:
-            la, lb = _usable(pair[0]), _usable(pair[1])
-        if la is None or lb is None:
-            out[name] = dict(available=False, p=None, mean_x=None)
-            raw[name] = None
-            continue
-        _, x = stats.paired(la, lb)
-        raw[name] = stats.p_max_over_blocks(x, stats.BLOCKS, B, seed)
-        out[name] = dict(available=True, p=raw[name], mean_x=float(np.mean(x)))
+        la, why_a = _usable(pair[0] if pair is not None else None)
+        lb, why_b = _usable(pair[1] if pair is not None else None)
+        why = why_a or why_b
+        p = mean_x = None
+        if why is None:
+            try:
+                _, x = stats.paired(la, lb)
+                p = stats.p_max_over_blocks(x, stats.BLOCKS, B, seed)
+                mean_x = float(np.mean(x))
+            except ValueError as e:
+                why = f"not comparable: {e}"
+        raw[name] = p
+        out[name] = dict(available=why is None, p=p, mean_x=mean_x, why=why)
     adj = stats.holm(raw)
     for name in SECONDARY:
         out[name]["p_holm"] = adj[name]
@@ -330,30 +382,50 @@ def secondary_family(pairs: Mapping[str, tuple | None], a1_calib: tuple | None, 
     return out, bool(out["A1 vs A0"]["rejects"] and out["P8-classifier"]["holds"])
 
 
+def _p1_em(x: HoldoutInputs) -> tuple[stats.CBBResult | None, str | None]:
+    """P1 under E_M (ML* E_M vs A0 E_M), or (None, why) when either E_M run is unusable (AMB-22 (g))."""
+    mlm, why_m = _usable(x.ml_M)
+    a0m, why_a = _usable(x.a0_M)
+    if why_m or why_a:
+        return None, f"ML* E_M: {why_m}" if why_m else f"A0 E_M: {why_a}"
+    try:
+        rm, xm = stats.paired(mlm, a0m)
+    except ValueError as e:
+        return None, f"not comparable: {e}"
+    return stats.cbb_test(rm, xm, stats.BLOCKS, x.B, x.seed), None
+
+
 def holdout(x: HoldoutInputs) -> Verdict:
     """The S-13.4 verdict on ``W_HOLD`` (most severe applicable class)."""
-    _check_roles(x)
-    leak, kill = bool(x.leakage), bool(x.dev_kill)
-    reasons = [f"leakage: {s}" for s in x.leakage] + [f"S-10.7: {s}" for s in x.dev_kill]
-    req = {"ML* E_T": x.ml_T, "A0 E_T": x.a0_T, "ML* E_M": x.ml_M, "A0 E_M": x.a0_M}
+    _check_inputs(x)
+    leak = bool(x.leakage)
+    reasons = [f"leakage: {s}" for s in x.leakage]
+    req = {"ML* E_T": x.ml_T, "A0 E_T": x.a0_T}
+    det: dict = dict(k8=x.k8, run_integrity={k: tuple(r.integrity) for k, r in
+                                             {**req, "ML* E_M": x.ml_M, "A0 E_M": x.a0_M}.items()})
     bad = [f"{k}: {r.invalid}" + (f" ({r.invalid_detail})" if r.invalid_detail else "")
            for k, r in req.items() if not r.valid]
     bad += [f"integrity: {s}" for s in x.integrity]
+    lim = FROZEN.invalid_max
+    if x.k8.invalid_label_rate > lim:
+        bad.append(f"K8: invalid labels {x.k8.invalid_label_rate:.4%} > {lim:.1%}")
+    if x.k8.missing_funding_rate > lim:
+        bad.append(f"K8: missing funding {x.k8.missing_funding_rate:.4%} > {lim:.1%}")
     leds: dict[str, Ledger] = {}
-    if not bad:
+    if all(r.valid for r in req.values()):
         leds = {k: account(r) for k, r in req.items()}
         bad += [f"{k}: {INTEGRITY_K10}" for k, led in leds.items() if not (k10_ok(led) and daily_ok(led))]
     if bad:
-        app = applicable(invalid=True, leakage=leak, dev_kill=kill, criteria={}, p1_em=None)
-        return Verdict(INVALID, tuple(bad + reasons), tuple(app))
+        app = applicable(invalid=True, leakage=leak, dev_kill=False, criteria={}, p1_em=None)
+        return Verdict(INVALID, tuple(bad + reasons), tuple(app), details=det)
 
-    ml, a0, mlm, a0m = leds["ML* E_T"], leds["A0 E_T"], leds["ML* E_M"], leds["A0 E_M"]
+    ml, a0 = leds["ML* E_T"], leds["A0 E_T"]
     r, xd = stats.paired(ml, a0)
     t1 = stats.cbb_test(r, xd, stats.BLOCKS, x.B, x.seed)
-    rm, xm = stats.paired(mlm, a0m)
-    t1m = stats.cbb_test(rm, xm, stats.BLOCKS, x.B, x.seed)
+    t1m, em_why = _p1_em(x)
+    p1_em = None if t1m is None else t1m.holds
+    det.update(p1=t1, p1_em=t1m, p1_em_unavailable=em_why)
     crit: dict[str, bool] = {}
-    det: dict = dict(p1=t1, p1_em=t1m)
     crit["P1"] = t1.holds
     ratio = ml.C_exec / ml.F_net if ml.F_net > 0 else float("inf")
     crit["P2"] = bool(ml.F_net > 0 and ratio <= ACC.p2_ratio)
@@ -376,13 +448,17 @@ def holdout(x: HoldoutInputs) -> Verdict:
     sec, a1 = ({}, None)
     if x.secondary is not None:
         sec, a1 = secondary_family(x.secondary, x.a1_calib, x.B, x.seed)
-    app = applicable(invalid=False, leakage=leak, dev_kill=kill, criteria=crit, p1_em=t1m.holds)
-    cls = min(app, key=CLASSES.index)
+    kw = dict(invalid=False, leakage=leak, dev_kill=False, criteria=crit, p1_em=p1_em)
+    app = applicable(**kw)
+    cls = classify(**kw)
+    undecidable = not crit["P1"] and p1_em is None
     reasons += [f"{p} fails" for p in P_IDS if not crit[p]]
-    return Verdict(cls, tuple(reasons), tuple(app), crit, t1m.holds, det, sec, a1)
+    if undecidable:
+        reasons.append(f"maker_split_undecidable: P1(E_M) unavailable ({em_why})")
+    return Verdict(cls, tuple(reasons), tuple(app), crit, p1_em, undecidable, det, sec, a1)
 
 
-__all__ = ["ADVANCE", "CLASSES", "HoldoutInputs", "INCONCLUSIVE", "INVALID", "K_TABLE", "LEAKAGE", "MAKER",
-           "NOGO", "NO_EDGE", "P_IDS", "SECONDARY", "Verdict", "active_days", "applicable", "classify",
-           "closed_legs", "drawdown_killed", "ece", "holdout", "max_drawdown", "p4", "p5", "p7", "p8_ok",
-           "p8_slope", "secondary_family"]
+__all__ = ["ADVANCE", "CLASSES", "HoldoutInputs", "INCONCLUSIVE", "INVALID", "K8Rates", "K_TABLE", "LEAKAGE",
+           "MAKER", "NOGO", "NO_EDGE", "P_IDS", "SECONDARY", "Verdict", "active_days", "applicable",
+           "classify", "closed_legs", "drawdown_killed", "ece", "holdout", "max_drawdown", "p4", "p5", "p7",
+           "p8_ok", "p8_slope", "secondary_family"]
