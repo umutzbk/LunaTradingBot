@@ -154,3 +154,26 @@ Additional interpretations under AMB-04 (all implementation clarifications):
 - (d) **Selection result and families.** EN and LightGBM regressors are selected separately (A2 = EN, A3 = LightGBM, S-7.2), each over its own 6 configs; `select_hparams` returns a `Selection` (cfg, best_iter, ic, scores) because the refit needs the early-stopped tree count. Ties on IC go to the first candidate in search-space order. Classification: implementation clarification.
 - (e) **Classifiers.** Both fixed classifiers are fitted per fold (LightGBM: tree count early-stopped on T_sel logloss; logistic EN has no stop phase), refit on T_fit, isotonic on T_cal; not selected.
 - (f) **Determinism.** Samples are sorted by (decision_ts, symbol, side) before use; duplicate keys raise. Classification: implementation clarification (S-17 deterministic ordering).
+
+## AMB-13 - FL30 units, rank key of ML arms, A1 mapping, NaN handling (Task 13)
+
+- Spec: S-7.2, S-9 (FL30 = mean r8), S-0.6, DEC-8.
+- Literal text: "c is the frozen V5 `carry_per_hour` on FL30"; ML arms "ranking: yhat(h*)", "hurdle yhat_cal > 0".
+- (a) **Units.** V5 `carry_per_hour(side, rel_rate)` expects a per-hour relative rate; V7 FL30 is a mean r8 (per 8 h). Code: `c = carry_per_hour(side, FL30 / 8)`, `h*` in hours. Classification: implementation clarification.
+- (b) **Rank key of A2 / A3.** The raw `yhat` (not `yhat_cal`) orders candidates (with b = 0 `yhat_cal` is a constant, so ordering by it would be void); the hurdle uses `yhat_cal > 0` (strict). `ml_score(yhat, yhat_cal)` therefore takes both (brief had `ml_score(yhat_cal)`). Classification: implementation clarification.
+- (c) **A1 classifier.** ML* = A2 -> `p_logit_en_cal`, ML* = A3 -> `p_lgb_clf_cal` (spec text). A1 keeps vetoed rows in the output with `passes_hurdle = False` (A0 order unchanged). NaN / missing P-hat vetoes (fail closed); P >= 0.50 passes.
+- (d) **Gate-failing candidates / NaN scores.** `arm_scores` raises unless every row has `gate_ok` True and (symbol, side) is unique; NaN scores never pass and sort last. Ties: (symbol, side). Classification: implementation clarification.
+
+## AMB-14 - TS references: EWMA and AR(1) projection (Task 13)
+
+- Spec: S-7.2 TS references, DEC-20.
+- Literal text: "EWMA(r8, half-life 72 h)" and "an AR(1) on r8 fitted on the last 30 d and projected to h*".
+- Code: EWMA weights `0.5 ** (age_h / 72)` with age from the settlement time to decision time t, over valid finite r8 settled at ts <= t - 60 s (the settlement time stands in for known_at). AR(1): OLS of r[k+1] on r[k] with intercept over the supplied last-30-d series (>= 10 finite obs, non-constant, else NaN); projected `steps = h*/8` settlements ahead by iterating the fitted map from the last observation; the forecast is the MEAN of the projected path r_hat[n+1..n+steps] (a carry-rate forecast averaged over the horizon, the quantity FL30 estimates), not the terminal value. The result is fed as `fl30_r8` into `a0_score`. Classification: implementation clarification (reference only, no test).
+
+## AMB-15 - A0-V5 reference adapter and frozen-config pin (Task 13)
+
+- Spec: S-7.2 A0-V5 row.
+- (a) `luna/carry/outcome_guard.frozen_carry_config()` does not exist on this branch. The pin is therefore local: `arms.V5_FROZEN_KNOBS` (k 2, gross 1, cost_aware, H 168, improvement 5 bps, mult 1.5, buffer 5 bps, min hold 24 h, hold_rank_buffer 0, max_actions 4, max_net_frac 0.10) is compared to config/default.yaml `carry:` and to a sha256 (`V5_FROZEN_KNOBS_SHA256`); any difference raises (fail closed). The universe is replaced by the V7 symbols.
+- (b) Adapter (`a0_v5_reference`): `AssetSignal.fl = FL30_r8 / 8` (per hour), `side_cost` = V7 per-side cost, `eligible` = the V7 gate result; all other AssetSignal fields (quotes, depth, volume, persistence, ...) are NaN because `decide` does not read them (gates are applied upstream by V7, not by V5 `compute_signals`). `DecisionInput` uses `allow_rebalance=True`, `opens_allowed=True`, no forced exits, no cooldown. V5 `HeldLeg` carries USD notional and entry time; V7 book state is not mapped here (callers pass legs or none; no position ids invented).
+- (c) NOT mapped / BLOCKED: V5's per-side cost uses its own live half spread and 2 bps slippage, V7 uses h-hat(t) + 2 bps; V5's risk layer (stops, cooldowns, kill switch) and its event-time evaluation are not part of `decide` and are not reproduced, so the reference is a decision-rule reference on V7 data, not a full V5 replay. No test on its economics (reference only).
+- Classification: implementation clarification.
