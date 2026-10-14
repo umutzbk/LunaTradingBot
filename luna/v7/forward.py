@@ -76,7 +76,7 @@ class NoForwardTest(RuntimeError):
 # --- times -------------------------------------------------------------------------------------------------
 def t_f7(review_pass_ns: int) -> int:
     """The first 00:00 UTC ≥ 24 h after the independent review PASS."""
-    x = to_ns(review_pass_ns) + D
+    x = to_ns(review_pass_ns) + FW.tf7_delay_h * H
     return -(-x // D) * D
 
 
@@ -99,7 +99,7 @@ def l7(t_f7_ns: int, r_v6: int | None, extended: bool = False) -> int | None:
     end = w_fwd7(t_f7_ns, extended)[1]
     if r_v6 is None:
         return None
-    return max(end, to_ns(r_v6)) + D
+    return max(end, to_ns(r_v6)) + FW.l7_pad_days * D
 
 
 def r_v6_strict_default(repo: Path | None = None) -> int:

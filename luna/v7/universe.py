@@ -30,7 +30,7 @@ from luna.v7.spread import half_spread
 from luna.v7.timeutil import MIN, D, H, ns_array, to_ns
 
 BAR_15M = 15 * MIN
-BARS_PER_DAY = 96
+BARS_PER_DAY = FROZEN.universe.u4_window_h * H // BAR_15M  # U4: the 96 bars of the last 24 h
 U = FROZEN.universe
 
 # S-2.1: stablecoin bases; BTCUSDT is the hedge instrument only; DEC-30: Stage 0 unknown-type symbols.
@@ -282,7 +282,7 @@ def _month_start(ns: int) -> pd.Timestamp:
 def d0_month(counts_by_decision: Mapping[int, int]) -> str | None:
     """S-1.8: first calendar-month start >= FROZEN.d0 where every decision (00:05, 08:05, 16:05 UTC of every
     day) has >= 30 G_D0 symbols. A month with a missing decision does not qualify (fail closed)."""
-    n_min = 30
+    n_min = U.d0_min_symbols
     d0 = pd.Timestamp(FROZEN.d0)
     by_month: dict[pd.Timestamp, dict[int, int]] = {}
     for ts_, c in counts_by_decision.items():

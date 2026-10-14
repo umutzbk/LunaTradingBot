@@ -55,9 +55,11 @@ class Universe:  # S-2.3 gates U1..U8
     u3_days: int = 30
     u3_gap_lookback_days: int = 7
     u4_min_coverage: float = 0.95
+    u4_window_h: int = 24  # U4: "in the last 24 h"
     u5_max_half_spread: float = 7.5e-4
     u7_slack_min: int = 15
     u8_window: tuple[int, int] = (60, 1)
+    d0_min_symbols: int = 30  # S-1.8 (DEC-2): >= 30 G_D0 symbols at every decision of the month
 
 
 @dataclass(frozen=True)
@@ -115,9 +117,18 @@ class A0:  # S-7 A0 reference arm
 
 
 @dataclass(frozen=True)
-class CV:  # S-10.3 / S-10.4
+class TSRef:  # S-7.2 TS reference arms (DEC-20)
+    ewma_half_life_h: int = 72
+    ar1_days: int = 30
+
+
+@dataclass(frozen=True)
+class CV:  # S-10.2 / S-10.3 / S-10.4
     purge_ns: int = 24 * H
     iso_clip: tuple[float, float] = (0.001, 0.999)
+    first_test_months: int = 24  # S-10.2: first test quarter begins >= D0 + 24 months
+    min_folds: int = 8  # S-10.2 (DEC-15): fewer outer folds is STAGE-0 FAIL
+    block_months: tuple[int, int] = (12, 6)  # S-10.4: T_sel = [C - 12 mo, C - 6 mo), T_cal = [C - 6 mo, C)
 
 
 @dataclass(frozen=True)
@@ -184,6 +195,8 @@ class Forward:  # S-15 (DEC-10), scaled to 180 days
     shift_max_h: int = 2
     gap_h: int = 24
     extension_days: int = 90
+    tf7_delay_h: int = 24  # T_F7 = the first 00:00 UTC >= 24 h after the review PASS
+    l7_pad_days: int = 1  # L7 = max(T_F7 + 180 d, R_V6) + 1 d
 
 
 @dataclass(frozen=True)
@@ -212,6 +225,7 @@ class Frozen:
     beta: Beta = field(default_factory=Beta)
     a0: A0 = field(default_factory=A0)
     a1_veto: float = 0.50  # S-7 A1 probability veto
+    ts_ref: TSRef = field(default_factory=TSRef)
     cv: CV = field(default_factory=CV)
     search: Search = field(default_factory=Search)
     stats: Stats = field(default_factory=Stats)

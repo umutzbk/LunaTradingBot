@@ -28,7 +28,7 @@ from luna.v7.timeutil import D, H, ns_array
 from luna.v7.universe import pit_funding
 
 R8_H = 8.0  # hours per r8 unit
-EWMA_HALF_LIFE_H = 72
+EWMA_HALF_LIFE_H = FROZEN.ts_ref.ewma_half_life_h  # DEC-20
 AR1_MIN_OBS = 10
 
 _FAMILY = {"A2": ("en", "logit_en"), "A3": ("lgb_reg", "lgb_clf")}  # ML* -> (regressor, classifier)
@@ -183,7 +183,7 @@ def ts_ar1_r8(f: pd.DataFrame, cur: Instance, t_ns: int, steps: int) -> float:
     if steps < 1:
         raise ValueError("steps must be >= 1")
     ts, x = _valid_r8(f, cur, t_ns)
-    keep = ts > int(t_ns) - 30 * D
+    keep = ts > int(t_ns) - FROZEN.ts_ref.ar1_days * D
     ts, x = ts[keep], x[keep]
     if len(x) < 2:
         return math.nan

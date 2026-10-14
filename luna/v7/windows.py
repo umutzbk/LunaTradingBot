@@ -16,7 +16,7 @@ from luna.v7.timeutil import MIN, D, to_ns
 D0 = to_ns(FROZEN.d0)
 W_DEV = (D0, to_ns(FROZEN.w_dev_end))  # S-1.4
 W_HOLD = (to_ns(FROZEN.w_dev_end), to_ns(FROZEN.w_hold_end))  # S-1.4, sealed
-MIN_FOLDS = 8  # S-10.2: fewer folds is STAGE-0 FAIL
+MIN_FOLDS = FROZEN.cv.min_folds  # S-10.2: fewer folds is STAGE-0 FAIL
 
 
 @dataclass(frozen=True)
@@ -45,14 +45,15 @@ def _shift_months(ns: int, months: int) -> int:
 
 def _blocks(cutoff: int, d0: int) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int]]:
     """S-10.4: T_tr [D0, C-12mo), T_sel [C-12mo, C-6mo), T_cal [C-6mo, C)."""
-    c12, c6 = _shift_months(cutoff, -12), _shift_months(cutoff, -6)
+    m_sel, m_cal = FROZEN.cv.block_months
+    c12, c6 = _shift_months(cutoff, -m_sel), _shift_months(cutoff, -m_cal)
     return (d0, c12), (c12, c6), (c6, cutoff)
 
 
 def outer_folds(d0: int) -> list[Fold]:
     """Consecutive calendar quarters, the first starting >= D0 + 24 mo, ending at W_DEV end (S-10.2)."""
     end = W_DEV[1]
-    earliest = _shift_months(d0, 24)
+    earliest = _shift_months(d0, FROZEN.cv.first_test_months)
     q = pd.Timestamp(earliest, tz="UTC").normalize().replace(day=1)
     while int(q.value) < earliest or q.month not in (1, 4, 7, 10):
         q = q + pd.DateOffset(months=1)
