@@ -11,11 +11,13 @@ re-simulates anything. An invalid run (``run.invalid`` set) is refused (``ValueE
   An instrument j is one (symbol, instance) (E10); leg and hedge books are separate instruments.
 * **Episodes:** maximal intervals with a non-zero, constant-sign leg position of one (symbol, instance);
   β̂_episode = the ``beta`` of the episode's opening fill (β̂ of the opening decision). **Clusters:** episodes
-  of the same (asset, side), each starting ≤ ``gap_h`` (72) h after the previous one ended; the asset is the
-  instrument instance (AMB-21 (a)). PR_c, mkt_c = Σ q(e_k⁺) p(e_k) β̂ (B(e_{k+1}) / B(e_k) − 1) with B the
-  fill's ``btc_ref`` / the tick's ``marks.btc_mark``; ρ_c = PR_c − mkt_c; MKT = Σ mkt_c + PR_BTC.
+  of the same (instance, side), each starting ≤ ``gap_h`` (72) h after the previous one ended; N_a and the
+  per-asset ρ pool a symbol's instances (asset = symbol, AMB-21 (a)). PR_c, mkt_c = Σ q(e_k⁺) p(e_k) β̂
+  (B(e_{k+1}) / B(e_k) − 1) with B the fill's ``btc_ref`` / the tick's ``marks.btc_mark`` (a missing B
+  raises, AMB-21 (b)); ρ_c = PR_c − mkt_c; MKT = Σ mkt_c + PR_BTC.
 * **K10:** |Σ ρ_c + MKT − PR| ≤ 1e-9 · Σ |qty · ref_mid| and PR equal to the engine's daily price column
-  (per day and in total, same tolerance; AMB-21 (c)).
+  (per day and in total, same tolerance; AMB-21 (c)); summation by parts holds (q_after = q + dq up to the
+  engine's 1e-9 close clamp, and −Σ dq·p(f) = PR). A held position without a tick row raises.
 * **S-8.4:** N_a = Σ over a's clusters of (leg funding + PR_c − leg C_exec); H = F_hedge + PR_BTC − hedge
   C_exec; NET = Σ_a N_a + H.
 * **P11:** NET_trim = NET − Σ_{Top_m} max(ρ_c, 0) − max(MKT, 0), m = max(3, ⌈0.05 n_clusters⌉).
@@ -39,7 +41,7 @@ from luna.v7.timeutil import H, ns_array
 
 K10_REL = 1e-9  # K10 tolerance: 1e-9 x sum |fill notional|
 GAP_H = 72  # S-8.3 cluster gap
-_Q_REL = 1e-6  # q_after vs q_before + dq (the engine books an exit of >= (1 - 1e-9) |q| as a close)
+_Q_REL = 1e-9  # q_after vs q_before + dq: the engine books an exit of >= (1 - 1e-9) |q| as a close
 
 
 @dataclass(frozen=True)
@@ -91,6 +93,10 @@ class Cluster:
         return math.fsum(e.mkt for e in self.episodes)
 
     @property
+    def symbol(self) -> str:
+        return self.episodes[0].symbol
+
+    @property
     def rho_c(self) -> float:
         return self.pr_c - self.mkt_c
 
@@ -137,12 +143,13 @@ class Ledger:
     PR: float
     PR_legs: float
     PR_BTC: float
-    PR_fills: float  # −Σ dq · ref_mid (S-8.3 summation by parts; a diagnostic)
+    PR_fills: float  # −Σ dq · ref_mid (S-8.3 summation by parts; checked by K10)
     MKT: float
     fill_notional: float
     equity_change: float  # the engine's equity change over the window
     daily: pd.DataFrame  # recomputed from the events
     daily_engine: pd.DataFrame = field(repr=False)
+    q_breaks: tuple[str, ...] = ()  # fills whose q_after != q_before + dq beyond the close clamp (K10)
 
     @property
     def F_net(self) -> float:
@@ -309,6 +316,7 @@ class _Walk:
     price_day: np.ndarray
     fills: list[dict]
     days: _Days
+    q_breaks: list[str]
 
 
 def _sgn(x: float) -> int:
@@ -352,6 +360,7 @@ def _walk(run: BookRun) -> _Walk:
     pid_ep: dict[str, _Ep] = {}
     pr_legs: list[float] = []
     pr_btc: list[float] = []
+    q_breaks: list[str] = []
     for (role, sym, inst), stream in sorted(streams.items()):
         leg = role == "leg"
         qs: dict[str, float] = {}
@@ -364,8 +373,9 @@ def _walk(run: BookRun) -> _Walk:
             q = math.fsum(qs.values())
             if kind == 1:
                 q_new_pid = qs.get(pid, 0.0) + row["direction"] * row["qty"]
-                if abs(row["q_after"] - q_new_pid) > _Q_REL * max(abs(qs.get(pid, 0.0)), row["qty"]):
-                    raise ValueError(f"fill {pid}@{ts}: q_after {row['q_after']} != q + dq {q_new_pid}")
+                scale = max(abs(qs.get(pid, 0.0)), row["qty"])
+                if abs(row["q_after"] - q_new_pid) > _Q_REL * scale + 4 * math.ulp(scale):
+                    q_breaks.append(f"{pid}@{ts}")  # a summation-by-parts break: K10 fails
                 qs_after = dict(qs)
                 if row["q_after"] == 0.0:
                     qs_after.pop(pid, None)
@@ -421,7 +431,29 @@ def _walk(run: BookRun) -> _Walk:
             p_prev, b_prev = p, b
         if qs:
             raise ValueError(f"{sym}#{inst} ({role}) is not flat at the end of the run")
-    return _Walk(episodes, pid_ep, math.fsum(pr_legs), math.fsum(pr_btc), price_day, fills, days)
+    _check_ticks(events, np.array(sorted(btc_mark), dtype=np.int64))
+    return _Walk(episodes, pid_ep, math.fsum(pr_legs), math.fsum(pr_btc), price_day, fills, days, q_breaks)
+
+
+def _check_ticks(events: list[tuple[int, int, int, dict]], grid: np.ndarray) -> None:
+    """Fail closed when a held position has no ``positions`` row at a 15-minute tick (a ``marks`` row): its
+    S-8.3 event list would be incomplete. A tick at a fill's timestamp precedes the fill."""
+    by_pid: dict[str, list[tuple[int, int, dict]]] = {}
+    for ts, kind, _, row in events:
+        by_pid.setdefault(str(row["position_id"]), []).append((ts, kind, row))
+    for pid, evs in by_pid.items():
+        q, prev_ts = 0.0, None
+        for ts, kind, row in evs:
+            if q != 0.0 and prev_ts is not None:
+                n = int(np.searchsorted(grid, ts, "left") - np.searchsorted(grid, prev_ts, "right"))
+                if kind == 1 and ts > prev_ts and bool(np.any(grid == ts)):
+                    n += 1  # the tick at the fill's ts would be this position's event just before the fill
+                if n > 0:
+                    raise ValueError(f"tick missing: {pid} is held but has no positions row at a tick in "
+                                     f"({prev_ts}, {ts}] (S-8.3 event list incomplete)")
+            if kind == 1:
+                q = float(row["q_after"])
+            prev_ts = ts
 
 
 def _cluster(eps: list[Episode], gap_h: float) -> tuple[Cluster, ...]:
@@ -511,7 +543,7 @@ def account(run: BookRun) -> Ledger:
         slip_hedge=s[("hedge", "slip_cost")],
         PR=w.pr_legs + w.pr_btc, PR_legs=w.pr_legs, PR_BTC=w.pr_btc, PR_fills=math.fsum(pr_fills),
         MKT=math.fsum(c.mkt_c for c in cl) + w.pr_btc, fill_notional=math.fsum(notional),
-        equity_change=eq1 - eq0, daily=daily, daily_engine=eng,
+        equity_change=eq1 - eq0, daily=daily, daily_engine=eng, q_breaks=tuple(w.q_breaks),
     )
 
 
@@ -522,12 +554,15 @@ def _tol(led: Ledger) -> float:
 
 def k10_ok(led: Ledger) -> bool:
     """K10: |Σ ρ_c + MKT − PR| ≤ 1e-9 Σ|fill notional|, and PR equals the engine's daily price column (in
-    total and per day, same tolerance; AMB-21 (c))."""
+    total and per day, same tolerance; AMB-21 (c)). The S-8.3 summation by parts must also hold: no fill with
+    q_after != q_before + dq beyond the engine's close clamp, and |−Σ dq·p(f) − PR| within the tolerance."""
     tol = _tol(led)
     eng = led.daily_engine["price"].to_numpy(dtype=float)
     if not np.all(np.isfinite(eng)) or len(eng) != len(led.daily):
         return False
-    return bool(abs(led.rho_sum + led.MKT - led.PR) <= tol
+    return bool(not led.q_breaks
+                and abs(led.rho_sum + led.MKT - led.PR) <= tol
+                and abs(led.PR_fills - led.PR) <= tol
                 and abs(led.PR - math.fsum(eng)) <= tol
                 and np.all(np.abs(led.daily["price"].to_numpy() - eng) <= tol))
 
@@ -550,10 +585,19 @@ def daily_ok(led: Ledger) -> bool:
 
 
 def per_asset_net(led: Ledger) -> dict[str, float]:
-    """S-8.4 N_a per asset (instrument instance, AMB-21 (a)); NET = Σ_a N_a + ``led.H``."""
+    """S-8.4 N_a per asset = per SYMBOL (instances of one symbol pooled; AMB-21 (a), conservative for P5);
+    NET = Σ_a N_a + ``led.H``."""
     out: dict[str, list[float]] = {}
     for c in led.clusters:
-        out.setdefault(c.asset, []).append(c.net)
+        out.setdefault(c.symbol, []).append(c.net)
+    return {a: math.fsum(v) for a, v in sorted(out.items())}
+
+
+def per_asset_rho(led: Ledger) -> dict[str, float]:
+    """§12 per-asset ρ: Σ ρ_c per symbol (as ``per_asset_net``)."""
+    out: dict[str, list[float]] = {}
+    for c in led.clusters:
+        out.setdefault(c.symbol, []).append(c.rho_c)
     return {a: math.fsum(v) for a, v in sorted(out.items())}
 
 
@@ -641,4 +685,4 @@ def stressed(run: BookRun, fee: float = 1.5, slip: float = 1.5, spread: float = 
 
 __all__ = ["Cluster", "Episode", "Ledger", "account", "clusters", "daily_ok", "episodes", "k10_ok",
            "m_rule", "mean_daily_net", "mean_daily_return", "net_trim", "p11_ok", "per_asset_net",
-           "period_net", "stressed", "top_rho"]
+           "per_asset_rho", "period_net", "stressed", "top_rho"]

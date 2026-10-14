@@ -215,6 +215,18 @@ def test_k10_invariant_holds_and_detects_break():
     daily.loc[0, "price"] -= 1e-3
     daily.loc[2, "price"] += 1e-3  # total unchanged, the day split is wrong
     assert not acc.k10_ok(acc.account(make_run(fills, ticks, funding, bm, daily)))
+    # a summation-by-parts break: q_after drifted by 1e-7 * qty (beyond the engine's 1e-9 close clamp)
+    fills, ticks, funding, bm, daily = scenario_parts()
+    fills[3]["q_after"] = 3.0 * (1 + 1e-7)
+    bad = acc.account(make_run(fills, ticks, funding, bm, daily))
+    assert bad.q_breaks == (f"{A1}@{LO + 2 * H}", f"{A1}@{LO + 3 * H}") and not acc.k10_ok(bad)
+    # within the clamp (an exit of (1 - 1e-10) |q| booked as a close) is no break
+    fills, ticks, funding, bm, daily = scenario_parts()
+    fills[4]["qty"] = 3.0 * (1 - 1e-10)
+    ok = acc.account(make_run(fills, ticks, funding, bm, daily))
+    assert ok.q_breaks == () and acc.k10_ok(ok)
+    # -sum dq * p(f) disagreeing with the event sum
+    assert not acc.k10_ok(replace(led, PR_fills=led.PR + 10 * tol))
 
 
 def test_net_equals_sum_of_assets_plus_hedge():
@@ -228,11 +240,26 @@ def test_net_equals_sum_of_assets_plus_hedge():
     assert led.NET == pytest.approx(0.07 - 13 * C + 11.3, abs=1e-12)
     assert led.CAC == pytest.approx(0.07 - 13 * C, abs=1e-12)
     na = acc.per_asset_net(led)
-    assert na["AAAUSDT#0"] == pytest.approx(0.08 + 7.5 - 9 * C, abs=1e-12)
-    assert na["BBBUSDT#0"] == pytest.approx(-0.02 + 4 - 2 * C, abs=1e-12)
+    assert list(na) == ["AAAUSDT", "BBBUSDT"]  # keyed by symbol (AMB-21 (a))
+    assert na["AAAUSDT"] == pytest.approx(0.08 + 7.5 - 9 * C, abs=1e-12)
+    assert na["BBBUSDT"] == pytest.approx(-0.02 + 4 - 2 * C, abs=1e-12)
     assert led.H == pytest.approx(0.01 - 0.2 - 2 * C, abs=1e-12)
     assert sum(na.values()) + led.H == pytest.approx(led.NET, abs=1e-12)
     assert led.equity_change == pytest.approx(led.NET, abs=1e-12)
+    rho = acc.per_asset_rho(led)
+    assert rho["BBBUSDT"] == pytest.approx(4 - MKT_B1, abs=1e-12)
+    assert rho["AAAUSDT"] == pytest.approx(7.5 - MKT_A1 - MKT_A2 - MKT_A3, abs=1e-12)
+    # a relisted symbol (AAA instance 1, 100 h after the last AAA#0 episode): its own cluster, ONE N_a entry
+    fills, ticks, funding, bm, daily = scenario_parts()
+    fills += [fill(130, "AAAUSDT", 1, 1, 1.0, 10.0, "AAAUSDT#1@130", "leg", 1.0, beta=1.0, btc=100.0),
+              fill(131, "AAAUSDT", 1, -1, 1.0, 12.0, "AAAUSDT#1@130", "leg", 0.0, btc=100.0, side=1)]
+    daily.loc[5, ["fees", "spread_slip", "price"]] += [2 * FEE, 2 * (SPR + SLP), 2.0]
+    led2 = acc.account(make_run(fills, ticks, funding, bm, daily))
+    assert led2.n_clusters == 5 and acc.k10_ok(led2)
+    na2 = acc.per_asset_net(led2)
+    assert list(na2) == ["AAAUSDT", "BBBUSDT"]
+    assert na2["AAAUSDT"] == pytest.approx(na["AAAUSDT"] + 2.0 - 2 * C, abs=1e-12)
+    assert sum(na2.values()) + led2.H == pytest.approx(led2.NET, abs=1e-12)
 
 
 def test_daily_components_sum():
@@ -340,6 +367,14 @@ def test_invalid_run_refused_and_inputs_checked():
     with pytest.raises(ValueError, match="BTC"):
         acc.account(make_run(fills, ticks, funding, bm, daily))
     fills, ticks, funding, bm, daily = scenario_parts()
+    bm[0] = (2, None)  # the BTC mark missing at a tick while legs are held (AMB-21 (b): fail closed)
+    with pytest.raises(ValueError, match="BTC"):
+        acc.account(make_run(fills, ticks, funding, bm, daily))
+    fills, ticks, funding, bm, daily = scenario_parts()
+    del ticks[1]  # BBB held at the 2h tick without a positions row
+    with pytest.raises(ValueError, match="tick missing"):
+        acc.account(make_run(fills, ticks, funding, bm, daily))
+    fills, ticks, funding, bm, daily = scenario_parts()
     fills[0]["beta"] = np.nan  # an episode without beta-hat of its opening decision
     with pytest.raises(ValueError, match="beta"):
         acc.account(make_run(fills, ticks, funding, bm, daily))
@@ -354,8 +389,19 @@ def test_invalid_run_refused_and_inputs_checked():
 
 
 def test_engine_run_accounts_and_k10():
-    r = engine.run("A0", fx.base_inputs(), (fx.LO, fx.END), 24)
+    # moving prices (AAA +1 %/day, BBB -0.5 %/day, BTC +2 %/day), held across 00:00 of day 2
+    def drift(p0, per_day):
+        return lambda ts: p0 * (1 + per_day * (ts - fx.LO) / D)
+
+    inp = fx.base_inputs(aaa=fx.instrument("AAAUSDT", drift(100.0, 0.01), -1e-4),
+                         bbb=fx.instrument("BBBUSDT", drift(50.0, -0.005), 1e-4))
+    inp = replace(inp, btc=fx.instrument(BTC, drift(1000.0, 0.02), 5e-5))
+    r = engine.run("A0", inp, (fx.LO, fx.END), 24)
+    assert r.valid and len(r.daily) == 2
     led = acc.account(r)
-    assert acc.k10_ok(led) and acc.daily_ok(led)
+    assert acc.k10_ok(led) and acc.daily_ok(led) and led.q_breaks == ()
     assert led.NET == pytest.approx(r.daily["equity_end"].iloc[-1] - 1.0, abs=1e-12)
-    assert led.n_clusters == 2 and led.PR == pytest.approx(0.0, abs=1e-12)
+    assert led.n_clusters == 2 and abs(led.PR) > 1e-4 and abs(led.PR_BTC) > 1e-5
+    assert all(abs(c.mkt_c) > 0 for c in led.clusters)
+    assert led.daily["price"].iloc[0] != 0 and led.daily["price"].iloc[1] != 0
+    assert led.PR == pytest.approx(led.PR_fills, abs=1e-9 * led.fill_notional)
