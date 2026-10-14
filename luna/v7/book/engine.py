@@ -24,11 +24,20 @@ decision, terminal unwind):
 * **terminal unwind** at the last reference minute before the end (end - 1 min): every leg and the hedge
   exit taker (S-5.3 costs); a halted leg / a still-waiting exit with no executable bar of its instance before
   the end -> ``INVALID RUN`` (S-5.4). The run stops at the first INVALID RUN.
+
+Equity layers (§14, EC-6): the public ``run`` is the L-norm path only and accepts no exchange filters (no
+parameter for them; any other layer is refused). The USD layers L-265 / L-10k run through ``_run`` with a
+``Lots`` sizer supplied by ``luna.v7.deploy`` (E_T only, AMB-23): entry, reduce and hedge quantities are
+rounded by the sizer at the fill price; an infeasible leg / reduce is not traded; if the S-7.4 hedge the book
+requires is infeasible, the decision's entries are forbidden and the hedge is re-decided without them. Full
+closes (decision, forced, terminal) are never filtered. Every decision row records ``n_post`` (legs in the
+post-decision book), and in a USD layer ``constructible`` / ``infeasible`` (D1).
 """
 
 from __future__ import annotations
 
 import heapq
+import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Protocol
@@ -39,7 +48,7 @@ import pandas as pd
 from luna.v7 import guard, windows
 from luna.v7.arms import arm_scores
 from luna.v7.book import EPS, Leg, Order, hedge
-from luna.v7.book.constructor import targets
+from luna.v7.book.constructor import Targets, targets
 from luna.v7.book.execution import (
     INVALID_NO_EXIT,
     ExecView,
@@ -117,6 +126,13 @@ class ScoreModel(Protocol):
     def predict(self, t: int, cands: pd.DataFrame) -> pd.DataFrame: ...
 
 
+class Lots(Protocol):
+    """USD-layer order sizer (``luna.v7.deploy``): the exchange-rounded quantity of an order of ``qty`` at
+    ``price`` for ``symbol`` with the filters applicable at decision ``t``; None = infeasible (not traded)."""
+
+    def size(self, symbol: str, qty: float, price: float, t: int) -> float | None: ...
+
+
 @dataclass(frozen=True)
 class EngineInputs:
     instruments: Mapping[str, Instrument]
@@ -144,6 +160,9 @@ class BookRun:
     integrity: tuple[str, ...]
     invalid: str | None
     invalid_detail: str | None = None
+    equity0: float = E0  # starting equity (book units; USD in L-265 / L-10k)
+    filter_provenance: tuple[str, ...] = ()  # USD layers: provenance of every supplied filter (S-14.1)
+    filters_missing: tuple[str, ...] = ()  # USD layers: symbols traded without applicable filters (DEC-34)
 
     @property
     def valid(self) -> bool:
@@ -160,14 +179,18 @@ class _Token:
 
 class _Sim:
     def __init__(self, arm: str, inputs: EngineInputs, window: tuple[int, int], h_star: int,
-                 model: ScoreModel | None, execution: str) -> None:
+                 model: ScoreModel | None, execution: str, e0: float = E0, upu: float | None = None,
+                 lots: Lots | None = None) -> None:
         self.arm, self.inp, self.h_star, self.model, self.exe = arm, inputs, h_star, model, execution
         self.lo, self.end = window
         self.unwind_ts = self.end - MIN  # S-1.5 / S-8.1: the last reference minute before the end
-        self.upu = float(FROZEN.deploy.E_ref)  # L-norm: liquidity cap (and E_M sizes) at E_ref (§14)
+        # L-norm: liquidity cap (and E_M sizes) at E_ref USD per unit of E (§14); USD layers: 1
+        self.upu = float(FROZEN.deploy.E_ref) if upu is None else float(upu)
+        self.e0 = float(e0)
+        self.lots = lots
         self.risk = RiskLayer()
-        self.state = self.risk.initial_state(E0, self.lo)
-        self.led = Ledger(E0, self.lo)
+        self.state = self.risk.initial_state(self.e0, self.lo)
+        self.led = Ledger(self.e0, self.lo)
         self.heap: list = []
         self.seq = 0
         self.views: dict[tuple[str, int], ExecView] = {}
@@ -460,14 +483,21 @@ class _Sim:
         eq = self.led.equity()
         tg = targets(t=t, equity=eq, held=tuple(legs), scores=scores, gates=v.gates, risk=acts, halted=halted,
                      betas=v.betas, quote_vol_24h=v.qv24, h_star_h=float(self.h_star), usd_per_unit=self.upu)
-        for o in tg.orders:
-            self.order(o, t, t_e, v)
-        hd = self.hedge_step(t, t_e, tg.post, v, eq, acts.killed)
+        extra: dict = {}
+        if self.lots is None:
+            for o in tg.orders:
+                self.order(o, t, t_e, v)
+            post: Mapping[str, float] = tg.post
+            hd = self.hedge_step(t, t_e, tg.post, v, eq, acts.killed)
+        else:
+            post, hd, infeasible = self.lot_decision(tg, t, t_e, v, eq, acts.killed)
+            extra = dict(constructible=not infeasible, infeasible=infeasible)
         self.decisions.append(dict(t=t, equity=eq, stale=acts.stale, killed=acts.killed, paused=acts.paused,
                                    n_orders=len(tg.orders), orders=tuple(f"{o.kind}:{o.reason}:{o.symbol}"
                                                                          for o in tg.orders),
                                    notes=tg.notes + acts.notes + tuple(self.notes), hedge_reason=hd.reason,
-                                   hedge_target=hd.target, beta_book=hd.beta_book))
+                                   hedge_target=hd.target, beta_book=hd.beta_book,
+                                   n_post=sum(1 for x in post.values() if x != 0), **extra))
 
     def scores(self, t: int, cands: pd.DataFrame) -> pd.DataFrame:
         if len(cands) == 0:
@@ -483,7 +513,7 @@ class _Sim:
     def order(self, o: Order, t: int, t_e: int, v: DecisionView) -> None:
         sym = o.symbol
         if o.kind == "open":
-            if o.notional <= EPS * E0:
+            if o.notional <= EPS * self.e0:
                 self.notes.append(f"zero_open:{sym}")
                 return
             cv = self.view_of(sym, t)
@@ -497,7 +527,7 @@ class _Sim:
             self.schedule(outs, pid, "open", t_e, None)
             return
         p = self.leg_pos(sym)
-        if o.kind == "reduce" and o.target > EPS * E0:
+        if o.kind == "reduce" and o.target > EPS * self.e0:
             leg_n = abs(p.q) * p.p_last  # type: ignore[operator]
             tr = Trade(sym, -o.side, abs(p.q) * o.notional / leg_n, None, False, o.reason, p.pid)
             outs = [taker_at(p.view, tr, t_e)] if self.exe == "E_T" else maker_at(
@@ -508,32 +538,54 @@ class _Sim:
 
     def hedge_step(self, t: int, t_e: int, post: Mapping[str, float], v: DecisionView, eq: float,
                    killed: bool) -> hedge.HedgeDecision:
+        hd, act, _ = self.hedge_plan(t, t_e, post, v, eq, killed)
+        self.hedge_exec(act, t, t_e)
+        return hd
+
+    def hedge_plan(self, t: int, t_e: int, post: Mapping[str, float], v: DecisionView, eq: float,
+                   killed: bool) -> tuple[hedge.HedgeDecision, tuple | None, str | None]:
+        """The S-7.4 hedge decision and its action (no side effect): None, ("note", text), ("exit", pos) or
+        ("trade", view, dq, q0); the third item is "hedge" when a USD layer's sizer finds the required hedge
+        trade infeasible (the action is then a note)."""
         h = self.hedge_pos()
         cur = h.q * h.p_last if h is not None and h.p_last is not None else 0.0
         hd = hedge.decide(post, v.betas, eq, current=cur, killed=killed)
         if not hd.trade or hd.target is None:
-            return hd
+            return hd, None, None
         if h is not None and h.pending_exit is not None:
-            self.notes.append("hedge_exit_pending")
-            return hd
+            return hd, ("note", "hedge_exit_pending"), None
         bv = self.view_of(HEDGE_SYMBOL, t)
         if bv is None or (h is not None and h.view is not bv):
             raise ValueError("BTC hedge instance missing or changed while hedged (E10)")
         if bv.halted(t_e):  # S-5.4 / S-7.1: no order of any kind while halted
-            self.notes.append("hedge_halted")
-            return hd
+            return hd, ("note", "hedge_halted"), None
         if hd.target == 0.0:
-            if h is not None:
-                self.exit(h, "hedge", False, None, t_e)
-            return hd
+            return hd, (("exit", h) if h is not None else None), None
         r = bv.ref(t_e)
         if r is None:
-            self.notes.append("hedge_price_missing")
-            return hd
+            return hd, ("note", "hedge_price_missing"), None
         q0 = h.q if h is not None else 0.0
         dq = hd.target / r[0] - q0
         if dq == 0.0:
-            return hd
+            return hd, None, None
+        if self.lots is not None:  # USD layer: exchange rounding of the hedge order (section 14)
+            q = self.lots.size(HEDGE_SYMBOL, abs(dq), r[0], t)
+            if q is None:
+                return hd, ("note", "hedge_infeasible"), "hedge"
+            dq = q if dq > 0 else -q
+        return hd, ("trade", bv, dq, q0), None
+
+    def hedge_exec(self, act: tuple | None, t: int, t_e: int) -> None:
+        if act is None:
+            return
+        if act[0] == "note":
+            self.notes.append(act[1])
+            return
+        if act[0] == "exit":
+            self.exit(act[1], "hedge", False, None, t_e)
+            return
+        _, bv, dq, q0 = act
+        h = self.hedge_pos()
         opening = abs(q0 + dq) > abs(q0) or (q0 + dq) * q0 < 0
         if h is None:
             self.n_hedge += 1
@@ -543,7 +595,82 @@ class _Sim:
             pid = h.pid
         tr = Trade(HEDGE_SYMBOL, 1 if dq > 0 else -1, abs(dq), None, opening, "hedge", pid)
         self.schedule([taker_at(bv, tr, t_e)], pid, "hedge", t_e, None)
-        return hd
+
+    def lot_decision(self, tg: Targets, t: int, t_e: int, v: DecisionView, eq: float,
+                     killed: bool) -> tuple[dict[str, float], hedge.HedgeDecision, tuple[str, ...]]:
+        """USD layer (section 14 L-265 / L-10k, E_T): size every entry / reduce with the sizer at its fill
+        price; an infeasible one is not traded (fail closed); if the hedge the resulting book requires is
+        infeasible, the beta rule forbids this decision's entries and the hedge is re-decided without them.
+        Returns the post-decision book, the hedge decision and the infeasibilities (empty = constructible,
+        D1)."""
+        lots = self.lots
+        if lots is None:
+            raise RuntimeError("internal: lot decision without a sizer")
+        infeasible: list[str] = []
+        post = dict(tg.post)
+        plan: dict[int, object] = {}
+        n_entries = 0
+        for i, o in enumerate(tg.orders):
+            sym = o.symbol
+            if o.kind == "open":
+                if o.notional <= EPS * self.e0:
+                    continue
+                cv = self.view_of(sym, t)
+                if cv is None:
+                    raise RuntimeError(f"internal: entry of {sym} without a current instance")
+                pid = f"{sym}#{cv.inst.idx}@{t}"
+                out = taker_at(cv, Trade(sym, o.side, None, o.notional, True, o.reason, pid), t_e)
+                if isinstance(out, Fill):
+                    q = lots.size(sym, out.qty, out.ref_mid, t)
+                    if q is None:
+                        infeasible.append(f"leg:{sym}")
+                        post.pop(sym, None)
+                        plan[i] = "infeasible"
+                        continue
+                    out = _scaled(out, q)
+                    post[sym] = o.side * q * out.ref_mid
+                    n_entries += 1
+                plan[i] = (pid, out)
+            elif o.kind == "reduce" and o.target > EPS * self.e0:
+                p = self.leg_pos(sym)
+                leg_n = abs(p.q) * p.p_last  # type: ignore[operator]
+                q = lots.size(sym, abs(p.q) * o.notional / leg_n, p.p_last, t)  # type: ignore[arg-type]
+                if q is None:
+                    infeasible.append(f"reduce:{sym}")
+                    post[sym] = p.side * leg_n
+                    plan[i] = "infeasible"
+                    continue
+                post[sym] = p.side * (abs(p.q) - q) * p.p_last  # type: ignore[operator]
+                plan[i] = q
+        hd, act, bad = self.hedge_plan(t, t_e, post, v, eq, killed)
+        if bad is not None and n_entries:  # S-7.4 / section 14: an infeasible required hedge forbids entries
+            infeasible.append("hedge:entries_forbidden")
+            for i, o in enumerate(tg.orders):
+                if o.kind == "open" and plan.get(i) != "infeasible":
+                    post.pop(o.symbol, None)
+                    plan[i] = "forbidden"
+            hd, act, bad = self.hedge_plan(t, t_e, post, v, eq, killed)
+        if bad is not None:
+            infeasible.append("hedge")
+        for i, o in enumerate(tg.orders):
+            x = plan.get(i)
+            if isinstance(x, str):
+                self.notes.append(f"{x}_{o.kind}:{o.symbol}")
+            elif o.kind == "open":
+                if x is None:
+                    self.notes.append(f"zero_open:{o.symbol}")
+                    continue
+                pid, out = x  # type: ignore[misc]
+                self.open_meta[pid] = (t, v.betas.get(o.symbol))
+                self.schedule([out], pid, "open", t_e, None)
+            elif isinstance(x, float):
+                p = self.leg_pos(o.symbol)
+                tr = Trade(o.symbol, -o.side, x, None, False, o.reason, p.pid)
+                self.schedule([taker_at(p.view, tr, t_e)], p.pid, "reduce", t_e, None)
+            else:
+                self.order(o, t, t_e, v)  # full closes: never filtered (AMB-23)
+        self.hedge_exec(act, t, t_e)
+        return post, hd, tuple(infeasible)
 
     # --- main loop --------------------------------------------------------------------------------------
     def run(self) -> None:
@@ -573,13 +700,32 @@ def _with(f: Fill, **kw) -> Fill:
     return replace(f, **kw)
 
 
+def _scaled(f: Fill, qty: float) -> Fill:
+    """The same fill at a rounded quantity: fee, spread and slippage are linear in the quantity (S-5.3)."""
+    r = qty / f.qty
+    return replace(f, qty=float(qty), fee=f.fee * r, spread_cost=f.spread_cost * r, slip_cost=f.slip_cost * r)
+
+
 def _frame(rows: list[dict], cols: list[str] | None = None) -> pd.DataFrame:
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=cols or [])
 
 
+USD_LAYERS = ("L-265", "L-10k")
+
+
 def run(arm: str, inputs: EngineInputs, window: tuple[int, int], h_star: int, model: ScoreModel | None = None,
         execution: str = "E_T", layer: str = "L-norm") -> BookRun:
-    """Run one arm's executed book over ``window`` (see the module docstring)."""
+    """Run one arm's executed book over ``window`` (see the module docstring). L-norm only: this path takes
+    no exchange filters (EC-6, section 14); the USD layers run through ``luna.v7.deploy.run_layer``."""
+    if layer != "L-norm":
+        raise ValueError("only L-norm runs here; L-265 / L-10k run through luna.v7.deploy.run_layer")
+    return _run(arm, inputs, window, h_star, model, execution, layer)
+
+
+def _run(arm: str, inputs: EngineInputs, window: tuple[int, int], h_star: int, model: ScoreModel | None,
+         execution: str, layer: str, *, equity0: float = E0, lots: Lots | None = None) -> BookRun:
+    """The shared event loop. ``layer`` "L-norm" (E = 1, no sizer, liquidity cap at E_ref) or a USD layer
+    (``equity0`` USD, a ``Lots`` sizer, liquidity cap in USD, E_T only; called by ``luna.v7.deploy``)."""
     if arm not in ARMS:
         raise ValueError(f"unknown arm {arm!r}")
     if (arm == "A0") != (model is None):
@@ -588,13 +734,25 @@ def run(arm: str, inputs: EngineInputs, window: tuple[int, int], h_star: int, mo
         raise ValueError(f"h_star must be one of {FROZEN.horizons_h}")
     if execution not in ("E_T", "E_M"):
         raise ValueError(f"unknown execution model {execution!r}")
-    if layer != "L-norm":
-        raise ValueError("only the L-norm layer runs here (L-265 / L-10k: Task 17)")
+    if layer == "L-norm":
+        if lots is not None or equity0 != E0:
+            raise ValueError("L-norm takes no exchange filters and starts at E = 1 (EC-6, section 14)")
+        upu = None
+    elif layer in USD_LAYERS:
+        if lots is None:
+            raise ValueError(f"{layer} needs the exchange-filter sizer (luna.v7.deploy)")
+        if execution != "E_T":
+            raise ValueError(f"{layer} runs under E_T only (AMB-23)")
+        if not (math.isfinite(equity0) and equity0 > 0):
+            raise ValueError("equity0 must be finite and > 0")
+        upu = 1.0  # notionals are USD
+    else:
+        raise ValueError(f"unknown equity layer {layer!r}")
     lo, end = int(window[0]), int(window[1])
     if lo % TICK or end % MIN or end - lo <= 2 * FILL_DELAY:
         raise ValueError("the window must start on the 15-minute grid and span more than 30 min")
     guard.check_outcome_window(lo, end, auth=inputs.auth, now_ns=inputs.now_ns)
-    sim = _Sim(arm, inputs, (lo, end), h_star, model, execution)
+    sim = _Sim(arm, inputs, (lo, end), h_star, model, execution, e0=equity0, upu=upu, lots=lots)
     sim.run()
     led = sim.led
     return BookRun(
@@ -602,7 +760,9 @@ def run(arm: str, inputs: EngineInputs, window: tuple[int, int], h_star: int, mo
         fills=_frame(led.fills), marks=_frame(led.marks), positions=_frame(led.positions),
         funding_flows=_frame(led.funding), daily=_frame(led.daily), decisions=_frame(sim.decisions),
         integrity=tuple(dict.fromkeys(sim.integrity)), invalid=sim.invalid, invalid_detail=sim.invalid_detail,
+        equity0=float(equity0),
     )
 
 
-__all__ = ["BookRun", "DecisionView", "EngineInputs", "Instrument", "ScoreModel", "run"]
+__all__ = ["BookRun", "DecisionView", "EngineInputs", "Instrument", "Lots", "ScoreModel", "USD_LAYERS",
+           "run"]
