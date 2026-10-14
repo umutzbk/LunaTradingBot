@@ -3,7 +3,8 @@
 ``normalise`` turns raw Binance kline rows (open_time, open, high, low, close, volume, close_time,
 quote_volume, count, taker_buy_volume, taker_buy_quote_volume, ignore) into ns-time frames; the unit is
 explicit and implausible values are refused (ambiguous units are never ingested). ``union`` = monthly union
-daily by key, daily filling keys missing from monthly; a differing value for the same key is an ``IntegrityBlocker``.
+daily by key, daily filling keys missing from monthly; a differing value for the same key is an
+``IntegrityBlocker``.
 """
 
 from __future__ import annotations

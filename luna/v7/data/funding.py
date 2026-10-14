@@ -1,10 +1,10 @@
 """Funding archive + REST merge (spec S-3 R2, S-2.6 DEC-32/DEC-29, S-4.6).
 
 Archive monthly ``fundingRate`` files are primary; REST fills only keys the archive lacks (match within the
-frozen +-60 s tolerance). Overlapping keys are compared: agreeing -> archive row kept (archive provenance, no field
-borrowed from REST); a material conflict -> ``IntegrityBlocker`` (never picked silently). "Material" is an
-implementation clarification (AMB-03): rate differing by more than ``RATE_ATOL`` = 1e-12, or an ambiguous /
-many-to-one timestamp mapping.
+frozen +-60 s tolerance). Overlapping keys are compared: agreeing -> archive row kept (archive provenance,
+no field borrowed from REST); a material conflict -> ``IntegrityBlocker`` (never picked silently).
+"Material" is an implementation clarification (AMB-03): rate differing by more than ``RATE_ATOL`` = 1e-12,
+or an ambiguous / many-to-one timestamp mapping.
 """
 
 from __future__ import annotations
