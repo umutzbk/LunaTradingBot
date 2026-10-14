@@ -280,7 +280,7 @@ def d_gates(lnorm: BookRun, l265: BookRun, infra_usd_year: float = DP.infra_usd_
         out.update(D1=False, D2=False, D3=False, why=why, mean_daily_net_usd=None, annual_net_usd=None)
         return out
     m = mean_daily_net(led)
-    annual = 365.0 * m
+    annual = float(FROZEN.accept.ann_days) * m
     out.update(D1=bool(share is not None and share >= DP.d1), D2=bool(m > 0),
                D3=bool(annual - float(infra_usd_year) > 0), why=None, mean_daily_net_usd=m,
                annual_net_usd=annual)

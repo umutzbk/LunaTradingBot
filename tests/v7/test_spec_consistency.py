@@ -139,7 +139,7 @@ ROWS: list[tuple[str, str, object, object]] = [
     ("S-7.2 A0 mult / sides / buffer", r"c\(a,side\)·h\\\* − ([\d.]+) · (\d) · cost\(a\) − (\d+) bps",
      lambda: (F.a0.mult, F.a0.sides, F.a0.buffer), "a0"),
     ("S-7.2 A1 veto", r"calibrated P̂\(net\(h\\\*\) > 0\) < \*\*([\d.]+)\*\* \(DEC-8\)", lambda: F.a1_veto, None),
-    ("S-7.2 A2 hurdle (bps)", r"Hurdle: calibrated ŷ_cal\(h\\\*\) > (\d+) bps", lambda: 0, int),
+    ("S-7.2 A2 hurdle (bps)", r"Hurdle: calibrated ŷ_cal\(h\\\*\) > (\d+) bps", lambda: F.ml_hurdle * 1e4, int),
     ("S-7.2 A0-V5 config (arms.V5_FROZEN_KNOBS)",
      r"frozen config \(k = (\d+), H = (\d+), mult ([\d.]+), buffer (\d+) bps, min hold (\d+) h\)",
      lambda: (arms.V5_FROZEN_KNOBS["k"], arms.V5_FROZEN_KNOBS["switch_horizon_hours"],
@@ -229,11 +229,12 @@ ROWS: list[tuple[str, str, object, object]] = [
      lambda: tuple(F.accept.p5[k] for k in ("min_pos_q", "max_q_share", "top1", "top3")), "p5"),
     ("S-13.2 P6 stress", r"every fill's fee × ([\d.]+), slippage × ([\d.]+) and spread charge × ([\d.]+)",
      lambda: tuple(F.accept.p6[k] for k in ("fee", "slip", "spread")), None),
-    ("S-13.2 P6 stressed mean daily net", r"spreads included\) → stressed mean daily net ≥ (\d) \|", lambda: 0, int),
+    ("S-13.2 P6 stressed mean daily net", r"spreads included\) → stressed mean daily net ≥ (\d) \|",
+     lambda: F.accept.p6_min_net, int),
     ("S-13.2 P7 block lengths", r"\| P7 \| Date-level IC of the ML\\\* regression model: mean > 0 and LB > 0 \(S-13\.1, ℓ ∈ \{(\d+), (\d+)\}\)",
      lambda: F.stats.blocks, int),
     ("S-13.2 P8 slope band", r"over every eligible `W_HOLD` candidate ∈ \[([\d.]+), ([\d.]+)\]", lambda: F.accept.p8, None),
-    ("S-13.2 P9 Sharpe", r"\| P9 \| Net Sharpe \(daily, annualized √(\d+)\) ≥ ([\d.]+)", lambda: (365, F.accept.p9_sharpe),
+    ("S-13.2 P9 Sharpe", r"\| P9 \| Net Sharpe \(daily, annualized √(\d+)\) ≥ ([\d.]+)", lambda: (F.accept.ann_days, F.accept.p9_sharpe),
      None),
     ("S-13.2 P11 m rule", r"m = max\((\d+), ⌈([\d.]+) · n_clusters⌉\)", lambda: F.accept.p11_m, None),
     # --- S-13.3 --------------------------------------------------------------------------------------------
@@ -272,9 +273,38 @@ ROWS: list[tuple[str, str, object, object]] = [
     ("§16 K8 invalid share", r"\| K8 \| During the holdout run: invalid labels or missing funding > ([\d.]+) %",
      lambda: F.invalid_max, pct),
     ("§16 K10 tolerance", r"\| K10 \| \\\|Σ_c ρ_c \+ MKT − PR\\\| > (1e-9) × Σ\\\|fill notional\\\|", lambda: F.k10_tol, None),
-    ("§16 K7 gain share", r"\| K7 \| One feature carries > (\d+) % of total LightGBM gain, or > (\d+) % of",
-     lambda: (50, 50), int),  # K7 is a review audit (verdict.K_TABLE text), see NOT_CODED
+    # --- rows of numbers the checked sections state outside their main tables (fix round 1) -----------------
+    ("S-4.2 forced exit delay (min)", r"Forced risk exits fill on the first 1-minute bar after the trigger \+ (\d+) min",
+     lambda: F.execution.forced_delay_min, int),
+    ("S-7.3 U6 exit fill (min)", r"filled at that decision's `t` \+ (\d+) min \(S-4\.2\)", lambda: F.decision.fill_delay_min,
+     int),
+    ("S-6.2 maker window (min)", r"from trades with timestamp > `t_e`, within W = (\d+) min", lambda: F.execution.maker_window_min,
+     int),
+    ("S-6.2 maker fallback (min)", r"\*\*Fallback:\*\* at `t_e` \+ (\d+) min, any remainder fills taker",
+     lambda: F.execution.maker_window_min, int),
+    ("S-6.2 adverse horizons (min)", r"the adverse mid move (\d+), (\d+) and (\d+) min after each maker fill",
+     lambda: F.execution.adverse_min, int),
+    ("S-2.5 U6 72 h auto-clear", r"U6 deactivates at `scheduled_delist_ts` \+ (\d+) h\.", lambda: F.notices.u6_clear_h, int),
+    ("§9 winsorization", r"Linear models: training-fold winsorization at (\d+) / (\d+) %", lambda: F.features.winsor, pct),
 ]
+
+
+def test_code_reads_the_frozen_values():
+    """Behavioural checks for rows whose value is a comparison bound or a scale factor in the code."""
+    import numpy as np
+
+    from luna.v7 import accounting, stats
+    from luna.v7.arms import ml_score
+
+    # S-7.2 A2 / A3 hurdle (arms.ml_score reads FROZEN.ml_hurdle = 0 bps): strictly above 0 passes
+    assert ml_score(1.0, 0.0) == (1.0, False) and ml_score(1.0, 1e-12)[1] is True
+    # P9 / §12 Sharpe: daily mean / std (ddof 1) x sqrt(365)
+    r = np.array([0.01, -0.005, 0.002, 0.007, -0.001])
+    assert math.isclose(stats.sharpe(r, lag=0).value, r.mean() / r.std(ddof=1) * math.sqrt(365), rel_tol=1e-12)
+    # P11 m rule: max(3, ceil(0.05 n)) in exact integer arithmetic, for every n up to 2000
+    for n in range(2001):
+        assert accounting.m_rule(n) == max(3, -(-n // 20)), n
+    assert accounting.GAP_H == F.cluster_gap_h and accounting.K10_REL == F.k10_tol
 
 
 def _fold_span() -> tuple[int, int, int, int]:
@@ -365,31 +395,33 @@ def test_spec_tables_have_rows():
 # still match the frozen text once.
 NOT_CODED: list[tuple[str, str, str]] = [
     ("S-2.3 PIT lag 1 min", r"All inputs must have `known_at` ≤ `t` − 1 min\.",
-     "structural: the PIT lag is the time unit timeutil.MIN in every assert_pit (universe, features, engine)"),
+     "structural PIT lag = timeutil.MIN: universe.py:128 (assert_pit), universe.py:138 (pit_rows), features.py:122"),
     ("S-4.3 support article id", r"\(360033544231\), in two official locales",
      "fee-evidence provenance (R9 record / binance-fee-evidence.md); governance, not code"),
     ("S-4.3 fee-evidence sha256", r"sha256 `63a9fa95ca32ea7d0015fd19dd7cce2d3549cec6b3feb740761794f5e135efb7`",
      "provenance hash of a Stage-0 document; governance, not code"),
     ("S-4.4 fill proxy PIT lag", r"using only bars fully known by τ − 1 min\. No R6\.",
-     "structural PIT lag (timeutil.MIN) inside spread.half_spread"),
+     "structural PIT lag = timeutil.MIN at spread.py:61"),
     ("S-4.5 R6 size", r"The full 1\.06 TB R6 dataset is not downloaded",
      "data-volume statement; R6 is diagnostic only and never read (L8)"),
     ("S-4.5 reference package", r"CRAN `bidask` 2\.1\.5, method `\"AR\"`",
      "reference implementation version for the required equality test (tests/v7/ar_reference.py, AMB-06)"),
     ("S-7.3 U6 exit lag", r"an open leg exits at the first decision at or after the matched version's `known_at` \+ 1 min",
-     "structural PIT lag (timeutil.MIN), book.constructor / universe U6 (AMB-16/17)"),
+     "structural PIT lag = timeutil.MIN at universe.py:268 (notice known_at <= t - 1 min); exit via U6 gate"),
     ("S-10.4 T_tr minimum length", r"\| `T_tr` \| \[D0, C − 12 mo\), ≥ 12 months \|",
      "implied by first_test_months = 24 and block_months = (12, 6) (checked rows)"),
     ("S-13.2 P4 quarter-hours per day", r"for ≥ \d+ of (96) quarter-hours",
-     "structural: the 15-minute tick grid (96 per UTC day); verdict.active_days counts ticks"),
+     "structural 15-minute tick grid; verdict.py:160 (active_days) counts ticks per UTC day"),
     ("S-13.2 P5 holdout quarters", r"net > 0 in ≥ \d of the (4) holdout quarters",
-     "structural: W_HOLD is one year (S-1.4); the quarter edges are verdict.p5 inputs"),
+     "structural: W_HOLD is one year (S-1.4); quarter edges are inputs of verdict.py:207 (p5)"),
     ("§15 L7 strict-default date", r"\*\*L7 ≥ (2027-10-14)\*\* under the strict default",
-     "derived at runtime from the hash-checked V6 artefacts (forward.r_v6_strict_default, S-1.1); never hard-coded"),
+     "derived at runtime from the hash-checked V6 artefacts (forward.py:105 r_v6_strict_default, S-1.1)"),
     ("§15 exchange-filter cadence", r"snapshotted at least daily and on change",
      "operational recorder cadence (forward recorder service, not in this engine)"),
+    ("§15 depth snapshot cadence", r"a depth snapshot every (5) minutes",
+     "recorder cadence only; depth is diagnostic (DEC-42) and never read by the engine"),
     ("§16 K7 50 % gain / weight share", r"\| K7 \| One feature carries > (50) % of total LightGBM gain",
-     "mandatory leakage audit before the holdout (review item, verdict.K_TABLE text); no automated check yet"),
+     "mandatory leakage audit before the holdout: review item, text only at verdict.py:88 (K_TABLE)"),
 ]
 
 

@@ -18,6 +18,18 @@ class Decision:  # S-4.1 / S-4.2
 
 
 @dataclass(frozen=True)
+class Execution:  # S-4.2 / S-6.2
+    forced_delay_min: int = 1  # S-4.2: forced risk exits fill on the first 1-minute bar after trigger + 1 min
+    maker_window_min: int = 30  # S-6.2: trade-through fills within W = 30 min, then the taker fallback
+    adverse_min: tuple[int, ...] = (5, 30, 60)  # S-6.2: reported adverse mid move horizons
+
+
+@dataclass(frozen=True)
+class Notices:  # S-2.5 (DEC-37)
+    u6_clear_h: int = 72  # U6 deactivates at scheduled_delist_ts + 72 h if never HALTED in between
+
+
+@dataclass(frozen=True)
 class Fees:  # S-4.3 (USD-M perp fees, DEC-39)
     maker: float = 0.0002
     taker: float = 0.0005
@@ -45,6 +57,7 @@ class Features:  # §9 feature table (F1-F14; F7 / F15 dropped by Stage 0)
     funding_windows_h: tuple[int, ...] = (24, 72, 168, 720)  # F1 FL1, FL3, FL7, FL30
     f13_cap: float = 1e4  # F13: "both capped at 10^4"
     f13_settlements_per_year: int = 3 * 365  # F13: |FL7| * 3 * 365
+    winsor: tuple[float, float] = (0.01, 0.99)  # linear models: training-fold winsorization at 1 / 99 %
 
 
 @dataclass(frozen=True)
@@ -180,7 +193,9 @@ class Accept:  # S-13.2 acceptance P1..P11
     p5: dict = field(default_factory=lambda: dict(min_pos_q=2, max_q_share=0.60, top1=0.30, top3=0.60))
     p6: dict = field(default_factory=lambda: dict(fee=1.5, slip=1.5, spread=3.0))
     p8: tuple[float, float] = (0.5, 1.5)
+    p6_min_net: float = 0.0  # P6: stressed mean daily net >= 0
     p9_sharpe: float = 1.0
+    ann_days: int = 365  # P9 / §12 Sharpe annualized sqrt(365); D3 annualized net (365 x mean daily net)
     p11_m: tuple[int, float] = (3, 0.05)
     ece_max: float = 0.05
     ece_bins: int = 10
@@ -211,6 +226,8 @@ class Deploy:  # S-14 (DEC-7)
 @dataclass(frozen=True)
 class Frozen:
     decision: Decision = field(default_factory=Decision)
+    execution: Execution = field(default_factory=Execution)
+    notices: Notices = field(default_factory=Notices)
     horizons_h: tuple[int, ...] = (24, 72, 168)  # S-5
     fees: Fees = field(default_factory=Fees)
     costs: Costs = field(default_factory=Costs)
@@ -225,6 +242,7 @@ class Frozen:
     beta: Beta = field(default_factory=Beta)
     a0: A0 = field(default_factory=A0)
     a1_veto: float = 0.50  # S-7 A1 probability veto
+    ml_hurdle: float = 0.0  # S-7.2 A2 / A3 hurdle: calibrated yhat_cal(h*) > 0 bps
     ts_ref: TSRef = field(default_factory=TSRef)
     cv: CV = field(default_factory=CV)
     search: Search = field(default_factory=Search)

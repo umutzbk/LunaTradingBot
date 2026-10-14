@@ -458,7 +458,7 @@ class Preprocessor:
             if len(x) == 0:
                 params[c] = _ColParams(NAN, NAN, 0.0, 0.0, 0.0)
                 continue
-            q1, q99 = (float(q) for q in np.quantile(x, [0.01, 0.99]))
+            q1, q99 = (float(q) for q in np.quantile(x, list(F.winsor)))
             w = np.clip(x, q1, q99)
             mean = float(w.mean())
             sd = float(w.std()) if np.ptp(w) > 0 else 0.0

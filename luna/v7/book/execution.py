@@ -43,9 +43,9 @@ TAKER, MAKER = FROZEN.fees.taker, FROZEN.fees.maker
 SLIP = FROZEN.costs.slip
 FB_H = FROZEN.costs.fallback_half_spread
 FB_SLIP = FROZEN.costs.fallback_slip_mult * FROZEN.costs.slip
-MAKER_WINDOW = 30 * MIN  # S-6.2 W
-FORCED_DELAY = MIN  # S-4.2: forced risk exits fill on the first 1-minute bar after trigger + 1 min
-ADVERSE_MIN = (5, 30, 60)  # S-6.2 reported adverse mid move horizons
+MAKER_WINDOW = FROZEN.execution.maker_window_min * MIN  # S-6.2 W
+FORCED_DELAY = FROZEN.execution.forced_delay_min * MIN  # S-4.2: first 1-minute bar after trigger + 1 min
+ADVERSE_MIN = FROZEN.execution.adverse_min  # S-6.2 reported adverse mid move horizons
 BAR_15M = 15 * MIN
 
 INVALID_TERMINAL = "INVALID RUN — terminal settlement not reconstructible"  # S-5.4 / S-13.4 exact text

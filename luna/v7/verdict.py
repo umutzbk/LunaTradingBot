@@ -434,7 +434,7 @@ def holdout(x: HoldoutInputs) -> Verdict:
     crit["P4"], det["p4"] = p4(x.ml_T, ml)
     crit["P5"], det["p5"] = p5(ml, x.quarter_edges)
     st = stressed(x.ml_T, **ACC.p6)
-    crit["P6"] = bool(mean_daily_net(st) >= 0)
+    crit["P6"] = bool(mean_daily_net(st) >= ACC.p6_min_net)
     crit["P7"], det["p7"] = p7(*x.ic, x.B, x.seed)
     slope = p8_slope(*x.calib)
     crit["P8"] = p8_ok(slope)

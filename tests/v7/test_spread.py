@@ -153,16 +153,51 @@ def test_out_of_range_known_at_raises():
             half_spread(b, T0 + 2 * Q + MIN)
 
 
-def _window_reference(b: pd.DataFrame, tau: int) -> float | None:
-    """The S-4.5 value straight from all pair products of the whole frame (no pre-trimming)."""
-    from luna.v7.constants import FROZEN
-    from luna.v7.spread import pair_products
+# --- verbatim copy of luna/v7/spread.py at 92b22aa (before the Task 19 speed-up): bit-identity reference
+def _old_pair_products(bars15: pd.DataFrame) -> pd.DataFrame:
+    from luna.v7.timeutil import ns_array
 
-    p = pair_products(b)
-    sel = p[(p["open_ts"] >= tau - FROZEN.spread.window_ns) & (p["known_at"] <= tau - MIN)]
+    BAR_15M = 15 * MIN  # noqa: N806
+    b = bars15.sort_values("open_ts")
+    hlc = b[["h", "l", "c"]].to_numpy(np.float64)
+    b = b[np.isfinite(hlc).all(axis=1) & (hlc > 0).all(axis=1)]
+    t = ns_array(b["open_ts"], "open_ts")
+    c = np.log(b["c"].to_numpy(np.float64))
+    eta = (np.log(b["h"].to_numpy(np.float64)) + np.log(b["l"].to_numpy(np.float64))) / 2.0
+    if "known_at" not in b.columns:
+        raise ValueError("bars15 has no known_at column: point-in-time filtering is impossible")
+    ka = ns_array(b["known_at"], "known_at")  # ValueError on missing / non-finite / out-of-range values
+    consec = (t[1:] - t[:-1]) == BAR_15M
+    pi = 4.0 * (c[:-1] - eta[:-1]) * (c[:-1] - eta[1:])
+    known = np.maximum(ka[1:], t[1:] + BAR_15M)
+    return pd.DataFrame({"open_ts": t[:-1][consec], "pi": pi[consec], "known_at": known[consec]})
+
+
+def _old_half_spread(bars15_instance: pd.DataFrame, tau_ns: int) -> float | None:
+    from luna.v7.constants import FROZEN
+
+    p = _old_pair_products(bars15_instance)
+    sel = p[(p["open_ts"] >= tau_ns - FROZEN.spread.window_ns) & (p["known_at"] <= tau_ns - MIN)]
     if len(sel) == 0:
         return None
-    return max(FROZEN.spread.lam * math.sqrt(max(float(sel["pi"].mean()), 0.0)) / 2.0, FROZEN.spread.floor)
+    s = float(np.sqrt(max(float(sel["pi"].mean()), 0.0)))
+    return max(FROZEN.spread.lam * s / 2.0, FROZEN.spread.floor)
+
+
+def _window_reference(b: pd.DataFrame, tau: int) -> float | None:
+    return _old_half_spread(b, tau)
+
+
+def test_pair_products_identical_to_old_implementation():
+    from luna.v7.spread import pair_products
+
+    rng = np.random.default_rng(5)
+    rows = [tuple(rng.normal(0, 1e-3, 3)) for _ in range(300)]
+    rows = [None if k in (40, 41, 170) else (max(r), min(r), r[2]) for k, r in enumerate(rows)]
+    b = bars(rows)
+    b.loc[90, "h"] = -1.0  # invalid price
+    b = b.sample(frac=1.0, random_state=1)  # unsorted input
+    pd.testing.assert_frame_equal(pair_products(b), _old_pair_products(b), check_exact=True)
 
 
 def test_long_frame_equals_whole_frame_reference():

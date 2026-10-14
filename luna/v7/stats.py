@@ -244,7 +244,7 @@ def sharpe(r, lag: int | None = None) -> Sharpe:
     lrv = g0
     for k in range(1, min(L, T - 1) + 1):
         lrv += 2.0 * (1.0 - k / (L + 1)) * float(d[k:] @ d[:-k]) / (T - 1)
-    ann = math.sqrt(365.0)
+    ann = math.sqrt(float(FROZEN.accept.ann_days))
     sr = m / math.sqrt(g0) * ann if g0 > 0 else float("nan")
     sr_adj = m / math.sqrt(lrv) * ann if lrv > 0 else float("nan")
     return Sharpe(sr, sr_adj, L)

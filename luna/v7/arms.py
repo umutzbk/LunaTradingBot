@@ -92,7 +92,7 @@ def a1_keep(p_cal: float) -> bool:
 def ml_score(yhat: float, yhat_cal: float) -> tuple[float, bool]:
     """(rank_key, passes): rank by raw yhat, hurdle yhat_cal > 0 (S-7.2). With b = 0 the calibrated value is
     the constant ``a`` (entries iff a > 0) and the ranking still uses yhat."""
-    ok = math.isfinite(yhat) and math.isfinite(yhat_cal) and yhat_cal > 0
+    ok = math.isfinite(yhat) and math.isfinite(yhat_cal) and yhat_cal > FROZEN.ml_hurdle
     return (float(yhat) if math.isfinite(yhat) else -math.inf, bool(ok))
 
 

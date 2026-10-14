@@ -20,6 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from luna.v7.constants import FROZEN
 from luna.v7.data.instances import Instance, current_instance
 from luna.v7.timeutil import MIN, H, to_ns
 
@@ -32,7 +33,7 @@ USDM_PAIR: tuple[str, str] = ("perpetual contract", "futures")
 # A COIN-M mention makes the context ambiguous -> no match.
 COIN_M_PHRASES: tuple[str, ...] = ("coin-m", "coin-margined")
 
-CLEAR_AFTER_NS = 72 * H
+CLEAR_AFTER_NS = FROZEN.notices.u6_clear_h * H
 HALT_GRID_NS = MIN  # the 72 h "not HALTED at any time" test samples halted_fn on this grid (AMB-05)
 
 _TS_RE = re.compile(

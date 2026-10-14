@@ -32,15 +32,21 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field, replace
+from fractions import Fraction
 
 import numpy as np
 import pandas as pd
 
 from luna.v7.book.engine import BookRun
+from luna.v7.constants import FROZEN
 from luna.v7.timeutil import H, ns_array
 
-K10_REL = 1e-9  # K10 tolerance: 1e-9 x sum |fill notional|
-GAP_H = 72  # S-8.3 cluster gap
+K10_REL = FROZEN.k10_tol  # K10 tolerance: 1e-9 x sum |fill notional|
+GAP_H = FROZEN.cluster_gap_h  # S-8.3 cluster gap
+M_MIN, _M_FRAC = FROZEN.accept.p11_m  # P11: m = max(3, ceil(0.05 n_clusters))
+M_FRAC = Fraction(_M_FRAC).limit_denominator(1000)  # the exact rational 1/20 (integer ceiling below)
+if float(M_FRAC) != _M_FRAC:
+    raise ValueError(f"P11 fraction {_M_FRAC!r} has no exact small rational form")
 _Q_REL = 1e-9  # q_after vs q_before + dq: the engine books an exit of >= (1 - 1e-9) |q| as a close
 
 
@@ -602,8 +608,8 @@ def per_asset_rho(led: Ledger) -> dict[str, float]:
 
 
 def m_rule(n_clusters: int) -> int:
-    """P11: m = max(3, ⌈0.05 · n_clusters⌉) (integer arithmetic: ⌈n / 20⌉)."""
-    return max(3, -(-int(n_clusters) // 20))
+    """P11: m = max(3, ⌈0.05 · n_clusters⌉) (integer arithmetic: ⌈n · 1 / 20⌉ from FROZEN.accept.p11_m)."""
+    return max(M_MIN, -(-int(n_clusters) * M_FRAC.numerator // M_FRAC.denominator))
 
 
 def top_rho(led: Ledger, m: int) -> tuple[Cluster, ...]:
