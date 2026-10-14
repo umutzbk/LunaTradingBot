@@ -66,7 +66,7 @@ PRIMARY_INPUTS = ("bars_1m", "bars_15m", "mark_index_premium", "funding", "metad
                   "reference_prices")  # DEC-42 (R3, R5; R4 / S-4.6 / F5; R2 / U7; R1; R11; other references)
 DIAGNOSTIC_INPUTS = ("book_top", "depth", "ticker")  # never make a quarter non-evaluable
 DEPLOY_INPUTS = ("exchange_filters",)  # D1–D3 only
-ML_ARMS = ("ML*", "A2", "A3")
+ARMS = ("A0", "A1", "A2", "A3")  # S-7.2 arm ids (ML* is A2 or A3, the selected one)
 
 
 class NoForwardTest(RuntimeError):
@@ -102,9 +102,11 @@ def l7(t_f7_ns: int, r_v6: int | None, extended: bool = False) -> int | None:
     return max(end, to_ns(r_v6)) + D
 
 
-def r_v6_strict_floor(repo: Path | None = None) -> int:
-    """S-1.2 (a), the strict default: R_V6 is not before V6's day-365 look (2027-10-14T00:00Z), read from the
-    hash-checked V6 artefacts. A floor only; R_V6 itself is fixed by the report (or a written release)."""
+def r_v6_strict_default(repo: Path | None = None) -> int:
+    """The date of S-1.2 (a), V6's day-365 look (2027-10-14T00:00Z, from the hash-checked V6 artefacts): the
+    strict default under which §15 states L7 ≥ 2027-10-14. It is NOT a lower bound of R_V6: R_V6 is the
+    EARLIEST of (a), (b) and (c), so a terminal V6 look (b) or a written release (c) can make it earlier;
+    and (a) itself needs the look's completion and report, so R_V6 is an input, never derived here."""
     return v6_artifacts(repo).looks[2]
 
 
@@ -202,14 +204,20 @@ class TerminalHit:
     """A terminal event (S-5.4 class A / B / C) reaching a position of a forward book."""
 
     ts: int
-    arm: str  # "ML*" (or A2 / A3) or "A0"
+    arm: str  # S-7.2 arm id of the book: "A0", "A1", "A2" or "A3"
     klass: str
     held: bool  # the book actually held the contract
 
+    def __post_init__(self) -> None:
+        if self.arm not in ARMS:
+            raise ValueError(f"unknown arm {self.arm!r} (one of {ARMS})")
+        if self.klass not in ("A", "B", "C"):
+            raise ValueError(f"unknown terminal class {self.klass!r}")
+
 
 def _bc(e: TerminalHit) -> bool:
-    if e.klass not in ("A", "B", "C"):
-        raise ValueError(f"unknown terminal class {e.klass!r}")
+    if not isinstance(e, TerminalHit):
+        raise ValueError("terminal events must be TerminalHit")
     return bool(e.held) and e.klass in ("B", "C")
 
 
@@ -220,9 +228,12 @@ def a0_availability(events: Iterable[TerminalHit]) -> tuple[int | None, str]:
     return (min(hits), INCOMPLETE) if hits else (None, COMPLETE)
 
 
-def ml_terminal_invalid(events: Iterable[TerminalHit]) -> bool:
-    """EC-11 / K11: an actually-held B / C event of ML* → INVALID RUN."""
-    return any(e.arm in ML_ARMS and _bc(e) for e in events)
+def ml_terminal_invalid(events: Iterable[TerminalHit], ml_arm: str) -> bool:
+    """EC-11 / K11: an actually-held B / C event of the selected ML* arm (``ml_arm``: A2 or A3) → INVALID RUN.
+    Events of other books (the non-selected ML family, A1, A0) never invalidate the forward run."""
+    if ml_arm not in ("A2", "A3"):
+        raise ValueError("ML* is A2 or A3")
+    return any(_bc(e) and e.arm == ml_arm for e in events)
 
 
 def extension_allowed(inconclusive_reason: str | Iterable[str], *, already_extended: bool = False) -> bool:
@@ -273,8 +284,8 @@ class ForwardInputs:
     integrity: Sequence[str]  # integrity / guard findings (any → INVALID RUN)
     outcome_before_l7: Sequence[str]  # audit findings of outcomes computed before L7 (any → INVALID RUN)
     unrecovered_funding: Sequence[int]  # ``unrecovered_funding`` (any → INVALID RUN)
+    terminal_events: Sequence[TerminalHit]  # held / not-held B / C events of the forward books (EC-11)
     a0: BookRun | None = None  # reference only
-    terminal_events: Sequence[TerminalHit] = ()
     extended: bool = False
     deploy: Mapping | None = None  # ``deploy.d_gates`` on the forward L-265 run
     dec14_verified: bool = False
@@ -330,7 +341,7 @@ def forward_evaluate(x: ForwardInputs) -> ForwardVerdict:
     bad = [f"integrity: {s}" for s in integrity] + [f"outcome computed before L7: {s}" for s in before]
     if unrec:
         bad.append(f"funding missing and not backfilled from the REST history: {len(unrec)} settlements")
-    if ml_terminal_invalid(events):
+    if ml_terminal_invalid(events, x.ml.arm):
         bad.append(f"ML*: {INVALID_TERMINAL}")
     if not x.ml.valid:
         bad.append(f"ML*: {x.ml.invalid}" + (f" ({x.ml.invalid_detail})" if x.ml.invalid_detail else ""))
@@ -346,9 +357,8 @@ def forward_evaluate(x: ForwardInputs) -> ForwardVerdict:
         comp = INCOMPLETE
     elif not x.a0.valid:
         comp = INCOMPLETE
-        if x.a0.invalid == INVALID_TERMINAL and a0_from is None:
-            m = re.search(r"@(\d+)", x.a0.invalid_detail or "")
-            a0_from = int(m.group(1)) if m else None
+        if x.a0.invalid == INVALID_TERMINAL and x.a0.invalid_ts is not None:  # structured event time
+            a0_from = min(t for t in (a0_from, int(x.a0.invalid_ts)) if t is not None)
     if bad:
         return ForwardVerdict(INVALID, tuple(bad), a0_unavailable_from=a0_from, comparison=comp)
 
@@ -405,4 +415,4 @@ __all__ = ["COMPLETE", "DEPLOY_INPUTS", "DIAGNOSTIC_INPUTS", "FORWARD_BLOCKS", "
            "count_evaluable_days",
            "decision_time", "evaluable_day", "evaluable_quarter", "evidence", "extension_allowed",
            "forward_evaluate", "forward_verdict", "gap_days", "l7", "ml_terminal_invalid", "p4_counts",
-           "r_v6_strict_floor", "require_l7", "skipped_exit_time", "t_f7", "unrecovered_funding", "w_fwd7"]
+           "r_v6_strict_default", "require_l7", "skipped_exit_time", "t_f7", "unrecovered_funding", "w_fwd7"]

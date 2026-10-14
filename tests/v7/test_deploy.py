@@ -178,6 +178,22 @@ def test_lnorm_path_rejects_filters():
     assert r.filter_provenance == () and r.equity0 == 1.0
 
 
+def test_d1_scaled_report_and_empty_base():
+    ln = engine.run("A0", base_inputs(), (LO, END), 24)
+    l265 = run_layer(spec(), 265, filters(btc_min_notional=100.0))
+    # path-independent report: the L-norm book scaled to 265 USD (hedge 26.5 USD -> 0.026 BTC = 26 USD)
+    assert deploy.d1_share_scaled(ln, filters(btc_min_notional=5.0))[0] == 1.0
+    assert deploy.d1_share_scaled(ln, filters(btc_min_notional=26.5))[0] == 0.0  # 0.026 BTC = 26 USD < 26.5
+    assert deploy.d1_share_scaled(ln, filters(drop=("AAAUSDT",)))[0] == 0.0  # missing filter
+    g = d_gates(ln, l265, filters_by_symbol=filters(btc_min_notional=5.0))
+    assert g["d1_share"] == 0.0 and g["d1_share_scaled"] == 1.0 and not g["D1"]  # the gate stays path-based
+    assert "d1_share_scaled" not in d_gates(ln, l265)
+    # an empty L-norm decision table: no base, D1 fails (consistent, fail closed)
+    empty = replace(_lnorm([1] * 13), decisions=pd.DataFrame())
+    ge = d_gates(empty, _l265([0.4] * 3, [True] * 13))
+    assert ge["d1_share"] is None and not ge["D1"] and ge["D2"]
+
+
 def test_l10k_layer_and_d_gates_on_real_runs():
     ln = engine.run("A0", base_inputs(), (LO, END), 24)
     big = run_layer(spec(), 10_000, filters())

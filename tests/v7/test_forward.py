@@ -43,7 +43,8 @@ def run(nets=GOOD, arm="A2", **kw):
 
 def inputs(**kw):
     base = dict(holdout_class=verdict.ADVANCE, t_f7=TF7, r_v6=R_V6, now_ns=NOW, ml=run(), evaluable_days=170,
-                integrity=(), outcome_before_l7=(), unrecovered_funding=(), a0=run([5e-4] * 180, arm="A0"),
+                integrity=(), outcome_before_l7=(), unrecovered_funding=(), terminal_events=(),
+                a0=run([5e-4] * 180, arm="A0"),
                 B=B)
     base.update(kw)
     return ForwardInputs(**base)
@@ -68,9 +69,9 @@ def test_t_f7_rule():
 def test_l7_strict_default():
     m6_lo, m6_hi = m6_cached()
     assert m6_hi is None and m6_lo <= TF7  # T_F7 inside M6, R_V6 undetermined
-    floor = forward.r_v6_strict_floor()
-    assert floor == to_ns("2027-10-14")  # V6 day-365 look (S-1.1 table)
-    assert l7(TF7, floor) == to_ns("2027-10-15") and l7(TF7, floor) >= to_ns("2027-10-14")
+    strict = forward.r_v6_strict_default()
+    assert strict == to_ns("2027-10-14")  # V6 day-365 look (S-1.1 table), S-1.2 (a)
+    assert l7(TF7, strict) == to_ns("2027-10-15") and l7(TF7, strict) >= to_ns("2027-10-14")
     assert l7(TF7, None) is None  # R_V6 unknown: no look
     early = to_ns("2027-01-01")  # e.g. a written release (c) before the forward end
     assert l7(TF7, early) == TF7 + 181 * D
@@ -165,7 +166,7 @@ def test_go_needs_forward_pit_deployment(p4_ok):
 
 
 def test_ec11_a0_event_does_not_invalidate(p4_ok):
-    ev = [TerminalHit(TF7 + 50 * D, "A0", "B", True), TerminalHit(TF7 + 10 * D, "ML*", "C", False)]
+    ev = [TerminalHit(TF7 + 50 * D, "A0", "B", True), TerminalHit(TF7 + 10 * D, "A2", "C", False)]
     assert a0_availability(ev) == (TF7 + 50 * D, "unavailable/incomplete")
     assert a0_availability([TerminalHit(TF7, "A0", "C", False), TerminalHit(TF7, "A0", "A", True)]) == (
         None, "complete")
@@ -173,10 +174,12 @@ def test_ec11_a0_event_does_not_invalidate(p4_ok):
     assert v.cls == forward.GO_NOT_DEPLOYABLE and v.a0_unavailable_from == TF7 + 50 * D
     assert v.comparison == "unavailable/incomplete" and "ml_minus_a0_mean" not in v.details
     # an A0 replay stopped by its own B / C event: same
-    a0_bad = replace(run([5e-4] * 180, arm="A0"), invalid=INVALID_TERMINAL,
-                     invalid_detail=f"XUSDT#0@{TF7 + 20 * D}: class B")
+    a0_bad = replace(run([5e-4] * 180, arm="A0"), invalid=INVALID_TERMINAL, invalid_ts=TF7 + 20 * D,
+                     invalid_detail="unparsed text")
     v2 = forward_evaluate(inputs(a0=a0_bad))
     assert v2.cls == forward.GO_NOT_DEPLOYABLE and v2.a0_unavailable_from == TF7 + 20 * D
+    v2b = forward_evaluate(inputs(a0=a0_bad, terminal_events=[TerminalHit(TF7 + 9 * D, "A0", "C", True)]))
+    assert v2b.a0_unavailable_from == TF7 + 9 * D  # the earlier of the two
     # no event: the ML* - A0 comparison is reported (never a gate)
     v3 = forward_evaluate(inputs())
     _, xd = stats.paired(account(run()), account(run([5e-4] * 180, arm="A0")))
@@ -184,8 +187,16 @@ def test_ec11_a0_event_does_not_invalidate(p4_ok):
 
 
 def test_ml_event_invalidates(p4_ok):
-    v = forward_evaluate(inputs(terminal_events=[TerminalHit(TF7 + 5 * D, "ML*", "B", True)]))
+    v = forward_evaluate(inputs(terminal_events=[TerminalHit(TF7 + 5 * D, "A2", "B", True)]))
     assert v.cls == forward.INVALID and INVALID_TERMINAL in v.reasons[0]
+    # the non-selected ML family (A3 while ML* = A2) and A1 are not ML*: no INVALID RUN
+    other = [TerminalHit(TF7 + 5 * D, "A3", "B", True), TerminalHit(TF7 + 6 * D, "A1", "C", True)]
+    assert forward_verdict(inputs(terminal_events=other)) == forward.GO_NOT_DEPLOYABLE
+    assert forward_verdict(inputs(ml=run(arm="A3"), terminal_events=other)) == forward.INVALID
+    with pytest.raises(ValueError):
+        TerminalHit(TF7, "ML*", "B", True)  # unknown arm id refused
+    with pytest.raises(TypeError):  # terminal_events is a required input
+        ForwardInputs(verdict.ADVANCE, TF7, R_V6, NOW, run(), 170, (), (), ())  # type: ignore[call-arg]
     bad = replace(run(), invalid=INVALID_TERMINAL, invalid_detail="X#0@1")
     assert forward_verdict(inputs(ml=bad)) == forward.INVALID
     assert forward_verdict(inputs(unrecovered_funding=(TF7 + 8 * H,))) == forward.INVALID

@@ -18,9 +18,11 @@ AMB-23).
   symbol without applicable filters is excluded (never traded) and the result is flagged incomplete (DEC-34).
 * **D1–D3 (§14).** D1: ≥ 90 % of the decisions at which the L-norm book is non-empty are constructible in the
   L-265 run at the same decision time (legs and any required hedge); D2: L-265 mean daily net (USD) > 0; D3:
-  365 × L-265 mean daily net − 144 USD/year infrastructure > 0. Any ``current_approximation`` filter labels
-  every D output "approximate (current filters)"; only forward point-in-time filters with no missing symbol
-  are exact deployment evidence (S-14.1 steps 3–5). Fixed infrastructure cost never enters labels or L-norm.
+  365 × L-265 mean daily net − 144 USD/year infrastructure > 0. The path-independent D1 share (the L-norm
+  book scaled to 265 USD against the filters, ``d1_share_scaled``) is reported alongside, never gated.
+  Any ``current_approximation`` filter labels every D output "approximate (current filters)"; only forward
+  point-in-time filters with no missing symbol are exact deployment evidence (S-14.1 steps 3–5). Fixed
+  infrastructure cost never enters labels or L-norm.
 """
 
 from __future__ import annotations
@@ -194,20 +196,61 @@ def exact_evidence(run: BookRun) -> bool:
 def d1_share(lnorm: BookRun, l265: BookRun) -> tuple[float | None, int, int]:
     """(share, constructible, base): over the L-norm decisions with a non-empty post-decision book, the
     share whose L-265 decision at the same time is constructible (a missing L-265 decision counts as not
-    constructible). share None when the base is empty."""
+    constructible). share None when the base is empty (an empty L-norm decision table included: D1 fails)."""
     ld, dd = lnorm.decisions, l265.decisions
-    if ld is None or "n_post" not in ld.columns or "t" not in ld.columns:
+    if ld is None or len(ld) == 0:
+        return None, 0, 0
+    if "n_post" not in ld.columns or "t" not in ld.columns:
         raise ValueError("L-norm decisions without 'n_post' (D1)")
-    if dd is None or "constructible" not in dd.columns:
+    if dd is not None and len(dd) and "constructible" not in dd.columns:
         raise ValueError("L-265 decisions without 'constructible' (D1)")
-    cons = {int(t): bool(c) for t, c in zip(dd["t"], dd["constructible"], strict=True)}
+    cons = ({} if dd is None or len(dd) == 0
+            else {int(t): bool(c) for t, c in zip(dd["t"], dd["constructible"], strict=True)})
     base = [int(t) for t, n in zip(ld["t"], ld["n_post"], strict=True) if int(n) > 0]
     ok = sum(cons.get(t, False) for t in base)
     return (ok / len(base) if base else None), ok, len(base)
 
 
-def d_gates(lnorm: BookRun, l265: BookRun, infra_usd_year: float = DP.infra_usd_year) -> dict:
-    """D1–D3 at 265 USD (§14) with the S-14.1 label. An invalid / non-accountable L-265 run fails every D."""
+def d1_share_scaled(lnorm: BookRun, filters_by_symbol: Mapping[str, Filters | Sequence[Filters]],
+                    E: float = DP.E_265) -> tuple[float | None, int, int]:  # noqa: N803
+    """Path-independent D1 REPORT (AMB-23 (j) alternative; never the gate): over the L-norm decisions with a
+    non-empty post-decision book, the share whose book scaled to ``E`` USD (each leg n_i · E / equity(t) at
+    its P(t + 15 min)) is buildable under the filters applicable at t, every leg and the S-7.4 hedge target
+    (|H_B| · E / equity(t) at BTC's price, when non-zero) included. A missing price or filter counts as not
+    buildable."""
+    ld = lnorm.decisions
+    if ld is None or len(ld) == 0:
+        return None, 0, 0
+    for c in ("t", "n_post", "post", "prices", "equity", "hedge_target"):
+        if c not in ld.columns:
+            raise ValueError(f"L-norm decisions without {c!r} (D1 report)")
+    sizer = _Sizer(filters_by_symbol)
+    ok = base = 0
+    for row in ld.itertuples(index=False):
+        if int(row.n_post) <= 0:
+            continue
+        base += 1
+        t, k = int(row.t), float(E) / float(row.equity)
+        px = dict(row.prices)
+        want = [(sym, abs(n) * k) for sym, n in row.post]
+        h = row.hedge_target
+        if h is not None and not (isinstance(h, float) and math.isnan(h)) and float(h) != 0.0:
+            want.append(("BTCUSDT", abs(float(h)) * k))
+        good = True
+        for sym, usd in want:
+            p, f = px.get(sym), sizer.at(sym, t)
+            if p is None or f is None or round_order(usd / p, p, f) is None:
+                good = False
+                break
+        ok += good
+    return (ok / base if base else None), ok, base
+
+
+def d_gates(lnorm: BookRun, l265: BookRun, infra_usd_year: float = DP.infra_usd_year,
+            filters_by_symbol: Mapping[str, Filters | Sequence[Filters]] | None = None) -> dict:
+    """D1–D3 at 265 USD (§14) with the S-14.1 label. An invalid / non-accountable L-265 run fails every D
+    (D1 included). With ``filters_by_symbol`` the path-independent D1 share is reported alongside
+    (``d1_share_scaled``; report only, AMB-23 (j))."""
     if lnorm.layer != "L-norm" or l265.layer != "L-265":
         raise ValueError("d_gates needs an L-norm run and an L-265 run")
     if float(l265.equity0) != float(DP.E_265):
@@ -221,6 +264,8 @@ def d_gates(lnorm: BookRun, l265: BookRun, infra_usd_year: float = DP.infra_usd_
                      filters_missing=l265.filters_missing, infra_usd_year=float(infra_usd_year))
     share, ok, base = d1_share(lnorm, l265)
     out.update(d1_share=share, d1_constructible=ok, d1_base=base)
+    if filters_by_symbol is not None:
+        out["d1_share_scaled"] = d1_share_scaled(lnorm, filters_by_symbol)[0]
     why = None
     if not l265.valid:
         why = f"L-265 run invalid: {l265.invalid}"
@@ -243,5 +288,5 @@ def d_gates(lnorm: BookRun, l265: BookRun, infra_usd_year: float = DP.infra_usd_
 
 
 __all__ = ["APPROX", "FORWARD", "INCOMPLETE", "PIT_HIST", "CurrentFiltersNotHistorical", "Filters",
-           "RunSpec", "assert_not_backdated", "d1_share", "d_gates", "exact_evidence", "label", "round_order",
-           "run_layer"]
+           "RunSpec", "assert_not_backdated", "d1_share", "d1_share_scaled", "d_gates", "exact_evidence",
+           "label", "round_order", "run_layer"]

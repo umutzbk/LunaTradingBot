@@ -31,7 +31,8 @@ parameter for them; any other layer is refused). The USD layers L-265 / L-10k ru
 rounded by the sizer at the fill price; an infeasible leg / reduce is not traded; if the S-7.4 hedge the book
 requires is infeasible, the decision's entries are forbidden and the hedge is re-decided without them. Full
 closes (decision, forced, terminal) are never filtered. Every decision row records ``n_post`` (legs in the
-post-decision book), and in a USD layer ``constructible`` / ``infeasible`` (D1).
+post-decision book), ``post`` / ``prices`` (that book and P(t + 15 min), the D1 report inputs), and in a USD
+layer ``constructible`` / ``infeasible`` (D1).
 """
 
 from __future__ import annotations
@@ -160,9 +161,10 @@ class BookRun:
     integrity: tuple[str, ...]
     invalid: str | None
     invalid_detail: str | None = None
+    invalid_ts: int | None = None  # the time of the RunInvalid event (structured; EC-11 A0 availability)
     equity0: float = E0  # starting equity (book units; USD in L-265 / L-10k)
     filter_provenance: tuple[str, ...] = ()  # USD layers: provenance of every supplied filter (S-14.1)
-    filters_missing: tuple[str, ...] = ()  # USD layers: symbols traded without applicable filters (DEC-34)
+    filters_missing: tuple[str, ...] = ()  # USD layers: symbols excluded (never traded) for lack of filters
 
     @property
     def valid(self) -> bool:
@@ -200,6 +202,7 @@ class _Sim:
         self.decisions: list[dict] = []
         self.invalid: str | None = None
         self.invalid_detail: str | None = None
+        self.invalid_ts: int | None = None
         self.fresh: dict[str, float] = {}
         self.kill_done = False
         self.n_hedge = 0
@@ -240,6 +243,7 @@ class _Sim:
         if self.invalid is None:
             self.invalid = r.reason
             self.invalid_detail = f"{r.symbol}#{r.instance}@{r.ts}" + (f": {r.detail}" if r.detail else "")
+            self.invalid_ts = int(r.ts)
 
     def legs(self) -> list[Leg]:
         """Held legs. A leg whose exit rests as an E_M maker order is passed as active (``pending_exit``
@@ -497,7 +501,19 @@ class _Sim:
                                                                          for o in tg.orders),
                                    notes=tg.notes + acts.notes + tuple(self.notes), hedge_reason=hd.reason,
                                    hedge_target=hd.target, beta_book=hd.beta_book,
-                                   n_post=sum(1 for x in post.values() if x != 0), **extra))
+                                   n_post=sum(1 for x in post.values() if x != 0),
+                                   post=tuple(sorted((k, float(x)) for k, x in post.items() if x != 0)),
+                                   prices=self.decision_prices(post, t, t_e), **extra))
+
+    def decision_prices(self, post: Mapping[str, float], t: int, t_e: int) -> tuple:
+        """P(t + 15 min) of every post-decision leg and of BTC (None if missing): the price inputs of the
+        path-independent D1 report (``deploy.d1_share_scaled``)."""
+        out = []
+        for sym in sorted({k for k, x in post.items() if x != 0} | {HEDGE_SYMBOL}):
+            cv = self.view_of(sym, t)
+            r = cv.ref(t_e) if cv is not None else None
+            out.append((sym, None if r is None else float(r[0])))
+        return tuple(out)
 
     def scores(self, t: int, cands: pd.DataFrame) -> pd.DataFrame:
         if len(cands) == 0:
@@ -634,14 +650,18 @@ class _Sim:
             elif o.kind == "reduce" and o.target > EPS * self.e0:
                 p = self.leg_pos(sym)
                 leg_n = abs(p.q) * p.p_last  # type: ignore[operator]
-                q = lots.size(sym, abs(p.q) * o.notional / leg_n, p.p_last, t)  # type: ignore[arg-type]
-                if q is None:
-                    infeasible.append(f"reduce:{sym}")
-                    post[sym] = p.side * leg_n
-                    plan[i] = "infeasible"
-                    continue
-                post[sym] = p.side * (abs(p.q) - q) * p.p_last  # type: ignore[operator]
-                plan[i] = q
+                tr = Trade(sym, -o.side, abs(p.q) * o.notional / leg_n, None, False, o.reason, p.pid)
+                out = taker_at(p.view, tr, t_e)
+                if isinstance(out, Fill):  # sized at its fill's reference mid, like the entries
+                    q = lots.size(sym, out.qty, out.ref_mid, t)
+                    if q is None:
+                        infeasible.append(f"reduce:{sym}")
+                        post[sym] = p.side * leg_n
+                        plan[i] = "infeasible"
+                        continue
+                    out = _scaled(out, q)
+                    post[sym] = p.side * (abs(p.q) - q) * p.p_last  # type: ignore[operator]
+                plan[i] = ("reduce", out)
         hd, act, bad = self.hedge_plan(t, t_e, post, v, eq, killed)
         if bad is not None and n_entries:  # S-7.4 / section 14: an infeasible required hedge forbids entries
             infeasible.append("hedge:entries_forbidden")
@@ -663,10 +683,9 @@ class _Sim:
                 pid, out = x  # type: ignore[misc]
                 self.open_meta[pid] = (t, v.betas.get(o.symbol))
                 self.schedule([out], pid, "open", t_e, None)
-            elif isinstance(x, float):
+            elif isinstance(x, tuple) and x[0] == "reduce":
                 p = self.leg_pos(o.symbol)
-                tr = Trade(o.symbol, -o.side, x, None, False, o.reason, p.pid)
-                self.schedule([taker_at(p.view, tr, t_e)], p.pid, "reduce", t_e, None)
+                self.schedule([x[1]], p.pid, "reduce", t_e, None)
             else:
                 self.order(o, t, t_e, v)  # full closes: never filtered (AMB-23)
         self.hedge_exec(act, t, t_e)
@@ -760,7 +779,7 @@ def _run(arm: str, inputs: EngineInputs, window: tuple[int, int], h_star: int, m
         fills=_frame(led.fills), marks=_frame(led.marks), positions=_frame(led.positions),
         funding_flows=_frame(led.funding), daily=_frame(led.daily), decisions=_frame(sim.decisions),
         integrity=tuple(dict.fromkeys(sim.integrity)), invalid=sim.invalid, invalid_detail=sim.invalid_detail,
-        equity0=float(equity0),
+        invalid_ts=sim.invalid_ts, equity0=float(equity0),
     )
 
 

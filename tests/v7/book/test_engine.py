@@ -171,12 +171,12 @@ def test_terminal_bc_held_invalidates_run():
         aaa = instrument("AAAUSDT", 100.0, -1e-4, last_trade=cess, terminal=k)
         r = run("A0", base_inputs(aaa=aaa), (LO, END), 24)
         assert r.invalid == INVALID_TERMINAL == "INVALID RUN — terminal settlement not reconstructible"
-        assert r.invalid_detail.startswith(f"AAAUSDT#0@{cess}")
+        assert r.invalid_detail.startswith(f"AAAUSDT#0@{cess}") and r.invalid_ts == cess
         assert not (r.fills["ts"] > cess).any()  # the run stops; no fill is invented
     # an A event settles at the official time and price, taker fee, no spread / slippage
     aaa = instrument("AAAUSDT", 100.0, -1e-4, last_trade=cess, terminal="A", settle_price=97.0)
     r = run("A0", base_inputs(aaa=aaa), (LO, END), 24)
-    assert r.valid
+    assert r.valid and r.invalid_ts is None
     s = r.fills[r.fills["liquidity"] == "settlement"].iloc[0]
     got = (s["symbol"], s["ts"], s["price"], s["spread_cost"], s["slip_cost"])
     assert got == ("AAAUSDT", cess, 97.0, 0, 0)
