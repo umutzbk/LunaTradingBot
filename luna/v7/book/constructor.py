@@ -1,34 +1,38 @@
-"""Deterministic book constructor (spec S-7.1, S-0.6, S-4.4 liquidity cap, §14 L-norm).
+"""Deterministic book constructor (spec S-7.1, S-7.3 caps, S-0.6, S-4.4 liquidity cap, §14 L-norm).
 
 One constructor for every arm; only the scores change. At decision t, in this order:
 
 1. **Forced exits** (``RiskActions.forced``: kill > leg stop > U6 > ineligibility) close their legs whatever
-   the score or the minimum hold. Legs with a ``pending_exit`` get no new order.
+   the score or the minimum hold; the order carries the trigger time and reason (S-4.2 timing is the
+   engine's). Legs with a ``pending_exit`` get no new order.
 2. **Decision exits**, only after the minimum hold h* (measured from the entry decision, AMB-16 (g)): a gate
    failure (any of U1-U7; U8 is never an exit trigger), a rank outside K + 2 on its side (or not ranked), or a
-   score below the hurdle (``passes_hurdle`` False). Before h* only risk exits close a leg.
+   score below the hurdle (``passes_hurdle`` False). A held leg that is unscored only because U8 is false gets
+   no rank / hurdle exit at that decision (AMB-16 (l)). Before h* only risk exits close a leg.
 3. **Entries** (only if the risk layer allows entries at t): per side, the candidates ranked in the top K of
    that side by the arm's score (re-derived: rank_key desc, NaN last, ties by symbol) that pass the hurdle,
    pass U1-U8 (``universe.eligible``; no gate row fails closed), are not in cooldown / U8-blocked, are not
-   held on either side (the other side: no same-decision flip), are not halted, and have a finite beta and 24
-   h quote volume. A slot lost to any of these is NOT backfilled by a lower rank (A1 = A0's entries minus the
-   vetoed, literal, AMB-16 (a)). A symbol qualifying on both sides enters neither (AMB-16 (b)). Entrants fill
-   the free slots (K minus the legs still held on the side after this decision's exits) in rank order.
-4. **Targets**: equal weight within a side, ``min(0.5 E / n_side, 0.5 E / K)`` (the per-leg cap binds whenever
-   n_side < K), each capped by the liquidity cap ``0.005 * qv24 / usd_per_unit`` (L-norm: usd_per_unit =
-   E_ref = 10,000 USD per unit of E, §14). Neutrality: if ``|L - S| > 0.05 (L + S)``, every target of the
-   heavier side is scaled by S/L (or L/S) so the target book is dollar-neutral; an empty side therefore makes
-   the other side's targets 0 (flat), including legs inside the minimum hold (conservative, AMB-16 (d)). Caps
-   and neutrality bound the targets (AMB-16 (e)); the actual book follows them through the drift rule.
-5. **Resizes**: a kept leg is resized to its target only when ``|n - T| > 25 % T`` and only downward
-   (reduce-only between entries, AMB-16 (f)); a target of 0 closes the leg (reason ``neutrality``). Halted:
-   no resize.
+   held on either side (the other side: no same-decision flip), are not halted, and have a finite beta and
+   24 h quote volume. A slot lost to any of these is NOT backfilled by a lower rank (A1 = A0's entries minus
+   the vetoed, literal, AMB-16 (a)). A symbol qualifying on both sides enters neither (AMB-16 (b)). Entrants
+   fill the free slots (K minus the legs still held on the side after this decision's exits) in rank order.
+4. **Targets**: equal weight within a side, ``min(0.5 E / n_side, 0.5 E / K)`` (the per-leg cap binds
+   whenever n_side < K), each capped by the liquidity cap ``0.005 * qv24 / usd_per_unit`` (L-norm:
+   usd_per_unit = E_ref = 10,000 USD per unit of E, §14). Neutrality: if ``|L - S| > 0.05 (L + S)``, every
+   target of the heavier side is scaled by S/L (or L/S) so the target book is dollar-neutral; an empty side
+   therefore makes the other side's targets 0 (flat), including legs inside the minimum hold (AMB-16 (d)).
+5. **Resizes**: a kept leg is resized to its target when ``|n - T| > 25 % T``, only downward (reduce-only
+   between entries, AMB-16 (f)); a target of 0 closes the leg (reason ``neutrality``). The S-7.3 caps are
+   HARD limits on the marked book (AMB-16 (e)): inside the drift band a leg above min(0.5 E / K, liquidity
+   cap) is reduced to that cap (``cap_leg`` / ``cap_liquidity``), and if the post-decision gross exceeds
+   1.0 E every reducible leg (kept, non-halted, and entrants) is scaled down proportionally (``cap_gross``).
+   Halted: no resize.
 
-Halted instruments (``halted`` evaluated by the engine at the order time): no open and no reduce is emitted;
-an exit is emitted with ``halted=True`` so the engine defers it (S-5.4). ``Targets.post`` holds the signed leg
-notionals after this decision's orders (pending / halted legs at their current notional), the input of
-``hedge.decide``. ML enters only through ``scores`` (order + hurdle flag): it cannot add a gate-failing
-candidate, change a size or cancel a forced exit (S-0.6).
+Halted instruments (``halted`` evaluated by the engine at the order time; required for every held leg): no
+open and no reduce is emitted; an exit is emitted with ``halted=True`` so the engine defers it (S-5.4).
+``Targets.post`` holds the signed leg notionals after this decision's orders (pending / halted legs at their
+current notional), the input of ``hedge.decide``. ML enters only through ``scores`` (order + hurdle flag): it
+cannot add a gate-failing candidate, change a size or cancel a forced exit (S-0.6).
 """
 
 from __future__ import annotations
@@ -132,10 +136,10 @@ def targets(
     ``scores``: ``arms.arm_scores`` output (symbol, side, rank_key, passes_hurdle) over the gate-passing
     candidates of both sides; ``gates``: GateRow per held / candidate symbol; ``risk``:
     ``RiskLayer.pre_decision`` actions for the same t; ``halted``: S-5.4 halt flag per symbol at the order
-    time (missing = halted, fail closed); ``betas``: beta_hat(t) per symbol; ``quote_vol_24h``: trailing 24 h
-    quote volume (USD) known at t - 1 min; ``equity``: E in book units (L-norm: the marked equity, starting
-    at 1); ``usd_per_unit``: USD per book unit for the liquidity cap (L-norm: ``FROZEN.deploy.E_ref``; USD
-    layers: 1).
+    time (required for every held leg; a candidate without one is not entered); ``betas``: beta_hat(t) per
+    symbol; ``quote_vol_24h``: trailing 24 h quote volume (USD) known at t - 1 min; ``equity``: E in book
+    units (L-norm: the marked equity, starting at 1); ``usd_per_unit``: USD per book unit for the liquidity
+    cap (L-norm: ``FROZEN.deploy.E_ref``; USD layers: 1).
     """
     t = int(t)
     e = positive(equity, "equity")
@@ -146,14 +150,20 @@ def targets(
     held = tuple(sorted(held, key=lambda x: x.symbol))
     if len({x.symbol for x in held}) != len(held):
         raise ValueError("a symbol is held more than once")
+    missing_halt = [x.symbol for x in held if x.symbol not in halted]
+    if missing_halt:
+        raise ValueError(f"no halted flag for held legs {missing_halt} (fail closed)")
     ranked = _ranked(scores)
     rank = {s: {sym: (i + 1, p) for i, (sym, p) in enumerate(ranked[s])} for s in SIDES}
     notes: list[str] = []
-    is_halted = {x.symbol: bool(halted.get(x.symbol, True)) for x in held}
+    is_halted = {x.symbol: bool(halted[x.symbol]) for x in held}
 
-    def order(lg: Leg, kind: str, notional: float, target: float, reason: str, forced: bool) -> Order:
-        return Order(lg.symbol, lg.side, kind, notional, target, reason, forced,  # type: ignore[arg-type]
-                     kind == "close" and is_halted[lg.symbol], lg.position_id)
+    def order(
+        lg: Leg, kind: str, notional: float, target: float, reason: str, forced: bool, trig: int | None = None
+    ) -> Order:
+        halt = kind == "close" and is_halted[lg.symbol]
+        return Order(lg.symbol, lg.side, kind, notional, target, reason, forced, halt,  # type: ignore[arg-type]
+                     lg.position_id, trig)
 
     # 1-2. exits ----------------------------------------------------------------------------------------
     forced_by = {f.symbol: f for f in risk.forced}
@@ -167,13 +177,18 @@ def targets(
         if f is not None:
             if f.side != lg.side:
                 raise ValueError(f"forced exit side mismatch for {lg.symbol}")
-            forced_orders.append(order(lg, "close", lg.notional, 0.0, f.reason, True))
+            forced_orders.append(order(lg, "close", lg.notional, 0.0, f.reason, True, f.trigger_ts))
             continue
         if t - lg.entry_decision_ts >= h_ns:
+            g = gates.get(lg.symbol)
             r = rank[lg.side].get(lg.symbol)
             why = None
-            if _gate_failed(gates.get(lg.symbol)):
+            if _gate_failed(g):
                 why = "gate"
+            elif r is None and g is not None and not g.u8:
+                # unscored only because U8 is false (arm_scores takes U1-U8-passing rows): U8 is never an
+                # exit trigger, so no rank / hurdle exit at this decision (AMB-16 (l))
+                notes.append(f"u8_unscored_hold:{lg.symbol}")
             elif r is None or r[0] > BK.K + BK.exit_rank_slack:
                 why = "rank"
             elif not r[1]:
@@ -229,22 +244,25 @@ def targets(
             entrants[s] = q[:free]
             notes.extend(f"no_slot:{x}" for x in q[free:])
         qualified = entrants
-    assert not (held_syms & (set(qualified[1]) | set(qualified[-1])))
+    if held_syms & (set(qualified[1]) | set(qualified[-1])):
+        raise RuntimeError("internal: a held symbol was selected for entry")
 
     # 4. targets ----------------------------------------------------------------------------------------
+    per_leg = BK.side_gross * e / BK.K
+    liq_cap: dict[str, float] = {}
     tgt: dict[str, float] = {}
     side_of: dict[str, int] = {}
     for s in SIDES:
         members = [x.symbol for x in kept if x.side == s] + qualified[s]
         if not members:
             continue
-        w = min(BK.side_gross * e / len(members), BK.side_gross * e / BK.K)
+        w = min(BK.side_gross * e / len(members), per_leg)
         for sym in members:
             qv = _finite_pos(quote_vol_24h.get(sym))
-            cap = LIQ * qv / upu if qv is not None else math.inf
+            liq_cap[sym] = LIQ * qv / upu if qv is not None else math.inf
             if qv is None:
                 notes.append(f"liquidity_missing_held:{sym}")
-            tgt[sym] = min(w, cap)
+            tgt[sym] = min(w, liq_cap[sym])
             side_of[sym] = s
     gross = {s: sum(v for k, v in tgt.items() if side_of[k] == s) for s in SIDES}
     lg_, sh_ = gross[1], gross[-1]
@@ -254,48 +272,68 @@ def targets(
         for k in tgt:
             if side_of[k] == heavy:
                 tgt[k] *= f
-    per_leg = BK.side_gross * e / BK.K
-    assert all(v <= per_leg * (1 + EPS) for v in tgt.values())
-    assert sum(tgt.values()) <= FROZEN.risk.gross_max * e * (1 + EPS)
+    if any(v > per_leg * (1 + EPS) for v in tgt.values()):
+        raise RuntimeError("internal: a target exceeds the per-leg cap")
+    if sum(tgt.values()) > FROZEN.risk.gross_max * e * (1 + EPS):
+        raise RuntimeError("internal: the target book exceeds the gross cap")
 
-    # 5. resizes / neutrality closes / opens --------------------------------------------------------------
+    # 5. resizes, S-7.3 hard caps on the marked book, neutrality closes, opens ----------------------------
     neutral_close: list[Order] = []
-    reduces: list[Order] = []
-    post: dict[str, float] = {}
+    new: dict[str, tuple[float, str]] = {}  # reducible kept legs / entrants -> (notional after, reason)
     for lg in kept:
         T = tgt[lg.symbol]
         n = lg.notional
         if T <= EPS * e:
             neutral_close.append(order(lg, "close", n, 0.0, "neutrality", False))
-            if is_halted[lg.symbol]:
-                post[lg.symbol] = lg.signed
             continue
-        post[lg.symbol] = lg.signed
-        if abs(n - T) <= BK.resize_drift * T * (1 + EPS):
+        cap = min(per_leg, liq_cap[lg.symbol])
+        drift = abs(n - T) > BK.resize_drift * T * (1 + EPS)
+        if is_halted[lg.symbol]:
+            if (drift and n > T) or n > cap * (1 + EPS):
+                notes.append(f"halted_resize:{lg.symbol}")
             continue
-        if n < T:
-            notes.append(f"no_increase:{lg.symbol}")
-        elif is_halted[lg.symbol]:
-            notes.append(f"halted_resize:{lg.symbol}")
+        if drift and n > T:
+            new[lg.symbol] = (T, "drift")
+        elif n > cap * (1 + EPS):  # S-7.3 hard cap inside the drift band (AMB-16 (e))
+            new[lg.symbol] = (cap, "cap_leg" if cap == per_leg else "cap_liquidity")
         else:
-            reduces.append(order(lg, "reduce", n - T, T, "drift", False))
-            post[lg.symbol] = lg.side * T
-    opens: list[Order] = []
+            if drift:
+                notes.append(f"no_increase:{lg.symbol}")
+            new[lg.symbol] = (n, "")
     for s in SIDES:
         for sym in qualified[s]:
-            T = tgt[sym]
-            if T <= EPS * e:
+            if tgt[sym] <= EPS * e:
                 notes.append(f"neutrality:{sym}")
-                continue
-            opens.append(Order(sym, s, "open", T, T, "entry", False, False, None))
-            post[sym] = s * T
-    for lg in held:  # pending exits and halted closes stay held
-        if lg.pending_exit is not None or (lg.symbol in closing and is_halted[lg.symbol]):
+            else:
+                new[sym] = (tgt[sym], "entry")
+    post: dict[str, float] = {}
+    fixed = 0.0  # gross no order can change at t: halted kept legs, pending exits, halted closes
+    for lg in held:
+        if lg.symbol not in new and (lg.pending_exit is not None or is_halted[lg.symbol]):
             post[lg.symbol] = lg.signed
+            fixed += lg.notional
+    gmax = FROZEN.risk.gross_max * e
+    total = fixed + sum(v for v, _ in new.values())
+    if new and total > gmax * (1 + EPS):  # S-7.3 gross hard cap: reducible legs scaled proportionally
+        f = max(gmax - fixed, 0.0) / sum(v for v, _ in new.values())
+        new = {k: (v * f, r if r == "entry" else "cap_gross") for k, (v, r) in new.items()}
+        notes.append("cap_gross")
+    reduces: list[Order] = []
+    opens: list[Order] = []
+    by_sym = {x.symbol: x for x in kept}
+    for sym, (v, r) in new.items():
+        if r == "entry":
+            s = side_of[sym]
+            opens.append(Order(sym, s, "open", v, v, "entry", False, False, None, None))
+            post[sym] = s * v
+            continue
+        lg = by_sym[sym]
+        if v < lg.notional * (1 - EPS):
+            reduces.append(order(lg, "reduce", lg.notional - v, v, r, False))
+        post[sym] = lg.side * v
 
     def srt(xs: list[Order]) -> list[Order]:
         return sorted(xs, key=lambda o: (o.symbol, o.side))
 
-    forced_sorted = sorted(forced_orders, key=lambda o: (o.symbol, o.side))
-    orders = tuple(forced_sorted + srt(exit_orders) + srt(neutral_close) + srt(reduces) + srt(opens))
+    orders = tuple(srt(forced_orders) + srt(exit_orders) + srt(neutral_close) + srt(reduces) + srt(opens))
     return Targets(t, orders, dict(sorted(post.items())), tuple(notes))

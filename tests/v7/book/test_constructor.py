@@ -4,15 +4,24 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pandas as pd
 import pytest
 
+from luna.v7.arms import arm_scores
 from luna.v7.book import LONG, SHORT, Leg, Order
 from luna.v7.book.constructor import Targets, targets
-from luna.v7.book.risk import RiskLayer
+from luna.v7.book.risk import RiskLayer, RiskState
 from luna.v7.timeutil import MIN, D
+from luna.v7.universe import eligible
 from tests.v7.book.helpers import BIG_QV, E_REF, T0, E, gate, leg, scores
 
 RL = RiskLayer()
+
+
+def ticked(equity: float = E) -> RiskState:
+    """A run started at the 15-minute mark just before T0 (08:00), that mark processed."""
+    ts = T0 - 5 * MIN
+    return RL.on_tick(RL.initial_state(equity, ts), ts, equity, (), {})[0]
 
 
 def run(
@@ -32,7 +41,7 @@ def run(
     rows = rows or []
     syms = sorted({r[0] for r in rows} | {lg.symbol for lg in held})
     g = {s: gate() for s in syms if s not in no_gate} | (gates or {})
-    st = state if state is not None else RL.initial_state(equity, T0 // D * D)
+    st = state if state is not None else ticked(equity)
     _, risk = RL.pre_decision(
         st, T0, held, g, {s: 5e-4 for s in syms}, {lg.symbol: lg.avg_entry for lg in held}, stale
     )
@@ -185,7 +194,7 @@ def test_resize_drift_rule():
     shorts = tuple(leg(f"S{i}", SHORT) for i in range(1, 6))
     longs = (
         leg("L1", LONG, 0.126),  # +26 % > 25 % -> reduce to the target
-        leg("L2", LONG, 0.125),  # +25 % is not > 25 %
+        leg("L2", LONG, 0.125),  # +25 % is not > 25 % (drift) but above the per-leg hard cap 0.1
         leg("L3", LONG, 0.07),  # -30 %: increases are never made (reduce-only)
         leg("L4", LONG, 0.13),  # halted: no order of any kind
         leg("L5", LONG, 0.1),
@@ -193,10 +202,14 @@ def test_resize_drift_rule():
     rows = side_rows("L", LONG, 5) + side_rows("S", SHORT, 5)
     tg = run(longs + shorts, rows, halted={"L4": True})
     assert [(o.symbol, o.kind, round(o.notional, 12), o.target, o.reason) for o in tg.orders] == [
-        ("L1", "reduce", 0.026, 0.1, "drift")
+        ("L1", "reduce", 0.026, 0.1, "drift"),
+        ("L2", "reduce", 0.025, 0.1, "cap_leg"),
     ]
     assert "no_increase:L3" in tg.notes and "halted_resize:L4" in tg.notes
     assert tg.post["L1"] == 0.1 and tg.post["L3"] == 0.07 and tg.post["L4"] == 0.13
+    # inside the drift band and under the caps: no resize (5 longs vs 4 shorts: long targets 0.08, held 0.1)
+    tg = run(tuple(leg(f"L{i}", LONG) for i in range(1, 6)) + shorts[:4], rows[:5] + rows[5:9])
+    assert tg.orders == ()
     # equity 0.4 -> per-leg 0.04; 2 longs vs 1 short -> longs scaled to 0.02 each
     tg = run((leg("L1", LONG, 0.1), leg("L2", LONG, 0.1001), leg("S1", SHORT, 0.1)),
              [("L1", LONG, 2.0, True), ("L2", LONG, 1.0, True), ("S1", SHORT, 1.0, True)], equity=0.4)
@@ -214,13 +227,14 @@ def test_risk_precedence_and_ml_cannot_override():
     gates = {"AAA": gate(u6=False), "GGG": gate(u3=False)}
     tg = run(held, rows, gates, no_gate=("NOG",))
     assert closes(tg) == {("AAA", LONG): "u6"}  # forced exit despite the top score inside min hold
+    assert [(o.forced, o.trigger_ts) for o in tg.orders if o.symbol == "AAA"] == [(True, T0)]
     assert opens(tg) == {("L1", LONG): 0.1}  # GGG fails a gate, NOG has no gate row (fail closed)
     assert "gate:GGG" in tg.notes and "gate:NOG" in tg.notes
     # sizes do not depend on score values (only on the order): rescaled scores give identical orders
     rows2 = [(s, sd, k * 1000.0 + 5.0, p) for s, sd, k, p in rows]
     assert run(held, rows2, gates, no_gate=("NOG",)).orders == tg.orders
     # killed: everything exits with reason kill, no entry whatever the scores
-    fresh = RL.initial_state(E, T0 // D * D)
+    fresh = ticked()
     tg = run(held, rows, gates, state=replace(fresh, killed=True))
     assert set(closes(tg).values()) == {"kill"} and len(closes(tg)) == 3 and opens(tg) == {}
     assert all(o.forced for o in tg.orders)
@@ -239,8 +253,63 @@ def test_risk_precedence_and_ml_cannot_override():
     assert opens(tg) == {} and [(o.symbol, o.halted) for o in tg.orders if o.side == LONG] == [("AAA", True)]
     assert "halted:L1" in tg.notes
     # risk actions are bound to their decision time
-    _, other = RL.pre_decision(RL.initial_state(E, T0 // D * D), T0 + 8 * 60 * MIN, (), {}, {}, {}, False)
+    _, other = RL.pre_decision(fresh, T0 - MIN, (), {}, {}, {}, False)
     with pytest.raises(ValueError):
         targets(t=T0, equity=E, held=(), scores=scores([]), gates={}, risk=other, halted={}, betas={},
                 quote_vol_24h={}, h_star_h=24.0, usd_per_unit=E_REF)
     assert isinstance(tg.orders[0], Order)
+
+
+def test_u8_unscored_held_leg_is_not_rank_exited():
+    """A held leg failing only U8 is absent from arm_scores (gated rows only); U8 is never an exit trigger, so
+    it gets no rank / hurdle exit (AMB-16 (l)); a leg that is unscored for another gate still exits."""
+    shorts = tuple(leg(f"S{i}", SHORT) for i in range(1, 3))
+    held = (leg("UUU", LONG), leg("VVV", LONG)) + shorts
+    gates = {"UUU": gate(u8=False), "VVV": gate(u4=False), "S1": gate(), "S2": gate(), "NNN": gate()}
+    cands = pd.DataFrame(
+        {
+            "symbol": ["NNN", "S1", "S2", "NNN"],
+            "side": [LONG, SHORT, SHORT, SHORT],
+            "fl30_r8": [-1e-3, 1e-3, 1e-3, -1e-3],
+            "cost_side": [1e-4] * 4,
+        }
+    )
+    cands = cands[[eligible(gates[x]) for x in cands["symbol"]]].assign(gate_ok=True)
+    sc = arm_scores("A0", cands, 24.0)
+    assert "UUU" not in set(sc["symbol"])  # exactly as arm_scores builds it
+    syms = sorted(gates)
+    _, risk = RL.pre_decision(ticked(), T0, held, gates, {s: 5e-4 for s in syms}, {}, False)
+    no_halt = {s: False for s in syms}
+    tg = targets(t=T0, equity=E, held=held, scores=sc, gates=gates, risk=risk, halted=no_halt,
+                 betas={s: 1.0 for s in syms}, quote_vol_24h={s: BIG_QV for s in syms}, h_star_h=24.0,
+                 usd_per_unit=E_REF)
+    assert closes(tg) == {("VVV", LONG): "gate"}
+    assert "u8_unscored_hold:UUU" in tg.notes and tg.post["UUU"] == 0.1
+
+
+def test_hard_caps_on_marked_book():
+    """S-7.3 caps are hard limits on the marked book (AMB-16 (e)): per leg, liquidity, gross."""
+    shorts = tuple(leg(f"S{i}", SHORT) for i in range(1, 6))
+    rows = side_rows("L", LONG, 5) + side_rows("S", SHORT, 5)
+    # liquidity cap 0.08 (qv 160,000 USD): target 0.08, held 0.09 is inside the drift band but above the cap
+    longs = tuple(leg(f"L{i}", LONG) for i in range(2, 6)) + (leg("L1", LONG, 0.09),)
+    tg = run(longs + shorts, rows, qv={"L1": 160_000.0})
+    red = [(o.symbol, round(o.target, 12), o.reason) for o in tg.orders if o.kind == "reduce"]
+    assert red == [("L1", 0.08, "cap_liquidity")]
+    # gross > 1.0 E with a halted leg above its cap: the halted leg cannot trade, the 9 others are scaled
+    longs = tuple(leg(f"L{i}", LONG) for i in range(2, 6)) + (leg("L1", LONG, 0.3),)
+    tg = run(longs + shorts, rows, halted={"L1": True})
+    red = {o.symbol: (round(o.target, 12), o.reason) for o in tg.orders}
+    assert "L1" not in red and len(red) == 9
+    assert set(red.values()) == {(round(0.1 * 0.7 / 0.9, 12), "cap_gross")}
+    assert sum(abs(v) for v in tg.post.values()) == pytest.approx(1.0, abs=1e-12)
+    assert "halted_resize:L1" in tg.notes and "cap_gross" in tg.notes
+
+
+def test_halted_flag_required_for_held_legs():
+    held = (leg("AAA", LONG), leg("SSS", SHORT))
+    g = {"AAA": gate(), "SSS": gate()}
+    _, risk = RL.pre_decision(ticked(), T0, held, g, {"AAA": 5e-4, "SSS": 5e-4}, {}, False)
+    with pytest.raises(ValueError, match="halted"):
+        targets(t=T0, equity=E, held=held, scores=scores([]), gates=g, risk=risk, halted={"AAA": False},
+                betas={}, quote_vol_24h={}, h_star_h=24.0, usd_per_unit=E_REF)

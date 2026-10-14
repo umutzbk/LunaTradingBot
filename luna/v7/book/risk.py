@@ -5,8 +5,9 @@ model input, and the constructor applies ``RiskActions.forced`` before any score
 
 * **Leg stop:** adverse move >= 15 % from the average entry price (long: price <= 0.85 avg; short: price >=
   1.15 avg) -> forced taker exit; a 24 h cooldown starts at the exit FILL (``start_cooldown``, called by the
-  engine). Evaluated on the mark at every 15-minute tick (``on_tick``) and on the latest mark at a decision
-  (``pre_decision``) (AMB-17 (a)).
+  engine). The trigger records a pending cooldown; ``pre_decision`` raises if that leg has left the book
+  without ``start_cooldown`` (a forgotten fill hook is detectable). Evaluated on the mark at every 15-minute
+  tick (``on_tick``) and on the latest mark at a decision (``pre_decision``) (AMB-17 (a)).
 * **Daily loss:** at a 15-minute mark, equity <= 98 % of the 00:00 UTC equity -> no entries until the next
   00:00 UTC (sticky; a recovery the same day does not lift it). Before the run's first 00:00 mark the
   day-start equity is the run's starting equity (AMB-17 (b)).
@@ -20,13 +21,16 @@ model input, and the constructor applies ``RiskActions.forced`` before any score
   from the engine): entries skipped, exits still run.
 * **Precedence** (the reason recorded when several apply): kill > leg stop > U6 > ineligibility for exits;
   kill > daily-loss pause > staleness for the decision-wide entry block; per symbol cooldown, then U8.
-* Gross <= 1.0 E, per leg <= 0.5 E / K and the liquidity cap bound the constructor's targets
-  (``constructor.targets``, AMB-16 (e)).
+* Gross <= 1.0 E, per leg <= 0.5 E / K and the liquidity cap are HARD limits on the marked book, applied
+  by ``constructor.targets`` at each decision with reduce-only orders (AMB-16 (e)).
 
 A halted instrument gets no order of any kind: forced exits are emitted as intents and the constructor flags
 them ``halted`` so the engine defers them (S-5.4); legs with a ``pending_exit`` get no new exit.
-State is immutable: every method returns a new ``RiskState``. ``pre_decision`` must be called exactly once per
-decision (it advances the two-consecutive-decision counters).
+State is immutable: every method returns a new ``RiskState``. Fail-closed sequencing: ``on_tick`` must be
+called at every 15-minute mark with no gap (ts == last tick + 15 min); ``pre_decision`` must be called
+exactly once per decision (it advances the two-consecutive-decision counters) and only after the mark at or
+before t was processed (0 <= t - last tick < 15 min). Every forced exit carries its trigger time (S-4.2 is
+the engine's).
 """
 
 from __future__ import annotations
@@ -64,6 +68,7 @@ class RiskState:
     last_decision: int | None
     cooldown_until: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
     inelig_streak: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
+    pending_cooldown: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))  # stop trigger
 
 
 @dataclass(frozen=True)
@@ -73,6 +78,7 @@ class ForcedExit:
     reason: ExitReason
     position_id: str
     cooldown: bool  # True for a leg stop: the engine calls ``start_cooldown`` at the exit fill
+    trigger_ts: int  # the tick / decision time at which the risk rule fired (S-4.2 fill timing)
 
 
 @dataclass(frozen=True)
@@ -155,7 +161,8 @@ class RiskLayer:
         until = int(exit_fill_ts) + RK.cooldown_h * H
         cur = dict(state.cooldown_until)
         cur[symbol] = max(until, cur.get(symbol, until))
-        return replace(state, cooldown_until=_frozen_map(cur))
+        pend = {k: v for k, v in state.pending_cooldown.items() if k != symbol}
+        return replace(state, cooldown_until=_frozen_map(cur), pending_cooldown=_frozen_map(pend))
 
     def _paused(self, state: RiskState, t: int) -> bool:
         return state.paused_until is not None and t < state.paused_until
@@ -168,8 +175,8 @@ class RiskLayer:
         e = _finite(equity, "equity")
         if ts % TICK:
             raise ValueError("ticks are on the 15-minute grid")
-        if state.last_tick is not None and ts <= state.last_tick:
-            raise ValueError("ticks must be strictly increasing")
+        if state.last_tick is not None and ts != state.last_tick + TICK:
+            raise ValueError("ticks must be consecutive 15-minute marks (no skipped tick)")
         day = ts // D
         s = state
         if day != s.day:
@@ -182,7 +189,8 @@ class RiskLayer:
             s = replace(s, killed=True)
         if not s.killed and not self._paused(s, ts) and e <= RK.daily_loss * s.day_start_equity * (1 + EPS):
             s = replace(s, paused_until=(day + 1) * D)
-        forced, notes = self._exits(s, legs, marks, None, None)
+        forced, notes = self._exits(s, ts, legs, marks, None, None)
+        s = self._record_pending(s, forced)
         return s, RiskActions(ts, forced, s.killed, self._paused(s, ts), False, _frozen_map({}), notes)
 
     def pre_decision(
@@ -201,7 +209,13 @@ class RiskLayer:
         t = int(t)
         if state.last_decision is not None and t <= state.last_decision:
             raise ValueError("decisions must be strictly increasing")
+        if state.last_tick is None or not 0 <= t - state.last_tick < TICK:
+            raise ValueError("the 15-minute mark at or before t was not processed (call on_tick first)")
         legs = list(legs)
+        held_syms = {x.symbol for x in legs}
+        lost = sorted(k for k in state.pending_cooldown if k not in held_syms)
+        if lost:
+            raise ValueError(f"leg-stop exit of {lost} left the book without start_cooldown (fail closed)")
         active = _active(legs)
         streak = {}
         for lg in active:
@@ -211,7 +225,8 @@ class RiskLayer:
             fail = _inelig_fail(g, half_spread.get(lg.symbol))
             streak[lg.symbol] = state.inelig_streak.get(lg.symbol, 0) + 1 if fail else 0
         s = replace(state, inelig_streak=_frozen_map(streak), last_decision=t)
-        forced, notes = self._exits(s, legs, marks, gates, streak)
+        forced, notes = self._exits(s, t, legs, marks, gates, streak)
+        s = self._record_pending(s, forced)
         blocked: dict[str, str] = {}
         for sym, until in s.cooldown_until.items():
             if t < until:
@@ -222,9 +237,17 @@ class RiskLayer:
         acts = RiskActions(t, forced, s.killed, self._paused(s, t), bool(stale), _frozen_map(blocked), notes)
         return s, acts
 
+    def _record_pending(self, s: RiskState, forced: tuple[ForcedExit, ...]) -> RiskState:
+        pend = dict(s.pending_cooldown)
+        for f in forced:
+            if f.cooldown:
+                pend.setdefault(f.symbol, f.trigger_ts)
+        return replace(s, pending_cooldown=_frozen_map(pend))
+
     def _exits(
         self,
         s: RiskState,
+        ts: int,
         legs: Iterable[Leg],
         marks: Mapping[str, float],
         gates: Mapping[str, GateRow] | None,
@@ -248,5 +271,5 @@ class RiskLayer:
                     reasons.append("ineligible")
             if reasons:
                 why = min(reasons, key=EXIT_PRECEDENCE.index)
-                out.append(ForcedExit(lg.symbol, lg.side, why, lg.position_id, why == "leg_stop"))
+                out.append(ForcedExit(lg.symbol, lg.side, why, lg.position_id, why == "leg_stop", ts))
         return tuple(out), tuple(notes)

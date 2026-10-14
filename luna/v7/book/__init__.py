@@ -41,7 +41,10 @@ class Leg:
     ``notional``: current |q| x price at the evaluation time (book units, > 0). ``avg_entry``: the average
     entry fill price (> 0; resizes are reduce-only, so it is the entry fill price). ``entry_decision_ts``: the
     decision that opened the leg (minimum hold is measured from it, AMB-16 (g)). ``pending_exit``: the reason
-    of an exit already issued but not yet filled (halted instrument, S-5.4); such a leg gets no new order.
+    of an exit already issued but not yet filled; such a leg gets no new order and still counts as held (slot,
+    flip block, ``post``, hedge beta). Two uses: (1) a halted exit deferred to the first executable bar of the
+    same instance (S-5.4); (2) a forced risk exit triggered between decisions (``RiskLayer.on_tick``: kill,
+    leg stop) awaiting its S-4.2 fill on the first 1-minute bar after trigger + 1 min.
     """
 
     symbol: str
@@ -71,8 +74,10 @@ class Order:
     ``forced``: a risk / forced exit (taker under every execution model, S-6.2). ``halted``: the instrument is
     halted at the order time: the engine must defer the exit (``Pending`` until the first executable bar of
     the same instance, S-5.4), never fill it now. Only exits carry ``halted=True`` (opens / reduces of a
-    halted instrument are never emitted: no order of any kind while halted, S-7.1).
-    """
+    halted instrument are never emitted: no order of any kind while halted, S-7.1). ``trigger_ts``: forced
+    exits only, the risk trigger time (``ForcedExit.trigger_ts``) so the engine can apply S-4.2 (forced risk
+    exit: first 1-minute bar after trigger + 1 min) versus a decision exit / U6 exit (t + 15 min); None
+    otherwise. """
 
     symbol: str
     side: int
@@ -83,3 +88,4 @@ class Order:
     forced: bool
     halted: bool
     position_id: str | None
+    trigger_ts: int | None = None
