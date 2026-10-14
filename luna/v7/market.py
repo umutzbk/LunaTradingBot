@@ -34,9 +34,10 @@ def _open_at(bars: pd.DataFrame, tau_ns: int) -> float | None:
 
 def P(bars1m: pd.DataFrame, bars15: pd.DataFrame, tau: int) -> float | None:  # noqa: N802
     """S-5.2: open of the 1m bar starting at tau; fallback only if that bar is absent: the 15m bar open."""
-    if (bars1m["open_ts"] == tau).any():
-        return _open_at(bars1m, tau)
-    return _open_at(bars15, tau)
+    v = _open_at(bars1m, tau)
+    if v is None or v <= 0:
+        v = _open_at(bars15, tau)  # 1m bar absent or its open unusable (NaN / non-positive)
+    return v if v is not None and v > 0 else None
 
 
 def first_bar_within(bars1m: pd.DataFrame, tau: int, window_ns: int = H) -> tuple[int, float] | None:
@@ -62,6 +63,8 @@ def first_executable_after(
     ok = (t >= tau) & (bars1m["vol_base"].to_numpy(np.float64) > 0) & (t >= instance.first_bar_ts)
     if instance.last_trade_ts is not None:
         ok &= t + MIN <= instance.last_trade_ts
+    c = bars1m["c"].to_numpy(np.float64)
+    ok &= np.isfinite(c) & (c > 0)  # a bar without a usable close is not executable (no price invented)
     if not ok.any():
         return None
     row = bars1m[ok].sort_values("open_ts").iloc[0]

@@ -103,3 +103,28 @@ def test_ar_matches_independent_reference():
         ref = ar_window(hi, lo, cl, 1, n - 1)
         got = half_spread(bars(rr), tau)
         assert abs(got - max(2.0 * ref / 2, 1e-4)) < 1e-12
+
+
+def test_ar_tau_trims_leading_pairs_matches_reference():
+    rng = np.random.default_rng(11)
+    n = 150
+    rows = []
+    for i in range(n):
+        c = 0.01 * math.sin(i / 7) + rng.normal(0, 0.003)
+        r = (c + abs(rng.normal(0, 0.004)), c - abs(rng.normal(0, 0.004)), c + rng.normal(0, 0.002))
+        rows.append((max(r), min(r), r[2]))
+    tau = T0 + 140 * Q + MIN
+    hi, lo, cl = ([math.exp(r[j]) for r in rows] for j in (0, 1, 2))
+    first = 44  # bar k opens >= tau - 24h - 15m = T0 + 43Q + 1 min -> k >= 44
+    ref = ar_window(hi, lo, cl, first + 1, 139)  # later bar 139 closes at tau - 1 min
+    assert abs(half_spread(bars(rows), tau) - max(ref, 1e-4)) < 1e-12
+
+
+def test_ar_mixed_sign_positive_mean_hand_worked():
+    E = (0.05, 0.03, 0.04)  # eta 0.04, c 0.04 ; after A: pi=4*(0.01)*(0.02-0.04)... see below
+    rows = [A, E, A, B]
+    # (A,E)=4*0.01*(0.02-0.04)=-0.0008 ; (E,A)=4*(0.04-0.04)*(0.04-0.01)=0 ; (A,B)=0.0008 -> mean 0 -> floor
+    assert half_spread(bars(rows), T0 + 4 * Q + MIN) == 1e-4
+    rows = [A, E, A, B, A, B]
+    # pairs: -0.0008, 0, 0.0008, (B,A)=0, (A,B)=0.0008 -> mean 0.0008/5 -> S = sqrt(0.00016)
+    assert abs(half_spread(bars(rows), T0 + 6 * Q + MIN) - math.sqrt(0.00016)) < 1e-12

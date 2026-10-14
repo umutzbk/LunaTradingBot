@@ -48,3 +48,19 @@ def test_hourly_close_from_15m():
     df = pd.DataFrame({"open_ts": [t, t + 15 * MIN, t + 45 * MIN], "c": [1.0, 2.0, 3.0]})
     s = hourly_close_from_15m(df)
     assert list(s.index) == [t + H] and s.iloc[0] == 3.0
+
+
+def test_beta_drops_late_known_at_bars():
+    rng = np.random.default_rng(3)
+    b = rng.normal(0, 0.01, 720)
+    a, btc = series(b * 2), series(b)
+    ka = pd.Series(a.index.to_numpy(), index=a.index)
+    ok = beta_hat(a, btc, T, ka, ka)
+    late = ka.copy()
+    late.iloc[-1] = T  # last hourly close received after t - 1 min
+    a_bad = a.copy()
+    a_bad.iloc[-1] = a_bad.iloc[-1] * 5  # would change beta if used
+    got = beta_hat(a_bad, btc, T, late, ka)
+    assert ok is not None and got is not None
+    assert beta_hat(a_bad, btc, T) != beta_hat(a, btc, T)  # without known_at it leaks
+    assert abs(got - beta_hat(a.iloc[:-1], btc, T)) < 1e-12

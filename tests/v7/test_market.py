@@ -77,3 +77,19 @@ def test_mark_fallback_order():
     assert mark_at_settle({}, mark15.iloc[:0], last15.iloc[:0], s) is None
     other = pd.DataFrame([dict(open_ts=s, c=99.0)])  # bar starting at settlement is not the one ending there
     assert mark_at_settle({}, other, other, s) is None
+
+
+def test_nan_close_not_executable_keeps_searching():
+    inst = Instance(0, T0, None, None)
+    b = m1([(130, 1, 2.0), (131, 1, 3.0)])
+    b.loc[0, "c"] = float("nan")
+    assert first_executable_after(b, T0 + 120 * MIN, inst) == (T0 + 132 * MIN, 3.5)
+    b.loc[1, "c"] = 0.0
+    assert first_executable_after(b, T0 + 120 * MIN, inst) is None
+
+
+def test_P_falls_back_when_1m_open_unusable():
+    b15 = pd.DataFrame([dict(open_ts=T0, o=6.0)])
+    for bad in (float("nan"), 0.0, -1.0):
+        assert P(m1([(0, 1, bad)]), b15, T0) == 6.0
+    assert P(m1([(0, 1, float("nan"))]), b15.iloc[:0].assign(o=[]), T0) is None
