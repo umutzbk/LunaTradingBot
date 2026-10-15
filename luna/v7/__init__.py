@@ -36,7 +36,10 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "S-1.4": _m("windows", "constants"),
     "S-1.5": _m("labels", "book.engine", "refs"),
     "S-1.6": (*_m("verdict"), KRAKEN),
-    "S-1.7": _m("netguard", "guard", "forward_store"),
+    "S-1.7": (*_m("netguard", "fetch", "guard", "localdata", "k9", "runner", "forward_store"),
+              "doc: one fetch layer (netguard before I/O, N1 checksum, N2 truncation fail-closed per DK-01, "
+              "N6 memento); read-only guarded local data; no W_HOLD features / labels before the opening "
+              "(SC-03, AMB-35)"),
     "S-1.8": _m("universe", "windows"),
     "S-2.1": _m("universe"),
     "S-2.2": (*_m("data.instances", "data.klines", "universe"),
@@ -149,7 +152,9 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "EC-8": _m("forward_store"),
     "EC-9": _m("data.intervals"),
     "EC-11": _m("forward"),
-    "E6": _m("netguard"),
+    "E6": (*_m("netguard", "fetch", "guard"),
+           "doc: post-opening mode only through the re-verified hardened authorization; captures pinned "
+           "by sha256 (SC-03, AMB-35 (e), (f))"),
     "E8": _m("universe", "guard", "netguard"),
     "E10": _m("refs", "labels", "book.execution"),
     "E11": (*_m("data.terminal"), STAGE0 + " (M3-1 settlement-feasibility audit)"),
@@ -166,9 +171,10 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "L9": (*_m("leakage", "cv"),
            "doc: canaries L9a / L9b per DK-27 (both regressor families, all horizons; L9b sandbox IC "
            "reported, no threshold); report sealed and consumed by the verdict (SC-02, AMB-33)"),
-    "L10": (*_m("guard", "netguard", "forward_store", "spec", "release", "windows"),
+    "L10": (*_m("guard", "netguard", "fetch", "localdata", "forward_store", "spec", "release", "windows"),
             "doc: one canonical, hash-checked R_V6 / T_F7 / L7 / M6 source; the forward store, netguard "
-            "and the outcome guard take no caller span / date (SC-06, AMB-34)"),
+            "and the outcome guard take no caller span / date (SC-06, AMB-34); refusal tests per refused "
+            "endpoint class through the fetch layer, before any transport call (SC-03, AMB-35)"),
     "L11": (*_m("arms"),
             "doc: audit item (no V5 / V6 outcome input; the Kraken outcome guard is not implemented)"),
     "L12": (*_m("timeutil", "data.klines"),
@@ -202,7 +208,9 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
            "(leakage.resolve_k7; unexplained -> K1), AMB-33"),
     "K8": (*_m("verdict", "runner", "runner_select"),
            "doc: missing-funding share AMB-27 (b) pending user decision"),
-    "K9": _m("guard", "netguard"),
+    "K9": (*_m("k9", "guard", "netguard", "fetch", "localdata", "runner"),
+           "doc: every seal refusal logged (K9_REFUSALS.jsonl) with an incident stub; the run configures "
+           "the log under its output directory (SC-03, AMB-35 (g), (h))"),
     "K10": (*_m("accounting", "selection", "verdict"),
             "doc: an accounting error on a required run -> INVALID RUN, never raised (DK-112, AMB-32 (c))"),
     "K11": _m("selection", "book.engine", "forward"),

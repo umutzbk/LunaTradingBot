@@ -46,6 +46,13 @@ A guard against accidental or premature runs inside this codebase, not a securit
   T_F7) is refused (``SealedBeforeL7``) until the canonical L7, on both clocks; one overlapping the extension
   [T_F7 + 180 d, T_F7 + 270 d) until the extended L7.
 - Before the opening only file *listings* of ``W_HOLD`` are readable (S-1.7).
+- K9 (§16 "guard refusal; logged; incident report", SC-03): every refusal of ``check_outcome_window``,
+  ``check_data_span`` and ``check_listing_only`` is recorded in the configured ``luna.v7.k9`` log (the run's
+  output directory) with an incident stub, then raised. ``check_data_span`` is the guard of LOCAL data
+  (files, frames, decision times; ``luna.v7.localdata`` and the runner): the outcome-window semantics on the
+  trusted clock. ``verified_opening`` is the only way a post-opening mode (E6 fetches, W_HOLD data) is
+  entered: the hardened authorization, re-verified (never a boolean). ``pin_e6_capture`` pins each E6
+  capture's sha256 next to the opening markers (``E6_CAPTURES.jsonl``; fetched once, pinned and hashed).
 - E8: only whitelisted immutable identity fields of current ``exchangeInfo`` may be used as history.
 
 The M6 / R_V6 / T_F7 sources are injectable through ``repo`` (SC-06); the opening's location only through
@@ -65,7 +72,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from luna.v7 import release, windows
+from luna.v7 import k9, release, windows
 from luna.v7.constants import FROZEN
 from luna.v7.forward_store import SealedBeforeL7
 from luna.v7.spec import SPEC_BLOB_SHA256, SPEC_TAG, SpecMismatch, _git, code_repo, verify_spec
@@ -77,6 +84,7 @@ PIN = "HOLDOUT_MANIFEST.json"
 VERDICT = "HOLDOUT_VERDICT.json"  # written once, when the W_HOLD verdict is produced (no second look)
 RESUME_LOG = "RESUME_ATTEMPTS.jsonl"  # append-only log of every resume attempt (never an authorization)
 OPENING_LOG = "OPENING_ATTEMPTS.jsonl"  # append-only log of every opening attempt (never an authorization)
+E6_CAPTURES = "E6_CAPTURES.jsonl"  # append-only pins of the E6 captures fetched after the opening (S-1.7 E6)
 RUN_ID = "v7-" + SPEC_BLOB_SHA256[:16]  # canonical run identity of the single opening
 
 # E8 (S-1.7): the only exchangeInfo fields that may establish history (immutable identity / schema, DEC-31).
@@ -156,11 +164,33 @@ def check_listing_only(path: str, *, access: str) -> None:
         return
     if access != "content":
         raise ValueError(f"access must be 'listing' or 'content', got {access!r}")
-    per = file_period(path)
-    if per is None:
-        raise HoldoutBlocked(f"content of {path}: period not parseable from the name, refused")
-    if per[1] > windows.W_HOLD[0]:
-        raise HoldoutBlocked(f"content of {path} (period reaches W_HOLD / M6) is sealed: listing only")
+    try:
+        per = file_period(path)
+        if per is None:
+            raise HoldoutBlocked(f"content of {path}: period not parseable from the name, refused")
+        if per[1] > windows.W_HOLD[0]:
+            raise HoldoutBlocked(f"content of {path} (period reaches W_HOLD / M6) is sealed: listing only")
+    except HoldoutBlocked as e:
+        _k9(e, {"kind": "file", "what": "listing only", "path": str(path)})
+        raise
+
+
+# --- K9 (§16): every seal refusal is logged with an incident stub, then raised ------------------------------
+
+
+def k9_rule(exc: BaseException) -> str:
+    """The rule a refusal enforces (K9 record field)."""
+    if isinstance(exc, EmbargoBlocked):
+        return "S-1.3 M6 embargo (no outcome / data inside M6 before R_V6)"
+    if isinstance(exc, SealedBeforeL7):
+        return "§15 W_FWD7 sealed before L7"
+    if isinstance(exc, HoldoutBlocked):
+        return "S-1.7 W_HOLD seal (DEC-19 opening required)"
+    return f"S-1.7 guard failure ({type(exc).__name__})"
+
+
+def _k9(exc: BaseException, request: Mapping) -> None:
+    k9.log_refusal(exc, request=request, rule=k9_rule(exc))
 
 
 # --- the ONE location seam --------------------------------------------------------------------------------
@@ -345,6 +375,15 @@ def verify_authorization(auth: object) -> dict:
     return _verify(auth)
 
 
+def verified_opening(auth: object) -> dict:
+    """The pin of the canonical opening ``auth`` belongs to, re-verified (a cache hit needs the same location
+    and unchanged marker / pin / verdict files, else the files are re-read); HoldoutBlocked otherwise (forged
+    or foreign object, no or partial opening, verdict produced). The only entry to a post-opening mode."""
+    if _cached(auth):
+        return dict(auth.record["pin"])  # type: ignore[attr-defined]
+    return verify_authorization(auth)
+
+
 def check_outcome_window(lo: int, hi: int, *, auth: HoldoutAuthorization | None = None, now_ns: int,
                          m6_span: tuple[int, int | None] | None = None, fresh: bool = False) -> None:
     """Refuse an outcome window [lo, hi): M6 overlap before R_V6 (EmbargoBlocked, even with auth), W_FWD7
@@ -355,9 +394,36 @@ def check_outcome_window(lo: int, hi: int, *, auth: HoldoutAuthorization | None 
     process). A supplied ``m6_span`` is only a cross-check. ``now_ns`` can only keep a seal closed: lifting
     needs the trusted clock as well. A W_HOLD window needs an authorization verified against the canonical
     opening (``_roots``, never a caller value); a cache hit needs the same location and unchanged marker /
-    pin / verdict files, else (and always with ``fresh=True``) the files are re-read."""
+    pin / verdict files, else (and always with ``fresh=True``) the files are re-read. A refusal is
+    K9-logged."""
     if hi <= lo:
         raise ValueError(f"empty outcome window [{lo}, {hi})")
+    try:
+        _outcome_window(lo, hi, auth, now_ns, m6_span, fresh)
+    except (EmbargoBlocked, SealedBeforeL7, HoldoutBlocked) as e:
+        _k9(e, {"kind": "outcome_window", "lo": int(lo), "hi": int(hi)})
+        raise
+
+
+def check_data_span(lo_ns: int, hi_ns: int, *, auth: HoldoutAuthorization | None = None,
+                    what: str = "local data") -> None:
+    """Guard of LOCAL data use (S-1.3, S-1.7 "no W_HOLD features or labels" before the opening; SC-03): the
+    content of a file / frame / decision whose period is [lo_ns, hi_ns) gets the ``check_outcome_window``
+    semantics on the trusted clock (``release.trusted_now_ns``): M6 refused before the canonical R_V6 (even
+    with the authorization), W_FWD7 before L7, W_HOLD without the verified hardened authorization. A refusal
+    is raised and K9-logged (``what`` names the data)."""
+    lo, hi = int(lo_ns), int(hi_ns)
+    if hi <= lo:
+        raise ValueError(f"empty data span [{lo}, {hi}) ({what})")
+    try:
+        _outcome_window(lo, hi, auth, release.trusted_now_ns(), None, False)
+    except (EmbargoBlocked, SealedBeforeL7, HoldoutBlocked) as e:
+        _k9(e, {"kind": "data_span", "what": str(what), "lo": lo, "hi": hi})
+        raise
+
+
+def _outcome_window(lo: int, hi: int, auth: object, now_ns: int, m6_span: tuple[int, int | None] | None,
+                    fresh: bool) -> None:
     repo = _roots()[0]
     span = windows.m6_cached(repo)
     if m6_span is not None and tuple(m6_span) != tuple(span):
@@ -368,6 +434,46 @@ def check_outcome_window(lo: int, hi: int, *, auth: HoldoutAuthorization | None 
     if windows.overlaps(lo, hi, windows.W_HOLD):
         if fresh or not _cached(auth):
             verify_authorization(auth)
+
+
+def e6_captures() -> list[dict]:
+    """Every pinned E6 capture of the canonical opening (both canonical directories, de-duplicated)."""
+    out: list[dict] = []
+    seen: set[str] = set()
+    for d in _dirs():
+        p = d / E6_CAPTURES
+        if not p.exists():
+            continue
+        for line in p.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                rec = json.loads(line)
+                if (key := _sha(rec)) not in seen:
+                    seen.add(key)
+                    out.append(rec)
+    return out
+
+
+def pin_e6_capture(auth: object, *, ts: str, original: str, sha256: str, recv_ts: int) -> dict:
+    """S-1.7 E6 "fetched once ... pinned and hashed": the first fetch of a (ts, original) capture after the
+    opening is pinned (sha256 of the raw bytes, appended in both canonical directories next to the markers);
+    a later fetch must be byte-identical (then the existing pin is returned), else GuardFailure (the content
+    is discarded by the caller). Needs the verified authorization."""
+    pin = verified_opening(auth)
+    if not isinstance(sha256, str) or not _SHA.match(sha256):
+        raise ValueError("sha256 must be a sha256")
+    prior = [c for c in e6_captures() if c.get("ts") == ts and c.get("original") == original]
+    if any(c.get("sha256") != sha256 for c in prior):
+        raise GuardFailure(f"E6 capture {ts} {original}: bytes differ from the pinned capture (fetched once, "
+                           "pinned and hashed): discarded")
+    if prior:
+        return prior[0]
+    rec = {"run_id": RUN_ID, "opening_id": pin["opening_id"], "ts": ts, "original": original,
+           "sha256": sha256, "recv_ts": int(recv_ts)}
+    try:
+        _log_attempt(E6_CAPTURES, rec)
+    except OSError as e:
+        raise GuardFailure(f"E6 capture {ts} {original} could not be pinned ({e}): discarded") from None
+    return rec
 
 
 def approval_phrase() -> str:

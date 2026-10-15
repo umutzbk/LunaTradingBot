@@ -20,6 +20,12 @@ wall-clock; the DT4 run record is written by ``luna.v7.runrecord`` to a caller-s
   (eligible symbols only, both sides) with the A0 inputs, the §9 features and their max known_at (DT1).
   Cached per t (and per (symbol, t)); ``record(t)`` is the provenance of the decision (gate rows, max
   known_at, staleness reasons, ...).
+* The W_HOLD / M6 guard (S-1.3, S-1.7 "no W_HOLD features or labels" before the opening, K9; SC-03,
+  AMB-35): ``ResearchUniverse.data_span`` is the event-time span of every input frame; ``DecisionProvider``
+  (at construction and on EVERY call, cached view or not), ``label_panel`` and ``run_book`` pass it, and the
+  decision time t, through ``guard.check_data_span`` with the provider's / caller's hardened authorization
+  (``auth``; None before the opening). A W_HOLD t or a frame row in W_HOLD is refused before the opening,
+  M6 until the canonical R_V6; a refusal is raised and K9-logged.
 * ``FoldScoreModel``: ``engine.ScoreModel`` over the outer-fold models: a decision t uses the model whose test
   quarter contains t (S-10.6 "each quarter uses its own fold model") and t outside every test quarter is
   refused. Logs (fold id, model sha256) and the predictions per decision.
@@ -46,7 +52,7 @@ from dataclasses import dataclass, replace
 import numpy as np
 import pandas as pd
 
-from luna.v7 import cv, features, guard, labels
+from luna.v7 import cv, features, guard, labels, localdata
 from luna.v7.arms import arm_scores, cost_side, families
 from luna.v7.beta import beta_hat, hourly_close_from_15m, hourly_known_at_from_15m
 from luna.v7.book import engine
@@ -74,6 +80,11 @@ REQUIRED_COLS: dict[str, tuple[str, ...]] = {
     "funding": ("funding_ts", "rate", "interval_h_explicit", "known_at"),
     "r4": ("open_ts", "c", "known_at"),
 }
+# the event-time columns of every input frame (the guarded data span; ``known_at`` is not an event time)
+EVENT_COLS: dict[str, tuple[str, ...]] = {"bars15": ("open_ts",), "bars1m": ("open_ts",),
+                                          "funding": ("funding_ts",), "r4": ("open_ts",),
+                                          "aggtrades": ("ts",)}
+UNIVERSE = "research universe"
 
 
 def _need(df: pd.DataFrame | None, cols: Sequence[str], what: str) -> None:
@@ -156,6 +167,27 @@ class ResearchUniverse:
             self.instruments[sym] = Instrument(sym, x.bars1m, x.bars15, mark15, x.funding, list(x.insts),
                                                dict(x.terminals), x.aggtrades)
         self.candidates: tuple[str, ...] = tuple(s for s in sorted(self.inputs) if s != hedge)
+        self.data_span: tuple[int, int] | None = self._data_span()
+
+    def _data_span(self) -> tuple[int, int] | None:
+        """(min, max + 1) of the event timestamps of every input frame (``EVENT_COLS``)."""
+        spans: list[tuple[int, int]] = []
+        for sym, x in self.inputs.items():
+            frames = [("bars15", x.bars15), ("bars1m", x.bars1m), ("funding", x.funding),
+                      *((f"r4.{k}", getattr(x.r4, k)) for k in ("premium", "mark", "index"))]
+            if x.aggtrades is not None:
+                frames.append(("aggtrades", x.aggtrades))
+            for name, df in frames:
+                sp = localdata.frame_span(df, EVENT_COLS[name.split(".")[0]], f"{sym}.{name}")
+                if sp is not None:
+                    spans.append(sp)
+        return (min(a for a, _ in spans), max(b for _, b in spans)) if spans else None
+
+    def check_data(self, auth: guard.HoldoutAuthorization | None) -> None:
+        """``guard.check_data_span`` over ``data_span`` (refused and K9-logged when it reaches W_HOLD before
+        the opening, or M6 before R_V6)."""
+        if self.data_span is not None:
+            guard.check_data_span(*self.data_span, auth=auth, what=UNIVERSE)
 
     def r4(self, sym: str) -> R4Bars:
         return self.inputs[sym].r4
@@ -207,12 +239,19 @@ class DecisionProvider:
     ``known_at`` (else the boolean reference path). Views and records are an LRU of at most
     ``max_cached_decisions`` decisions (None = unbounded); an evicted decision is recomputed on demand
     (deterministic), so the bound trades memory for recomputation (the S-10.6 driver replays the same
-    decisions for each of its books)."""
+    decisions for each of its books).
+
+    Guard (SC-03): ``auth`` is the hardened ``HoldoutAuthorization`` (None before the opening). The universe's
+    data span is checked at construction and, with the decision time t, on every call (cached or not), so a
+    W_HOLD t / W_HOLD frame row is refused before the opening and M6 until R_V6 (K9-logged)."""
 
     def __init__(self, u: ResearchUniverse, with_features: bool = True,
-                 max_cached_decisions: int | None = 2048) -> None:
+                 max_cached_decisions: int | None = 2048, *,
+                 auth: guard.HoldoutAuthorization | None = None) -> None:
         if max_cached_decisions is not None and int(max_cached_decisions) < 1:
             raise ValueError("max_cached_decisions must be >= 1 or None")
+        u.check_data(auth)
+        self.auth = auth
         self.u = u
         self.with_features = bool(with_features)
         self.max_cached = None if max_cached_decisions is None else int(max_cached_decisions)
@@ -334,6 +373,8 @@ class DecisionProvider:
 
     def __call__(self, t: int) -> DecisionView:
         t = int(t)
+        guard.check_data_span(t, t + 1, auth=self.auth, what="decision t")
+        self.u.check_data(self.auth)
         if t in self._views:
             self._views.move_to_end(t)
             self._records.move_to_end(t)
@@ -491,6 +532,7 @@ def label_panel(u: ResearchUniverse, provider: DecisionProvider, decision_ts: Se
         raise ValueError("no decision times")
     w_lo, w_end = int(window[0]), int(window[1])
     guard.check_outcome_window(ts[0], min(ts[-1] + FILL_DELAY + h * H + MIN, w_end), auth=auth, now_ns=now_ns)
+    u.check_data(auth)
     rows: list[dict] = []
     res: list[labels.LabelResult | None] = []
     lab_rows: list[dict] = []
@@ -542,6 +584,7 @@ def run_book(arm: str, u: ResearchUniverse, provider: DecisionProvider, window: 
         miss = [s for s in u.candidates if u.instruments[s].aggtrades is None]
         if miss:
             raise ValueError(f"E_M needs aggTrades for {miss}")
+    u.check_data(auth)
     inputs = u.engine_inputs(provider, now_ns, auth)
     return replace(engine.run(arm, inputs, window, h, model=model, execution=execution), research=True)
 

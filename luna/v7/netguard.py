@@ -1,8 +1,9 @@
 """Pre-opening endpoint allowlist N1-N6 (spec S-1.7, DEC-41 as amended by DEC-46, L10, E6, E8).
 
 Permission is per exact endpoint and parameter set, never per host and never by assuming a time parameter
-bounds an endpoint. ``check`` is pure (no I/O): it refuses everything not matched by the explicit table
-below before any network access could happen. Every V7 research request must go through it.
+bounds an endpoint. ``check`` refuses everything not matched by the explicit table below before any network
+access could happen; it is pure (no I/O) without an authorization. Every V7 research request goes through it,
+called by the one fetch layer ``luna.v7.fetch`` (which K9-logs every refusal).
 
     N1  data.binance.vision futures/um zip (+ .CHECKSUM), whole file period < 2025-07-01
     N2  S3 bucket listing (delimiter=/, prefix=data/futures/um/...), names / sizes / checksums only
@@ -10,6 +11,13 @@ below before any network access could happen. Every V7 research request must go 
     N4  fapi/v1/exchangeInfo, no parameters (E8-limited use)
     N5  Wayback CDX with ``to`` <= 20250630235959
     N6  Wayback /web/<ts>id_/<original>, only an exact pair returned by an N5 query
+
+Post-opening mode (E6; SC-03, AMB-35): with ``auth`` = the hardened ``guard.HoldoutAuthorization``,
+re-verified against the canonical opening by ``guard.verified_opening`` (never a boolean; refused once the
+verdict marker exists), N1 also allows file content whose whole period is < the W_HOLD end and does not
+overlap the canonical M6, and the N5 / N6 bound is raised to 20260630235959 / < 20260701000000
+(``post_opening_bounds``). Everything else is unchanged: the research CMS stays blocked, N2 / N3 / N4 keep
+their pre-opening rules, M6 file content stays refused. Without ``auth`` the pre-opening bounds apply.
 """
 
 from __future__ import annotations
@@ -21,13 +29,15 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
+import pandas as pd
+
 from luna.v7 import guard, windows
 from luna.v7.guard import GuardFailure
 from luna.v7.timeutil import D
 
-__all__ = ["Allowed", "EndpointRefused", "GuardFailure", "Request", "cdx_pair_registry", "check",
-           "check_wayback_response", "drop_m6_keys",
-           "partition_m6_keys"]
+__all__ = ["Allowed", "EndpointRefused", "GuardFailure", "Request", "bounds", "cdx_pair_registry", "check",
+           "check_wayback_response", "drop_m6_keys", "params_of", "partition_m6_keys", "post_opening_bounds",
+           "wayback_pair"]
 
 
 class EndpointRefused(RuntimeError):
@@ -46,7 +56,16 @@ class Allowed:
 
 
 _BOUND_MS = windows.W_HOLD[0] // 10**6  # 2025-07-01T00:00:00Z in ms
-_BOUND_TS = "20250701000000"  # first Wayback timestamp that is refused
+
+
+def _ts14(ns: int) -> str:
+    return pd.Timestamp(int(ns), unit="ns", tz="UTC").strftime("%Y%m%d%H%M%S")
+
+
+_BOUND_TS = _ts14(windows.W_HOLD[0])  # first Wayback timestamp that is refused before the opening
+_TO_MAX = _ts14(windows.W_HOLD[0] - 10**9)  # 20250630235959
+_E6_BOUND_TS = _ts14(windows.W_HOLD[1])  # E6: first refused capture timestamp after the opening
+_E6_TO_MAX = _ts14(windows.W_HOLD[1] - 10**9)  # 20260630235959
 _TS14 = re.compile(r"\d{14}", re.ASCII)
 _DIGITS = re.compile(r"\d{1,16}", re.ASCII)
 
@@ -71,21 +90,40 @@ def _int_param(v: object) -> int | None:
     return int(s) if _DIGITS.fullmatch(s) else None
 
 
+def post_opening_bounds() -> tuple[str, str, int]:
+    """E6 bounds: (N5 ``to`` max, first refused N6 ts, N1 period end bound in ns) after the opening."""
+    return _E6_TO_MAX, _E6_BOUND_TS, windows.W_HOLD[1]
+
+
+def bounds(auth: object = None) -> tuple[str, str, int]:
+    """(N5 ``to`` max, first refused N6 ts, N1 period end bound in ns): the pre-opening bounds without an
+    authorization; with one, the E6 bounds once ``guard.verified_opening(auth)`` verifies it (HoldoutBlocked
+    otherwise: a forged authorization is refused, never treated as "no authorization")."""
+    if auth is None:
+        return _TO_MAX, _BOUND_TS, windows.W_HOLD[0]
+    guard.verified_opening(auth)
+    return post_opening_bounds()
+
+
 class CdxPairRegistry:
-    """The exact (ts, original) pairs returned by bounded N5 queries; N6 may fetch only these."""
+    """The exact (ts, original) pairs returned by bounded N5 queries (this process); N6 may fetch only these.
+    A pair at or beyond the pre-opening bound can only come from an E6 query and is fetchable only in the E6
+    mode (``check`` applies the mode's bound to the N6 ts as well)."""
 
     def __init__(self) -> None:
         self._pairs: set[tuple[str, str]] = set()
 
-    def register_cdx_result(self, rows) -> None:
+    def register_cdx_result(self, rows, *, auth: object = None) -> None:
         """``rows``: dicts with ``timestamp`` / ``original`` or (timestamp, original) sequences. A row at or
-        beyond the bound means the server-side bound failed: guard failure, nothing from the batch kept."""
+        beyond the mode's bound (``bounds(auth)``) means the server-side bound failed: guard failure, nothing
+        from the batch kept."""
+        bound = bounds(auth)[1]
         batch: list[tuple[str, str]] = []
         for r in rows:
             ts, orig = (r["timestamp"], r["original"]) if isinstance(r, dict) else (r[0], r[1])
             ts = str(ts)
-            if not _TS14.fullmatch(ts) or ts >= _BOUND_TS:
-                raise GuardFailure(f"CDX row timestamp {ts!r} is outside the bound < {_BOUND_TS}")
+            if not _TS14.fullmatch(ts) or ts >= bound:
+                raise GuardFailure(f"CDX row timestamp {ts!r} is outside the bound < {bound}")
             batch.append((ts, str(orig)))
         self._pairs.update(batch)
 
@@ -127,8 +165,25 @@ def _merged_params(req: Request, query: str) -> dict:
     return out
 
 
-def check(req: Request) -> Allowed:
-    """Pure allowlist decision; raises EndpointRefused for everything not listed (before any I/O)."""
+def params_of(req: Request) -> dict[str, str]:
+    """The request's parameters merged from its URL query and ``params`` (EndpointRefused on duplicates)."""
+    try:
+        q = urlsplit(req.url).query
+    except ValueError:
+        raise _refuse("unparsable URL", req) from None
+    return _merged_params(req, q)
+
+
+def wayback_pair(url: str) -> tuple[str, str] | None:
+    """(ts, original) of an N6 URL, else None."""
+    m = _N6.fullmatch(url) if isinstance(url, str) else None
+    return None if m is None else (m.group(1), m.group(2))
+
+
+def check(req: Request, *, auth: object = None) -> Allowed:
+    """Allowlist decision; raises EndpointRefused for everything not listed (before any I/O). ``auth``: the
+    hardened holdout authorization for the post-opening E6 mode (module docstring), verified first."""
+    to_max, n6_bound, n1_hi = bounds(auth)
     url = req.url
     if not isinstance(url, str) or not url:
         raise _refuse("empty URL", req)
@@ -139,7 +194,7 @@ def check(req: Request) -> Allowed:
         if req.params:
             raise _refuse("N6 takes no parameters", req)
         ts, original = m.groups()
-        if ts >= _BOUND_TS or not cdx_pair_registry.contains(ts, original):
+        if ts >= n6_bound or not cdx_pair_registry.contains(ts, original):
             raise _refuse("N6 only for an exact (ts, original) pair returned by a bounded N5 query", req)
         return Allowed("N6")
     try:
@@ -161,8 +216,11 @@ def check(req: Request) -> Allowed:
             raise _refuse("N1 file period does not match its monthly / daily directory", req)
         if not n1.group("file").startswith(n1.group("symbol")):
             raise _refuse("N1 file name does not belong to the directory symbol", req)
-        if per[1] > windows.W_HOLD[0]:
-            raise _refuse("N1 file period reaches W_HOLD / M6 (content refused)", req)
+        if per[1] > n1_hi:
+            raise _refuse("N1 file period reaches W_HOLD / M6 (content refused)" if auth is None else
+                          "N1 file period reaches past W_HOLD (M6 content refused after the opening)", req)
+        if auth is not None and windows.overlaps(per[0], per[1], windows.m6_cached(guard._roots()[0])):
+            raise _refuse("N1 file period overlaps the canonical M6 (content refused)", req)
         return Allowed("N1")
 
     if host == "s3-ap-northeast-1.amazonaws.com":
@@ -193,8 +251,8 @@ def check(req: Request) -> Allowed:
 
     if host == "web.archive.org" and path == "/cdx/search/cdx":
         to = p.get("to")
-        if to is None or not _TS14.fullmatch(to) or to > "20250630235959" or not set(p) <= _N5_ALLOWED:
-            raise _refuse("N5 requires a 14-digit `to` <= 20250630235959 and only allowed parameters", req)
+        if to is None or not _TS14.fullmatch(to) or to > to_max or not set(p) <= _N5_ALLOWED:
+            raise _refuse(f"N5 requires a 14-digit `to` <= {to_max} and only allowed parameters", req)
         return Allowed("N5")
 
     raise _refuse("endpoint not on the S-1.7 allowlist", req)
