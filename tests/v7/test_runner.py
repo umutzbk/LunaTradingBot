@@ -364,6 +364,8 @@ def test_fold_model_routing_by_quarter():
     a, b = m.predict(LO + 5 * MIN, cands), m.predict(LO + 2 * D + 5 * MIN, cands)
     np.testing.assert_array_equal(a["yhat_en"].to_numpy(), -b["yhat_en"].to_numpy())
     assert m.log[LO + 5 * MIN][0] == 0 and m.log[LO + 2 * D + 5 * MIN][0] == 1
+    assert m.fold_index(LO) == 0 and m.fold_index(LO + 2 * D) == 1  # a quarter's first instant is its own
+    assert m.fold_index(LO + 2 * D - 1) == 0
     assert m.hashes[0] != m.hashes[1]
     for t in (LO - 5 * MIN, LO + 4 * D):  # outside every test quarter
         with pytest.raises(ValueError, match="outside every fold"):
@@ -381,7 +383,7 @@ def test_wrong_fold_model_cannot_be_used(inputs):
     the provenance log names fold q's model for every decision of quarter q."""
     q = [(LO, LO + 2 * D), (LO + 2 * D, fx.BOOK[1])]
     u = uni(inputs)
-    p = DecisionProvider(u, with_features=False)
+    p = DecisionProvider(u, with_features=True)
     m = FoldScoreModel(fakes(q, [1.0, -1.0]), "A2", 24)
     run = runner.run_book("A2", u, p, fx.BOOK, 24, NOW, model=m)
     assert run.valid
@@ -431,9 +433,11 @@ def test_risk_layer_cannot_be_bypassed(inputs):
     assert not (pause.fills["reason"] == "leg_stop").any()
 
 
-def test_one_sided_book_is_flattened(inputs):
+def test_one_sided_book_is_flattened_at_next_decision_interim(inputs):
     """AMB-16 (d) (user decision): when one side has no holdable leg, the whole book is flat at the next
-    executable opportunity, even inside the minimum hold; no replacement keeps the other side alone."""
+    executable opportunity, even inside the minimum hold; no replacement keeps the other side alone. The
+    timing asserted is the INTERIM reading "next executable opportunity = the next decision's t + 15 min"
+    (AMB-28, normative, pending the user's decision; the controller's next task may change it)."""
     tau = LO + 12 * H
     run = _shocked_run(inputs, {s: 0.8 for s in LONGS}, tau, h=168)  # every long leg stops out
     f = run.fills
@@ -540,14 +544,53 @@ def test_fold_convergence_collected_and_written(tmp_path, monkeypatch):
     assert len(lin) == 4  # 2 EN candidate fits (selection) + the EN refit + the logistic EN refit
     assert all(isinstance(r["converged"], bool) for r in lin)
     assert all(r["converged"] is None for r in conv if r["family"] in ("lgb_reg", "lgb_clf"))
-    rec = runrecord.run_record(commit="a" * 40, config={"h": 24, "space": [repr(c) for c in space]},
-                               data_manifests={"bars15": "b" * 64}, seeds=runrecord.default_seeds(),
-                               uv_lock_sha256="c" * 64, libraries=runrecord.library_versions(),
-                               convergence=conv)
-    assert rec["convergence_summary"]["fits"] == len(conv)
-    assert rec["convergence_summary"]["not_converged"] == sum(r["converged"] is False for r in conv)
+    with pytest.raises(ValueError, match="convergence record"):  # never a silent omission
+        runner.fold_convergence([FakeFold(fold(0, LO, LO + D), 24, 1.0)])
+    un = runner.fold_convergence([FakeFold(fold(3, LO, LO + D), 24, 1.0)], allow_unavailable=True)
+    assert len(un) == 1 and un[0]["stage"] == "unavailable" and un[0]["converged"] is None
+
+
+def _record(runs_, conv=(), **kw):
+    base = dict(commit="a" * 40, dirty=False, config={"h": 24}, data_manifests={"bars15": "b" * 64},
+                seeds=runrecord.default_seeds(), uv_lock_sha256="c" * 64,
+                libraries=runrecord.library_versions(), convergence=conv, runs=runs_)
+    return runrecord.run_record(**{**base, **kw})
+
+
+def test_dt4_run_record(tmp_path, dev_valid):
+    """DT4 matches data.schema (run_id key, the schema columns), records the working-tree state, the run
+    identities with output sha256s and the convergence rows; run_id is deterministic and content-bound."""
+    from luna.v7.data import schema
+
+    dev, _ = dev_valid
+    runs = [dev.runs[("A0", 24)], dev.runs[("A2", 24)]]
+    conv = [dict(fold_id=0, horizon=24, stage="select", family="en", params=(("alpha", 0.001),),
+                 converged=False, n_iter=1000, max_iter=1000, messages=("did not converge",))]
+    rec = _record(runs, conv)
+    assert set(schema.TABLES["DT4"].key) | set(schema.TABLES["DT4"].columns) <= set(rec)
+    assert rec["code_dirty"] is False and rec["convergence_summary"] == {"fits": 1, "not_converged": 1}
+    ids = rec["runs"]
+    assert [(r["arm"], r["h"], r["execution"], r["layer"]) for r in ids] == [("A0", 24, "E_T", "L-norm"),
+                                                                             ("A2", 24, "E_T", "L-norm")]
+    assert ids[0]["window"] == list(dev.window)
+    assert ids[0]["output_sha256"] == runrecord.run_output_sha256(runs[0])
+    assert _record(runs, conv)["run_id"] == rec["run_id"]  # deterministic
+    other = replace(runs[0], integrity=(*runs[0].integrity, "x"))
+    assert runrecord.run_output_sha256(other) != ids[0]["output_sha256"]
+    assert _record([other, runs[1]], conv)["run_id"] != rec["run_id"]
+    assert _record(runs, conv, dirty=True)["run_id"] != rec["run_id"]
+    with pytest.raises(ValueError, match="clean working tree"):
+        _record(runs, conv, dirty=True, research=True)
+    for bad in (dict(runs=[]), dict(commit="xyz"), dict(data_manifests={}), dict(uv_lock_sha256="no"),
+                dict(dirty="no")):
+        with pytest.raises(ValueError):
+            _record(runs, conv, **bad)
+    commit, dirty = runrecord.code_state()
+    assert len(commit) == 40 and isinstance(dirty, bool)
     p = runrecord.write_run_record(tmp_path / "run.json", rec)
-    assert json.loads(p.read_text(encoding="utf-8")) == rec
+    assert json.loads(p.read_text(encoding="utf-8")) == json.loads(runrecord.canonical_json(rec))
+    with pytest.raises(FileExistsError):  # a record is never overwritten
+        runrecord.write_run_record(tmp_path / "run.json", rec)
 
 
 # ------------------------------------------------------------------------------------- S-10.6 / S-10.7
@@ -556,7 +599,7 @@ def test_fold_convergence_collected_and_written(tmp_path, monkeypatch):
 @pytest.fixture(scope="module")
 def dev_valid(inputs):
     u = uni(inputs)
-    p = DecisionProvider(u, with_features=False)
+    p = DecisionProvider(u, with_features=True)
     q = [(LO, LO + D), (LO + D, LO + 2 * D)]
     fm = {h: fakes(q, h=h) for h in selection.HORIZONS}
     return dev_selection(u, p, fm, NOW, B=B_SMALL), q
@@ -588,11 +631,12 @@ def test_dev_selection_invalid_precondition(inputs):
     syms = (BTC, "AAAUSDT", "BBBUSDT", fx.RELIST, *LONGS)
     i0 = inputs[fx.RELIST].insts[0]
     with pytest.raises(ValueError, match="TerminalEvent"):  # an unclassified cessation is never guessed
-        dev_selection(uni(inputs, syms=syms), DecisionProvider(uni(inputs, syms=syms), with_features=False),
+        u0 = uni(inputs, syms=syms)
+        dev_selection(u0, DecisionProvider(u0, with_features=True),
                       {h: fakes([(REL_WIN[0], REL_WIN[1])], h=h) for h in selection.HORIZONS}, NOW, B=B_SMALL)
     ev = TerminalEvent(i0, int(i0.last_trade_ts), "C", None, None, None)  # no official termination record
     u = uni(inputs, syms=syms, **{fx.RELIST: dict(terminals={i0.idx: ev})})
-    p = DecisionProvider(u, with_features=False)
+    p = DecisionProvider(u, with_features=True)
     q = [(REL_WIN[0], REL_WIN[0] + 2 * D), (REL_WIN[0] + 2 * D, REL_WIN[1])]
     fm = {h: fakes(q, h=h) for h in selection.HORIZONS}
     dev = dev_selection(u, p, fm, NOW, B=B_SMALL)
@@ -674,22 +718,81 @@ def test_missing_required_inputs_fail_closed(inputs, dev_valid):
         "r4 mark known_at": lambda: uni(inputs, AAAUSDT=dict(r4=features.R4Bars(
             x.r4.premium, x.r4.mark.drop(columns="known_at"), x.r4.index))),
         "no instances": lambda: uni(inputs, AAAUSDT=dict(insts=[])),
+        "notices feed missing": lambda: uni(inputs, AAAUSDT=dict(notices=None)),
+        "terminals feed missing": lambda: uni(inputs, AAAUSDT=dict(terminals=None)),
+        "notices not notices": lambda: uni(inputs, AAAUSDT=dict(notices=("text",))),
     }
     for name, fn in cases.items():
         with pytest.raises(ValueError):
             fn()
             pytest.fail(name)
+    with pytest.raises(TypeError):  # notices / terminals have no default: they must be stated
+        runner.SymbolInputs(x.symbol, x.bars15, x.bars1m, x.funding, x.insts, x.r4, x.identity)
     u = uni(inputs, AAAUSDT=dict(aggtrades=None))
     p = DecisionProvider(u, with_features=False)
     with pytest.raises(ValueError, match="aggTrades"):
         runner.run_book("A0", u, p, (T - 5 * MIN, T + D), 24, NOW, execution="E_M")
     with pytest.raises(ValueError, match="lacks"):
         FoldScoreModel([NoP1Cal(fold(0, LO, fx.BOOK[1]))], "A2", 24).predict(T, p(T).cands)
+    m24 = FoldScoreModel(fakes([(LO, LO + D)]), "A2", 24)
+    with pytest.raises(ValueError, match="with_features"):  # an ML arm never scores feature-less rows
+        runner.run_book("A2", u, p, (T - 5 * MIN, T + D), 24, NOW, model=m24)
     with pytest.raises(ValueError, match="horizon"):
-        runner.run_book("A2", u, p, (T - 5 * MIN, T + D), 72, NOW, model=FoldScoreModel(fakes([(LO, LO + D)]),
-                                                                                          "A2", 24))
+        runner.run_book("A2", u, DecisionProvider(u, with_features=True), (T - 5 * MIN, T + D), 72, NOW,
+                        model=m24)
     dev, _ = dev_valid
     with pytest.raises(ValueError, match="W_DEV facts"):
         holdout_inputs(auth=auth(), ml_T=dev.runs[("A2", 24)], a0_T=dev.runs[("A0", 24)],
                        ml_M=dev.em_runs["A0"], a0_M=dev.em_runs["A0"], quarter_edges=(), panel=_panel(24),
                        final_model=None, leakage=(), integrity=())
+
+
+def test_dev_selection_refusals(inputs):
+    """S-10.6 inputs are refused before any book runs: a window outside W_DEV, non-consecutive quarters,
+    quarters that differ across horizons, missing horizons, a provider without the §9 features."""
+    u = uni(inputs)
+    pf, p0 = DecisionProvider(u, with_features=True), DecisionProvider(u, with_features=False)
+    q = [(LO, LO + D), (LO + D, LO + 2 * D)]
+    hs = selection.HORIZONS
+    w_hold = [(windows.W_HOLD[0], windows.W_HOLD[0] + D)]
+    cases = [
+        ({h: fakes(w_hold, h=h) for h in hs}, pf, "W_DEV only"),
+        ({h: fakes([(LO, LO + D), (LO + 2 * D, LO + 3 * D)], h=h) for h in hs}, pf, "consecutive"),
+        ({**{h: fakes(q, h=h) for h in hs}, 72: fakes([(LO, LO + D)], h=72)}, pf, "same outer test"),
+        ({24: fakes(q, h=24)}, pf, "every horizon"),
+        ({h: fakes(q, h=h) for h in hs}, p0, "with_features"),
+    ]
+    for fm, prov, msg in cases:
+        with pytest.raises(ValueError, match=msg):
+            dev_selection(u, prov, fm, NOW, B=B_SMALL)
+    assert pf._views == {} and p0._views == {}  # nothing was computed
+
+
+def test_provider_cache_bounded_and_identical(inputs):
+    """Bars are kept for the current decision only (positional slices), views / records are a bounded LRU;
+    every output equals the unbounded provider's and the boolean reference definition of the bars."""
+    u = uni(inputs)
+    small = DecisionProvider(u, with_features=False, max_cached_decisions=2)
+    full = DecisionProvider(u, with_features=False, max_cached_decisions=None)
+    ts = [int(t) for t in fx.decisions_in(fx.BOOK)]
+    for t in ts:
+        _views_equal(small(t), full(t))
+        assert len(small._views) <= 2 and len(small._records) <= 2
+        assert small._bars_t == t and len(small._bars) <= len(SUB)
+        for s in SUB:
+            got = small.instance_bars(s, t)
+            cur = runner.current_instance(u.sd[s].insts, t)
+            ref = runner._instance_bars_reference(u.sd[s], cur, t)
+            pd.testing.assert_frame_equal(got, ref, check_exact=True)
+    assert len(full._views) == len(ts)
+    _views_equal(small(ts[0]), full(ts[0]))  # an evicted decision is recomputed identically
+    # unsorted bars: the reference (boolean) path, same values
+    b = inputs["AAAUSDT"].bars15.sample(frac=1.0, random_state=1)
+    us = uni(inputs, AAAUSDT=dict(bars15=b))
+    ps = DecisionProvider(us, with_features=False)
+    assert ps._positions("AAAUSDT")[0] is False
+    got = ps.instance_bars("AAAUSDT", T)
+    ref = full.instance_bars("AAAUSDT", T)
+    pd.testing.assert_frame_equal(got.sort_values("open_ts"), ref, check_exact=True)
+    with pytest.raises(ValueError):
+        DecisionProvider(u, max_cached_decisions=0)

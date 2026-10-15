@@ -223,8 +223,8 @@ def build_inputs(seed: int, dense: Sequence[tuple[int, int]] = (BOOK,),
         b1 = _bars1m(b15, mask, seed, i)
         mult = MULTIPLIER.get(sym, 1.0)
         ident = Identity(sym.removesuffix("USDT"), "PERPETUAL", "USDT", "COIN", mult, True)
-        out[sym] = SymbolInputs(sym, b15, b1, f, insts, R4Bars(premium, mark, index), ident,
-                                aggtrades=_aggtrades(b1, dense, seed, i))
+        out[sym] = SymbolInputs(sym, b15, b1, f, insts, R4Bars(premium, mark, index), ident, notices=(),
+                                terminals={}, aggtrades=_aggtrades(b1, dense, seed, i))
     return out
 
 

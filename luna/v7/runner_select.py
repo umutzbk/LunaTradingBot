@@ -83,6 +83,8 @@ def dev_selection(u: ResearchUniverse, provider: DecisionProvider, fold_models: 
     window = (q[0][0], q[-1][1])
     if not (W_DEV[0] <= window[0] and window[1] <= W_DEV[1]):
         raise ValueError("S-10.6 runs on W_DEV only (terminal unwind before the W_DEV end)")
+    if not provider.with_features:
+        raise ValueError("the ML candidates score the §9 features: DecisionProvider(with_features=True)")
     ref = dict(reference_runs or {})
     bad = [k for k in ref if k[0] not in selection.REFERENCE_ARMS]
     if bad:
@@ -95,8 +97,7 @@ def dev_selection(u: ResearchUniverse, provider: DecisionProvider, fold_models: 
     for a in selection.ML_ARMS:
         for h in HORIZONS:
             runs[(a, h)] = run_book(a, u, provider, window, h, now_ns, model=models[(a, h)])
-    has_conv = all(hasattr(m, "convergence") for s in fold_models.values() for m in s)
-    conv = fold_convergence(fold_models) if has_conv else ()
+    conv = fold_convergence(fold_models, allow_unavailable=True)
     res = selection.choose({**runs, **ref}, B=B, seed=seed)
     if isinstance(res, selection.Invalid):
         return DevSelection(window, edges, {**runs, **ref}, models, res, None, None, {}, conv)
@@ -157,6 +158,11 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
         if r.arm != a or r.execution != e or r.h_star != h:
             raise ValueError(f"run {r.arm}/{r.execution}/{r.h_star}h is not {a}/{e} at h* = {h}h")
     reg, clf = families(arm)
+    if int(getattr(final_model, "horizon", -1)) != int(h):
+        raise ValueError(f"the final model is not for h* = {h}h")
+    fams = getattr(final_model, "reg", None)
+    if fams is not None and reg not in fams:
+        raise ValueError(f"the final model has no {reg} regressor (ML* = {arm})")
     s = cv.canonical(panel.samples, h)
     if len(s) == 0:
         raise ValueError("no valid holdout labels for P7 / P8")

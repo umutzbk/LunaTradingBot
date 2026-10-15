@@ -39,8 +39,9 @@ from __future__ import annotations
 
 import hashlib
 import pickle
+from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -99,7 +100,9 @@ def _max_ka(df: pd.DataFrame) -> int | None:
 class SymbolInputs:
     """One symbol's normalised inputs (outputs of the ingestion / instance stages): R3 15m and R5 1m
     last-price bars, merged R2 funding records (``data.funding.merge``), instances, R4 bars, the R1
-    identity, R11 notice versions, classified terminal events per instance idx and (E_M only) aggTrades."""
+    identity, R11 notice versions, classified terminal events per instance idx and (E_M only) aggTrades.
+    ``notices`` and ``terminals`` are REQUIRED (no default): an explicit empty tuple / mapping states "no
+    notice" / "no classified terminal event"; a forgotten feed (None) is refused, never read as empty."""
 
     symbol: str
     bars15: pd.DataFrame
@@ -108,8 +111,8 @@ class SymbolInputs:
     insts: list[Instance]
     r4: R4Bars
     identity: Identity | None
-    notices: tuple[NoticeVersion, ...] = ()
-    terminals: Mapping[int, TerminalEvent] = field(default_factory=dict)
+    notices: tuple[NoticeVersion, ...]
+    terminals: Mapping[int, TerminalEvent]
     aggtrades: pd.DataFrame | None = None
 
 
@@ -138,6 +141,12 @@ class ResearchUniverse:
                 _need(getattr(x.r4, k), REQUIRED_COLS["r4"], f"{sym}.r4.{k}")
             if not x.insts:
                 raise ValueError(f"{sym}: no instances (required)")
+            if not isinstance(x.notices, tuple | list) or not all(isinstance(n, NoticeVersion)
+                                                                  for n in x.notices):
+                raise ValueError(f"{sym}.notices: required R11 input missing (pass () for none)")
+            if not isinstance(x.terminals, Mapping) or not all(isinstance(e, TerminalEvent)
+                                                               for e in x.terminals.values()):
+                raise ValueError(f"{sym}.terminals: required input missing (pass {{}} for none)")
             if x.aggtrades is not None:
                 _need(x.aggtrades, ("ts", "price", "qty"), f"{sym}.aggtrades")
             fa = annotate(x.funding, list(x.insts))
@@ -191,28 +200,59 @@ class DecisionRecord:
 
 class DecisionProvider:
     """Point-in-time ``DecisionView`` per decision t (see module docstring). ``with_features`` adds the §9
-    features to the candidate rows (needed by the ML arms and the labels; A0 needs only its own inputs)."""
+    features to the candidate rows (needed by the ML arms and the labels; A0 needs only its own inputs).
 
-    def __init__(self, u: ResearchUniverse, with_features: bool = True) -> None:
+    Memory: the per-(symbol, t) bar slices are kept for the CURRENT t only (a new t evicts them) and are
+    positional slices (no copy of the history) when the bars are sorted by ``open_ts`` with non-decreasing
+    ``known_at`` (else the boolean reference path). Views and records are an LRU of at most
+    ``max_cached_decisions`` decisions (None = unbounded); an evicted decision is recomputed on demand
+    (deterministic), so the bound trades memory for recomputation (the S-10.6 driver replays the same
+    decisions for each of its books)."""
+
+    def __init__(self, u: ResearchUniverse, with_features: bool = True,
+                 max_cached_decisions: int | None = 2048) -> None:
+        if max_cached_decisions is not None and int(max_cached_decisions) < 1:
+            raise ValueError("max_cached_decisions must be >= 1 or None")
         self.u = u
         self.with_features = bool(with_features)
-        self._views: dict[int, DecisionView] = {}
-        self._records: dict[int, DecisionRecord] = {}
-        self._bars: dict[tuple[str, int], pd.DataFrame | None] = {}
+        self.max_cached = None if max_cached_decisions is None else int(max_cached_decisions)
+        self._views: OrderedDict[int, DecisionView] = OrderedDict()
+        self._records: OrderedDict[int, DecisionRecord] = OrderedDict()
+        self._bars: dict[str, pd.DataFrame | None] = {}
+        self._bars_t: int | None = None
+        self._pos: dict[str, tuple[bool, np.ndarray, np.ndarray]] = {}
+
+    def _positions(self, sym: str) -> tuple[bool, np.ndarray, np.ndarray]:
+        """(sliceable, open_ts, known_at) of the symbol's 15m bars, validated once."""
+        if sym not in self._pos:
+            b = self.u.sd[sym].bars15
+            ot = ns_array(b["open_ts"], f"{sym}.bars15.open_ts") if len(b) else np.empty(0, np.int64)
+            ka = ns_array(b["known_at"], f"{sym}.bars15.known_at") if len(b) else np.empty(0, np.int64)
+            ok = bool(len(b) == 0 or ((np.diff(ot) >= 0).all() and (np.diff(ka) >= 0).all()))
+            self._pos[sym] = (ok, ot, ka)
+        return self._pos[sym]
 
     # per (symbol, t) inputs
     def instance_bars(self, sym: str, t: int) -> pd.DataFrame | None:
         """PIT 15m bars (known_at <= t - 1 min) of the current instance at t; None without one."""
-        key = (sym, int(t))
-        if key not in self._bars:
-            sd = self.u.sd[sym]
-            cur = current_instance(sd.insts, int(t))
-            if cur is None:
-                self._bars[key] = None
-            else:
-                b = pit_rows(sd.bars15, int(t), f"{sym}.bars15")
-                self._bars[key] = b[ns_array(b["open_ts"], "open_ts") >= cur.first_bar_ts]
-        return self._bars[key]
+        t = int(t)
+        if self._bars_t != t:
+            self._bars, self._bars_t = {}, t
+        if sym not in self._bars:
+            self._bars[sym] = self._slice(sym, t)
+        return self._bars[sym]
+
+    def _slice(self, sym: str, t: int) -> pd.DataFrame | None:
+        sd = self.u.sd[sym]
+        cur = current_instance(sd.insts, t)
+        if cur is None:
+            return None
+        ok, ot, ka = self._positions(sym)
+        if ok:
+            lo = int(np.searchsorted(ot, cur.first_bar_ts, "left"))
+            hi = int(np.searchsorted(ka, t - MIN, "right"))
+            return sd.bars15.iloc[lo:max(lo, hi)]
+        return _instance_bars_reference(sd, cur, t)
 
     def h_hat(self, sym: str, t: int) -> float | None:
         """S-4.4 decision-time h-hat(t): the S-4.5 proxy at t on the current instance (None = missing)."""
@@ -294,7 +334,10 @@ class DecisionProvider:
 
     def __call__(self, t: int) -> DecisionView:
         t = int(t)
-        if t not in self._views:
+        if t in self._views:
+            self._views.move_to_end(t)
+            self._records.move_to_end(t)
+        else:
             u = self.u
             xs = self.xs(t)
             syms = u.candidates
@@ -313,11 +356,20 @@ class DecisionProvider:
             el = tuple(x.symbol for x in xs if eligible(x.gate))
             self._records[t] = DecisionRecord(t, gates, hh, betas, vols, bool(stale), stale, el, len(cands),
                                               mk)
+            while self.max_cached is not None and len(self._views) > self.max_cached:
+                self._views.popitem(last=False)
+                self._records.popitem(last=False)
         return self._views[t]
 
     def record(self, t: int) -> DecisionRecord:
         self(int(t))
         return self._records[int(t)]
+
+
+def _instance_bars_reference(sd: SymbolData, cur: Instance, t: int) -> pd.DataFrame:
+    """The boolean definition of the PIT current-instance bars (``universe.pit_rows`` + instance start)."""
+    b = pit_rows(sd.bars15, int(t), f"{sd.symbol}.bars15")
+    return b[ns_array(b["open_ts"], "open_ts") >= cur.first_bar_ts]
 
 
 # ------------------------------------------------------------------------------------------------ models
@@ -388,15 +440,23 @@ def fit_fold_models(samples: pd.DataFrame, folds: Sequence, horizon: int) -> lis
     return [cv.run_fold(f, samples, horizon) for f in sorted(folds, key=lambda f: f.test_lo)]
 
 
-def fold_convergence(fold_models: Mapping[int, Sequence] | Sequence) -> tuple[dict, ...]:
-    """Every linear fit's convergence status (AMB-26) of the fold models (``cv.FoldModel.convergence``)."""
+def fold_convergence(fold_models: Mapping[int, Sequence] | Sequence, *,
+                     allow_unavailable: bool = False) -> tuple[dict, ...]:
+    """Every linear fit's convergence status (AMB-26) of the fold models (``cv.FoldModel.convergence``). A
+    model without a convergence record raises, or with ``allow_unavailable`` gives one explicit row
+    ``stage = "unavailable"`` (``converged`` None) for that fold: never a silent omission."""
     seqs = fold_models.values() if isinstance(fold_models, Mapping) else [fold_models]
     out: list[dict] = []
     for seq in seqs:
         for m in seq:
-            if not hasattr(m, "convergence"):
+            if hasattr(m, "convergence"):
+                out.extend(m.convergence())
+            elif allow_unavailable:
+                out.append(dict(fold_id=int(m.fold.fold_id), horizon=int(m.horizon), stage="unavailable",
+                                family=None, params=(), converged=None, n_iter=None, max_iter=None,
+                                messages=("no convergence record on this fold model",)))
+            else:
                 raise ValueError("fold model without a convergence record")
-            out.extend(m.convergence())
     return tuple(out)
 
 
@@ -468,7 +528,10 @@ def label_panel(u: ResearchUniverse, provider: DecisionProvider, decision_ts: Se
 def run_book(arm: str, u: ResearchUniverse, provider: DecisionProvider, window: tuple[int, int], h: int,
              now_ns: int, model: FoldScoreModel | None = None, execution: str = "E_T",
              auth: guard.HoldoutAuthorization | None = None) -> BookRun:
-    """One ``engine.run`` (L-norm) through the provider; E_M needs every instrument's aggTrades."""
+    """One ``engine.run`` (L-norm) through the provider; E_M needs every instrument's aggTrades; the ML arms
+    need the §9 features in the candidate rows (``DecisionProvider(with_features=True)``)."""
+    if arm != "A0" and not provider.with_features:
+        raise ValueError(f"{arm} scores the §9 features: the provider must be built with_features=True")
     if arm != "A0" and model is not None and model.ml_star != arm and arm in ("A2", "A3"):
         raise ValueError(f"{arm} run with an ML* = {model.ml_star} score model")
     if model is not None and model.horizon != h:
