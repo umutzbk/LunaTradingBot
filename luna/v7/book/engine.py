@@ -11,18 +11,20 @@ Events (heap; same timestamp: funding settlement, 15-minute tick, fills in booki
 one-sided check, decision, terminal unwind):
 * **tick** (every 15 min from lo): marks every open position (mark-price bar ending at the tick, else the
   last-price bar of the same period, S-4.6; nothing else: a held leg without either -> ``INVALID RUN —
-  required leg mark missing``, round-2 override 3 / DK-70; only a HALTED or ceased leg keeps the previous
-  price event, ``mark_source`` ``stale``, AMB-29: a stopped sub-case, normative amendment required), equity,
+  required leg mark missing``, round-2 override 3 / DK-70; only a HALTED leg keeps the previous price
+  event, ``mark_source`` ``stale``, AMB-29 (a): a stopped sub-case, normative amendment required), equity,
   ``RiskLayer.on_tick``; its forced exits (kill, leg stop) fill per S-4.2; a kill also closes the hedge and
   cancels unfilled entries and in-flight hedge opens (AMB-19 (c), DK-78). After the tick's fills and terminal
   checks, the **one-sided check** (AMB-16 (d), user decision 2026-10-15): if holdable legs remain on exactly
   one side, they all exit with the S-4.2 timing (reason ``one_sided_flatten``; ``on_neutral``), and an
   in-flight hedge open is cancelled (DK-78).
 * **required exits** (round-2 override 2 / DK-69): a non-halted exit (decision, risk / forced, U6, flatten,
-  hedge) with no 1-minute bar within the 60-minute data-gap window -> ``INVALID RUN — required exit without a
-  reference bar within the 60-minute data-gap window`` (detail: symbol#instance@time); never carried to a
-  later bar. A gap-rule fill is booked at the substitute bar's open time (DK-10), so funding and B(e) follow
-  that time. A partial reduce without a price is skipped (``unfilled_reduce``), as an entry is not traded.
+  hedge) or reduce (drift, ``risk_gross``; controller ruling R42) with no 1-minute bar within the 60-minute
+  data-gap window -> ``INVALID RUN — required exit without a reference bar within the 60-minute data-gap
+  window`` (detail: symbol#instance@time), as an event at the order's due time (cancelled with the order);
+  never carried to a later bar. A HALTED reduce is skipped (``unfilled_reduce``, S-5.4 no resizes while
+  halted). A gap-rule fill is booked at the substitute bar's open time (DK-10), so funding and B(e) follow
+  that time.
 * **E_M resting exits** (DK-77): a leg's exit counts as a resting maker order (replaceable by a forced exit,
   shown active to the risk layer) only inside [post, post + 30 min) of a limit actually posted.
 * **BTC price required** (AMB-21 (b), user decision 2026-10-15): a hedge trade due at t_e with no BTC
@@ -198,10 +200,14 @@ class BookRun:
 
 @dataclass
 class _Token:
-    fill: Fill
+    fill: Fill | None  # None for an "invalid" token
     pid: str
-    kind: str  # open | reduce | exit | hedge
+    kind: str  # open | reduce | exit | hedge | invalid
     cancelled: bool = False
+    # kind "invalid": a required order (exit / reduce / hedge) with no bar within 60 min (DK-69, R42): the run
+    # becomes INVALID at the order's due time, unless the order is cancelled first (exit replaced, position
+    # settled, unwind)
+    invalid: RunInvalid | None = None
 
 
 class _Sim:
@@ -313,11 +319,14 @@ class _Sim:
     def schedule(self, outs: list[Outcome], pid: str, kind: str, now: int, p: Position | None) -> None:
         for o in outs:
             if isinstance(o, RunInvalid):
-                if kind == "reduce":  # a partial reduce is not a required exit: skipped, as before (AMB-29)
-                    self.notes.append(f"unfilled_{kind}:{o.symbol}")
-                    continue
-                self.fail(o)  # a required exit without a bar within 60 min (DK-69 override)
-                return
+                # a required exit / reduce of a NON-HALTED instrument without a bar within 60 min
+                # (override 2 / DK-69; reduces incl. risk_gross: controller ruling R42): INVALID RUN at its
+                # due time (lazy: an order cancelled before then, e.g. a resting maker exit replaced by a
+                # forced exit, never invalidates); a halted reduce stays a Pending -> ``unfilled_reduce``
+                tk = _Token(None, pid, "invalid", invalid=o)
+                self.tokens.setdefault(pid, []).append(tk)
+                self.push(max(int(o.ts), now), EV_FILL, tk)
+                continue
             if isinstance(o, Fill):
                 if o.ts < now:
                     raise RuntimeError("internal: a fill before its scheduling time")
@@ -382,8 +391,13 @@ class _Sim:
     def on_fill(self, tk: _Token) -> None:
         if tk.cancelled:
             return
-        f = tk.fill
         self.tokens[tk.pid].remove(tk)
+        if tk.invalid is not None:  # a required order due now without a bar within 60 min (DK-69, R42)
+            self.fail(tk.invalid)
+            return
+        f = tk.fill
+        if f is None:
+            raise RuntimeError("internal: a fill token without a fill")
         p = self.led.pos.get(tk.pid)
         if p is None and tk.kind not in ("open", "hedge"):
             return
@@ -445,9 +459,9 @@ class _Sim:
                                          f"no mark-price or last-price 15-minute close at tick {ts} "
                                          "(not halted; DK-70)"))
                     return
-                # AMB-29 (normative amendment required; sub-case STOPPED, current code kept): a HALTED (or
-                # ceased, awaiting its terminal settlement) held leg without any 15m close at the tick: no
-                # frozen rule supplies its mark -> the previous price event is carried (it moves no P&L)
+                # AMB-29 (a) (normative amendment required; sub-case STOPPED, current code kept): a HALTED
+                # held leg without any 15m close at the tick: no frozen rule supplies its mark -> the previous
+                # price event is carried (it moves no P&L)
                 m, src = p.p_last, "stale"
             elif p.role == "leg":
                 fresh[p.symbol] = m
@@ -469,11 +483,10 @@ class _Sim:
 
     @staticmethod
     def mark_exempt(p: Position, ts: int) -> bool:
-        """AMB-29 (stopped sub-case of DK-70): the leg is HALTED at the tick (S-5.4: no volume > 0 1m bar in
-        [ts - 60 min, ts)), or its instance has ceased (no bar of the instance can end at ts) and the terminal
-        rule (DEC-43) settles it. Only then may a missing mark keep the current (stale) code."""
-        last = p.view.inst.last_trade_ts
-        return p.view.halted(ts) or (last is not None and ts - TICK >= last)
+        """AMB-29 (a) (stopped sub-case of DK-70): the leg is HALTED at the tick (S-5.4: no volume > 0 1m bar
+        in [ts - 60 min, ts)). Only then may a missing mark keep the current (stale) code. A ceased instance
+        that is not (yet) halted gets no exemption (fail closed, fix round 1): DEC-43 supplies no mark."""
+        return p.view.halted(ts)
 
     def on_neutral(self, ts: int) -> None:
         """AMB-16 (d) (user decision 2026-10-15), at every 15-minute tick after its fills: if held legs remain
@@ -492,7 +505,7 @@ class _Sim:
         alive = {s: bool(holdable[s]) for s in (1, -1)}
         for pid, tks in self.tokens.items():
             for tk in tks:
-                if tk.kind == "open" and not tk.cancelled and pid not in self.led.pos:
+                if tk.kind == "open" and tk.fill is not None and not tk.cancelled and pid not in self.led.pos:
                     alive[tk.fill.direction] = True
         if alive[1] == alive[-1] or not holdable[1 if alive[1] else -1]:
             return  # balanced, empty, or the surviving side is only being built (nothing held to flatten)
@@ -571,8 +584,13 @@ class _Sim:
                 r = halted_exit(p.view, out)
                 out = r if isinstance(r, Fill) else None  # type: ignore[assignment]
             if not isinstance(out, Fill) or out.ts >= self.end:
-                why = ("halted at the unwind" if p.view.halted(u)
-                       else "no reference price at the unwind minute (data gap, not halted; AMB-20)")
+                if p.view.halted(u):
+                    why = "halted at the unwind"
+                elif isinstance(out, Pending) and out.terminal:  # AMB-29 (f): cessation in (u, end)
+                    why = ("no reference price at the unwind minute; the instance ceases after it, before "
+                           "the end (its terminal check is never reached; AMB-29 (f))")
+                else:
+                    why = "no reference price at the unwind minute (data gap, not halted; AMB-20)"
                 self.fail(RunInvalid(INVALID_NO_EXIT, p.symbol, p.view.inst.idx, u, why))
                 return
             if not self.on_fill_now(out, p):

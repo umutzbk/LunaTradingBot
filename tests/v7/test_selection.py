@@ -10,7 +10,7 @@ import pytest
 from luna.v7 import accounting as acc
 from luna.v7 import selection as sel
 from luna.v7 import stats
-from luna.v7.book.execution import INVALID_NO_EXIT, INVALID_TERMINAL
+from luna.v7.book.execution import INVALID_EXIT_GAP, INVALID_MARK, INVALID_NO_EXIT, INVALID_TERMINAL
 from tests.v7.run_fixtures import funding_run
 
 BP = 1e-4
@@ -33,7 +33,8 @@ def _runs(mus=None, **over):
 def test_selection_invalid_if_any_required_invalid():
     base = _runs()
     for key in sel.REQUIRED:  # every required run, A0 at each single horizon included
-        for why in (INVALID_TERMINAL, INVALID_NO_EXIT):
+        # INVALID_EXIT_GAP / INVALID_MARK: round-2 overrides 2 / 3 (DK-69 / DK-70, Task 22a)
+        for why in (INVALID_TERMINAL, INVALID_NO_EXIT, INVALID_EXIT_GAP, INVALID_MARK):
             runs = dict(base)
             runs[key] = replace(runs[key], invalid=why, invalid_detail="X#0")
             out = sel.choose(runs, B=200)
