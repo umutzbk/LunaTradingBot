@@ -1,0 +1,32 @@
+vectors sha256 382b879ae88e68386b0dc46068e1a50b0f95cd39ab6970a1df15c96e6f346f61
+r_output: R version 4.5.3 (2026-03-11 ucrt), bidask 2.1.5, data.table 1.18.6.1, vectors_sha256 382b879ae88e68386b0dc46068e1a50b0f95cd39ab6970a1df15c96e6f346f61
+transcription: C:\Users\umutzbk\Documents\LunaTradingBot-v7\tests\v7\ar_reference.py
+luna: C:\Users\umutzbk\Documents\LunaTradingBot-v7\luna\v7\spread.py (lam=2.0, floor=0.0001, window_ns=87300000000000)
+PASS 01_single_pair: ref=1/1 sign=1/1 luna_pi=1/1 luna_h=1/1
+PASS 02_negative_mean: ref=1/1 sign=1/1 luna_pi=1/1 luna_h=1/1
+PASS 03_missing_bar_all_nan: map=1/1 ref=1/1 sign=1/1 luna_pi=1/1 luna_h=1/1
+PASS 04_missing_bar_two_pairs: map=1/1 ref=1/1 sign=1/1 luna_pi=1/1 luna_h=1/1
+PASS 05_below_floor: ref=1/1 sign=1/1 luna_pi=1/1 luna_h=1/1
+PASS 06_above_floor: ref=1/1 sign=1/1 luna_pi=1/1 luna_h=1/1
+PASS 07a_scale_invariance_x1: map=1/1 ref=1/1 sign=1/1 luna_pi=1/1 luna_h=1/1
+PASS 07b_scale_invariance_x12345: map=1/1 ref=1/1 sign=1/1 luna_pi=1/1 luna_h=1/1
+PASS 08_constant_prices: map=1/1 ref=1/1 sign=1/1 luna_pi=1/1 luna_h=1/1
+PASS 09_reference_rng7_gapNone: map=1/1 ref=1/1 sign=1/1 luna_pi=1/1 luna_h=1/1
+PASS 09_reference_rng7_gap40: map=1/1 ref=1/1 sign=1/1 luna_pi=1/1 luna_h=1/1
+PASS 09_reference_rng7_gap55: map=1/1 ref=1/1 sign=1/1 luna_pi=1/1 luna_h=1/1
+PASS 10_tau_trim_rng11: map=2/2 ref=2/2 sign=2/2 luna_pi=2/2 luna_h=1/1
+PASS-COND 11a_mixed_sign_zero_mean: map=1/1 ref=1/1 sign=1/1 luna_pi=1/1 luna_h=1/1
+    cond: sign [1,3]: python=-2.272058085509182e-09 R=-2.272056842827955e-09; means -5.162247943927649e-18 vs -5.162242297041334e-18, mean|pi|=0.0005333333333333374
+    cond: luna_pi [1,3]: python=-2.272058085509182e-09 R=-2.272056842827955e-09; means -5.162247943927649e-18 vs -5.162242297041334e-18, mean|pi|=0.0005333333333333374
+PASS 11b_mixed_sign_positive_mean: map=1/1 ref=1/1 sign=1/1 luna_pi=1/1 luna_h=1/1
+PASS 12_negative_window_mean_multi: map=3/3 ref=3/3 sign=3/3 luna_pi=3/3 luna_h=3/3
+PASS 13_high_equals_low: map=2/2 ref=2/2 sign=2/2 luna_pi=2/2 luna_h=2/2
+PASS 14_high_equals_low_equals_close: map=1/1 ref=1/1 sign=1/1 luna_pi=1/1 luna_h=1/1
+PASS 15_nan_gaps: map=5/5 ref=5/5 sign=5/5 luna_pi=5/5 luna_h=5/5 roll_ref=49/49 roll_sign=49/49 roll_luna_pi=49/49
+FAIL 16_partial_nan_close_only: map=1/1 ref=1/1 sign=1/1 luna_pi=0/1 luna_h=1/1
+    luna_pi [1,3]: python=-9.125060374972135e-10 R=-6.8437952812291e-10
+PASS 17_partial_nan_high_only: map=1/1 ref=1/1 sign=1/1 luna_pi=1/1 luna_h=1/1
+PASS 18_random_walk_2000: map=4/4 ref=4/4 sign=4/4 luna_pi=4/4 luna_h=1/1 roll_ref=1905/1905 roll_sign=1905/1905 roll_luna_pi=1905/1905 roll_luna_h=1905/1905
+PASS 19_random_walk_2000_gappy: map=3/3 ref=3/3 sign=3/3 luna_pi=3/3 luna_h=2/2 roll_ref=1905/1905 roll_sign=1905/1905 roll_luna_pi=1905/1905 roll_luna_h=1905/1905
+totals: ref=36/36 sign=36/36 luna_pi=35/36 luna_h=31/31 map=32/32 roll_ref=3859/3859 roll_sign=3859/3859 roll_luna_pi=3859/3859 roll_luna_h=3810/3810
+FAIL: 22/23 cases (1 of them PASS-COND)
