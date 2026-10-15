@@ -17,8 +17,11 @@ Everything here is pure (no I/O, no clock) and deterministic.
   and keeps only the ``text`` of ``{"node": "text"}`` leaves (character references unescaped, inner
   whitespace collapsed); a block element (``p``, ``h1``-``h6``, ``li``, ``tr``, ``br``, ``div``, ``ul`` /
   ``ol``, ``table`` / ``tbody`` / ``thead``, ``figure``, ...) breaks the line, table cells (``td`` / ``th``)
-  of one row are joined by `` | ``, any other node (inline ``span`` / ``strong`` / ``a``, unknown types) is
-  walked and contributes only its text; ``attr`` values are never text; empty lines are dropped. The lines
+  of one row are joined by `` | ``, any other element (inline ``span`` / ``strong`` / ``a``, unknown tags) is
+  walked and contributes only its text; ``attr`` values are never text; empty lines are dropped. The node
+  shapes are CLOSED (``root`` {node, child}, ``element`` {node, tag, attr?, child?}, ``text`` {node, text}, as
+  in all 54 real captures): any other node type, key (e.g. ``children``) or child is refused and the capture
+  is unusable (``unknown_node_shape``; Task 26d round 1, fail closed, never a partial text). The lines
   are kept, so ``notices._SENT_RE`` splits sentences and ``notices._TS_RE`` reads timestamps on real text.
   Any other body is HTML -> text by the Stage-0 extraction
   (``docs/results/v7-stage0/scripts/m31_notices.py`` ``analyse``) ported to the stdlib ``html.parser``: the
@@ -42,11 +45,12 @@ Everything here is pure (no I/O, no clock) and deterministic.
 * **Kind** (``classify_kind``): CLOSED phrase lists on the NFKC-casefolded, whitespace-collapsed article title
   only; no semantic inference (DK-05 approach; AMB-39 (e), ratified by R52 from the C4 evidence).
   R52 (a): when ``updat`` is the title's ONLY modifier stem and every ``updat`` lies inside an
-  ``update(s|d|ing) [on ][the ]leverage (&|and) margin tiers`` span (``LEVERAGE_TIERS_UPDATE``; "updating"
-  included), those spans are dropped first and the remainder is classified normally. R52 (b): a title with
-  no cancellation / postponement phrase that contains ``postponed`` and ``delist`` exactly once each, no
-  other delisting phrase and no modifier stem other than ``postpon`` is a postponement ("Delisting of ...
-  Postponed", "... Will Be Further Postponed").
+  ``updat(e|es|ed|ing) [on ][the ]leverage (&|and) margin tiers`` span (``LEVERAGE_TIERS_UPDATE``), those
+  spans are dropped first and the remainder is classified normally. R52 (b): a title with no cancellation /
+  postponement phrase in the evidence word order ``delisting of ... postponed`` (``DELISTING_OF_POSTPONED``),
+  with ``postponed`` and ``delist`` exactly once each, no other delisting phrase and no modifier stem other
+  than ``postpon`` is a postponement ("Delisting of ... Postponed", "Delisting of ... Will Be Further
+  Postponed"); any other order ("Will Delist X (Previously Postponed)") keeps the veto.
   An explicit cancellation / postponement phrase decides the kind unless both occur, or a delisting phrase is
   still present once those phrases are removed (a mixed title): then unclassified. Otherwise a delisting
   phrase gives delisting only when no MODIFIER stem (``MODIFIER_STEMS``: cancel, postpon, delay, extend,
@@ -69,10 +73,10 @@ from urllib.parse import urlsplit
 from luna.v7.data.notices import Kind
 from luna.v7.timeutil import to_ns
 
-__all__ = ["CANCELLATION_PHRASES", "DELISTING_PHRASES", "LEVERAGE_TIERS_UPDATE", "MODIFIER_STEMS",
-           "POSTPONEMENT_PHRASES", "Capture", "CaptureText", "article", "article_release", "body_text",
-           "capture_ts_ns", "classify_kind", "decode", "extract", "html_text", "node_tree_text", "notice_id",
-           "release_date"]
+__all__ = ["CANCELLATION_PHRASES", "DELISTING_OF_POSTPONED", "DELISTING_PHRASES", "LEVERAGE_TIERS_UPDATE",
+           "MODIFIER_STEMS", "POSTPONEMENT_PHRASES", "Capture", "CaptureText", "UnknownNodeShape", "article",
+           "article_release", "body_text", "capture_ts_ns", "classify_kind", "decode", "extract", "html_text",
+           "node_tree_text", "notice_id", "release_date"]
 
 # AMB-39 (e): the closed kind phrase lists (compared on the NFKC-casefolded, whitespace-collapsed title).
 CANCELLATION_PHRASES: tuple[str, ...] = (
@@ -92,6 +96,8 @@ MODIFIER_STEMS: tuple[str, ...] = ("cancel", "postpon", "delay", "extend", "exte
                                    "revers", "resum", " not ", "n't", "updat", "withdraw", "suspend")
 # R52 (a): the only "updat" use that does not veto (28 of 47 W_DEV catalog titles, C4); normalized title.
 LEVERAGE_TIERS_UPDATE = re.compile(r"updat(?:e|es|ed|ing) (?:on )?(?:the )?leverage (?:&|and) margin tiers")
+# R52 (b): the only postponement word order with evidence ("Delisting of ... (Will Be Further) Postponed").
+DELISTING_OF_POSTPONED = re.compile(r"\bdelisting of\b.*\bpostponed\b")
 
 # R51: node-tree element tags that break the line / separate table cells (any other node: its text only).
 _BLOCK_TAGS = frozenset({
@@ -241,24 +247,53 @@ def _leaf(t: str) -> str:
     return _WS.sub(" ", html.unescape(t).replace(_CELL, " "))
 
 
+class UnknownNodeShape(ValueError):
+    """A node-tree body with a node outside the closed shapes of ``_SHAPES`` (fail closed: the capture is
+    unusable, ``unknown_node_shape``)."""
+
+
+# The closed node shapes of the real bodies (C4: root {node, child}, element {node, tag, attr?, child?}, text
+# {node, text}); anything else (another node type, extra keys such as ``children``, a non-object child) is
+# refused instead of silently dropped (Task 26d round 1).
+_SHAPES: dict[str, frozenset[str]] = {"root": frozenset({"node", "child"}),
+                                      "element": frozenset({"node", "tag", "attr", "child"}),
+                                      "text": frozenset({"node", "text"})}
+
+
+def _check_shape(n: object) -> dict:
+    if not isinstance(n, dict) or n.get("node") not in _SHAPES or not set(n) <= _SHAPES[n["node"]]:
+        raise UnknownNodeShape(f"unknown node shape {sorted(n) if isinstance(n, dict) else type(n).__name__}"
+                               f" (node={n.get('node') if isinstance(n, dict) else None!r})")
+    kind = n["node"]
+    if kind == "text" and not isinstance(n.get("text"), str):
+        raise UnknownNodeShape("text node without a string text")
+    if kind == "element" and not isinstance(n.get("tag"), str):
+        raise UnknownNodeShape("element node without a string tag")
+    if "attr" in n and not isinstance(n["attr"], dict):
+        raise UnknownNodeShape("element attr is not an object")
+    if "child" in n and not isinstance(n["child"], list):
+        raise UnknownNodeShape("child is not a list")
+    return n
+
+
 def _tree_text(root: object) -> str:
+    """Text of a node tree (module docstring); raises ``UnknownNodeShape`` on any node outside ``_SHAPES``."""
+    if not isinstance(root, dict) or root.get("node") != "root":
+        raise UnknownNodeShape("the tree does not start with a root node")
     out: list[str] = []
     stack: list[object] = [root]
     while stack:  # iterative pre-order walk; ("sep", s) entries are the block / cell separators
         n = stack.pop()
         if isinstance(n, tuple):
             out.append(n[1])
-        elif isinstance(n, str):
-            out.append(_leaf(n))
-        elif isinstance(n, dict):
-            if n.get("node") == "text":
-                if isinstance(n.get("text"), str):
-                    out.append(_leaf(n["text"]))
-                continue
-            tag = str(n.get("tag") or "").lower()
+            continue
+        n = _check_shape(n)
+        if n["node"] == "text":
+            out.append(_leaf(n["text"]))
+        else:
+            tag = str(n.get("tag") or "").lower()  # an unknown tag is walked like an inline element
             sep = "\n" if tag in _BLOCK_TAGS else _CELL if tag in _CELL_TAGS else ""
-            kids = n.get("child")
-            kids = kids if isinstance(kids, list) else []
+            kids = n.get("child", [])
             if sep:
                 stack.append(("sep", sep))
             stack.extend(reversed(kids))
@@ -273,7 +308,8 @@ def _tree_text(root: object) -> str:
 
 
 def node_tree_text(body: str) -> str | None:
-    """R51 node tree -> text (module docstring), or None when ``body`` is not a node tree."""
+    """R51 node tree -> text (module docstring), or None when ``body`` is not a node tree; a node tree with a
+    node outside the closed shapes raises ``UnknownNodeShape``."""
     tree = _node_tree(body)
     return None if tree is None else _tree_text(tree)
 
@@ -409,8 +445,13 @@ def extract(body: bytes, original: str) -> CaptureText:
     if a is None:
         sha = hashlib.sha256(("unusable\n" + page_text).encode("utf-8")).hexdigest()
         return CaptureText(None, None, sha, None, why, page_title, page_text, keys)
+    try:
+        body = body_text(a[1])
+    except UnknownNodeShape:  # fail closed (Task 26d round 1): never a partial text
+        sha = hashlib.sha256(("unusable\n" + page_text).encode("utf-8")).hexdigest()
+        return CaptureText(None, None, sha, None, "unknown_node_shape", page_title, page_text, keys)
     title = _collapse(html_text(a[0])) or None
-    text = f"{title or ''}\n{body_text(a[1])}"
+    text = f"{title or ''}\n{body}"
     return CaptureText(title, text, hashlib.sha256(text.encode("utf-8")).hexdigest(), a[2] * 10**6, "ok",
                        page_title, page_text, keys, src)
 
@@ -458,7 +499,8 @@ def _classify(t: str) -> tuple[Kind | None, str]:
         return None, "no_kind_phrase"
     mods = _mods(t)
     # R52 (b): "Delisting of ... (Will Be Further) Postponed" (no cancellation / postponement phrase here)
-    if mods == ["postpon"] and t.count("postponed") == 1 and t.count("delist") == 1 and hits == ["delist"]:
+    if (mods == ["postpon"] and t.count("postponed") == 1 and t.count("delist") == 1 and hits == ["delist"]
+            and DELISTING_OF_POSTPONED.search(t)):
         return "postponement", "postponement:r52b:postponed+delist"
     if mods:
         return None, "ambiguous_kind:modifier:" + "|".join(m.strip() for m in mods)

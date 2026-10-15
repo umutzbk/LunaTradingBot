@@ -41,6 +41,7 @@ a boolean. Tests inject a fake ``Transport``; nothing here is exercised against 
 from __future__ import annotations
 
 import hashlib
+import http.cookiejar
 import json
 import math
 import os
@@ -107,12 +108,19 @@ class Transport(Protocol):
     def get(self, url: str, params: Mapping[str, str], *, timeout: float, max_bytes: int) -> Response: ...
 
 
+def _no_cookie_jar() -> http.cookiejar.CookieJar:
+    """A cookie jar whose policy accepts no cookie and sends none (no cross-request state)."""
+    return http.cookiejar.CookieJar(policy=http.cookiejar.DefaultCookiePolicy(allowed_domains=[]))
+
+
 class HttpxTransport:
     """The default transport: ``httpx`` (a project dependency), ``follow_redirects=False``, a timeout per
     request, a streamed body capped at ``max_bytes`` (a declared or actual larger body is refused), a 3xx
     body never read. One pooled keep-alive ``httpx.Client`` per transport, created on the first GET and
     shared by every thread (``httpx.Client`` is thread-safe for requests); ``close()`` closes it, after which
-    a GET raises. ``_mock`` (an ``httpx`` transport) is for tests only (no network)."""
+    a GET raises. The client's cookie jar accepts and returns no cookie (``_no_cookie_jar``), so no state
+    passes from one request to the next (round 1). ``_mock`` (an ``httpx`` transport) is for tests only (no
+    network)."""
 
     def __init__(self, *, _mock: httpx.BaseTransport | None = None) -> None:
         self._mock = _mock
@@ -126,7 +134,7 @@ class HttpxTransport:
                 raise RuntimeError("HttpxTransport is closed")
             if self._client is None:
                 self._client = httpx.Client(follow_redirects=False, timeout=DEFAULT_TIMEOUT_S,
-                                            transport=self._mock)
+                                            transport=self._mock, cookies=_no_cookie_jar())
             return self._client
 
     def close(self) -> None:
@@ -222,7 +230,8 @@ class Fetcher:
     @classmethod
     def default(cls, out_dir: str | Path, **kw) -> Fetcher:
         """The production fetcher of a run: the real ``HttpxTransport`` (constructed only here, so drivers
-        never build or touch a transport; Task 26a round 1)."""
+        never build or touch a transport; Task 26a round 1). Drivers use it as a context manager,
+        ``with Fetcher.default(out_dir) as f: ...``, so its pooled client is closed (Task 26d)."""
         return cls(HttpxTransport(), out_dir, **kw)
 
     @property
@@ -384,5 +393,6 @@ class Fetcher:
 
 def fetch(req: Request, *, transport: Transport, out_dir: str | Path,
           auth: guard.HoldoutAuthorization | None = None, k9_log: k9.K9Log | None = None) -> Fetched:
-    """One request through a ``Fetcher`` (the only network entry point of V7 research code)."""
+    """One request through a ``Fetcher`` (the only network entry point of V7 research code). The transport is
+    the caller's: it is not closed here."""
     return Fetcher(transport, out_dir, k9_log=k9_log).fetch(req, auth=auth)

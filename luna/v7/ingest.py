@@ -2,9 +2,10 @@
 S-2.2 DEC-33, S-2.6, L12; SC-01 part 1, DK-01; rulings R47 / R48; AMB-36, AMB-37).
 
 Every entry point takes the run's ``fetch.Fetcher`` (the ONLY network path; this module never builds or
-touches a transport; production drivers use ``Fetcher.default(out_dir)``) and runs under the fetcher's K9 log
-(``<out_dir>/k9``, ``k9.using``: the previous process log is restored afterwards). One source file in memory
-at a time:
+touches a transport; production drivers use ``with Fetcher.default(out_dir) as fetcher: ...`` so the pooled
+HTTP client is closed when the run ends; the entry points never create or close a fetcher themselves, the
+driver that creates it owns it) and runs under the fetcher's K9 log (``<out_dir>/k9``, ``k9.using``: the
+previous process log is restored afterwards). One source file in memory at a time:
 
 * ``ingest_bars(fetcher, store, table, symbol, month, *, monthly=True, daily=None)``: R3 / R5 / R4. For R3 /
   R5 the month's daily files come from ONE N2 listing of the month's daily prefix (``daily_days``; DK-01: a

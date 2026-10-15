@@ -384,6 +384,21 @@ def test_default_transport_reuses_one_pooled_client_across_calls_and_threads(tmp
     Fetcher(FakeTransport({}), tmp_path).close()  # a transport without close(): nothing to close
 
 
+def test_default_transport_keeps_no_cookies_between_requests():
+    """Round 1: a Set-Cookie of one response is never sent with a later request (no cross-request state)."""
+    sent: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request.headers.get("cookie"))
+        return httpx.Response(200, content=b"ok",
+                              headers={"Set-Cookie": "sid=abc; Path=/; Domain=binance.com"})
+
+    with fetch.HttpxTransport(_mock=httpx.MockTransport(handler)) as tr:
+        for _ in range(3):
+            tr.get("https://fapi.binance.com/fapi/v1/exchangeInfo", {}, timeout=5.0, max_bytes=100)
+        assert sent == [None, None, None] and len(tr._client.cookies.jar) == 0
+
+
 def test_default_transport_refuses_a_declared_oversized_body():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=b"0123456789")  # content-length 10

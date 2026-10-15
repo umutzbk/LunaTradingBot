@@ -220,6 +220,9 @@ def test_r52b_delisting_postponed_word_order_is_a_postponement(title):
     ("Delisting of AUSDT Postponed; Binance Futures Will Delist BUSDT", MOD + "postpon"),
     ("Automatic Settlement and Delisting of USDⓈ-M OMGUSDT Postponed", MOD + "postpon"),
     ("Binance Futures Postponement of Delisting of USDⓈ-M OMGUSDT", MOD + "postpon"),
+    # round 1: R52 (b) needs the evidence word order "delisting of ... postponed"
+    ("Binance Futures Will Delist USDⓈ-M XUSDT (Previously Postponed)", MOD + "postpon"),
+    ("Binance Futures Will Delist XUSDT After the Postponed Upgrade", MOD + "postpon"),
 ])
 def test_r52b_is_narrow(title, why):
     assert cap.classify_kind(title) == (None, why)
@@ -252,7 +255,7 @@ TREE = {"node": "root", "child": [
         _el("tr", _el("td", _el("span", _t("DEFUSDT"))), _el("td", _t("2024-03-16 09:00 (UTC)")), _el("td")),
         _el("tr", _el("td", _t("ABCUSDT")), _el("td", _t("2024-03-20 09:00 (UTC)")))))),
     _el("ul", _el("li", _t("Terms &amp; conditions")), _el("li", _el("a", _t("link"), href="https://x/y"))),
-    _el("p", _t("Line one"), _el("br"), _t("line two"), {"node": "comment", "child": [_t(" kept")]}),
+    _el("p", _t("Line one"), _el("br"), _t("line two"), _el("x-unknown-tag", _t(" kept"))),
 ]}
 TREE_TEXT = ("Fellow Binancians,\n"
              "Binance Futures will close all positions on the USDⓈ-M XYZUSDT Perpetual Contract at "
@@ -275,6 +278,26 @@ def test_r51_node_tree_text_document_order_blocks_cells_and_entities():
     assert cap.node_tree_text('{"child": []}') is None and cap.node_tree_text("{not json") is None
     assert cap.node_tree_text('[{"node": "root"}]') is None
     assert cap.node_tree_text('{"node": "root"}') == ""
+
+
+@pytest.mark.parametrize("bad", [
+    {"node": "root", "child": [{"node": "textNode", "text": "XYZUSDT"}]},  # another node type
+    {"node": "root", "children": [_t("XYZUSDT")]},  # another key
+    {"node": "root", "child": [_el("p", _t("a")) | {"children": []}]},
+    {"node": "root", "child": [{"node": "text", "text": 1}]},
+    {"node": "root", "child": [{"node": "element", "child": []}]},  # element without a tag
+    {"node": "root", "child": ["bare string"]},
+    {"node": "root", "child": {"node": "text", "text": "x"}},
+    {"node": "element", "tag": "p", "child": []},  # not a root
+])
+def test_r51_unknown_node_shape_fails_closed(bad):
+    """Round 1: a node outside the closed shapes is refused (never silently dropped); the capture is
+    unusable with ``unknown_node_shape``."""
+    body = json.dumps(bad)
+    with pytest.raises(cap.UnknownNodeShape):
+        cap.node_tree_text(body)
+    t = cap.extract(tree_page(DELIST_TITLE, bad, publish=RELEASE), URL)
+    assert (t.text, t.title, t.release_ts, t.article_reason) == (None, None, None, "unknown_node_shape")
 
 
 def tree_page(title: str, tree: dict, *, publish: int | None = None, catalog: tuple = (),
