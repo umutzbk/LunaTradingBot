@@ -27,7 +27,7 @@ import pandas as pd
 
 from luna.v7.constants import FROZEN
 from luna.v7.data.instances import Instance
-from luna.v7.timeutil import H
+from luna.v7.timeutil import H, ns_array
 
 TOL = FROZEN.funding.tol_ns
 STD_H = FROZEN.funding.std_intervals_h
@@ -54,7 +54,7 @@ def _instances_of(insts: list[Instance], ts: np.ndarray) -> list[int | None]:
 
 def _annotate_one(df: pd.DataFrame, insts: list[Instance]) -> pd.DataFrame:
     n = len(df)
-    ts_np = df["funding_ts"].to_numpy(np.int64)
+    ts_np = ns_array(df["funding_ts"], "funding_ts")
     ex_np = df["interval_h_explicit"].astype("Float64").to_numpy(dtype=float, na_value=np.nan)
     rate = df["rate"].to_numpy(float)
     inst = _instances_of(insts, ts_np)

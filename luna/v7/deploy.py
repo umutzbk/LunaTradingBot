@@ -175,7 +175,8 @@ def run_layer(run_inputs: RunSpec, E: float, filters_by_symbol: Mapping[str, Fil
     r = engine._run(x.arm, x.inputs, x.window, x.h_star, x.model, x.execution, layer, equity0=float(E),
                     lots=sizer)
     prov = tuple(sorted({f.provenance for h in sizer.hist.values() for f in h}))
-    return replace(r, filter_provenance=prov, filters_missing=tuple(sorted(sizer.missing)))
+    # a research entry point like runner.run_book: its DT4 record is a research record (DK-114, round 1)
+    return replace(r, filter_provenance=prov, filters_missing=tuple(sorted(sizer.missing)), research=True)
 
 
 def label(run: BookRun) -> str:

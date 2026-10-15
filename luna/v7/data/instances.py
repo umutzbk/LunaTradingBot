@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 from luna.v7.constants import FROZEN
-from luna.v7.timeutil import MIN, D
+from luna.v7.timeutil import MIN, D, ns_array
 
 BAR_15M = 15 * MIN
 
@@ -33,7 +33,7 @@ def build_instances(bars15: pd.DataFrame, data_end_ns: int) -> list[Instance]:
     """Instances from a normalised 15m frame (``open_ts`` ns, ``vol_base``); see module docstring."""
     if len(bars15) == 0:
         return []
-    t = bars15["open_ts"].to_numpy(np.int64)
+    t = ns_array(bars15["open_ts"], "open_ts")
     act = np.sort(t[bars15["vol_base"].to_numpy(np.float64) > 0])
     if len(act) == 0:
         return []

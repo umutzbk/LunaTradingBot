@@ -260,3 +260,83 @@ def test_non_neutral_decisions_are_counted():
     assert e.non_neutral_decisions == sum("non_neutral_post" in n for n in e.decisions["notes"])
     v = V.holdout(_hold_inputs(ml_T=replace(_hold_inputs().ml_T, decisions=d)))
     assert v.details["non_neutral_decisions"] == 1
+
+
+# ------------------------------------------- round 1 (review): accounting input validation -> ValueError only
+
+
+def _with_fills():
+    return funding_run([0.001, 0.0005, -0.0002], costs=[0.0001, 0.0001, 0.0])  # hedge round-trip fills
+
+
+@pytest.mark.parametrize("col", ["start_ts", "equity_end", "price", "equity_start", "funding", "net"])
+def test_missing_daily_column_is_a_value_error_and_invalid_k10(col):
+    r = _with_fills()
+    accounting.account(r)
+    bad = replace(r, daily=r.daily.drop(columns=col))
+    with pytest.raises(ValueError, match=col):
+        accounting.account(bad)
+    runs = {**_sel_runs(), ("A0", 24): replace(bad, arm="A0", h_star=24)}
+    out = sel.choose(runs, B=100)
+    assert isinstance(out, sel.Invalid) and out.reason == sel.INVALID_K10 and col in out.runs[0]
+
+
+@pytest.mark.parametrize("col", ["btc_mark", "ts"])
+def test_missing_marks_column_is_a_value_error(col):
+    r = _with_fills()
+    with pytest.raises(ValueError, match=col):
+        accounting.account(replace(r, marks=r.marks.drop(columns=col)))
+    g = _hold_inputs()
+    v = V.holdout(replace(g, a0_T=replace(g.a0_T, marks=g.a0_T.marks.drop(columns=col))))
+    assert v.cls == V.INVALID and v.reasons[0].startswith(f"A0 E_T: {V.INTEGRITY_K10} (")
+
+
+@pytest.mark.parametrize("value", [None, float("nan"), 1.5, "x", True])
+def test_bad_fill_instance_is_a_value_error(value):
+    r = _with_fills()
+    f = r.fills.astype({"instance": object})
+    f.loc[0, "instance"] = value
+    with pytest.raises(ValueError, match="instance"):
+        accounting.account(replace(r, fills=f))
+
+
+# --------------------------------------------------------- round 1 (review): remaining ns guards
+
+
+def test_to_ns_window_checks_integers():
+    for bad in (1_700_000_000_000_000, -1_700_000_000_000_000_000, to_ns("2100-01-01") + 0, 2**62):
+        with pytest.raises(ValueError):
+            to_ns(int(bad))
+    assert to_ns(1_700_000_000_000_000_000) == 1_700_000_000_000_000_000
+
+
+def test_ns_array_refuses_narrow_floats():
+    t = float(to_ns("2024-06-01"))
+    with pytest.raises(ValueError, match="float"):  # float32 ULP at 1.7e18 is ~1.4e11 ns (minutes)
+        ns_array(np.array([t], dtype=np.float32), "known_at")
+    with pytest.raises(ValueError, match="float"):  # float16 cannot even hold the magnitude
+        ns_array(np.array([1.0], dtype=np.float16), "known_at")
+    assert ns_array(np.array([t], dtype=np.float64), "known_at").tolist() == [int(t)]
+
+
+def test_instances_and_intervals_validate_timestamps():
+    from luna.v7.data.instances import build_instances
+    from luna.v7.data.intervals import annotate
+
+    bars = pd.DataFrame(dict(open_ts=np.array([1_700_000_000_000, 1_700_000_900_000]), vol_base=[1.0, 1.0]))
+    with pytest.raises(ValueError, match="open_ts"):
+        build_instances(bars, to_ns("2024-01-01"))  # ms values: refused, never read as 1970 ns
+    with pytest.raises(ValueError, match="open_ts"):
+        build_instances(bars.assign(open_ts=[float(to_ns("2024-01-01")), np.nan]), to_ns("2024-01-02"))
+    f = pd.DataFrame(dict(funding_ts=np.array([1_700_000_000_000]), rate=[1e-4],
+                          interval_h_explicit=pd.array([8], dtype="Int64")))
+    with pytest.raises(ValueError, match="funding_ts"):
+        annotate(f, [Instance(0, to_ns("2023-01-01"), None, None)])
+
+
+def test_deploy_layer_runs_are_research_runs():
+    from luna.v7.deploy import run_layer
+    from tests.v7.test_deploy import filters, spec
+
+    r = run_layer(spec(), 265, filters(btc_min_notional=5.0))
+    assert r.research is True and r.layer == "L-265"

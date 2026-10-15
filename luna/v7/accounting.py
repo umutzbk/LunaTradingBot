@@ -261,6 +261,27 @@ def _records(df: pd.DataFrame, cols: tuple[str, ...], what: str) -> list[dict]:
     return recs
 
 
+def _inst(x: object, what: str) -> int:
+    """An instance index: a non-negative integer (never None / NaN / bool / fractional), else ValueError."""
+    if isinstance(x, bool) or x is None or x is pd.NA:
+        raise ValueError(f"{what}: instance must be a non-negative integer, got {x!r}")
+    v = _num(x)
+    if v is None or v < 0 or v != math.floor(v):
+        raise ValueError(f"{what}: instance must be a non-negative integer, got {x!r}")
+    return int(v)
+
+
+def _need(df: pd.DataFrame, cols: tuple[str, ...], what: str) -> None:
+    """Malformed input is a ValueError (never KeyError), so a required run maps to INVALID K10 (DK-112)."""
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"{what}: missing columns {missing}")
+
+
+# the engine's daily table (book.ledger.DAILY_COLS) as read here and by k10_ok / daily_ok / stressed
+_DAILY_COLS = ("day", "start_ts", "end_ts", "equity_start", "equity_end", "net", "funding", "fees",
+               "spread_slip", "price")
+_MARK_COLS = ("ts", "btc_mark")
 _FILL_COLS = ("ts", "symbol", "instance", "direction", "qty", "ref_mid", "fee", "spread_cost", "slip_cost",
               "position_id", "role", "q_after", "beta", "btc_ref")
 _TICK_COLS = ("ts", "symbol", "instance", "position_id", "role", "qty", "mark")
@@ -273,6 +294,7 @@ class _Days:
     def __init__(self, daily: pd.DataFrame) -> None:
         if daily is None or len(daily) == 0:
             raise ValueError("the run has no daily table")
+        _need(daily, _DAILY_COLS, "daily")
         self.start = ns_array(daily["start_ts"].to_numpy(), "daily.start_ts")
         self.end = ns_array(daily["end_ts"].to_numpy(), "daily.end_ts")
         if np.any(self.start[1:] != self.end[:-1]) or np.any(self.end < self.start):
@@ -339,6 +361,7 @@ def _walk(run: BookRun) -> _Walk:
     ticks = _records(run.positions, _TICK_COLS, "positions")
     btc_mark: dict[int, float | None] = {}
     if run.marks is not None and len(run.marks):
+        _need(run.marks, _MARK_COLS, "marks")
         for t, b in zip(ns_array(run.marks["ts"].to_numpy(), "marks.ts"), run.marks["btc_mark"], strict=True):
             v = _num(b)
             btc_mark[int(t)] = v if v is not None and v > 0 else None
@@ -351,10 +374,12 @@ def _walk(run: BookRun) -> _Walk:
         for c in ("fee", "spread_cost", "slip_cost"):
             f[c] = _cost(f[c], f"fill {i} {c}")
         f["q_after"] = _fin(f["q_after"], f"fill {i} q_after")
+        f["instance"] = _inst(f["instance"], f"fill {i}")
         events.append((f["ts"], 1, i, f))
     for j, k in enumerate(ticks):
         k["mark"] = _pos(k["mark"], f"tick {j} mark")
         k["qty"] = _fin(k["qty"], f"tick {j} qty")
+        k["instance"] = _inst(k["instance"], f"tick {j}")
         events.append((k["ts"], 0, j, k))
     events.sort(key=lambda e: e[:3])  # S-8.3: tick before fill at one ts; fills keep booking order
 

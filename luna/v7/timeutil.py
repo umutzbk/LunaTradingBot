@@ -32,6 +32,8 @@ def to_ns(x: pd.Timestamp | str | int) -> int:
         v = int(x)
         if abs(v) < _MIN_NS:
             raise ValueError(f"ambiguous time unit for int {v}: use from_ms / from_s")
+        if not NS_LO <= v < NS_HI:  # e.g. a us value 1.7e15 (DK-106 / DK-110 review round 1)
+            raise ValueError(f"int {v} outside the plausible ns window [2017-01-01, 2100-01-01)")
         return v
     t = pd.Timestamp(x)
     t = t.tz_localize("UTC") if t.tzinfo is None else t.tz_convert("UTC")
@@ -57,11 +59,14 @@ def ns_array(values, name: str) -> np.ndarray:
     dtype: integers too (DK-106 / red-team m1: a ms ``known_at`` such as 1_700_000_000_000 would otherwise
     always pass ``known_at <= t - 1 min``). Floats (and numeric objects) must also be finite and integral, so
     NaN / inf / 1e30 can never become a silent INT64_MIN. Anything else, including non-numeric or bool values,
-    raises ValueError naming ``name``. Never emits a RuntimeWarning.
+    raises ValueError naming ``name``. Floats narrower than float64 (float16 / float32) are refused: their
+    precision is minutes to years at ns epoch values (review round 1). Never emits a RuntimeWarning.
     """
     arr = np.asarray(values)
     if arr.dtype.kind == "b":
         raise ValueError(f"{name}: bool is not a timestamp")
+    if arr.dtype.kind == "f" and np.finfo(arr.dtype).nmant < np.finfo(np.float64).nmant:
+        raise ValueError(f"{name}: {arr.dtype} float cannot hold an ns timestamp (float64 at least)")
     if arr.dtype.kind == "u":
         if arr.size and arr.max() > np.iinfo(np.int64).max:
             raise ValueError(f"{name}: value exceeds the int64 range")
