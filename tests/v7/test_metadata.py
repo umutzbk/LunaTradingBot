@@ -409,10 +409,11 @@ def test_identity_invariance_pass_and_fail():
                                                          (True, "verified")]
 
 
-@pytest.mark.parametrize(("base", "mult"), [
-    ("PEPE", 1.0), ("1000PEPE", 1000.0), ("1000000MOG", 1e6), ("1MBABYDOGE", 1e6), ("1000SATS", 1000.0),
-    ("10000LADYS", None), ("1INCH", None), ("1000", None), ("1M", None), ("1000000", None), ("2X", None),
-    ("1K", None), ("1000_X", None)])
+@pytest.mark.parametrize(("base", "mult"), [  # ruling R49
+    ("PEPE", 1.0), ("1INCH", 1.0), ("2Z", 1.0), ("1K", 1.0), ("1M", 1.0), ("12X", 1.0),
+    ("1000PEPE", 1000.0), ("1000000MOG", 1e6), ("1MBABYDOGE", 1e6), ("1000SATS", 1000.0),
+    ("100X", None), ("10000SATS", None), ("10000LADYS", None), ("10X", None), ("1000", None),
+    ("1000000", None), ("1000_X", None)])
 def test_multiplier_from_the_closed_base_prefix_list(base, mult):
     assert ins.multiplier_of(base) == mult
     row = one({**FULL, "baseAsset": base})

@@ -16,9 +16,11 @@ S-1.7 E8, §3 R1, L1, DEC-30 / DEC-31 / DEC-44, EC-1; DK-15; Task 26c, AMB-40).
   (``missing:<field>``) and agree (``conflict:<field>``); no such source: ``no_source_within_instance``.
 * **Multiplier** (user decision on AMB-40 (a)(i)): derived mechanically from the invariant ``baseAsset`` by
   the CLOSED prefix list ``MULTIPLIER_PREFIXES`` (``1000000`` -> 1e6, ``1000`` -> 1000, ``1M`` -> 1e6; the
-  remainder must start with a letter); a base starting with no digit -> 1; any other digit / multiplier-like
-  start (e.g. ``10000X``, ``1INCH``) -> excluded (``invalid:multiplier_prefix``). A source that states a
-  ``multiplier`` field must agree with the derivation (``conflict:multiplier``). Nothing is guessed.
+  remainder must start with a letter). Ruling R49: only a leading digit run that is a power of ten >= 10, or
+  ``1M`` + a letter, is multiplier-like; another multiplier-like run (``10``, ``100``, ``10000``, ...) ->
+  excluded (``invalid:multiplier_prefix``); any other base (``1INCH``, ``2Z``, no digit) -> 1.
+  A source that states a ``multiplier`` field must agree with the derivation (``conflict:multiplier``).
+  Nothing is guessed.
 * Anything else excludes the instance (fail closed, DK-15): its identity columns are null. Its ``known_at``
   is the instance's ``first_bar_ts`` (L1 whitelist). ``quote_asset`` is stored as one extra R1 column after
   the frozen S-3 columns (AMB-40 (e)).
@@ -63,14 +65,24 @@ assert set(FIELD_COLUMNS) | {"multiplier"} == set(guard.IDENTITY_FIELDS)
 MULTIPLIER_PREFIXES: tuple[tuple[str, float], ...] = (("1000000", 1e6), ("1000", 1e3), ("1M", 1e6))
 
 
+def _letter(c: str) -> bool:
+    return c[:1].isascii() and c[:1].isalpha()
+
+
 def multiplier_of(base: str) -> float | None:
-    """The multiplier of a ``baseAsset`` by the closed prefix list, or None (excluded) for any other digit /
-    multiplier-like start (module docstring)."""
-    if not base or not base[0].isdigit():
-        return 1.0
+    """The multiplier of a ``baseAsset`` (ruling R49): ``1M`` + a letter -> 1e6; a leading digit run that is a
+    power of ten >= 10 is multiplier-like: ``1000`` / ``1000000`` followed by a letter -> that factor, any
+    other (``10``, ``100``, ``10000``, ... or a closed-list run not followed by a letter) -> None (excluded);
+    any other base (no leading digit, or a digit run that is not a power of ten >= 10, e.g. ``1INCH``,
+    ``2Z``) -> 1, the base kept as is."""
+    if base.startswith("1M") and _letter(base[2:]):
+        return 1e6  # the user's closed list (Binance convention 1MBABYDOGE = 1e6 x BABYDOGE; AMB-40 (a)(i))
+    run = base[:len(base) - len(base.lstrip("0123456789"))]
+    if not (len(run) >= 2 and run[0] == "1" and set(run[1:]) == {"0"}):
+        return 1.0  # not multiplier-like
+    rest = base[len(run):]
     for p, f in MULTIPLIER_PREFIXES:
-        rest = base[len(p):]
-        if base.startswith(p) and rest[:1].isascii() and rest[:1].isalpha():
+        if run == p and _letter(rest):
             return f
     return None
 
