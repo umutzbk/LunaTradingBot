@@ -69,15 +69,34 @@ def _token_re(symbol: str) -> re.Pattern[str]:
     return re.compile(r"(?<![A-Za-z0-9_])" + re.escape(symbol) + r"(?![A-Za-z0-9_])(?![-.][A-Za-z0-9])")
 
 
-def _usdm_context(text: str) -> bool:
+def _context(text: str) -> tuple[bool, str]:
+    """(unambiguous USDⓈ-M context, reason): the vetoing COIN-M phrase, the context phrase found, or none."""
     t = unicodedata.normalize("NFKC", text).casefold()
-    if any(p in t for p in COIN_M_PHRASES):
-        return False
-    return any(p in t for p in USDM_PHRASES) or all(p in t for p in USDM_PAIR)
+    veto = [p for p in COIN_M_PHRASES if p in t]
+    if veto:
+        return False, "coin_m_veto:" + "|".join(veto)
+    found = [p for p in USDM_PHRASES if p in t]
+    if found:
+        return True, "usdm_context:" + "|".join(found)
+    if all(p in t for p in USDM_PAIR):
+        return True, "usdm_context:" + "+".join(USDM_PAIR)
+    return False, "no_usdm_context"
+
+
+def _usdm_context(text: str) -> bool:
+    return _context(text)[0]
+
+
+def match_reason(v: NoticeVersion, symbol: str) -> tuple[bool, str]:
+    """``confident_match`` with its reason (Task 26c ingest report): ``no_symbol_token``, the context reason
+    of ``_context`` (``coin_m_veto:...`` / ``no_usdm_context`` -> no match; ``usdm_context:...`` -> match)."""
+    if not symbol or _token_re(symbol).search(v.text) is None:
+        return False, "no_symbol_token"
+    return _context(v.text)
 
 
 def confident_match(v: NoticeVersion, symbol: str) -> bool:
-    return bool(symbol) and _token_re(symbol).search(v.text) is not None and _usdm_context(v.text)
+    return match_reason(v, symbol)[0]
 
 
 def _parse_ts(m: re.Match[str]) -> int | None:
@@ -100,8 +119,15 @@ def scheduled_ts(v: NoticeVersion, symbol: str) -> int | None:
     ordered "A and B ... T1 and T2 respectively" list (equal counts, symbol listed once). Exactly one
     distinct candidate must result; any unmappable sentence or any disagreement gives None.
     """
+    return scheduled_reason(v, symbol)[0]
+
+
+def scheduled_reason(v: NoticeVersion, symbol: str) -> tuple[int | None, str]:
+    """``scheduled_ts`` with the reason of its result (Task 26c ingest report): ``mapped`` (a time) or, for
+    None, ``no_confident_match``, ``unparseable_timestamp``, ``several_timestamps_without_respectively``,
+    ``respectively_list_mismatch``, ``no_timestamp_in_symbol_sentences`` or ``conflicting_candidates``."""
     if not confident_match(v, symbol):
-        return None
+        return None, "no_confident_match"
     tok = _token_re(symbol)
     cands: set[int] = set()
     for sent in _SENT_RE.split(v.text):
@@ -112,18 +138,22 @@ def scheduled_ts(v: NoticeVersion, symbol: str) -> int | None:
             continue
         stamps = [_parse_ts(m) for m in ms]
         if any(s is None for s in stamps):
-            return None
+            return None, "unparseable_timestamp"
         if len(ms) == 1:
             cands.add(stamps[0])
             continue
         pos = sent.lower().find("respectively")
         if pos < 0:
-            return None
+            return None, "several_timestamps_without_respectively"
         syms = [m.group(0) for m in _SYM_RE.finditer(sent[: ms[0].start()])]
         if len(syms) != len(stamps) or syms.count(symbol) != 1 or pos < ms[-1].end():
-            return None
+            return None, "respectively_list_mismatch"
         cands.add(stamps[syms.index(symbol)])
-    return cands.pop() if len(cands) == 1 else None
+    if not cands:
+        return None, "no_timestamp_in_symbol_sentences"
+    if len(cands) > 1:
+        return None, "conflicting_candidates"
+    return cands.pop(), "mapped"
 
 
 @dataclass(frozen=True)

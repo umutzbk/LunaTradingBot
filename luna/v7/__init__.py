@@ -41,12 +41,15 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
               "N6 memento); read-only guarded local data; no W_HOLD features / labels before the opening "
               "(SC-03, AMB-35)"),
     "S-1.8": _m("universe", "windows"),
-    "S-2.1": _m("universe"),
+    "S-2.1": (*_m("universe", "data.instruments"),
+              "doc: identity from the E8 whitelist only; multiplier / quoteAsset sources stopped (AMB-40)"),
     "S-2.2": (*_m("data.instances", "data.klines", "universe"),
               "doc: the current instance switches at its first bar's known_at (round 2 DK-108, AMB-31)"),
     "S-2.3": _m("universe"),
     "S-2.4": (KRAKEN,),
-    "S-2.5": _m("data.notices", "universe"),
+    "S-2.5": (*_m("data.notices", "data.captures", "metaingest", "metastore", "universe"),
+              "doc: versions from bounded Wayback captures; closed kind list to be ratified with the DK-05 "
+              "validation report (AMB-39)"),
     "S-2.6": _m("data.funding", "data.intervals"),
     "S-4.1": _m("windows", "constants"),
     "S-4.2": _m("book.engine", "book.execution", "labels"),
@@ -155,7 +158,7 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "E6": (*_m("netguard", "fetch", "guard"),
            "doc: post-opening mode only through the re-verified hardened authorization; captures pinned "
            "by sha256 (SC-03, AMB-35 (e), (f))"),
-    "E8": _m("universe", "guard", "netguard"),
+    "E8": _m("universe", "guard", "netguard", "data.instruments", "metaingest"),
     "E10": _m("refs", "labels", "book.execution"),
     "E11": (*_m("data.terminal"), STAGE0 + " (M3-1 settlement-feasibility audit)"),
     # --- leakage controls -----------------------------------------------------------------------------------
@@ -219,7 +222,9 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "D2": _m("deploy"),
     "D3": _m("deploy"),
     # --- raw / derived tables -------------------------------------------------------------------------------
-    "R1": _m("data.schema", "data.instances", "universe"),
+    "R1": (*_m("data.schema", "data.instances", "data.instruments", "metaingest", "metastore", "universe"),
+           "doc: per-instance rows; filters never backdated; identity stopped on multiplier / quote "
+           "(AMB-40)"),
     "R2": _m("data.schema", "data.funding", "data.intervals"),
     "R3": _m("data.schema", "data.klines"),
     "R4": _m("data.schema", "features"),
@@ -229,8 +234,9 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "R8": (*_m("data.schema"), "doc: F15 dropped by Stage 0 - not read"),
     "R9": _m("data.schema", "constants"),
     "R10": _m("data.schema", "book.execution"),
-    "R11": _m("data.schema", "data.notices"),
-    "R12": _m("data.schema", "data.terminal"),
+    "R11": (*_m("data.schema", "data.notices", "data.captures", "metaingest", "metastore"),
+            "doc: notice identity, version numbering and the closed kind list (AMB-39)"),
+    "R12": _m("data.schema", "data.terminal", "metaingest", "metastore"),
     "DT1": _m("data.schema", "universe", "features", "runner"),
     "DT2": _m("data.schema", "labels"),
     "DT3": _m("data.schema", "windows"),
