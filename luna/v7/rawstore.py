@@ -1,6 +1,6 @@
 """The real-scale raw store and its read-only lazy loaders (spec §3 "All raw files are immutable once written.
 Each table has a manifest with per-file sha256 ... Time units are normalized to ns at ingest", S-1.7
-"read-only loaders", §17, DEC-33; SC-01 part 1, SC-03, red-team M1 / M3; AMB-36).
+"read-only loaders", §17, DEC-33; SC-01 part 1, SC-03, red-team M1 / M3; AMB-36, AMB-37).
 
 Layout (``RawStore(root)``; one directory per table, one file per (symbol, calendar month))::
 
@@ -10,37 +10,49 @@ Layout (``RawStore(root)``; one directory per table, one file per (symbol, calen
 
 Tables (``TABLES``): R3 ``bars_last_15m``, R5 ``bars_last_1m``, R4 ``bars_{mark,index,premium}_15m`` and the
 two R2 sources ``funding_archive`` / ``funding_rest`` (merged by ``data.funding.merge`` at load). A chunk
-holds exactly the R-table columns (bars: ``open_ts`` int64 ns, float64 prices / volumes, int64
-``n_trades``; R4: ``open_ts``, o, h, l, c; funding: ``funding_ts``, ``rate``, nullable
-``interval_h_explicit``, ``mark_at_settle``), sorted by the event time, strictly increasing, every row
-inside the chunk's month.
+holds exactly the R-table columns (bars: ``open_ts`` int64 ns, the prices / volumes, int64 ``n_trades``;
+R4: ``open_ts``, o, h, l, c; funding: ``funding_ts``, ``rate``, nullable ``interval_h_explicit``,
+``mark_at_settle``), sorted by the event time, strictly increasing, every row inside the chunk's month.
 ``known_at`` is not stored: it is the fixed-offset archive rule (``data.schema.known_at``, open_ts + 15 min /
 1 min) applied at load (and checked equal at write when the caller supplies it); merged funding gets it from
-``data.funding.merge``. Format: parquet, zstd level 9 (``FORMAT``).
+``data.funding.merge``.
 
-Write once (``put_chunk``): K9 log required; the store bound (the fetch layer's N1 bound: < 2025-07-01
-before the opening, < the W_HOLD end with the verified authorization) and ``guard.check_data_span`` first;
-the file is written under a temporary name, fsynced and renamed; the symbol manifest then the table manifest
-are replaced atomically. An existing chunk is never rewritten: identical content (``content_sha256``) is a
-no-op, different content an ``ImmutabilityViolation`` (K9-logged, "§3 ... immutable"). An orphan file (a crash
-between the file and its manifest) is adopted only when its content is identical. The table manifest's sha256
-is the DT4 data-manifest hash (``manifest_sha256s``); it covers every file through the symbol manifests.
+Encoding (``FORMAT``; AMB-36 (b)): parquet, zstd level 9, no dictionary. A bar price / volume column is stored
+as int64 = value x 10^k with ``DELTA_BINARY_PACKED`` (k per column per chunk: the decimals of the source CSV
+strings, else the smallest exact k), only when ``int / 10**k`` reproduces every float64 value exactly
+(checked at write); otherwise that column of that chunk stays float64 (``BYTE_STREAM_SPLIT``). The scales
+are in the parquet schema metadata and in the manifest entry. ``content_sha256`` is defined on the float64
+values, so the encoding is not part of the content identity.
+
+Write once (``put_chunk``): K9 log required; one writer per store (an OS lock on ``<root>/.writer.lock``);
+the store bound (the fetch layer's N1 bound: < 2025-07-01 before the opening, < the W_HOLD end with the
+verified authorization) and ``guard.check_data_span`` first; the file is written under a temporary name,
+fsynced and hard-linked / renamed to a target that must not exist (never overwritten); the symbol manifest
+then the table manifest are replaced atomically. Identical content (``content_sha256``) is a no-op (and heals
+a stale table-manifest entry), different content an ``ImmutabilityViolation`` (K9-logged). An orphan file (a
+crash between the file and its manifest) is adopted only when its content is identical. The table manifest's
+sha256 is the DT4 data-manifest hash (``manifest_sha256s``); it covers every file through the symbol
+manifests.
 
 Read only (``TableLoader`` / ``FundingLoader``): nothing is read until asked; each request and each chunk
 period pass ``guard.check_data_span`` (W_HOLD without the verified authorization, M6 before R_V6: refused and
 K9-logged) before a file is opened ``"rb"``; the file's sha256 must equal its manifest entry (else
-``IntegrityBlocker``, K9-logged). Rows are located with ``searchsorted`` on the sorted chunk ts arrays; a
-window touches only the chunks it overlaps and copies only its rows. Decoded chunks sit in a ``ChunkCache``:
-LRU with a fixed byte budget (an implementation parameter, ``DEFAULT_CACHE_BYTES``), deterministic eviction.
+``IntegrityBlocker``, K9-logged); a symbol directory with a manifest that the table manifest does not list is
+an ``IntegrityBlocker`` (never "no rows"). Only the requested columns are decoded; rows are located with
+``searchsorted`` on the sorted chunk ts arrays; a window touches only the chunks it overlaps and copies only
+its rows. Decoded columns sit in a ``ChunkCache``: LRU with a fixed byte budget (an implementation parameter,
+``DEFAULT_CACHE_BYTES``), deterministic eviction.
 
-``RunStore``: executed ``BookRun`` objects persisted immutably under their output sha256
-(``runrecord.run_output_sha256``), file sha256 checked before unpickling and the output sha256 recomputed
-after, so a later (opening) process can pass the pinned W_DEV ML* run to ``runner_select.holdout_inputs``
-without a re-run. ``StoreSource``: the loader-backed ``runner.UniverseSource``.
+``RunStore``: executed ``BookRun`` objects persisted immutably under their output sha256 (file =
+``runrecord.run_pickle``), so a later (opening) process can pass the pinned W_DEV ML* run to
+``runner_select.holdout_inputs`` without a re-run: the file sha256 (pinned at the opening as
+``dev_ml_run_file_sha256``) is checked before unpickling with a restricted unpickler, the output sha256 and
+the window after. ``StoreSource``: the loader-backed ``runner.UniverseSource``.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import json
@@ -48,7 +60,7 @@ import os
 import pickle
 import re
 from collections import OrderedDict
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -57,7 +69,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from luna.v7 import guard, k9, netguard
+from luna.v7 import guard, k9, netguard, windows
 from luna.v7.book.engine import BookRun
 from luna.v7.constants import FROZEN
 from luna.v7.data import funding as fund_mod
@@ -67,26 +79,34 @@ from luna.v7.data.schema import KNOWN_AT_OFFSET_NS, IntegrityBlocker
 from luna.v7.data.terminal import TerminalEvent
 from luna.v7.features import R4Bars
 from luna.v7.runner import SymbolInputs
-from luna.v7.runrecord import run_output_sha256
+from luna.v7.runrecord import run_output_sha256, run_pickle
 from luna.v7.timeutil import ns_array
 from luna.v7.universe import Identity
 
-__all__ = ["DEFAULT_CACHE_BYTES", "FORMAT", "TABLES", "ChunkCache", "FundingLoader", "ImmutabilityViolation",
-           "RawStore", "RunStore", "StoreSource", "StoreTable", "SymbolMeta", "TableLoader", "content_sha256",
-           "month_period", "months_between"]
+__all__ = ["DEFAULT_CACHE_BYTES", "FORMAT", "MAX_SCALE", "TABLES", "ChunkCache", "FundingLoader",
+           "ImmutabilityViolation", "RawStore", "RunStore", "StoreBusy", "StoreSource", "StoreTable",
+           "SymbolMeta", "TableLoader", "content_sha256", "month_period", "months_between", "store_bound"]
 
-DEFAULT_CACHE_BYTES = 512 * 2**20  # implementation parameter (AMB-36): decoded-chunk LRU budget per cache
-FORMAT = "parquet/zstd-9"
+DEFAULT_CACHE_BYTES = 512 * 2**20  # implementation parameter (AMB-36 (i)): decoded-column LRU budget
+FORMAT = "parquet/zstd-9/scaled-int-delta/v1"
+MAX_SCALE = 12  # implementation parameter: largest decimal scale k tried for a scaled-int column
 MANIFEST = "MANIFEST.json"
+LOCK = ".writer.lock"
+SCALES_KEY = b"luna.v7.scales"
 RULE_IMMUTABLE = "§3 raw files immutable once written (integrity)"
 RULE_INTEGRITY = "§3 raw file sha256 differs from its manifest (integrity)"
 _SYMBOL = re.compile(r"[A-Z0-9_]{1,40}\Z", re.ASCII)
 _MONTH = re.compile(r"(\d{4})-(\d{2})\Z", re.ASCII)
 _SHA = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
+_EXACT = float(2**53)
 
 
 class ImmutabilityViolation(IntegrityBlocker):
     """A written raw file would get different content (§3: immutable once written); refused, K9-logged."""
+
+
+class StoreBusy(RuntimeError):
+    """Another writer holds the store's lock (one writer per store)."""
 
 
 # ------------------------------------------------------------------------------------------------ tables
@@ -95,7 +115,8 @@ class ImmutabilityViolation(IntegrityBlocker):
 @dataclass(frozen=True)
 class StoreTable:
     """One stored table: its directory, event-time column, stored (name, dtype) columns (ts first), the
-    fixed known_at offset of the archive rule (None: set by the funding merge) and its N1 dataset."""
+    fixed known_at offset of the archive rule (None: set by the funding merge), its N1 dataset and whether
+    its float columns are stored as scaled ints."""
 
     key: str
     dirname: str
@@ -104,11 +125,16 @@ class StoreTable:
     known_at_ns: int | None
     dataset: str | None
     interval: str | None
-    daily_union: bool  # DEC-33 monthly union daily (R3 / R5 only)
+    daily_union: bool  # DEC-33 monthly union daily (R3 / R5 only; R4 monthly only, ruling R47)
+    scaled: bool  # bar prices / volumes as int64 x 10^k (AMB-36 (b))
 
     @property
     def names(self) -> tuple[str, ...]:
         return tuple(n for n, _ in self.columns)
+
+    @property
+    def scaled_names(self) -> tuple[str, ...]:
+        return tuple(n for n, dt in self.columns if self.scaled and dt == "float64")
 
 
 _BAR = (("open_ts", "int64"), ("o", "float64"), ("h", "float64"), ("l", "float64"), ("c", "float64"),
@@ -117,19 +143,22 @@ _BAR = (("open_ts", "int64"), ("o", "float64"), ("h", "float64"), ("l", "float64
 _OHLC = _BAR[:5]
 _FUND = (("funding_ts", "int64"), ("rate", "float64"), ("interval_h_explicit", "Int64"),
          ("mark_at_settle", "float64"))
+_K15 = KNOWN_AT_OFFSET_NS["R4"]
 
 TABLES: dict[str, StoreTable] = {
-    "R3": StoreTable("R3", "bars_last_15m", "open_ts", _BAR, KNOWN_AT_OFFSET_NS["R3"], "klines", "15m", True),
-    "R5": StoreTable("R5", "bars_last_1m", "open_ts", _BAR, KNOWN_AT_OFFSET_NS["R5"], "klines", "1m", True),
-    "R4_mark": StoreTable("R4_mark", "bars_mark_15m", "open_ts", _OHLC, KNOWN_AT_OFFSET_NS["R4"],
-                          "markPriceKlines", "15m", False),
-    "R4_index": StoreTable("R4_index", "bars_index_15m", "open_ts", _OHLC, KNOWN_AT_OFFSET_NS["R4"],
-                           "indexPriceKlines", "15m", False),
-    "R4_premium": StoreTable("R4_premium", "bars_premium_15m", "open_ts", _OHLC, KNOWN_AT_OFFSET_NS["R4"],
-                             "premiumIndexKlines", "15m", False),
+    "R3": StoreTable("R3", "bars_last_15m", "open_ts", _BAR, KNOWN_AT_OFFSET_NS["R3"], "klines", "15m", True,
+                     True),
+    "R5": StoreTable("R5", "bars_last_1m", "open_ts", _BAR, KNOWN_AT_OFFSET_NS["R5"], "klines", "1m", True,
+                     True),
+    "R4_mark": StoreTable("R4_mark", "bars_mark_15m", "open_ts", _OHLC, _K15, "markPriceKlines", "15m", False,
+                          True),
+    "R4_index": StoreTable("R4_index", "bars_index_15m", "open_ts", _OHLC, _K15, "indexPriceKlines", "15m",
+                           False, True),
+    "R4_premium": StoreTable("R4_premium", "bars_premium_15m", "open_ts", _OHLC, _K15, "premiumIndexKlines",
+                             "15m", False, True),
     "R2_archive": StoreTable("R2_archive", "funding_archive", "funding_ts", _FUND, None, "fundingRate", None,
-                             False),
-    "R2_rest": StoreTable("R2_rest", "funding_rest", "funding_ts", _FUND, None, None, None, False),
+                             False, False),
+    "R2_rest": StoreTable("R2_rest", "funding_rest", "funding_ts", _FUND, None, None, None, False, False),
 }
 
 
@@ -166,6 +195,12 @@ def months_between(lo: int, hi: int) -> list[str]:
     return out
 
 
+def store_bound(auth: guard.HoldoutAuthorization | None = None) -> int:
+    """The first event time the store never holds in this mode: the fetch layer's N1 bound (2025-07-01 before
+    the opening, the W_HOLD end with the verified authorization)."""
+    return int(netguard.bounds(auth).n1_end_ns)
+
+
 # ----------------------------------------------------------------------------------------- content
 
 
@@ -197,8 +232,8 @@ def _columns(t: StoreTable, df: pd.DataFrame) -> dict[str, object]:
 
 
 def content_sha256(t: StoreTable, cols: Mapping[str, object]) -> str:
-    """sha256 of a chunk's content (table, column names / dtypes, values; NaN canonical), independent of the
-    file encoding (a re-encoding by another pyarrow version is not a content change)."""
+    """sha256 of a chunk's content (table, column names / dtypes, float64 / int64 values; NaN canonical),
+    independent of the file encoding (scales, parquet version)."""
     h = hashlib.sha256(f"{t.key}\n".encode())
     for name, dt in t.columns:
         a = cols[name]
@@ -217,32 +252,83 @@ def content_sha256(t: StoreTable, cols: Mapping[str, object]) -> str:
     return h.hexdigest()
 
 
-def _encode(t: StoreTable, cols: Mapping[str, object]) -> bytes:
-    tbl = pa.table({n: pa.array(cols[n], type=pa.int64() if dt in ("int64", "Int64") else pa.float64())
-                    for n, dt in t.columns})
-    buf = io.BytesIO()
-    pq.write_table(tbl, buf, compression="zstd", compression_level=9)
-    return buf.getvalue()
+def _scaled_ints(v: np.ndarray, k: int) -> np.ndarray | None:
+    """int64 = v x 10^k when ``ints / 10**k`` reproduces every value exactly (lossless), else None."""
+    if not 0 <= k <= MAX_SCALE or not np.isfinite(v).all():
+        return None
+    p = float(10**k)
+    s = np.rint(v * p)
+    if len(s) and np.abs(s).max() >= _EXACT:
+        return None
+    ints = s.astype(np.int64)
+    return ints if (ints / p == v).all() else None
 
 
-def _decode(t: StoreTable, data: bytes) -> dict[str, object]:
-    tbl = pq.read_table(io.BytesIO(data))
-    if tuple(tbl.column_names) != t.names:
-        raise IntegrityBlocker(f"{t.key}: stored columns {tbl.column_names} differ from {list(t.names)}")
-    out: dict[str, object] = {}
-    for name, dt in t.columns:
-        col = tbl.column(name)
-        if dt == "Int64":
-            out[name] = pd.array(col.to_pandas(types_mapper={pa.int64(): pd.Int64Dtype()}.get), dtype="Int64")
+def _scales(t: StoreTable, cols: Mapping[str, object], decimals: Mapping[str, int | None] | None
+            ) -> dict[str, int | None]:
+    """k per scaled column: the given source decimals (the CSV strings) when lossless, else (no decimals
+    given) the smallest lossless k <= MAX_SCALE; None = stored as float64."""
+    out: dict[str, int | None] = {}
+    for n in t.scaled_names:
+        v = np.asarray(cols[n], dtype=np.float64)
+        if decimals is not None:
+            k = decimals.get(n)
+            out[n] = k if k is not None and _scaled_ints(v, int(k)) is not None else None
         else:
-            if col.null_count:
-                raise IntegrityBlocker(f"{t.key}.{name}: null values in a non-nullable column")
-            out[name] = np.array(col.to_numpy(), dtype=np.int64 if dt == "int64" else np.float64, copy=True)
+            out[n] = next((k for k in range(MAX_SCALE + 1) if _scaled_ints(v, k) is not None), None)
     return out
 
 
-def _nbytes(cols: Mapping[str, object]) -> int:
-    return int(sum(int(getattr(a, "nbytes", 0)) for a in cols.values()))
+def _encode(t: StoreTable, cols: Mapping[str, object], scales: Mapping[str, int | None]) -> bytes:
+    arrays, fields, enc = [], [], {}
+    for n, dt in t.columns:
+        k = scales.get(n)
+        if k is not None:
+            a = _scaled_ints(np.asarray(cols[n], dtype=np.float64), int(k))
+            if a is None:
+                raise IntegrityBlocker(f"{t.key}.{n}: scale {k} is not lossless")
+            arr, typ, enc[n] = pa.array(a, type=pa.int64()), pa.int64(), "DELTA_BINARY_PACKED"
+        elif dt in ("int64", "Int64"):
+            arr, typ, enc[n] = pa.array(cols[n], type=pa.int64()), pa.int64(), "DELTA_BINARY_PACKED"
+        else:
+            arr, typ, enc[n] = pa.array(cols[n], type=pa.float64()), pa.float64(), "BYTE_STREAM_SPLIT"
+        arrays.append(arr)
+        fields.append(pa.field(n, typ, nullable=(dt == "Int64")))
+    meta = {SCALES_KEY: json.dumps({n: scales.get(n) for n in t.scaled_names}, sort_keys=True).encode()}
+    tbl = pa.Table.from_arrays(arrays, schema=pa.schema(fields, metadata=meta))
+    buf = io.BytesIO()
+    pq.write_table(tbl, buf, compression="zstd", compression_level=9, use_dictionary=False,
+                   column_encoding=enc)
+    return buf.getvalue()
+
+
+def _decode(t: StoreTable, data: bytes, names: Sequence[str] | None = None,
+            scales: Mapping[str, int | None] | None = None) -> dict[str, object]:
+    """The ``names`` columns (default all) as float64 / int64 / Int64 arrays. ``scales``: the manifest's
+    (must equal the file metadata's)."""
+    names = list(t.names if names is None else names)
+    tbl = pq.read_table(io.BytesIO(data), columns=names)
+    raw = (tbl.schema.metadata or {}).get(SCALES_KEY)
+    file_scales = json.loads(raw) if raw is not None else None
+    if file_scales is None or set(file_scales) != set(t.scaled_names):
+        raise IntegrityBlocker(f"{t.key}: file scales metadata missing or malformed")
+    if scales is not None and dict(scales) != file_scales:
+        raise IntegrityBlocker(f"{t.key}: file scales {file_scales} differ from the manifest {dict(scales)}")
+    dts = dict(t.columns)
+    out: dict[str, object] = {}
+    for name in names:
+        col, dt = tbl.column(name), dts[name]
+        if dt == "Int64":
+            out[name] = pd.array(col.to_pandas(types_mapper={pa.int64(): pd.Int64Dtype()}.get), dtype="Int64")
+            continue
+        if col.null_count:
+            raise IntegrityBlocker(f"{t.key}.{name}: null values in a non-nullable column")
+        k = file_scales.get(name)
+        if k is not None:
+            out[name] = np.asarray(col.to_numpy(), dtype=np.int64) / float(10 ** int(k))
+        else:
+            out[name] = np.array(col.to_numpy(), dtype=np.int64 if dt == "int64" else np.float64, copy=True)
+    return out
 
 
 def _canonical(obj: object) -> bytes:
@@ -253,27 +339,78 @@ def _sha_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
+def _write_tmp(path: Path, data: bytes) -> Path:
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return tmp
+
+
 def _replace_atomic(path: Path, data: bytes) -> None:
     """Write ``data`` to a temporary sibling, fsync, then replace ``path`` (manifests only)."""
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    with open(tmp, "wb") as f:
-        f.write(data)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    tmp = _write_tmp(path, data)
+    try:
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _create_once(path: Path, data: bytes) -> None:
-    """Write-once: a temporary sibling, fsync, then rename to ``path`` (which must not exist)."""
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    with open(tmp, "wb") as f:
-        f.write(data)
-        f.flush()
-        os.fsync(f.fileno())
-    if path.exists():
-        tmp.unlink()
-        raise ImmutabilityViolation(f"{path} already exists: raw files are written once")
-    os.replace(tmp, path)
+    """Write-once: a temporary sibling, fsync, then a hard link (or, where links are unsupported, a Windows
+    rename) to ``path``, both of which fail if ``path`` exists: an existing file is never overwritten. The
+    temporary file is removed in every case."""
+    tmp = _write_tmp(path, data)
+    try:
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            raise ImmutabilityViolation(f"{path} already exists: raw files are written once") from None
+        except OSError:
+            if os.name != "nt":
+                raise
+            try:
+                os.rename(tmp, path)  # Windows: fails if the target exists
+            except FileExistsError:
+                raise ImmutabilityViolation(f"{path} already exists: raw files are written once") from None
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+@contextlib.contextmanager
+def _writer_lock(root: Path) -> Iterator[None]:
+    """One writer per store: a non-blocking OS lock on ``<root>/.writer.lock`` (released by the OS if the
+    process dies), held around every read-modify-write of the manifests."""
+    root.mkdir(parents=True, exist_ok=True)
+    f = open(root / LOCK, "a+b")  # noqa: SIM115 - closed in finally
+    locked = False
+    try:
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            locked = True
+        except OSError:
+            raise StoreBusy(f"{root}: another writer holds {LOCK} (one writer per store)") from None
+        yield
+    finally:
+        if locked and os.name == "nt":
+            import msvcrt
+
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        f.close()
 
 
 # ------------------------------------------------------------------------------------------------ store
@@ -281,7 +418,7 @@ def _create_once(path: Path, data: bytes) -> None:
 
 class RawStore:
     """The raw store under ``root`` (module docstring). Writing is ``put_chunk`` (the ingestion's only
-    write path); reading goes through ``TableLoader`` / ``FundingLoader``."""
+    write path; one writer per store); reading goes through ``TableLoader`` / ``FundingLoader``."""
 
     def __init__(self, root: str | Path) -> None:
         self.root = Path(root)
@@ -333,21 +470,32 @@ class RawStore:
             _integrity(f"{p}: sha256 {got} differs from the manifest {e['sha256']}", p)
         return e
 
+    def resume_chunk(self, table: str, symbol: str, month: str) -> dict:
+        """A resumed ingest's view of a completed chunk: the table-manifest entry of ``symbol`` is healed from
+        its symbol manifest (a crash between the two), then the chunk is verified (``verify_chunk``)."""
+        k9.require()
+        t = _table(table)
+        with _writer_lock(self.root):
+            self._sync_table(t, symbol)
+        return self.verify_chunk(table, symbol, month)
+
     # the write path
     def put_chunk(self, table: str, symbol: str, month: str, df: pd.DataFrame, *, sources: Sequence[Mapping],
+                  decimals: Mapping[str, int | None] | None = None,
                   auth: guard.HoldoutAuthorization | None = None) -> dict:
-        """Write one (table, symbol, month) chunk once (module docstring); returns its manifest entry."""
+        """Write one (table, symbol, month) chunk once (module docstring); returns its manifest entry.
+        ``decimals``: per scaled column, the decimals of the source strings (None: inferred)."""
         t = _table(table)
         _symbol(symbol)
         lo, hi = month_period(month)
         k9.require()
         what = f"raw store {t.key} {symbol} {month}"
-        bound = netguard.bounds(auth).n1_end_ns
+        req = {"kind": "raw_store_write", "table": t.key, "symbol": symbol, "month": month}
+        bound = store_bound(auth)
         if hi > bound:
             e = guard.HoldoutBlocked(f"{what}: period ends after the store bound {bound} (the fetch layer's "
                                      "N1 bound): not stored")
-            k9.log_refusal(e, request={"kind": "raw_store_write", "table": t.key, "symbol": symbol,
-                                       "month": month}, rule=guard.k9_rule(e))
+            k9.log_refusal(e, request=req, rule=guard.k9_rule(e))
             raise e
         guard.check_data_span(lo, hi, auth=auth, what=what)
         cols = _columns(t, df)
@@ -359,36 +507,40 @@ class RawStore:
             raise IntegrityBlocker(f"{what}: rows outside the chunk period [{lo}, {hi}) (period)")
         csha = content_sha256(t, cols)
         path = self.chunk_path(table, symbol, month)
-        req = {"kind": "raw_store_write", "table": t.key, "symbol": symbol, "month": month}
-        old = self.entry(table, symbol, month)
-        if old is not None:
-            if old["content_sha256"] != csha:
-                _immutable(f"{what}: written with content {old['content_sha256']}, refusing {csha}", req)
-            if not path.exists():  # a lost file: re-created with identical content (manifest unchanged)
-                data = _encode(t, cols)
-                if _sha_bytes(data) != old["sha256"]:
-                    _immutable(f"{what}: re-encoded file differs from the manifest sha256", req)
+        with _writer_lock(self.root):
+            old = self.entry(table, symbol, month)
+            if old is not None:
+                if old["content_sha256"] != csha:
+                    _immutable(f"{what}: written with content {old['content_sha256']}, refusing {csha}", req)
+                if not path.exists():  # a lost file: re-created byte-identical only (manifest unchanged)
+                    data = _encode(t, cols, old["scales"])
+                    if _sha_bytes(data) != old["sha256"]:
+                        _immutable(f"{what}: re-encoded file differs from the manifest sha256", req)
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    _create_once(path, data)
+                self._sync_table(t, symbol)  # heals a crash between the symbol and the table manifest
+                return self.verify_chunk(table, symbol, month)
+            if path.exists():  # orphan (crash before its manifest entry): adopted only when identical
+                data = path.read_bytes()
+                try:
+                    same = content_sha256(t, _decode(t, data)) == csha
+                    meta = pq.read_schema(io.BytesIO(data)).metadata or {}
+                    scales = json.loads(meta[SCALES_KEY])
+                except (IntegrityBlocker, pa.ArrowException, ValueError, KeyError):
+                    same, scales = False, {}
+                if not same:
+                    _immutable(f"{what}: an unrecorded file with different content exists", req)
+            else:
+                scales = _scales(t, cols, decimals)
+                data = _encode(t, cols, scales)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 _create_once(path, data)
-            self._sync_table(t, symbol)  # heals a crash between the symbol and the table manifest
-            return self.verify_chunk(table, symbol, month)
-        if path.exists():  # orphan (crash before its manifest entry): adopted only when identical
-            data = path.read_bytes()
-            try:
-                same = content_sha256(t, _decode(t, data)) == csha
-            except (IntegrityBlocker, pa.ArrowException, ValueError):
-                same = False
-            if not same:
-                _immutable(f"{what}: an unrecorded file with different content exists", req)
-        else:
-            data = _encode(t, cols)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            _create_once(path, data)
-        entry = {"file": path.name, "sha256": _sha_bytes(data), "bytes": len(data), "content_sha256": csha,
-                 "rows": int(len(ts)), "period": [lo, hi],
-                 "span": [int(ts[0]), int(ts[-1]) + 1] if len(ts) else None,
-                 "sources": [dict(s) for s in sources]}
-        self._record(t, symbol, month, entry)
+            entry = {"file": path.name, "sha256": _sha_bytes(data), "bytes": len(data),
+                     "content_sha256": csha,
+                     "rows": int(len(ts)), "period": [lo, hi], "scales": scales,
+                     "span": [int(ts[0]), int(ts[-1]) + 1] if len(ts) else None,
+                     "sources": [dict(s) for s in sources]}
+            self._record(t, symbol, month, entry)
         return entry
 
     def _record(self, t: StoreTable, symbol: str, month: str, entry: dict) -> None:
@@ -401,7 +553,10 @@ class RawStore:
 
     def _sync_table(self, t: StoreTable, symbol: str) -> None:
         """The table manifest's entry of ``symbol`` from its symbol manifest (rewritten only if changed)."""
-        sdata = self._symbol_manifest_path(t.key, symbol).read_bytes()
+        p = self._symbol_manifest_path(t.key, symbol)
+        if not p.exists():
+            return
+        sdata = p.read_bytes()
         sm = json.loads(sdata)
         tm = self.table_manifest(t.key) or {
             "kind": "V7_RAW_TABLE", "table": t.key, "name": t.dirname, "format": FORMAT,
@@ -432,19 +587,19 @@ def _integrity(msg: str, path: Path) -> None:
 
 
 class ChunkCache:
-    """LRU of decoded chunks with a fixed byte budget (``budget_bytes`` > 0; an implementation parameter).
-    Eviction is deterministic: least recently used first (access order is total, so there are no ties); an
-    item larger than the whole budget is returned to the caller but never cached. Shareable by loaders."""
+    """LRU of decoded chunk columns with a fixed byte budget (``budget_bytes`` > 0; an implementation
+    parameter). Eviction is deterministic: least recently used first (access order is total, so there are no
+    ties); an item larger than the whole budget is returned to the caller but never cached. Shareable."""
 
     def __init__(self, budget_bytes: int = DEFAULT_CACHE_BYTES) -> None:
         if isinstance(budget_bytes, bool) or not isinstance(budget_bytes, int) or budget_bytes <= 0:
             raise ValueError(f"budget_bytes must be a positive int, got {budget_bytes!r}")
         self.budget = budget_bytes
         self.bytes = 0
-        self._items: OrderedDict[tuple, tuple[dict, int]] = OrderedDict()
+        self._items: OrderedDict[tuple, tuple[object, int]] = OrderedDict()
         self.stats = {"hits": 0, "misses": 0, "evictions": 0}
 
-    def get(self, key: tuple) -> dict | None:
+    def get(self, key: tuple) -> object | None:
         if key in self._items:
             self._items.move_to_end(key)
             self.stats["hits"] += 1
@@ -452,7 +607,7 @@ class ChunkCache:
         self.stats["misses"] += 1
         return None
 
-    def put(self, key: tuple, value: dict, nbytes: int) -> None:
+    def put(self, key: tuple, value: object, nbytes: int) -> None:
         if key in self._items:
             self.bytes -= self._items.pop(key)[1]
         if nbytes > self.budget:
@@ -488,7 +643,7 @@ class TableLoader:
     (None before the opening); ``cache``: a shared ``ChunkCache`` (default: its own of ``budget_bytes``);
     ``manifest_sha256``: when given, the table manifest must have this hash (e.g. the one recorded in DT4).
     The table manifest is read at construction, a symbol's manifest when the symbol is first used (its
-    sha256 checked against the table manifest), a chunk when a window first needs it."""
+    sha256 checked against the table manifest), a chunk's columns when a window first needs them."""
 
     def __init__(self, store: RawStore, table: str, *, auth: guard.HoldoutAuthorization | None = None,
                  cache: ChunkCache | None = None, budget_bytes: int = DEFAULT_CACHE_BYTES,
@@ -516,6 +671,16 @@ class TableLoader:
     def rows(self, symbol: str) -> int:
         return int(self._symbols[symbol]["rows"]) if symbol in self._symbols else 0
 
+    def _known(self, symbol: str) -> bool:
+        """Whether the symbol has data; a symbol manifest the table manifest does not list is refused."""
+        if symbol in self._symbols:
+            return True
+        p = self.store._symbol_manifest_path(self.t.key, _symbol(symbol))
+        if p.exists():
+            _integrity(f"{p}: symbol manifest not listed in the {self.t.key} table manifest (an interrupted "
+                       "write; resume the ingest to heal it)", p)
+        return False
+
     def _chunks(self, symbol: str) -> tuple[list[str], np.ndarray, np.ndarray, list[dict]]:
         if symbol not in self._index:
             p = self.store._symbol_manifest_path(self.t.key, symbol)
@@ -530,11 +695,19 @@ class TableLoader:
             self._index[symbol] = (months, los, his, ents)
         return self._index[symbol]
 
-    def _chunk(self, symbol: str, month: str, e: dict) -> dict:
-        key = (str(self.store.root), self.t.key, symbol, month)
-        got = self.cache.get(key)
-        if got is not None:
-            return got
+    def _chunk(self, symbol: str, month: str, e: dict, names: Sequence[str]) -> dict[str, object]:
+        """The ``names`` columns of one chunk (cached per column; one file read for all missing columns)."""
+        base = (str(self.store.root), self.t.key, symbol, month)
+        out: dict[str, object] = {}
+        missing: list[str] = []
+        for n in names:
+            got = self.cache.get((*base, n))
+            if got is None:
+                missing.append(n)
+            else:
+                out[n] = got
+        if not missing:
+            return out
         guard.check_data_span(int(e["period"][0]), int(e["period"][1]), auth=self.auth,
                               what=f"raw chunk {self.t.key} {symbol} {month}")
         p = self.store.chunk_path(self.t.key, symbol, month)
@@ -542,13 +715,15 @@ class TableLoader:
             data = f.read()
         if _sha_bytes(data) != e["sha256"]:
             _integrity(f"{p}: sha256 {_sha_bytes(data)} differs from the manifest {e['sha256']}", p)
-        cols = _decode(self.t, data)
-        if len(cols[self.t.ts_col]) != int(e["rows"]):  # type: ignore[arg-type]
-            _integrity(f"{p}: {len(cols[self.t.ts_col])} rows, manifest {e['rows']}", p)  # type: ignore[arg-type]
+        cols = _decode(self.t, data, missing, e["scales"])
+        for n in missing:
+            if len(cols[n]) != int(e["rows"]):  # type: ignore[arg-type]
+                _integrity(f"{p}: {n} has {len(cols[n])} rows, manifest {e['rows']}", p)  # type: ignore[arg-type]
+            self.cache.put((*base, n), cols[n], int(getattr(cols[n], "nbytes", 0)))
+            out[n] = cols[n]
         self.stats["decoded_chunks"] += 1
         self.stats["bytes_read"] += len(data)
-        self.cache.put(key, cols, _nbytes(cols))
-        return cols
+        return out
 
     def arrays(self, symbol: str, lo: int, hi: int,
                columns: Sequence[str] | None = None) -> dict[str, object]:
@@ -564,13 +739,13 @@ class TableLoader:
             raise ValueError(f"{self.t.key}: unknown columns {bad}")
         guard.check_data_span(lo, hi, auth=self.auth, what=f"raw {self.t.key} {symbol}")
         parts: dict[str, list] = {n: [] for n in names}
-        if symbol in self._symbols:
+        if self._known(symbol):
             months, los, his, ents = self._chunks(symbol)
             i0 = int(np.searchsorted(his, lo, "right"))
             i1 = int(np.searchsorted(los, hi, "left"))
             for i in range(i0, i1):
-                cols = self._chunk(symbol, months[i], ents[i])
-                ts = cols[self.t.ts_col]
+                cols = self._chunk(symbol, months[i], ents[i], names)
+                ts = cols[ts_col]
                 a = int(np.searchsorted(ts, lo, "left"))  # type: ignore[call-overload]
                 b = int(np.searchsorted(ts, hi, "left"))  # type: ignore[call-overload]
                 if b > a:
@@ -578,7 +753,7 @@ class TableLoader:
                         parts[n].append(cols[n][a:b])  # type: ignore[index]
         out = {n: (_concat(v) if v else _empty(self.t, [n])[n]) for n, v in parts.items()}
         if self.t.known_at_ns is not None:
-            out["known_at"] = out[self.t.ts_col] + self.t.known_at_ns  # type: ignore[operator]
+            out["known_at"] = out[ts_col] + self.t.known_at_ns  # type: ignore[operator]
         return out
 
     def frame(self, symbol: str, lo: int, hi: int, columns: Sequence[str] | None = None) -> pd.DataFrame:
@@ -587,26 +762,48 @@ class TableLoader:
                              for k, v in a.items()})
 
 
+def _padded(lo: int, hi: int, pad: int, auth: guard.HoldoutAuthorization | None) -> tuple[int, int]:
+    """[lo - pad, hi + pad) clipped so the padding never reaches content the window itself may not read: the
+    store bound and the canonical M6 start above hi, the M6 end / W_HOLD end below lo (before the opening)."""
+    p_lo, p_hi = lo - pad, hi + pad
+    bound = store_bound(auth)
+    if hi <= bound:
+        p_hi = min(p_hi, bound)
+    m6_lo, m6_hi = windows.m6_cached(guard._roots()[0])
+    if hi <= m6_lo:
+        p_hi = min(p_hi, m6_lo)
+    if m6_hi is not None and lo >= m6_hi:
+        p_lo = max(p_lo, m6_hi)
+    if auth is None and lo >= windows.W_HOLD[1]:
+        p_lo = max(p_lo, windows.W_HOLD[1])
+    return p_lo, p_hi
+
+
 class FundingLoader:
     """R2: the archive and REST funding sources of a symbol merged by ``data.funding.merge`` (archive
-    primary, REST fills, conflicts raise). A window [lo, hi) merges the sources over [lo - tol, hi + tol)
-    (tol = the frozen +-60 s match tolerance, so a pair across the edge is matched exactly as in the full
-    merge) and keeps the merged records with lo <= funding_ts < hi."""
+    primary, REST fills, conflicts raise). A window [lo, hi) is guarded as such; the sources are merged over
+    [lo - tol, hi + tol) (tol = the frozen +-60 s match tolerance, so a pair across the edge matches as in the
+    full merge), the padding clipped at the store bound / M6 (``_padded``: a W_DEV window ending at the W_HOLD
+    start reads nothing of W_HOLD), and the merged records with lo <= funding_ts < hi are kept."""
 
     def __init__(self, store: RawStore, *, auth: guard.HoldoutAuthorization | None = None,
                  cache: ChunkCache | None = None, budget_bytes: int = DEFAULT_CACHE_BYTES) -> None:
         cache = cache if cache is not None else ChunkCache(budget_bytes)
         self.archive = TableLoader(store, "R2_archive", auth=auth, cache=cache)
         self.rest = TableLoader(store, "R2_rest", auth=auth, cache=cache)
-        self.cache = cache
+        self.cache, self.auth = cache, auth
 
     def symbols(self) -> tuple[str, ...]:
         return tuple(sorted(set(self.archive.symbols()) | set(self.rest.symbols())))
 
     def frame(self, symbol: str, lo: int, hi: int) -> pd.DataFrame:
-        tol = int(FROZEN.funding.tol_ns)
-        a = self.archive.frame(symbol, int(lo) - tol, int(hi) + tol)
-        r = self.rest.frame(symbol, int(lo) - tol, int(hi) + tol)
+        lo, hi = int(lo), int(hi)
+        if hi <= lo:
+            raise ValueError(f"empty window [{lo}, {hi})")
+        guard.check_data_span(lo, hi, auth=self.auth, what=f"raw R2 {symbol}")
+        p_lo, p_hi = _padded(lo, hi, int(FROZEN.funding.tol_ns), self.auth)
+        a = self.archive.frame(symbol, p_lo, p_hi)
+        r = self.rest.frame(symbol, p_lo, p_hi)
         if not len(a) and not len(r):
             return pd.DataFrame({c: pd.Series(dtype=d) for c, d in (
                 ("funding_ts", "int64"), ("rate", "float64"), ("interval_h_explicit", "Int64"),
@@ -614,7 +811,7 @@ class FundingLoader:
                 ("known_at", "int64"))})[list(fund_mod.OUT_COLUMNS)]
         m = fund_mod.merge(a, r)
         ts = m["funding_ts"].to_numpy(np.int64)
-        i, j = int(np.searchsorted(ts, int(lo), "left")), int(np.searchsorted(ts, int(hi), "left"))
+        i, j = int(np.searchsorted(ts, lo, "left")), int(np.searchsorted(ts, hi, "left"))
         return m.iloc[i:j].reset_index(drop=True)
 
 
@@ -665,15 +862,40 @@ class StoreSource:
 
 # ------------------------------------------------------------------------------------------- book runs
 
+_PICKLE_MODULES = ("pandas._libs.", "pandas.core.", "numpy._core.", "numpy.core.")
+_PICKLE_NAMES = {
+    "builtins": {"slice", "tuple", "list", "dict", "set", "frozenset", "complex", "bytearray", "range"},
+    "datetime": {"datetime", "date", "time", "timedelta", "timezone"},
+    "numpy": {"dtype", "ndarray"},
+    "numpy.dtypes": None,
+    "pandas": None,
+    "pandas.arrays": None,
+    "pyarrow.lib": {"_restore_array", "py_buffer", "type_for_alias"},
+    "luna.v7.book.engine": {"BookRun"},
+}
+
+
+class _RunUnpickler(pickle.Unpickler):
+    """Restricted unpickler: only the globals a ``BookRun`` of frames needs (``_PICKLE_NAMES`` /
+    ``_PICKLE_MODULES``); anything else (os, subprocess, eval, ...) is refused."""
+
+    def find_class(self, module: str, name: str):  # noqa: ANN201
+        allowed = _PICKLE_NAMES.get(module, set())
+        if (module in _PICKLE_NAMES and (allowed is None or name in allowed)) or \
+                module.startswith(_PICKLE_MODULES):
+            return super().find_class(module, name)
+        raise pickle.UnpicklingError(f"global {module}.{name} is not allowed in a persisted BookRun")
+
 
 class RunStore:
-    """Executed ``BookRun`` objects, written once under ``root`` as ``<output sha256>.pkl`` with a manifest
-    (``MANIFEST.json``: file sha256, bytes, arm, h, execution, layer, window, research). ``load(sha)``
-    guards the run's window (``guard.check_data_span``), checks the file sha256 BEFORE unpickling and
-    recomputes ``runrecord.run_output_sha256`` after (it must equal ``sha``). Pickle is used because it
-    round-trips the frames exactly (object / tuple columns included), so the output hash is reproducible;
-    the files are this project's own outputs, bound to the manifest (not a defence against a hostile
-    writer with access to both)."""
+    """Executed ``BookRun`` objects, written once under ``root`` as ``<output sha256>.pkl``
+    (``runrecord.run_pickle``) with a manifest (``MANIFEST.json``: file sha256, bytes, arm, h, execution,
+    layer, window, research). ``load(sha, *, file_sha256=None)``: the run's window is guarded
+    (``guard.check_data_span``), the file sha256 must equal the manifest's (and ``file_sha256``, the value
+    pinned at the opening, when given) BEFORE unpickling with the restricted ``_RunUnpickler``; after it, the
+    object must be a ``BookRun`` with the manifest's window and the output sha256 ``sha``. Pickle round-trips
+    the frames exactly (object / tuple columns), so the output hash is reproducible; the producing run must
+    ``put`` the same in-memory run whose pickle sha256 the pre-opening record carries. One writer per root."""
 
     def __init__(self, root: str | Path) -> None:
         self.root = Path(root)
@@ -690,36 +912,46 @@ class RunStore:
         if not isinstance(run, BookRun):
             raise TypeError("RunStore.put takes an executed BookRun")
         sha = run_output_sha256(run)
-        man = self.manifest()
-        if sha in man["runs"]:
-            return sha
-        data = pickle.dumps(run, protocol=5)
-        self.root.mkdir(parents=True, exist_ok=True)
-        p = self.root / f"{sha}.pkl"
-        _create_once(p, data)
-        man["runs"][sha] = {"file": p.name, "sha256": _sha_bytes(data), "bytes": len(data), "arm": run.arm,
-                            "h": int(run.h_star), "execution": run.execution, "layer": run.layer,
-                            "window": [int(run.window[0]), int(run.window[1])],
-                            "research": bool(run.research)}
-        man["runs"] = dict(sorted(man["runs"].items()))
-        _replace_atomic(self.root / MANIFEST, _canonical(man))
+        with _writer_lock(self.root):
+            man = self.manifest()
+            if sha in man["runs"]:
+                return sha
+            data = run_pickle(run)
+            p = self.root / f"{sha}.pkl"
+            _create_once(p, data)
+            man["runs"][sha] = {"file": p.name, "sha256": _sha_bytes(data), "bytes": len(data),
+                                "arm": run.arm, "h": int(run.h_star), "execution": run.execution,
+                                "layer": run.layer, "window": [int(run.window[0]), int(run.window[1])],
+                                "research": bool(run.research)}
+            man["runs"] = dict(sorted(man["runs"].items()))
+            _replace_atomic(self.root / MANIFEST, _canonical(man))
         return sha
 
-    def load(self, output_sha256: str, *, auth: guard.HoldoutAuthorization | None = None) -> BookRun:
+    def file_sha256(self, output_sha256: str) -> str:
+        return str(self.manifest()["runs"][output_sha256]["sha256"])
+
+    def load(self, output_sha256: str, *, auth: guard.HoldoutAuthorization | None = None,
+             file_sha256: str | None = None) -> BookRun:
         k9.require()
         if not isinstance(output_sha256, str) or not _SHA.match(output_sha256):
             raise ValueError(f"not a sha256: {output_sha256!r}")
         e = self.manifest()["runs"].get(output_sha256)
         if e is None:
             raise KeyError(f"no persisted run {output_sha256}")
-        guard.check_data_span(int(e["window"][0]), int(e["window"][1]), auth=auth,
-                              what=f"persisted run {output_sha256[:12]}")
+        window = (int(e["window"][0]), int(e["window"][1]))
+        guard.check_data_span(*window, auth=auth, what=f"persisted run {output_sha256[:12]}")
         p = self.root / e["file"]
+        if file_sha256 is not None and file_sha256 != e["sha256"]:
+            _integrity(f"{p}: manifest file sha256 {e['sha256']} is not the pinned {file_sha256}", p)
         with open(p, "rb") as f:
             data = f.read()
         if _sha_bytes(data) != e["sha256"]:
             _integrity(f"{p}: sha256 differs from the run manifest (not unpickled)", p)
-        run = pickle.loads(data)  # noqa: S301 - this project's own file, hash-checked above
-        if not isinstance(run, BookRun) or run_output_sha256(run) != output_sha256:
-            _integrity(f"{p}: the unpickled object is not the BookRun {output_sha256}", p)
+        try:
+            run = _RunUnpickler(io.BytesIO(data)).load()
+        except pickle.UnpicklingError as err:
+            _integrity(f"{p}: {err}", p)
+        if not isinstance(run, BookRun) or tuple(int(x) for x in run.window) != window \
+                or run_output_sha256(run) != output_sha256:
+            _integrity(f"{p}: the unpickled object is not the BookRun {output_sha256} of window {window}", p)
         return run

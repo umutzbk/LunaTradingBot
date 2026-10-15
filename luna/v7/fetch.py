@@ -187,6 +187,12 @@ class Fetcher:
         self.k9 = k9_log if k9_log is not None else k9.K9Log.under(self.out_dir)
         self._cdx = netguard.CdxPairs()
 
+    @classmethod
+    def default(cls, out_dir: str | Path, **kw) -> Fetcher:
+        """The production fetcher of a run: the real ``HttpxTransport`` (constructed only here, so drivers
+        never build or touch a transport; Task 26a round 1)."""
+        return cls(HttpxTransport(), out_dir, **kw)
+
     @property
     def cdx_pairs(self) -> netguard.CdxPairs:
         return self._cdx

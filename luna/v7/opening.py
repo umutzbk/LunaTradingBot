@@ -12,8 +12,11 @@ and the opening normally runs in a later process, so the producing run persists 
   ``leakage.run_leakage_checks`` / ``resolve_k7``); the record is checked exactly as the opening will check it
   (below, except HEAD) and written by exclusive create as canonical JSON:
   ``{kind, run_id, spec_sha256, code_commit, dev_selection, dev_selection_sha256, dev_label_panels,
-  leakage_report, leakage_report_sha256, record_sha256}``. ``dev_label_panels`` are the sha256 of the W_DEV
-  label panels (``leakage.panel_sha256``) the fold models / canaries used.
+  leakage_report, leakage_report_sha256, dev_ml_run_file_sha256, record_sha256}``
+  (``dev_ml_run_file_sha256``: ``runrecord.run_pickle_sha256`` of the W_DEV ML* run, the file the producing
+  run persists with ``rawstore.RunStore.put``; pinned at the opening, Task 26a round 1).
+  ``dev_label_panels`` are the sha256 of the W_DEV label panels (``leakage.panel_sha256``) the fold
+  models / canaries used.
 * ``load_pre_opening(path, head=...)`` (called by ``guard.preflight`` / ``guard.authorize_holdout``):
   reloads the file; recomputes the DevSelection record hash, the LeakageReport content hash and the record
   hash and checks each against the recorded value; rebuilds the LeakageReport
@@ -41,14 +44,15 @@ from pathlib import Path
 
 import pandas as pd
 
-from luna.v7 import leakage, runner_select
+from luna.v7 import leakage, runner_select, runrecord
 from luna.v7.guard import RUN_ID, HoldoutBlocked
 from luna.v7.runrecord import canonical_json
 from luna.v7.spec import SPEC_BLOB_SHA256
 
 KIND = "V7_PRE_OPENING"
 FIELDS = ("kind", "run_id", "spec_sha256", "code_commit", "dev_selection", "dev_selection_sha256",
-          "dev_label_panels", "leakage_report", "leakage_report_sha256", "record_sha256")
+          "dev_label_panels", "leakage_report", "leakage_report_sha256", "dev_ml_run_file_sha256",
+          "record_sha256")
 _SHA = re.compile(r"\A[0-9a-f]{64}\Z")
 
 
@@ -61,6 +65,7 @@ class PreOpening:
     dev_selection: dict  # the persisted DevSelection record (``runner_select.dev_selection_record``)
     dev_selection_sha256: str
     leakage_report: leakage.LeakageReport  # rebuilt and registered in this process (verifies, passed)
+    dev_ml_run_file_sha256: str  # sha256 of the W_DEV ML* run's RunStore file (``runrecord.run_pickle``)
 
     @property
     def ml_star(self) -> tuple[str, int]:
@@ -128,6 +133,7 @@ def build_pre_opening_record(dev: runner_select.DevSelection, report: leakage.Le
         "leakage_report": leakage.report_content(report), "leakage_report_sha256": report.sha256,
     }
     _semantics(body, report)
+    body["dev_ml_run_file_sha256"] = runrecord.run_pickle_sha256(dev.runs[dev.ml_star])  # type: ignore[index]
     body["record_sha256"] = content_sha256(body)
     return body
 
@@ -160,13 +166,15 @@ def _load(path: str | Path, head: str) -> PreOpening:
         raise ValueError("pre-opening record: LeakageReport hash mismatch (tampered)")
     if not isinstance(rec["dev_label_panels"], dict):
         raise ValueError("pre-opening record: dev_label_panels")
+    if not isinstance(rec["dev_ml_run_file_sha256"], str) or not _SHA.match(rec["dev_ml_run_file_sha256"]):
+        raise ValueError("pre-opening record: dev_ml_run_file_sha256 is not a sha256")
     rep = leakage._load_persisted_report(rec["leakage_report"], rec["leakage_report_sha256"])
     _semantics(rec, rep)
     if rec["code_commit"] != head or rep.commit != head:
         raise ValueError(f"the records were produced at {rec['code_commit']}, not at HEAD {head} "
                          "(code freeze)")
     return PreOpening(rec["record_sha256"], rec["code_commit"], rec["dev_selection"],
-                      rec["dev_selection_sha256"], rep)
+                      rec["dev_selection_sha256"], rep, rec["dev_ml_run_file_sha256"])
 
 
 def load_pre_opening(path: str | Path | None, *, head: str) -> PreOpening:

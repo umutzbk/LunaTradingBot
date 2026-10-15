@@ -91,10 +91,10 @@ RUN_ID = "v7-" + SPEC_BLOB_SHA256[:16]  # canonical run identity of the single o
 IDENTITY_FIELDS = frozenset({"baseAsset", "contractType", "underlyingType", "multiplier"})
 _SHA = re.compile(r"\A[0-9a-f]{64}\Z")
 _PIN_SHAS = ("manifest_sha256", "pre_opening_sha256", "dev_selection_sha256", "leakage_report_sha256",
-             "final_model_hash", "dev_ml_run_sha256", "marker_sha256", "opening_id")
+             "final_model_hash", "dev_ml_run_sha256", "dev_ml_run_file_sha256", "marker_sha256", "opening_id")
 _OPENING_ID_FIELDS = ("run_id", "spec_sha256", "code_commit", "manifest_sha256", "pre_opening_sha256",
                       "dev_selection_sha256", "leakage_report_sha256", "ml_star", "fold_model_hashes",
-                      "final_model_hash", "dev_ml_run_sha256", "opened_at")
+                      "final_model_hash", "dev_ml_run_sha256", "dev_ml_run_file_sha256", "opened_at")
 
 
 class GuardFailure(RuntimeError):
@@ -635,7 +635,7 @@ def _authorize(phrase: str | None, pre_opening, manifest_sha256, issue):
            "ml_star": [rep.ml_star[0], int(rep.ml_star[1])],
            "fold_model_hashes": {str(h): list(hs) for h, hs in rep.fold_model_hashes},
            "final_model_hash": rep.final_model_hash, "dev_ml_run_sha256": pre.dev_ml_run_sha256,
-           "opened_at": opened_at}
+           "dev_ml_run_file_sha256": pre.dev_ml_run_file_sha256, "opened_at": opened_at}
     pin["opening_id"] = _opening_id(pin)
     marker = {"head": pf["head"], "spec_sha256": SPEC_BLOB_SHA256, "run_id": RUN_ID, "approved": True,
               "opened_at": opened_at, "opening_id": pin["opening_id"]}
@@ -668,7 +668,8 @@ def _resume(phrase, pre_opening, manifest_sha256, issue):
         ("DevSelection", pre.dev_selection_sha256, pin["dev_selection_sha256"]),
         ("LeakageReport", rep.sha256, pin["leakage_report_sha256"]),
         ("final model", rep.final_model_hash, pin["final_model_hash"]),
-        ("W_DEV ML* run", pre.dev_ml_run_sha256, pin["dev_ml_run_sha256"])) if now != pinned]
+        ("W_DEV ML* run", pre.dev_ml_run_sha256, pin["dev_ml_run_sha256"]),
+        ("W_DEV ML* run file", pre.dev_ml_run_file_sha256, pin["dev_ml_run_file_sha256"])) if now != pinned]
     if diffs:
         raise HoldoutBlocked(f"resume refused: differs from the pinned opening ({', '.join(diffs)}); the "
                              "holdout stays sealed")

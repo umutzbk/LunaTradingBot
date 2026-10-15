@@ -521,19 +521,26 @@ _TRANSPORT_NAMES = ("HttpxTransport", "Transport")
 
 def _transport_uses(tree) -> list[str]:
     """Static uses of a transport outside the fetch layer: importing / naming ``HttpxTransport`` or
-    ``Transport``, reading a ``.transport`` attribute, or passing ``transport=`` to a call."""
+    ``Transport`` (a star import from the fetch module included), reading a ``.transport`` attribute (also
+    through ``getattr`` / ``setattr`` / ``hasattr`` with a string), or passing ``transport=`` to a call."""
     import ast
 
     out: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             out += [f"import {a.name}" for a in node.names if a.name in _TRANSPORT_NAMES]
+            if (node.module or "").endswith("fetch") and any(a.name == "*" for a in node.names):
+                out.append(f"from {node.module} import *")
         elif isinstance(node, ast.Name) and node.id in _TRANSPORT_NAMES:
             out.append(f"name {node.id}")
         elif isinstance(node, ast.Attribute) and (node.attr in _TRANSPORT_NAMES or node.attr == "transport"):
             out.append(f"attribute .{node.attr}")
         elif isinstance(node, ast.Call):
             out += [f"{k.arg}= in a call" for k in node.keywords if k.arg == "transport"]
+            if isinstance(node.func, ast.Name) and node.func.id in ("getattr", "setattr", "hasattr") and \
+                    any(isinstance(a, ast.Constant) and a.value in (*_TRANSPORT_NAMES, "transport")
+                        for a in node.args[1:2]):
+                out.append(f"{node.func.id}(..., {node.args[1].value!r})")  # type: ignore[attr-defined]
     return out
 
 
@@ -552,7 +559,15 @@ def test_no_other_v7_module_constructs_or_uses_a_transport():
     assert offenders == []
     # the scan detects each form (mutation check on a synthetic module)
     probe = ast.parse("from luna.v7.fetch import HttpxTransport\nt = fetch.Transport\nf.transport.get('u')\n"
-                      "fetch.fetch(r, transport=x, out_dir='o')\nHttpxTransport()\n")
-    assert len(_transport_uses(probe)) == 5
+                      "fetch.fetch(r, transport=x, out_dir='o')\nHttpxTransport()\n"
+                      "getattr(f, 'transport').get('u')\ngetattr(fetch, 'HttpxTransport')()\n"
+                      "from luna.v7.fetch import *\n")
+    assert len(_transport_uses(probe)) == 8
     assert (root / "ingest.py").exists() and _transport_uses(ast.parse((root / "ingest.py").read_text(
         encoding="utf-8"))) == []
+
+
+def test_default_fetcher_owns_the_real_transport(tmp_path):
+    """Drivers get the production fetcher from the fetch layer (no transport construction elsewhere)."""
+    f = Fetcher.default(tmp_path, timeout=5.0)
+    assert isinstance(f.transport, fetch.HttpxTransport) and f.timeout == 5.0 and f.out_dir == tmp_path

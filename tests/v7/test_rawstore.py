@@ -11,6 +11,7 @@ import tracemalloc
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 import pytest
 
 from luna.v7 import guard, k9, rawstore, runner, windows
@@ -18,7 +19,7 @@ from luna.v7.data import funding as fund_mod
 from luna.v7.data.schema import IntegrityBlocker
 from luna.v7.rawstore import ChunkCache, FundingLoader, RawStore, RunStore, TableLoader
 from luna.v7.runner import InMemorySource, ResearchUniverse
-from luna.v7.runrecord import run_output_sha256
+from luna.v7.runrecord import run_output_sha256, run_pickle_sha256
 from luna.v7.timeutil import MIN, D, to_ns
 from tests.v7 import fixtures_v7 as fx
 from tests.v7 import run_fixtures as rf
@@ -259,7 +260,7 @@ def test_window_load_touches_only_overlapping_chunks(tmp_path, log):
         lo, _ = rawstore.month_period(m)
         one.arrays("BTCUSDT", lo, lo + D)
         assert one.cache.bytes <= one.cache.budget
-    assert one.stats["decoded_chunks"] == 6 and len(one.cache.keys()) == 1
+    assert one.stats["decoded_chunks"] == 6 and len({k[:4] for k in one.cache.keys()}) == 1
 
 
 def test_column_projection(tmp_path, log):
@@ -432,6 +433,12 @@ def test_representative_scale_memory_and_window_cost(tmp_path, log):
     total = sum(TableLoader(st, "R5").rows(s) for s in syms)
     assert total == 3 * n_rows
     budget = 32 * 2**20
+    try:  # RSS as well when psutil is installed (it is not a project dependency: traced memory otherwise)
+        import psutil
+        proc = psutil.Process()
+        rss0 = proc.memory_info().rss
+    except ImportError:
+        proc = None
     tracemalloc.start()
     try:
         base = tracemalloc.get_traced_memory()[0]
@@ -447,8 +454,150 @@ def test_representative_scale_memory_and_window_cost(tmp_path, log):
     finally:
         tracemalloc.stop()
     assert peak < budget + 16 * 2**20  # cache budget + one decoded chunk and the window
+    if proc is not None:
+        assert proc.memory_info().rss - rss0 < budget + 128 * 2**20
     # O(window): a one-day window decodes at most the two chunks it overlaps, whatever the history
     cold = TableLoader(st, "R5", budget_bytes=budget)
     cold.arrays("AAAUSDT", lo0 + 400 * D, lo0 + 401 * D)
     assert cold.stats["decoded_chunks"] <= 2
     assert write_s < 60
+
+
+# ------------------------------------------------------------------------------- Task 26a fix round 1
+
+
+def btc_like_month(seed: int = 1) -> pd.DataFrame:
+    """The reviewer's BTC-like 1m month (tick 0.1, clustered volatility / activity, volumes to 3 / 5
+    decimals)."""
+    g = np.random.default_rng(seed)
+    n = 44640
+    ts = JAN + np.arange(n, dtype=np.int64) * MIN
+    sig = 4e-4 * np.exp(np.convolve(g.normal(0, .5, n), np.ones(60) / 60, "same") * 3)
+    c = np.round(np.exp(np.log(42000) + np.cumsum(g.normal(0, 1, n) * sig)), 1)
+    o = np.r_[c[0], c[:-1]]
+    h = np.round(np.maximum(o, c) + np.abs(g.normal(0, 1, n)) * sig * c, 1)
+    lo_ = np.round(np.minimum(o, c) - np.abs(g.normal(0, 1, n)) * sig * c, 1)
+    act = np.exp(np.convolve(g.normal(0, 1, n), np.ones(30) / 30, "same") * 4)
+    vb = np.round(g.gamma(2, 60, n) * act, 3)
+    vq = np.round(vb * (lo_ + (h - lo_) * g.uniform(0, 1, n)), 5)
+    return pd.DataFrame(dict(open_ts=ts, o=o, h=h, l=lo_, c=c, vol_base=vb, vol_quote=vq,
+                             n_trades=g.poisson(800 * act).astype(np.int64),
+                             taker_buy_quote=np.round(vq * g.uniform(.3, .7, n), 5)))
+
+
+DEC = {"o": 1, "h": 1, "l": 1, "c": 1, "vol_base": 3, "vol_quote": 5, "taker_buy_quote": 5}
+
+
+def test_scaled_int_delta_layout_is_lossless_and_compact(tmp_path, log):
+    st = RawStore(tmp_path / "raw")
+    df = btc_like_month()
+    e = st.put_chunk("R5", "BTCUSDT", "2024-01", df, sources=[], decimals=DEC)
+    assert e["scales"] == DEC
+    bpr = e["bytes"] / e["rows"]
+    assert bpr < 22, bpr  # about 20 B/row (float64 + zstd: about 34)
+    p = st.chunk_path("R5", "BTCUSDT", "2024-01")
+    schema = pq.read_schema(p)
+    assert json.loads(schema.metadata[rawstore.SCALES_KEY]) == DEC
+    assert {str(schema.field(n).type) for n in DEC} == {"int64"}
+    got = TableLoader(st, "R5").frame("BTCUSDT", JAN, FEB)
+    pd.testing.assert_frame_equal(got.drop(columns="known_at"), df)  # exact float64 values
+    t0 = time.perf_counter()
+    for _ in range(5):
+        TableLoader(st, "R5").arrays("BTCUSDT", JAN, FEB)
+    assert (time.perf_counter() - t0) / 5 < 0.5
+    # the content identity is the float64 content, whatever the encoding
+    assert e["content_sha256"] == rawstore.content_sha256(
+        rawstore.TABLES["R5"], {c: df[c].to_numpy() for c in rawstore.TABLES["R5"].names})
+
+
+def test_lossy_scale_falls_back_to_float64_per_column(tmp_path, log):
+    st = RawStore(tmp_path / "raw")
+    df = btc_like_month().iloc[:1000].copy()
+    df["vol_quote"] = df["vol_quote"] * (1 + 1e-13)  # no longer a short decimal
+    e = st.put_chunk("R5", "BTCUSDT", "2024-01", df, sources=[], decimals={**DEC, "c": 0})
+    assert e["scales"]["vol_quote"] is None and e["scales"]["c"] is None and e["scales"]["o"] == 1
+    got = TableLoader(st, "R5").frame("BTCUSDT", JAN, FEB)
+    pd.testing.assert_frame_equal(got.drop(columns="known_at"), df.reset_index(drop=True))
+    # without source decimals the smallest exact scale is inferred
+    e2 = st.put_chunk("R5", "ETHUSDT", "2024-01", btc_like_month().iloc[:1000], sources=[])
+    assert all(k is not None and k <= DEC[n] for n, k in e2["scales"].items())
+
+
+def test_decode_reads_only_the_requested_columns(tmp_path, log):
+    st = RawStore(tmp_path / "raw")
+    st.put_chunk("R5", "BTCUSDT", "2024-01", btc_like_month().iloc[:5000], sources=[])
+    ld = TableLoader(st, "R5")
+    ld.arrays("BTCUSDT", JAN, FEB, columns=("c",))
+    assert sorted(k[-1] for k in ld.cache.keys()) == ["c", "open_ts"]
+    ld.arrays("BTCUSDT", JAN, FEB, columns=("c", "vol_base"))
+    assert sorted(k[-1] for k in ld.cache.keys()) == ["c", "open_ts", "vol_base"]
+    assert ld.stats["decoded_chunks"] == 2  # the second read decoded vol_base only
+
+
+def test_funding_window_ending_at_the_w_hold_start_is_not_refused(tmp_path, log):
+    """Review I-1: the +-60 s merge pad must not turn a W_DEV window ending at W_HOLD[0] into a refusal."""
+    st = RawStore(tmp_path / "raw")
+    ts = to_ns("2025-06-01") + np.arange(90, dtype=np.int64) * 8 * 3600 * 10**9
+    a = fund_mod.normalise_archive(pd.DataFrame(dict(calc_time=ts // 10**6, funding_interval_hours=8,
+                                                     last_funding_rate=1e-4)), "ms")
+    st.put_chunk("R2_archive", "BTCUSDT", "2025-06", a, sources=[])
+    f = FundingLoader(st).frame("BTCUSDT", to_ns("2025-06-01"), HOLD)
+    assert len(f) == 90 and log.records() == []
+    with pytest.raises(guard.HoldoutBlocked):  # a window reaching into W_HOLD is still refused
+        FundingLoader(st).frame("BTCUSDT", to_ns("2025-06-01"), HOLD + 1)
+
+
+def test_unlisted_symbol_manifest_is_refused_not_empty(tmp_path, log):
+    """Review I-2: a symbol without its table-manifest entry is an integrity failure, never 0 rows."""
+    st = RawStore(tmp_path / "raw")
+    put_months(st, "R3", "BTCUSDT", bars(JAN, 31 * 96), ["2024-01"])
+    (st.table_dir("R3") / "MANIFEST.json").unlink()
+    with pytest.raises(IntegrityBlocker, match="not listed"):
+        TableLoader(st, "R3").frame("BTCUSDT", JAN, FEB)
+    st.resume_chunk("R3", "BTCUSDT", "2024-01")  # heals
+    assert len(TableLoader(st, "R3").frame("BTCUSDT", JAN, FEB)) == 31 * 96
+
+
+def test_create_once_never_overwrites_and_cleans_up(tmp_path):
+    p = tmp_path / "x.parquet"
+    rawstore._create_once(p, b"one")
+    with pytest.raises(rawstore.ImmutabilityViolation):
+        rawstore._create_once(p, b"two")
+    assert p.read_bytes() == b"one" and sorted(x.name for x in tmp_path.iterdir()) == ["x.parquet"]
+
+
+def test_one_writer_per_store(tmp_path, log):
+    st = RawStore(tmp_path / "raw")
+    with rawstore._writer_lock(st.root), pytest.raises(rawstore.StoreBusy):
+        put_months(st, "R3", "BTCUSDT", bars(JAN, 31 * 96), ["2024-01"])
+    put_months(st, "R3", "BTCUSDT", bars(JAN, 31 * 96), ["2024-01"])  # released
+
+
+def test_run_store_pin_unpickler_and_window(tmp_path, log):
+    rs = RunStore(tmp_path / "runs")
+    run = rf.funding_run([0.01, -0.02], arm="A2", h=72)
+    sha = rs.put(run)
+    assert rs.file_sha256(sha) == run_pickle_sha256(run)  # the value the pre-opening record / pin carries
+    assert run_output_sha256(rs.load(sha, file_sha256=run_pickle_sha256(run))) == sha
+    with pytest.raises(IntegrityBlocker, match="pinned"):
+        rs.load(sha, file_sha256="0" * 64)
+    # a hostile pickle bound to a rewritten manifest is refused by the restricted unpickler
+    evil = b"cos\nsystem\n(S'echo pwned'\ntR."
+    man_p = tmp_path / "runs" / "MANIFEST.json"
+    man = json.loads(man_p.read_text(encoding="utf-8"))
+    f = tmp_path / "runs" / man["runs"][sha]["file"]
+    f.unlink()
+    f.write_bytes(evil)
+    man["runs"][sha]["sha256"] = hashlib.sha256(evil).hexdigest()
+    man_p.write_text(json.dumps(man), encoding="utf-8")
+    with pytest.raises(IntegrityBlocker, match="not allowed"):
+        rs.load(sha)
+    # a manifest window that is not the run's is refused after loading
+    rs2 = RunStore(tmp_path / "runs2")
+    sha2 = rs2.put(run)
+    m2p = tmp_path / "runs2" / "MANIFEST.json"
+    m2 = json.loads(m2p.read_text(encoding="utf-8"))
+    m2["runs"][sha2]["window"] = [run.window[0] - D, run.window[1]]
+    m2p.write_text(json.dumps(m2), encoding="utf-8")
+    with pytest.raises(IntegrityBlocker, match="window"):
+        rs2.load(sha2)
