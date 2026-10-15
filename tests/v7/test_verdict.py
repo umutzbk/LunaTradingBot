@@ -359,6 +359,8 @@ def test_em_runs_are_secondary():
             v = V.holdout(replace(good, **{field_: spoil(getattr(good, field_))}))
             assert v.cls == V.INCONCLUSIVE and v.p1_em is None and not v.maker_split_undecidable
             assert v.details["p1_em_unavailable"]
+            if "hedge construction" in str(spoil(getattr(good, field_)).invalid_detail):
+                assert "hedge construction missing at 1" in v.details["p1_em_unavailable"]  # detail reported
             # P1(E_T) fails, E_M unavailable: NO-GO with the explicit flag (never MAKER / NO_EDGE / ADVANCE);
             # it outranks the INCONCLUSIVE of the failing P4 (both candidate classes would)
             weak = _inputs(ml_mu=0.0, ml_m_mu=0.002)

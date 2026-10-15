@@ -161,6 +161,8 @@ def test_empty_side_keeps_book_flat():
     held = (leg("AAA", LONG), leg("SSS", SHORT))
     tg = run(held, [("AAA", LONG, 1.0, True), ("SSS", SHORT, 1.0, True)], gates={"SSS": gate(u6=False)})
     assert closes(tg) == {("SSS", SHORT): "u6", ("AAA", LONG): "neutrality"}
+    # AMB-16 (d) / AMB-28 (fix round 1): the empty-side close is a forced exit triggered at t (S-4.2, taker)
+    assert [(o.symbol, o.forced, o.trigger_ts) for o in tg.orders] == [("SSS", True, T0), ("AAA", True, T0)]
 
 
 def test_min_hold_blocks_non_risk_exit():

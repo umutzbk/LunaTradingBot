@@ -69,7 +69,7 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
               "resolved by user decision 2026-10-15"),
     "S-7.4": _m("book.hedge"),
     "S-8.1": (*_m("book.engine", "book.ledger", "accounting"),
-              "doc: AMB-20 pending user decision (pre-run blocker)"),
+              "doc: AMB-20 and AMB-21 (b) resolved by user decision 2026-10-15 (clarifications round 1)"),
     "S-8.2": _m("accounting"),
     "S-8.3": _m("accounting"),
     "S-8.4": _m("accounting"),

@@ -23,9 +23,10 @@ one-sided check, decision, terminal unwind):
   marks are reported in ``integrity`` (never invented); the DEC-29 gap test runs per closed episode.
 * **decision** (00:05 / 08:05 / 16:05 with t + 15 min before the unwind): provider view -> ``pre_decision``
   -> ``arm_scores`` -> ``constructor.targets`` -> ``hedge.decide`` -> orders. Fill timing: decision exits,
-  neutrality closes, resizes, entries, U6 exits and hedge trades at t_e = t + 15 min (E_M: maker-first for
-  the non-forced leg orders); kill, leg-stop and ineligibility exits on the first 1-minute bar >= trigger +
-  1 min (S-4.2, AMB-19 (a)). A halted exit waits (``execution.halted_exit``).
+  drift resizes, entries, U6 exits, ``risk_gross`` reduces (taker) and hedge trades at t_e = t + 15 min
+  (E_M: maker-first for the non-forced leg orders); kill, leg-stop, ineligibility, empty-side
+  ``neutrality`` and ``one_sided_flatten`` exits on the first 1-minute bar >= trigger + 1 min (S-4.2,
+  AMB-19 (a), AMB-28). A halted exit waits (``execution.halted_exit``).
 * **terminal check** at a held instance's cessation (A: the official settlement time): A settles (DEC-43),
   B / C -> ``INVALID RUN — terminal settlement not reconstructible``.
 * **terminal unwind** at the last reference minute before the end (end - 1 min): every leg and the hedge
@@ -85,8 +86,9 @@ from luna.v7.universe import GateRow, assert_pit
 EV_FUNDING, EV_TICK, EV_FILL, EV_TERMINAL, EV_NEUTRAL, EV_DECISION, EV_UNWIND = range(7)
 TICK = 15 * MIN
 FILL_DELAY = FROZEN.decision.fill_delay_min * MIN
-# S-4.2 timing (U6: t + 15 min, S-7.3); one_sided_flatten: AMB-16 (d), user decision 2026-10-15
-FORCED_TIMING = frozenset({"kill", "leg_stop", "ineligible", "one_sided_flatten"})
+# S-4.2 timing (U6: t + 15 min, S-7.3); one_sided_flatten and the constructor's empty-side neutrality close:
+# AMB-16 (d), user decision 2026-10-15 (AMB-28)
+FORCED_TIMING = frozenset({"kill", "leg_stop", "ineligible", "one_sided_flatten", "neutrality"})
 HEDGE_SYMBOL = "BTCUSDT"
 B_ACCOUNTING = "BTC reference B(e) required for canonical accounting"  # AMB-21 (b) detail
 E0 = 1.0  # L-norm (§14)
@@ -434,13 +436,14 @@ class _Sim:
 
     def on_neutral(self, ts: int) -> None:
         """AMB-16 (d) (user decision 2026-10-15), at every 15-minute tick after its fills: if held legs remain
-        on exactly one side, every remaining leg of that side exits as a forced exit with the S-4.2 timing
-        (first 1m bar after the tick + 1 min, taker; halted -> S-5.4 pending; reason ``one_sided_flatten``).
-        The minimum hold does not block it and nothing is entered to keep K. A leg whose exit is already
-        issued (``pending_exit``, incl. a resting E_M exit) is not holdable. A side with an entry order
-        still in flight (ordered for t + 15 min, or resting in an E_M maker window) is not empty (the book is
-        being built); once those orders have filled or lapsed, a one-sided result is flattened at the next
-        tick (AMB-28)."""
+        on exactly one side, the ENTIRE book is flattened: every remaining leg and the S-7.4 BTC hedge exit as
+        forced exits with the S-4.2 timing (first 1m bar after the tick + 1 min, taker; halted -> S-5.4
+        pending; reason ``one_sided_flatten``); a resting E_M maker exit is replaced by the forced exit
+        (S-6.2), as the kill does. The minimum hold does not block it and nothing is entered to keep K. A leg
+        whose exit is already issued (``pending_exit``, incl. a resting E_M exit) is not holdable. A side with
+        an entry order still in flight (ordered for t + 15 min, or resting in an E_M maker window) is not
+        empty (the book is being built); once those orders have filled or lapsed, a one-sided result is
+        flattened at the next tick (AMB-28)."""
         holdable: dict[int, list[Position]] = {1: [], -1: []}
         for p in self.led.pos.values():
             if p.role == "leg" and p.q != 0 and p.pending_exit is None:
@@ -450,11 +453,11 @@ class _Sim:
             for tk in tks:
                 if tk.kind == "open" and not tk.cancelled and pid not in self.led.pos:
                     alive[tk.fill.direction] = True
-        if alive[1] == alive[-1]:
-            return
-        side = 1 if alive[1] else -1
-        for p in sorted(holdable[side], key=lambda x: x.symbol):
-            self.exit(p, "one_sided_flatten", True, ts, ts + FILL_DELAY)
+        if alive[1] == alive[-1] or not holdable[1 if alive[1] else -1]:
+            return  # balanced, empty, or the surviving side is only being built (nothing held to flatten)
+        for p in sorted(self.led.pos.values(), key=lambda x: (x.role != "leg", x.symbol)):
+            if p.q != 0 and (p.pending_exit is None or p.maker_exit):
+                self.exit(p, "one_sided_flatten", True, ts, ts + FILL_DELAY)
 
     def forced(self, acts: RiskActions, t_e: int) -> None:
         if acts.killed and not self.kill_done:

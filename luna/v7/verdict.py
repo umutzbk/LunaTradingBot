@@ -341,7 +341,7 @@ def _usable(obj: BookRun | Ledger | None) -> tuple[Ledger | None, str | None]:
     if obj is None:
         return None, "not supplied"
     if isinstance(obj, BookRun) and not obj.valid:
-        return None, str(obj.invalid)
+        return None, str(obj.invalid) + (f" ({obj.invalid_detail})" if obj.invalid_detail else "")
     try:
         led = obj if isinstance(obj, Ledger) else account(obj)
         ok = k10_ok(led) and daily_ok(led)

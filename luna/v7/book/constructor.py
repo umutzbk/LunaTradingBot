@@ -22,7 +22,8 @@ One constructor for every arm; only the scores change. At decision t, in this or
    target of the heavier side is scaled by S/L (or L/S) so the target book is dollar-neutral; an empty side
    therefore makes the other side's targets 0 (flat), including legs inside the minimum hold (AMB-16 (d)).
 5. **Resizes**: a kept leg is resized to its target only when ``|n - T| > 25 % T``, only downward
-   (reduce-only between entries, AMB-16 (f)); a target of 0 closes the leg (reason ``neutrality``). The S-7.3
+   (reduce-only between entries, AMB-16 (f)); a target of 0 (the other side is empty) closes the leg as a
+   forced exit (reason ``neutrality``, trigger t, S-4.2 timing, taker; AMB-16 (d) / AMB-28). The S-7.3
    caps (per leg 0.5 E / K, liquidity, gross 1.0 E) bind the TARGETS and the ENTRIES only (controller ruling
    R24, AMB-16 (e)): the marked book may drift within the 25 % band; an entrant is sized at its capped
    target, and entrants are scaled down together when the post-decision gross (held legs at their marked /
@@ -292,7 +293,9 @@ def targets(
         T = tgt[lg.symbol]
         n = lg.notional
         if T <= EPS * e:
-            neutral_close.append(order(lg, "close", n, 0.0, "neutrality", False))
+            # a target of 0 means the other side is empty (AMB-16 (d), user decision 2026-10-15: flatten at
+            # the next executable opportunity): a forced exit, S-4.2 timing from t, taker (AMB-28)
+            neutral_close.append(order(lg, "close", n, 0.0, "neutrality", True, t))
             continue
         drift = abs(n - T) > BK.resize_drift * T * (1 + EPS)
         if is_halted[lg.symbol]:

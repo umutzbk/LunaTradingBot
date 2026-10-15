@@ -11,9 +11,9 @@ import pytest
 from luna.v7 import accounting
 from luna.v7.book.engine import run
 from luna.v7.book.execution import INVALID_BTC
-from luna.v7.timeutil import MIN, H
+from luna.v7.timeutil import MIN, D, H
 
-from .engine_fixtures import BTC, END, LO, base_inputs, instrument
+from .engine_fixtures import BTC, END, LO, base_inputs, gate_row, instrument
 
 T1 = LO + 5 * MIN  # first decision
 TE1 = T1 + 15 * MIN
@@ -34,9 +34,10 @@ def _of(r, sym, reason=None):
 
 
 def test_leg_stop_empties_short_side_long_flattened_at_s42_time():
-    """The leg stop empties the short side at the 05:45 tick: the long leg exits with reason
-    ``one_sided_flatten`` on the S-4.2 forced-exit bar (trigger + 1 min, taker), not at the next decision's
-    t + 15 min (08:20); the minimum hold (24 h) does not block it; nothing is entered to keep the side."""
+    """The leg stop empties the short side at the 05:45 tick: the long leg AND the BTC hedge (the entire book,
+    fix round 1) exit with reason ``one_sided_flatten`` on the S-4.2 forced-exit bar (trigger + 1 min, taker),
+    not at the next decision's t + 15 min (08:20); the minimum hold (24 h) does not block it; nothing is
+    entered to keep the side."""
     r = run("A0", base_inputs(bbb=_bbb_stops()), (LO, END), 24)
     assert r.valid
     st = _of(r, "BBBUSDT", "leg_stop")
@@ -52,10 +53,12 @@ def test_leg_stop_empties_short_side_long_flattened_at_s42_time():
     assert sorted(legs_mid["reason"]) == ["leg_stop", "one_sided_flatten"]
     pos = r.positions
     assert pos[(pos["role"] == "leg") & (pos["ts"] > TRIG + MIN) & (pos["ts"] <= LO + 8 * H + 15 * MIN)].empty
-    # the hedge is a book-level S-7.4 object: it is closed at the next decision (target 0), taker
+    # the S-7.4 hedge is part of the entire book: it exits with the legs, not at the 08:05 decision
     h = _of(r, BTC)
     hm = h[(h["ts"] > TRIG) & (h["ts"] < LO + 16 * H)]
-    assert hm[["ts", "reason"]].values.tolist() == [[LO + 8 * H + 20 * MIN, "hedge"]]
+    assert hm[["ts", "reason", "liquidity", "q_after"]].values.tolist() == [
+        [TRIG + MIN, "one_sided_flatten", "taker", 0.0]]
+    assert "hedge" not in set(r.fills.loc[(r.fills["ts"] > TRIG) & (r.fills["ts"] < LO + 16 * H), "reason"])
     d = r.decisions.set_index("t")
     assert not any(o.startswith("open:") for o in d.loc[LO + 8 * H + 5 * MIN, "orders"])
 
@@ -90,6 +93,70 @@ def test_inflight_entry_keeps_its_side_under_e_m():
     assert not (r.fills["reason"] == "one_sided_flatten").any()
     at = r.positions[(r.positions["ts"] == LO + 45 * MIN) & (r.positions["role"] == "leg")]
     assert sorted(at["symbol"]) == ["AAAUSDT", "BBBUSDT"]
+
+
+NONE = pd.DataFrame({"ts": pd.Series(dtype="int64"), "price": [], "qty": []})  # E_M: no trade-through ever
+
+
+def test_empty_side_neutrality_close_is_forced_under_e_m():
+    """Fix round 1: at t2 AAA (the only long) fails a gate -> its decision exit rests as an E_M maker order;
+    BBB's empty-side neutrality close is a forced exit triggered at t2: taker on the first 1m bar at
+    t2 + 1 min (S-4.2), not a maker order at t2 + 15 min."""
+    t2 = LO + D + 5 * MIN
+
+    def gates(t, s):
+        return gate_row(t, u2=False) if (s == "AAAUSDT" and t >= t2) else gate_row(t)
+
+    inp = base_inputs(aaa=instrument("AAAUSDT", 100.0, -1e-4, trades=NONE),
+                      bbb=instrument("BBBUSDT", 50.0, 1e-4, trades=NONE), gates=gates)
+    r = run("A0", inp, (LO, END), 24, execution="E_M")
+    assert r.valid
+    b = _of(r, "BBBUSDT", "neutrality")
+    assert b[["ts", "liquidity", "q_after"]].values.tolist() == [[t2 + MIN, "taker", 0.0]]
+    assert not (r.fills["liquidity"] == "maker").any()
+
+
+def test_one_sided_flatten_replaces_resting_maker_exits_under_e_m():
+    """E_M: at t2 CCC (long) fails a gate -> its exit rests as a maker order (t2 + 15 .. t2 + 45 min). BBB
+    (the only short) stops out at the t2 + 25 min tick: the one-sided flatten replaces CCC's resting maker
+    exit by the forced taker exit and flattens AAA, both on the first 1m bar at t2 + 26 min (S-4.2); the hedge
+    was already closed by the t2 decision (beta_book 0)."""
+    t2 = LO + D + 5 * MIN
+    rise = t2 + 10 * MIN
+
+    def gates(t, s):
+        return gate_row(t, u2=False) if (s == "CCCUSDT" and t >= t2) else gate_row(t)
+
+    ccc = instrument("CCCUSDT", 20.0, -1e-4, trades=NONE)
+    bbb = instrument("BBBUSDT", lambda ts: np.where(ts < rise, 50.0, 60.0), 1e-4, trades=NONE)
+    inp = base_inputs(aaa=instrument("AAAUSDT", 100.0, -1e-4, trades=NONE), bbb=bbb, extra={"CCCUSDT": ccc},
+                      fl30={"CCCUSDT": -0.004}, gates=gates)
+    r = run("A0", inp, (LO, END), 24, execution="E_M")
+    assert r.valid
+    trig = t2 + 25 * MIN
+    assert _of(r, "BBBUSDT", "leg_stop")["ts"].tolist() == [trig + MIN]
+    after = r.fills[(r.fills["ts"] > t2) & (r.fills["ts"] < LO + D + 8 * H)]
+    got = sorted(map(tuple, after[["symbol", "reason", "ts", "liquidity"]].values.tolist()))
+    assert got == [("AAAUSDT", "one_sided_flatten", trig + MIN, "taker"),
+                   ("BBBUSDT", "leg_stop", trig + MIN, "taker"),
+                   (BTC, "hedge", t2 + 15 * MIN, "taker"),  # the t2 decision: beta_book 0 -> hedge closed
+                   ("CCCUSDT", "one_sided_flatten", trig + MIN, "taker")]
+    assert not (r.fills["liquidity"] == "maker").any()
+
+
+def test_class_a_settlement_records_btc_ref_and_is_accountable():
+    """Regression (round 1 side fix): an A settlement fill carries B(e) = the BTC reference at the settlement
+    time, so the valid run is accountable (the remaining short is then flattened one-sided)."""
+    cess = LO + 12 * H
+    aaa = instrument("AAAUSDT", 100.0, -1e-4, last_trade=cess, terminal="A", settle_price=97.0)
+    r = run("A0", base_inputs(aaa=aaa), (LO, END), 24)
+    assert r.valid
+    s = r.fills[r.fills["liquidity"] == "settlement"]
+    assert s[["symbol", "ts", "btc_ref"]].values.tolist() == [["AAAUSDT", cess, 1000.0]]
+    fl = r.fills[r.fills["reason"] == "one_sided_flatten"]
+    # the 12:00 terminal check precedes the 12:00 one-sided check: S-4.2 from 12:00
+    assert set(fl["symbol"]) == {"BBBUSDT", BTC} and set(fl["ts"]) == {cess + MIN}
+    accounting.account(r)
 
 
 # ---------------------------------------------------------------------------------------- AMB-21 (b)
@@ -139,12 +206,18 @@ def test_hedge_held_without_btc_mark_is_invalid():
 
 
 def test_hedge_exit_without_btc_price_is_invalid():
-    """After the one-sided flatten, the 08:05 decision closes the hedge at 08:20; BTC has no reference there
-    (not halted) and no leg is held -> INVALID RUN for the required hedge trade."""
-    te = LO + 8 * H + 20 * MIN
-    inp = replace(base_inputs(bbb=_bbb_stops()), btc=_btc(dead=((te, te + 61 * MIN),)))
+    """At t2 (after h* = 24 h) AAA fails a gate: decision exit at t2 + 15 min, BBB's empty-side neutrality
+    close is forced (t2 + 1 min) and the hedge target is 0 -> a hedge close due at t2 + 15 min; BTC has no
+    reference there (not halted) -> INVALID RUN for the required hedge trade."""
+    t2 = LO + D + 5 * MIN
+    te = t2 + 15 * MIN
+
+    def gates(t, s):
+        return gate_row(t, u2=False) if (s == "AAAUSDT" and t >= t2) else gate_row(t)
+
+    inp = replace(base_inputs(gates=gates), btc=_btc(dead=((te, te + 61 * MIN),)))
     r = run("A0", inp, (LO, END), 24)
-    assert r.invalid == INVALID_BTC
+    assert r.invalid == INVALID_BTC and r.invalid_ts == te
     assert f"BTC price required for hedge construction missing at {te}" in r.invalid_detail
 
 
