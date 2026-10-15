@@ -31,7 +31,7 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "S-0.5": (GOV + " (non-goals: nothing is implemented for them)",),
     "S-0.6": _m("arms", "book.constructor", "book.hedge", "book.risk"),
     "S-1.1": _m("spec"),
-    "S-1.2": _m("windows", "guard", "forward"),
+    "S-1.2": _m("windows", "guard", "forward", "release"),
     "S-1.3": _m("guard", "windows", "forward"),
     "S-1.4": _m("windows", "constants"),
     "S-1.5": _m("labels", "book.engine", "refs"),
@@ -111,7 +111,7 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "DEC-16": _m("beta"),
     "DEC-17": (*_m("verdict"), KRAKEN),
     "DEC-18": _m("constants"),
-    "DEC-19": _m("guard", "verdict", "leakage"),
+    "DEC-19": _m("guard", "opening", "verdict", "leakage", "runner_select"),
     "DEC-20": _m("arms"),
     "DEC-21": _m("deploy"),
     "DEC-22": _m("spread"),
@@ -138,7 +138,7 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "DEC-42": _m("forward"),
     "DEC-43": _m("data.terminal", "labels", "book.execution", "selection"),
     "DEC-44": _m("data.instances"),
-    "DEC-45": _m("forward_store"),
+    "DEC-45": _m("forward_store", "release"),
     "DEC-46": _m("netguard"),
     "DEC-47": _m("data.intervals"),
     # --- EC / E ---------------------------------------------------------------------------------------------
@@ -166,13 +166,17 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "L9": (*_m("leakage", "cv"),
            "doc: canaries L9a / L9b per DK-27 (both regressor families, all horizons; L9b sandbox IC "
            "reported, no threshold); report sealed and consumed by the verdict (SC-02, AMB-33)"),
-    "L10": _m("guard", "netguard", "forward_store", "spec"),
+    "L10": (*_m("guard", "netguard", "forward_store", "spec", "release", "windows"),
+            "doc: one canonical, hash-checked R_V6 / T_F7 / L7 / M6 source; the forward store, netguard "
+            "and the outcome guard take no caller span / date (SC-06, AMB-34)"),
     "L11": (*_m("arms"),
             "doc: audit item (no V5 / V6 outcome input; the Kraken outcome guard is not implemented)"),
     "L12": (*_m("timeutil", "data.klines"),
             "doc: integer ns window-checked, floats refused by to_ns (DK-106 / DK-110, AMB-32 (a))"),
     "L13": _m("stats", "cv"),
-    "L14": _m("guard"),
+    "L14": (*_m("guard", "opening", "runner_select"),
+            "doc: DEC-19 prerequisites from a re-verified pre-opening record; markers and pin re-checked for "
+            "every W_HOLD window (SC-05, AMB-34)"),
     # --- acceptance -----------------------------------------------------------------------------------------
     "P1": _m("verdict", "stats"),
     "P2": _m("verdict", "accounting"),

@@ -7,11 +7,14 @@ relisted symbol) -> interval annotation (EC-9, one 8 h -> 4 h regime transition)
 ``runner.label_panel`` (leg labels of a sample of decisions) -> ``runner.fit_fold_models`` (tiny
 monkeypatched search space; one compressed synthetic fold) -> ``runner.FoldScoreModel`` -> executed books of
 A0 and A2 under E_T and E_M (engine, L-norm) -> §8 accounting -> K10 / daily identity -> S-10.7 kill
-triggers and the S-13.1 paired bootstrap -> verdict stage (``runner_select.holdout_inputs`` with a synthetic
-authorization on a W_DEV window, ``verdict.holdout``; if the S-10.7 kill fired, ``verdict.classify`` with
-it). Both passes must give byte-identical outputs (sha256 of every key frame, the decision provenance logs
-and the Verdict). Everything is dated 2022 - early 2023 on the real
-calendar, inside W_DEV: the guards (labels, engine) run unmodified against the canonical M6 / W_HOLD spans.
+triggers and the S-13.1 paired bootstrap -> verdict stage (``runner_select.holdout_inputs`` with a real
+synthetic opening per pass (``auth_fixtures.authorize``: frozen repo, injected home, pre-opening record of a
+DevSelection with these books issued through the documented test hook and the real passed LeakageReport of
+the ``leak_fixtures`` fold models, whose final model then scores the holdout panel, I-2) on a W_DEV window,
+``verdict.holdout``; if the S-10.7 kill fired, ``verdict.classify`` with it). Both passes must give
+byte-identical outputs (sha256 of every key frame, the decision provenance logs and the Verdict). Everything
+is dated 2022 - early 2023 on the real calendar, inside W_DEV: the guards (labels, engine) run unmodified
+against the canonical M6 / W_HOLD spans.
 
 Runtime is kept modest by sampling decisions (every ``SAMPLE_EVERY``-th sample day) and a short book window;
 nothing is skipped.
@@ -30,17 +33,13 @@ from luna.v7 import accounting, guard, models, runner, selection, stats, univers
 from luna.v7.constants import FROZEN
 from luna.v7.runner_select import holdout_inputs
 from luna.v7.timeutil import D
+from tests.v7 import auth_fixtures as af
 from tests.v7 import fixtures_v7 as fx
 from tests.v7 import leak_fixtures as lf
 
 SEED = 7
 SAMPLE_EVERY = 7  # every 7th day of the 4-day sample grid -> 28-day spacing, 11 sample decisions
 B_SMALL = 200  # bootstrap draws (the frozen B = 10,000 is exercised in test_stats)
-
-
-def synthetic_auth() -> guard.HoldoutAuthorization:
-    """Test-only stand-in for the DEC-19 authorization object (the windows used never overlap W_HOLD)."""
-    return guard.HoldoutAuthorization(guard.HoldoutAuthorization._secret, {"synthetic": True})
 
 
 def _sha(obj: object) -> str:
@@ -55,8 +54,9 @@ def _sha(obj: object) -> str:
     return h.hexdigest()
 
 
-def run_pipeline(seed: int) -> tuple[dict[str, str], dict]:
-    """One full pass. Returns (sha256 per output, facts for the non-triviality assertions)."""
+def run_pipeline(seed: int, base) -> tuple[dict[str, str], dict]:
+    """One full pass (``base``: a fresh directory for this pass's synthetic opening). Returns (sha256 per
+    output, facts for the non-triviality assertions)."""
     u = fx.build_universe(seed)
     prov = runner.DecisionProvider(u, with_features=True)
     panel = runner.label_panel(u, prov, fx.sample_times()[::SAMPLE_EVERY], fx.H_STAR, windows.W_DEV, fx.NOW)
@@ -76,10 +76,13 @@ def run_pipeline(seed: int) -> tuple[dict[str, str], dict]:
     # verdict stage (synthetic): the "holdout" is the W_DEV book window, its labels and the fold model; the
     # S-10.7 result passed is empty so the P1-P11 machinery runs; the real kill is applied through classify
     hold = runner.label_panel(u, prov, fx.decisions_in(fx.BOOK), fx.H_STAR, fx.BOOK, fx.NOW)
-    x = holdout_inputs(auth=synthetic_auth(), ml_T=runs["A2"], a0_T=runs["A0"], ml_M=em["A2"], a0_M=em["A0"],
-                       quarter_edges=edges, panel=hold, final_model=fm, dev_ml_run=runs["A2"], dev_kill=(),
-                       leakage_report=lf.passed_report("A2", fx.H_STAR), records=prov.record, integrity=(),
-                       B=B_SMALL)
+    dev = af.dev_selection("A2", fx.H_STAR, window=fx.BOOK, em_runs={"ML*": em["A2"], "A0": em["A0"]},
+                           runs={("A2", fx.H_STAR): runs["A2"], ("A0", fx.H_STAR): runs["A0"]})
+    opened = af.authorize(base, dev=dev)
+    x = holdout_inputs(auth=opened.auth, ml_T=runs["A2"], a0_T=runs["A0"], ml_M=em["A2"], a0_M=em["A0"],
+                       quarter_edges=edges, panel=hold, final_model=lf.final(fx.H_STAR, "en"),
+                       dev_ml_run=runs["A2"], dev_kill=(), leakage_report=opened.auth.leakage_report,
+                       records=prov.record, integrity=(), B=B_SMALL)
     v = verdict.holdout(x)
     v_kill = None
     if kill:
@@ -123,13 +126,13 @@ def tiny_space(monkeypatch):
     monkeypatch.setattr(models, "search_space", lambda h: list(fx.TINY_SPACE))
 
 
-def test_end_to_end_synthetic(tiny_space):
+def test_end_to_end_synthetic(tiny_space, tmp_path):
     t0 = time.perf_counter()
     universe._PF_CACHE.clear()  # independent passes: no memo carried between them
-    a, facts = run_pipeline(SEED)
+    a, facts = run_pipeline(SEED, tmp_path / "pass1")
     t1 = time.perf_counter()
     universe._PF_CACHE.clear()
-    b, _ = run_pipeline(SEED)
+    b, _ = run_pipeline(SEED, tmp_path / "pass2")
     t2 = time.perf_counter()
     diff = sorted(k for k in a if a[k] != b[k])
     assert a.keys() == b.keys() and not diff, f"non-deterministic outputs: {diff}"

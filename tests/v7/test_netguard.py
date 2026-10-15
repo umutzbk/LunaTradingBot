@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from luna.v7 import guard, netguard
+from luna.v7 import guard, netguard, windows
 from luna.v7.netguard import EndpointRefused, Request, check
 from luna.v7.timeutil import to_ns
 
@@ -12,7 +12,7 @@ FAPI = "https://fapi.binance.com/fapi/v1/"
 BVIS = "https://data.binance.vision/data/futures/um"
 MS_OK = str(to_ns("2025-06-30T23:59:59") // 10**6)
 MS_BAD = str(to_ns("2025-07-01") // 10**6)
-SPAN = (to_ns("2026-07-01"), None)  # fixed M6 span, no git
+SPAN = (to_ns("2026-07-01"), None)  # the canonical M6 span while R_V6 is undetermined (asserted below)
 
 
 def test_refuses_cms_catalog_and_detail():
@@ -134,11 +134,12 @@ def test_n2_drops_m6_keys():
     keys = [d + "BTCUSDT-15m-2025-06.zip", d + "BTCUSDT-15m-2025-08.zip", d + "BTCUSDT-15m-2026-06.zip",
             d + "BTCUSDT-15m-2026-07.zip", d + "BTCUSDT-15m-2026-07.zip.CHECKSUM",
             d + "BTCUSDT-15m-2026-09.zip", "data/futures/um/monthly/klines/BTCUSDT/"]
-    out = netguard.drop_m6_keys(keys, SPAN)
+    assert windows.m6_cached() == SPAN  # the canonical span is the only span (SC-06)
+    out = netguard.drop_m6_keys(keys)
     assert out == [keys[0], keys[1], keys[2], keys[6]]
     assert keys[1] in out  # W_HOLD key kept (name only)
     # a daily file the day before M6 stays, the first M6 day goes
-    assert netguard.drop_m6_keys(["X-2026-06-30.zip", "X-2026-07-01.zip"], SPAN) == ["X-2026-06-30.zip"]
+    assert netguard.drop_m6_keys(["X-2026-06-30.zip", "X-2026-07-01.zip"]) == ["X-2026-06-30.zip"]
 
 
 def test_exchangeinfo_status_fields_refused_as_history():
@@ -168,11 +169,11 @@ def test_n2_unparseable_keys_fail_closed():
     d = "data/futures/um/monthly/klines/BTCUSDT/15m/"
     keys = [d + "BTCUSDT-15m-2026-13.zip", d + "BTCUSDT-15m-2025-06.zip", d + "junk.zip", d,
             d + "BTCUSDT-15m-2026-08.zip"]
-    kept, m6, bad = netguard.partition_m6_keys(keys, SPAN)
+    kept, m6, bad = netguard.partition_m6_keys(keys)
     assert kept == [keys[1], keys[3]] and m6 == [keys[4]] and bad == [keys[0], keys[2]]
-    assert netguard.drop_m6_keys(keys, SPAN) == kept
-    with pytest.raises(TypeError):
-        netguard.drop_m6_keys(keys)  # type: ignore[call-arg]
+    assert netguard.drop_m6_keys(keys) == kept
+    with pytest.raises(TypeError):  # no caller span is taken (red-team M5)
+        netguard.drop_m6_keys(keys, SPAN)  # type: ignore[call-arg]
 
 
 def test_trailing_newline_and_non_ascii_digits_refused():

@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from luna.v7 import release
 from luna.v7.constants import FROZEN
 from luna.v7.spec import code_repo, v6_artifacts
 from luna.v7.timeutil import MIN, D, to_ns
@@ -80,8 +81,10 @@ def final_blocks() -> Fold:
 
 
 def m6(repo: Path | None = None) -> tuple[int, int | None]:
-    """M6 = [V6 holdout start, R_V6); the end is None while R_V6 is undetermined (S-1.2)."""
-    return v6_artifacts(repo).holdout_start, None
+    """M6 = [V6 holdout start, R_V6) (S-1.2). The start comes from the hash-checked V6 artefacts; the end is
+    R_V6 from the canonical, hash-checked release record (``release.r_v6``, SC-06 / AMB-34) and None while
+    that record is absent or does not verify (R_V6 undetermined: M6 open-ended)."""
+    return v6_artifacts(repo).holdout_start, release.r_v6(repo)
 
 
 @functools.cache
@@ -90,8 +93,9 @@ def _m6_by_repo(repo_key: str) -> tuple[int, int | None]:
 
 
 def m6_cached(repo: Path | None = None) -> tuple[int, int | None]:
-    """``m6(repo)`` read once per process and resolved repository (the hash-checked V6 artefacts via git);
-    a failure (SpecMismatch) is not cached. This is the canonical span every guard compares against."""
+    """``m6(repo)`` read once per process and resolved repository (the hash-checked V6 artefacts and R_V6
+    release record via git); a failure (SpecMismatch) is not cached. This is the canonical span every guard
+    compares against (outcome guard, ``netguard.partition_m6_keys``)."""
     return _m6_by_repo(str(Path(repo or code_repo()).resolve()))
 
 

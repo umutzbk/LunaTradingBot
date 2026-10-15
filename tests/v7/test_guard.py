@@ -1,4 +1,6 @@
-"""Task 2 guard tests: holdout seal, M6 embargo, markers (spec S-1.2, S-1.3, S-1.7, DEC-19, L10, K9)."""
+"""Task 2 guard tests: holdout seal, M6 embargo, markers (spec S-1.2, S-1.3, S-1.7, DEC-19, L10, K9). Since
+Task 24 (SC-05) the opening needs a persisted pre-opening record and a manifest to pin: the repository is the
+deterministic frozen repo of ``auth_fixtures`` (its HEAD is the cached reports' code commit)."""
 
 from __future__ import annotations
 
@@ -10,6 +12,7 @@ import pytest
 
 from luna.v7 import guard, windows
 from luna.v7.timeutil import D, to_ns
+from tests.v7 import auth_fixtures as af
 
 M6_START = windows.m6()[0]
 NOW = to_ns("2026-10-14")
@@ -23,20 +26,17 @@ def _git(repo: Path, *args: str) -> None:
 
 @pytest.fixture
 def repo(tmp_path, monkeypatch):
-    r = tmp_path / "repo"
-    r.mkdir()
-    _git(r, "init", "-q")
-    (r / "a.txt").write_text("x")
-    _git(r, "add", "a.txt")
-    _git(r, "commit", "-q", "-m", "c")
-    _git(r, "tag", "-a", guard.SPEC_TAG, "-m", "spec")
-    _git(r, "tag", "-a", guard.CODE_TAG, "-m", "code")
+    r = af.frozen_repo(tmp_path / "repo")
     monkeypatch.setattr(guard, "verify_spec", lambda repo=None: None)
     return r
 
 
 def _auth(repo, tmp_path):
-    return guard.authorize_holdout(guard.approval_phrase(), repo, home=tmp_path / "home")
+    rec = tmp_path / "pre_opening.json"
+    if not rec.exists():
+        af.pre_opening(rec)
+    return guard.authorize_holdout(guard.approval_phrase(), repo, home=tmp_path / "home", pre_opening=rec,
+                                   manifest_sha256=af.MANIFEST)
 
 
 def test_hold_window_needs_authorization(repo, tmp_path):
@@ -149,15 +149,16 @@ def test_run_id_and_phrase():
 
 
 def test_pin_manifest_once(repo, tmp_path):
+    """The manifest is pinned by the opening itself, exclusively and once, next to both markers (SC-05)."""
     home = tmp_path / "home"
+    assert guard.pinned_manifest(repo, home=home) is None and not hasattr(guard, "pin_manifest")
     auth = _auth(repo, tmp_path)
-    assert guard.pinned_manifest(repo, home=home) is None
-    guard.pin_manifest("ab" * 32, auth, repo, home=home)
-    assert guard.pinned_manifest(repo, home=home) == "ab" * 32
-    with pytest.raises(FileExistsError):
-        guard.pin_manifest("cd" * 32, auth, repo, home=home)
-    with pytest.raises(guard.HoldoutBlocked):
-        guard.pin_manifest("ab" * 32, object(), repo, home=home)  # type: ignore[arg-type]
+    pin = guard.pinned_manifest(repo, home=home)
+    assert pin["manifest_sha256"] == af.MANIFEST and pin == auth.record["pin"]
+    assert all((m.parent / guard.PIN).exists() for m in guard.marker_paths(repo, home=home))
+    with pytest.raises(guard.HoldoutBlocked, match="already opened"):
+        _auth(repo, tmp_path)
+    assert guard.pinned_manifest(repo, home=home) == pin
 
 
 def test_check_listing_only():

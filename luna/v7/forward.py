@@ -1,16 +1,20 @@
 """V7 forward protocol: start time, single look L7, evaluability, missing data, EC-11 and the forward verdict
 (spec §15, DEC-10, DEC-42, DEC-45, EC-8, EC-11, K11, S-1.2, S-1.3, S-13.1, S-14.1; AMB-24).
 
-Pure: no I/O and no wall-clock (``now_ns`` is always injected); the replay itself is ``book.engine.run`` over
-the recorded data, whose own guard refuses M6 before R_V6.
+Pure except the L7 seal: L7 and the clock come from ``luna.v7.release`` (git reads of the canonical records,
+the guards' wall clock); the replay itself is ``book.engine.run`` over the recorded data, whose own guard
+refuses M6 before R_V6 and W_FWD7 before L7.
 
 * **Precondition:** the `W_HOLD` verdict is ``V7 HOLDOUT ADVANCE``; otherwise there is no forward test.
 * **Forward model:** mechanical refit, no re-selection, T_fit = [D0, 2026-01-01), T_cal = [2026-01-01,
   2026-07-01) (``FORWARD_BLOCKS``), hashed and frozen before T_F7.
 * **T_F7** = the first 00:00 UTC ≥ 24 h after the independent review PASS; W_FWD7 = [T_F7, T_F7 + 180 d)
   (+ 90 d after the single extension).
-* **L7** = max(T_F7 + 180 d, R_V6) + 1 d (the extended end replaces T_F7 + 180 d). R_V6 undetermined → L7 is
-  None and every forward outcome computation is refused (``SealedBeforeL7``), as is any call before L7.
+* **L7** = max(T_F7 + 180 d, R_V6) + 1 d (the extended end replaces T_F7 + 180 d), derived ONLY from the
+  canonical, hash-checked R_V6 release and T_F7 review-pass records (``luna.v7.release``, SC-06 / AMB-34): no
+  caller supplies R_V6, T_F7, L7 or the time. Either record absent or not verifying → L7 is None and every
+  forward outcome computation is refused (``SealedBeforeL7``), as is any call before L7 on the guards' trusted
+  clock (``release.trusted_now_ns``). The canonical source is injectable (``repo``) like every other guard.
 * **Evaluability (DEC-42):** a quarter is evaluable when every PRIMARY replay input is present and fresh
   (book-top / depth / ticker are diagnostic and ignored; the exchange-filter snapshot is required only for
   the D1–D3 deployment evaluation); a day is evaluable when ≥ 90 % of its 96 quarters are; a recorder gap
@@ -38,7 +42,7 @@ from typing import Literal
 
 import numpy as np
 
-from luna.v7 import stats, verdict
+from luna.v7 import release, stats, verdict
 from luna.v7.accounting import account, daily_ok, k10_ok, mean_daily_net, p11_ok, stressed
 from luna.v7.book.engine import BookRun
 from luna.v7.book.execution import INVALID_TERMINAL
@@ -75,9 +79,9 @@ class NoForwardTest(RuntimeError):
 
 # --- times -------------------------------------------------------------------------------------------------
 def t_f7(review_pass_ns: int) -> int:
-    """The first 00:00 UTC ≥ 24 h after the independent review PASS."""
-    x = to_ns(review_pass_ns) + FW.tf7_delay_h * H
-    return -(-x // D) * D
+    """The first 00:00 UTC ≥ 24 h after the independent review PASS (the formula; the canonical T_F7 is
+    ``release.t_f7``, from the review-pass record)."""
+    return release.tf7_from_review(review_pass_ns)
 
 
 def _check_tf7(t: int) -> int:
@@ -93,13 +97,11 @@ def w_fwd7(t_f7_ns: int, extended: bool = False) -> tuple[int, int]:
     return t, t + (FW.days + (FW.extension_days if extended else 0)) * D
 
 
-def l7(t_f7_ns: int, r_v6: int | None, extended: bool = False) -> int | None:
-    """L7 = max(T_F7 + 180 d, R_V6) + 1 d (the extended end after the extension); None while R_V6 is
-    undetermined (the look is refused)."""
-    end = w_fwd7(t_f7_ns, extended)[1]
-    if r_v6 is None:
-        return None
-    return max(end, to_ns(r_v6)) + FW.l7_pad_days * D
+def l7(repo: Path | None = None, *, extended: bool = False) -> int | None:
+    """L7 = max(T_F7 + 180 d, R_V6) + 1 d (the extended end after the extension) from the canonical records
+    only (``release.l7``); None while either is absent or does not verify (the look is refused). There is no
+    R_V6 / T_F7 argument: a guessed R_V6 cannot produce an L7 (red-team M5)."""
+    return release.l7(repo, extended=extended)
 
 
 def r_v6_strict_default(repo: Path | None = None) -> int:
@@ -110,10 +112,14 @@ def r_v6_strict_default(repo: Path | None = None) -> int:
     return v6_artifacts(repo).looks[2]
 
 
-def require_l7(now_ns: int, l7_ns: int | None) -> None:
-    """Refuse every forward outcome computation before L7 (or while L7 is undetermined)."""
-    if l7_ns is None or to_ns(now_ns) < l7_ns:
-        raise SealedBeforeL7("no forward outcome is computed before L7 or while R_V6 is undetermined (§15)")
+def require_l7(repo: Path | None = None, *, extended: bool = False) -> int:
+    """Refuse every forward outcome computation before the canonical L7 on the trusted clock, or while L7 is
+    undetermined; returns L7."""
+    v = l7(repo, extended=extended)
+    if v is None or release.trusted_now_ns() < v:
+        raise SealedBeforeL7("no forward outcome is computed before L7 or while R_V6 / T_F7 is undetermined "
+                             "(§15; canonical records, trusted clock)")
+    return v
 
 
 # --- evaluability ------------------------------------------------------------------------------------------
@@ -275,10 +281,7 @@ def classify(*, invalid: bool, criteria: Mapping[str, bool], evidence_missing: S
 
 @dataclass(frozen=True)
 class ForwardInputs:
-    holdout_class: str  # the W_HOLD verdict (must be V7 HOLDOUT ADVANCE)
-    t_f7: int
-    r_v6: int | None
-    now_ns: int
+    holdout_class: str  # the W_HOLD verdict (must be V7 HOLDOUT ADVANCE); T_F7 / R_V6 / L7 / clock: canonical
     ml: BookRun  # ML* replay, L-norm, E_T, over W_FWD7
     evaluable_days: int
     integrity: Sequence[str]  # integrity / guard findings (any → INVALID RUN)
@@ -321,12 +324,13 @@ def _ledger_ok(run: BookRun):
     return (led, None) if k10_ok(led) and daily_ok(led) else (None, verdict.INTEGRITY_K10)
 
 
-def forward_evaluate(x: ForwardInputs) -> ForwardVerdict:
-    """The single forward look (§15). Raises before L7 / with R_V6 undetermined (nothing is computed)."""
+def forward_evaluate(x: ForwardInputs, *, repo: Path | None = None) -> ForwardVerdict:
+    """The single forward look (§15). Raises before the canonical L7 / with R_V6 or T_F7 undetermined (nothing
+    is computed). W_FWD7 comes from the canonical T_F7."""
     if x.holdout_class != verdict.ADVANCE:
         raise NoForwardTest(f"W_HOLD verdict {x.holdout_class!r}: no forward test (§15 precondition)")
-    require_l7(x.now_ns, l7(x.t_f7, x.r_v6, x.extended))
-    win = w_fwd7(x.t_f7, x.extended)
+    require_l7(repo, extended=x.extended)
+    win = w_fwd7(release.t_f7(repo), x.extended)  # type: ignore[arg-type]  (defined: L7 exists)
     for name, r in (("ML*", x.ml), ("A0", x.a0)):
         if r is None:
             continue
@@ -404,9 +408,9 @@ def forward_evaluate(x: ForwardInputs) -> ForwardVerdict:
     return ForwardVerdict(cls, tuple(reasons), crit, missing, ext, a0_from, comp, det)
 
 
-def forward_verdict(x: ForwardInputs) -> Verdict:
+def forward_verdict(x: ForwardInputs, *, repo: Path | None = None) -> Verdict:
     """The §15 verdict string of ``forward_evaluate``."""
-    return forward_evaluate(x).cls  # type: ignore[return-value]
+    return forward_evaluate(x, repo=repo).cls  # type: ignore[return-value]
 
 
 __all__ = ["COMPLETE", "DEPLOY_INPUTS", "DIAGNOSTIC_INPUTS", "FORWARD_BLOCKS", "GO", "GO_NOT_DEPLOYABLE",

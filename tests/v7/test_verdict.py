@@ -270,6 +270,16 @@ def _inputs(ml_mu=0.002, ml_m_mu=None, a0_mu=0.0, leak_records=lf.clean_records,
     return V.HoldoutInputs(**base)
 
 
+def _swap(x, records=lf.clean_records, **changes):
+    """``replace(x, **changes)``; when a run changes, the holdout-phase report is rebuilt over the new runs
+    with ``records`` (M-1: it must cover exactly the four runs the verdict is given)."""
+    y = replace(x, **changes)
+    if {"ml_T", "a0_T", "ml_M", "a0_M"} & set(changes):
+        runs = [y.ml_T, y.a0_T, y.ml_M, y.a0_M]
+        y = replace(y, holdout_leakage=lf.holdout_report(y.leakage, runs, records))
+    return y
+
+
 def _ml(nets, **kw):
     return funding_run(nets, arm="A2", h=72, **kw)
 
@@ -287,7 +297,7 @@ def test_holdout_inconclusive_when_only_p4_fails():
     assert v.details["mean_daily_net"] == acc.mean_daily_net(led)
     # each required / secondary run's engine integrity notes are copied into the details
     inp = _inputs()
-    inp = replace(inp, ml_T=replace(inp.ml_T, integrity=("funding_missing:X",)),
+    inp = _swap(inp, ml_T=replace(inp.ml_T, integrity=("funding_missing:X",)),
                   a0_M=replace(inp.a0_M, integrity=("mark_missing:Y",)))
     v = V.holdout(inp)
     assert v.details["run_integrity"] == {"ML* E_T": ("funding_missing:X",), "A0 E_T": (),
@@ -314,13 +324,13 @@ def test_holdout_negative_wiring_p2_p3_p5_p9_p11():
     base = _inputs()
     m = base.ml_T.marks.copy()
     m.loc[100, "equity"] = 0.8
-    v = V.holdout(replace(base, ml_T=replace(base.ml_T, marks=m)))
+    v = V.holdout(_swap(base, ml_T=replace(base.ml_T, marks=m)))
     assert _fails(v) == {"P3", "P4"} and v.details["mdd"] == pytest.approx(0.2)
     killed = pd.DataFrame(dict(t=[LO, LO + D], killed=[False, True]))
-    v = V.holdout(replace(base, ml_T=replace(base.ml_T, decisions=killed)))
+    v = V.holdout(_swap(base, ml_T=replace(base.ml_T, decisions=killed)))
     assert _fails(v) == {"P3", "P4"} and v.details["killed"]
     # DK-113 / m9: a decision log without `killed` is an integrity failure (a class), never an exception
-    v = V.holdout(replace(base, ml_T=replace(base.ml_T, decisions=pd.DataFrame(dict(t=[LO])))))
+    v = V.holdout(_swap(base, ml_T=replace(base.ml_T, decisions=pd.DataFrame(dict(t=[LO])))))
     assert v.cls == V.INVALID
     assert v.reasons == ("ML* E_T: integrity: decisions table without the 'killed' column",)
     assert _flip("P3") == V.NOGO
@@ -384,7 +394,7 @@ def test_em_runs_are_secondary():
                       lambda r: replace(r, invalid=INVALID_MARK,  # round-2 DK-70
                                         invalid_detail="AAAUSDT#0@3: no mark")):
             # P1(E_T) holds: the class is unaffected, P1(E_M) unavailable, no flag
-            v = V.holdout(replace(good, **{field_: spoil(getattr(good, field_))}))
+            v = V.holdout(_swap(good, **{field_: spoil(getattr(good, field_))}))
             assert v.cls == V.INCONCLUSIVE and v.p1_em is None and not v.maker_split_undecidable
             assert v.details["p1_em_unavailable"]
             if "hedge construction" in str(spoil(getattr(good, field_)).invalid_detail):
@@ -396,11 +406,11 @@ def test_em_runs_are_secondary():
             # P1(E_T) fails, E_M unavailable: NO-GO with the explicit flag (never MAKER / NO_EDGE / ADVANCE);
             # it outranks the INCONCLUSIVE of the failing P4 (both candidate classes would)
             weak = _inputs(ml_mu=0.0, ml_m_mu=0.002)
-            v = V.holdout(replace(weak, **{field_: spoil(getattr(weak, field_))}))
+            v = V.holdout(_swap(weak, **{field_: spoil(getattr(weak, field_))}))
             assert v.cls == V.NOGO and v.maker_split_undecidable and v.p1_em is None
             assert any(s.startswith("maker_split_undecidable") for s in v.reasons)
     # an E_M run on other days is not comparable: unavailable as well
-    v = V.holdout(replace(good, a0_M=funding_run(_nets(0.0, 4), arm="A0", h=72, execution="E_M", lo=LO + D)))
+    v = V.holdout(_swap(good, a0_M=funding_run(_nets(0.0, 4), arm="A0", h=72, execution="E_M", lo=LO + D)))
     assert v.p1_em is None and v.cls == V.INCONCLUSIVE
     # classify: P1 fails and P1(E_M) unavailable -> NO-GO, never ADVANCE
     for p4 in (True, False):
@@ -414,32 +424,31 @@ def test_em_runs_are_secondary():
 
 def test_holdout_invalid_required_arm():
     good = _inputs()
-    leaky = _inputs(leak_records=_leak_late).holdout_leakage
     for field_ in ("ml_T", "a0_T"):
         # INVALID_BTC: AMB-21 (b); INVALID_EXIT_GAP / INVALID_MARK: round-2 overrides 2 / 3 (DK-69, DK-70)
         for why in (INVALID_TERMINAL, INVALID_NO_EXIT, INVALID_BTC, INVALID_EXIT_GAP, INVALID_MARK):
             run = replace(getattr(good, field_), invalid=why)
-            v = V.holdout(replace(good, **{field_: run}, holdout_leakage=leaky))
+            v = V.holdout(_swap(good, records=_leak_late, **{field_: run}))
             assert v.cls == V.INVALID and any(why in s for s in v.reasons)
             assert v.applicable[:2] == (V.INVALID, V.LEAKAGE) and v.criteria == {}
             assert set(v.details["run_integrity"]) == {"ML* E_T", "A0 E_T", "ML* E_M", "A0 E_M"}
     # EC-11: A0 alone invalid on W_HOLD is INVALID RUN (no forward-style relaxation)
-    v = V.holdout(replace(good, a0_T=replace(good.a0_T, invalid=INVALID_TERMINAL)))
+    v = V.holdout(_swap(good, a0_T=replace(good.a0_T, invalid=INVALID_TERMINAL)))
     assert v.cls == V.INVALID and v.reasons[0] == f"A0 E_T: {INVALID_TERMINAL}"
     # integrity findings and K10 / daily-identity failures
     v = V.holdout(replace(good, integrity=("guard: refused endpoint",)))
     assert v.cls == V.INVALID and v.reasons == ("integrity: guard: refused endpoint",)
     d = good.ml_T.daily.copy()
     d.loc[3, "price"] = 1e-6
-    v = V.holdout(replace(good, ml_T=replace(good.ml_T, daily=d)))
+    v = V.holdout(_swap(good, ml_T=replace(good.ml_T, daily=d)))
     assert v.cls == V.INVALID and v.reasons == (f"ML* E_T: {V.INTEGRITY_K10}",)
     # roles are checked
     with pytest.raises(ValueError):
-        V.holdout(replace(good, a0_T=good.ml_T))
+        V.holdout(_swap(good, a0_T=good.ml_T))
     with pytest.raises(ValueError):
-        V.holdout(replace(good, ml_M=good.ml_T))
+        V.holdout(_swap(good, ml_M=good.ml_T))
     with pytest.raises(ValueError):
-        V.holdout(replace(good, a0_T=funding_run(_nets(0.0, 2), arm="A0", h=24)))
+        V.holdout(_swap(good, a0_T=funding_run(_nets(0.0, 2), arm="A0", h=24)))
 
 
 def test_k8_and_required_findings_inputs():
@@ -467,7 +476,7 @@ def test_k8_and_required_findings_inputs():
 def test_holdout_misaligned_days_refused():
     good = _inputs()
     with pytest.raises(ValueError, match="aligned"):
-        V.holdout(replace(good, a0_T=funding_run(_nets(0.0, 2), arm="A0", h=72, lo=LO + D)))
+        V.holdout(_swap(good, a0_T=funding_run(_nets(0.0, 2), arm="A0", h=72, lo=LO + D)))
 
 
 def test_secondary_family_holm_and_a1_claim():
@@ -540,6 +549,47 @@ def test_holdout_requires_a_passed_pre_opening_report():
                 if good.holdout_leakage.findings else replace(good.holdout_leakage, runs=())):
         with pytest.raises(ValueError, match="run_holdout_checks"):
             V.holdout(replace(good, holdout_leakage=bad))
+
+
+def test_holdout_report_must_cover_exactly_the_runs():
+    """M-1: the holdout-phase report covers exactly the four runs the verdict is given."""
+    good = _inputs()
+    runs = [good.ml_T, good.a0_T, good.ml_M, good.a0_M]
+    assert V.holdout(good).cls in V.CLASSES
+    extra = lf.holdout_report(good.leakage, [*runs, funding_run(_nets(0.0, 9), arm="A0", h=72)])
+    missing = lf.holdout_report(good.leakage, runs[:3])
+    for bad in (extra, missing):
+        with pytest.raises(ValueError, match="cover"):
+            V.holdout(replace(good, holdout_leakage=bad))
+    with pytest.raises(ValueError, match="cover"):  # a run swapped after its decisions were checked
+        V.holdout(replace(good, ml_T=replace(good.ml_T, invalid_detail="swapped")))
+
+
+def test_holdout_report_must_link_to_the_pre_report():
+    """M-4: a holdout report built on another (verified, passed) pre-opening report is refused."""
+    good = _inputs()
+    content = lf.leakage.report_content(good.leakage)
+    content["data_manifests"] = [["W_DEV", "d" * 64]]
+    twin = lf.leakage.load_persisted_report(content, _content_sha(content))
+    assert twin.passed and twin.sha256 != good.leakage.sha256
+    hold = lf.holdout_report(twin, [good.ml_T, good.a0_T, good.ml_M, good.a0_M])
+    assert hold.pre_sha256 == twin.sha256 != good.leakage.sha256
+    with pytest.raises(ValueError, match="not linked"):
+        V.holdout(replace(good, holdout_leakage=hold))
+    empty = pd.DataFrame({"t": pd.Series([], dtype="int64"), "killed": pd.Series([], dtype=bool)})
+    no_dec = [replace(r, decisions=empty) for r in (good.ml_T, good.a0_T, good.ml_M, good.a0_M)]
+    unchecked = lf.holdout_report(good.leakage, no_dec)  # M-3: zero decisions checked
+    with pytest.raises(ValueError, match="not executed"):
+        V.holdout(replace(good, ml_T=no_dec[0], a0_T=no_dec[1], ml_M=no_dec[2], a0_M=no_dec[3],
+                          holdout_leakage=unchecked))
+
+
+def _content_sha(content) -> str:
+    import hashlib
+    import json
+
+    text = json.dumps(content, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def test_holdout_phase_findings_give_no_go_leakage():

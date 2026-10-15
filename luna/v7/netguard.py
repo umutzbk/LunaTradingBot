@@ -18,6 +18,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
 from luna.v7 import guard, windows
@@ -199,11 +200,14 @@ def check(req: Request) -> Allowed:
     raise _refuse("endpoint not on the S-1.7 allowlist", req)
 
 
-def partition_m6_keys(keys: list[str], m6_span: tuple[int, int | None]
+def partition_m6_keys(keys: list[str], *, repo: Path | None = None
                       ) -> tuple[list[str], list[str], list[str]]:
     """N2, fail closed: (kept, dropped_m6, dropped_unparseable). A key is kept only if it is a directory
     prefix (ends with '/') or has a parseable period that does not overlap M6. W_HOLD keys stay (name only,
-    nothing else is read from them). The M6 span is supplied by the caller (no I/O here)."""
+    nothing else is read from them). M6 is always the canonical span (``windows.m6_cached``: the hash-checked
+    V6 artefacts and R_V6 release record, read once per process); no caller span is taken (SC-06, red-team
+    M5: a hand-built span kept M6 keys)."""
+    m6_span = windows.m6_cached(repo)
     kept: list[str] = []
     m6_dropped: list[str] = []
     unparseable: list[str] = []
@@ -218,6 +222,6 @@ def partition_m6_keys(keys: list[str], m6_span: tuple[int, int | None]
     return kept, m6_dropped, unparseable
 
 
-def drop_m6_keys(keys: list[str], m6_span: tuple[int, int | None]) -> list[str]:
+def drop_m6_keys(keys: list[str], *, repo: Path | None = None) -> list[str]:
     """N2: the keys that survive ``partition_m6_keys`` (M6 and unparseable keys dropped in memory)."""
-    return partition_m6_keys(keys, m6_span)[0]
+    return partition_m6_keys(keys, repo=repo)[0]

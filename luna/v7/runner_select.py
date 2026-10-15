@@ -19,18 +19,30 @@ S-13.2 / S-13.4 inputs, K3, K8, K11, EC-2, DEC-19; AMB-27). Orchestration only (
   be passed, be for ML* at h* and, with ``dev``, carry dev's fold-model hashes) and builds the holdout-phase
   report itself (``leakage.run_holdout_checks`` over the four holdout runs with the caller's decision
   ``records``, e.g. ``DecisionProvider.record``); no free leakage tuple exists any more.
+* Verifiable DevSelection (SC-05, AMB-34): a DevSelection is built only by ``dev_selection`` (a module-private
+  issuer checked in ``__post_init__``) and carries the sha256 of its canonical record
+  (``dev_selection_record``: windows, the S-10.6 result, ML*, the S-10.7 kill, fold nets, the identity and
+  output sha256 of every book, the fold-model hashes, convergence); ``verify_dev_selection`` recomputes it and
+  requires it to have been issued in this process. Persisted with the LeakageReport in the pre-opening record
+  (``luna.v7.opening``), re-verified across processes by ``guard.authorize_holdout``.
+* ``holdout_inputs`` is bound to the opening (SC-05, I-2): the authorization must verify (markers and pin,
+  ``guard.verify_authorization``); the LeakageReport must be the pinned one (sha256), the DevSelection (or the
+  W_DEV ML* run) the pinned one, the fold-model hashes the pinned ones on every path, and the final model the
+  one the report audited (``leakage.model_hash(final_model) == report.final_model_hash``).
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
 
-from luna.v7 import cv, guard, leakage, models, selection, stats
+from luna.v7 import cv, guard, leakage, models, runrecord, selection, stats
 from luna.v7.accounting import account, mean_daily_net, period_net
 from luna.v7.arms import families
 from luna.v7.book.engine import BookRun
@@ -47,11 +59,15 @@ from luna.v7.runner import (
 from luna.v7.verdict import HoldoutInputs, K8Rates
 from luna.v7.windows import W_DEV
 
+_DEV_ISSUER = object()  # module-private: only dev_selection builds a DevSelection
+_DEV_ISSUED: set[str] = set()  # record sha256 of every DevSelection issued here (this process)
+
 
 @dataclass(frozen=True)
 class DevSelection:
     """S-10.6 / S-10.7 result. ``result``: ``selection.Choice`` or ``selection.Invalid``. ``kill`` and
-    ``fold_nets`` are None when the validity precondition failed (S-10.7 runs only after it holds)."""
+    ``fold_nets`` are None when the validity precondition failed (S-10.7 runs only after it holds). Built only
+    by ``dev_selection``; ``sha256`` is the sha256 of ``dev_selection_record`` (``verify_dev_selection``)."""
 
     window: tuple[int, int]
     quarter_edges: tuple[int, ...]
@@ -62,11 +78,89 @@ class DevSelection:
     fold_nets: tuple[float, ...] | None
     em_runs: dict[str, BookRun]
     convergence: tuple[dict, ...]
+    sha256: str = ""
+    _issuer: object = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._issuer is not _DEV_ISSUER:
+            raise TypeError("a DevSelection is built only by runner_select.dev_selection")
 
     @property
     def ml_star(self) -> tuple[str, int] | None:
         r = self.result
         return (r.arm, r.h) if isinstance(r, selection.Choice) else None
+
+
+def _plain(o: object) -> object:
+    """JSON-plain form: tuples -> lists, numpy scalars -> Python, non-finite floats -> None."""
+    if isinstance(o, bool) or o is None or isinstance(o, str):
+        return o
+    if hasattr(o, "item") and not isinstance(o, list | tuple | dict):
+        o = o.item()  # type: ignore[attr-defined]
+    if isinstance(o, float):
+        return o if math.isfinite(o) else None
+    if isinstance(o, int):
+        return o
+    if isinstance(o, Mapping):
+        return {str(k): _plain(v) for k, v in o.items()}
+    if isinstance(o, list | tuple):
+        return [_plain(v) for v in o]
+    raise TypeError(f"not JSON-plain in a DevSelection record: {type(o).__name__}")
+
+
+def _result_record(res: selection.Choice | selection.Invalid) -> dict:
+    if isinstance(res, selection.Choice):
+        return {"type": "choice", "arm": res.arm, "h": int(res.h),
+                "lbs": [[a, int(h), float(v)] for (a, h), v in sorted(res.lbs.items())],
+                "ell": int(res.ell), "B": int(res.B), "seed": int(res.seed),
+                "reference_invalid": list(res.reference_invalid)}
+    if isinstance(res, selection.Invalid):
+        return {"type": "invalid", "reason": res.reason, "runs": list(res.runs),
+                "reference_invalid": list(res.reference_invalid)}
+    raise ValueError("DevSelection.result must be selection.Choice or selection.Invalid")
+
+
+def dev_selection_record(dev: DevSelection) -> dict:
+    """The canonical JSON record of a DevSelection (what its sha256 covers): windows, the S-10.6 result, ML*,
+    the S-10.7 kill (None = not run), the fold nets, the DT4 identity and output sha256 of every book
+    (``runrecord.run_identity``), the fold-model hashes per (arm, h) and the convergence rows."""
+    body = {
+        "kind": "DevSelection",
+        "window": [int(dev.window[0]), int(dev.window[1])],
+        "quarter_edges": [int(x) for x in dev.quarter_edges],
+        "result": _result_record(dev.result),
+        "ml_star": None if dev.ml_star is None else [dev.ml_star[0], int(dev.ml_star[1])],
+        "kill": None if dev.kill is None else [str(k) for k in dev.kill],
+        "fold_nets": None if dev.fold_nets is None else [float(x) for x in dev.fold_nets],
+        "runs": [{"key": [a, int(h)], **runrecord.run_identity(r)} for (a, h), r in sorted(dev.runs.items())],
+        "em_runs": {str(k): runrecord.run_identity(r) for k, r in sorted(dev.em_runs.items())},
+        "fold_model_hashes": [[a, int(h), list(m.hashes)] for (a, h), m in sorted(dev.models.items())],
+        "convergence": _plain(list(dev.convergence)),
+    }
+    return json.loads(runrecord.canonical_json(_plain(body)))
+
+
+def _record_sha(dev: DevSelection) -> str:
+    return hashlib.sha256(runrecord.canonical_json(dev_selection_record(dev)).encode()).hexdigest()
+
+
+def _issue_dev(**fields) -> DevSelection:
+    """The module-private producer of DevSelection (``dev_selection`` only; the tests' documented hook)."""
+    sha = _record_sha(DevSelection(**fields, _issuer=_DEV_ISSUER))
+    _DEV_ISSUED.add(sha)
+    return DevSelection(**fields, sha256=sha, _issuer=_DEV_ISSUER)
+
+
+def verify_dev_selection(dev: object) -> bool:
+    """True iff ``dev`` is a DevSelection issued by ``dev_selection`` (in this process) whose record still
+    hashes to its ``sha256`` (a copied-and-altered one never verifies)."""
+    if type(dev) is not DevSelection or dev._issuer is not _DEV_ISSUER:
+        return False
+    try:
+        sha = _record_sha(dev)
+    except (TypeError, ValueError, AttributeError):
+        return False
+    return sha == dev.sha256 and sha in _DEV_ISSUED
 
 
 def quarters(fold_models: Mapping[int, Sequence]) -> tuple[tuple[int, int], ...]:
@@ -110,7 +204,8 @@ def dev_selection(u: ResearchUniverse, provider: DecisionProvider, fold_models: 
     conv = fold_convergence(fold_models, allow_unavailable=True)
     res = selection.choose({**runs, **ref}, B=B, seed=seed)
     if isinstance(res, selection.Invalid):
-        return DevSelection(window, edges, {**runs, **ref}, models, res, None, None, {}, conv)
+        return _issue_dev(window=window, quarter_edges=edges, runs={**runs, **ref}, models=models, result=res,
+                          kill=None, fold_nets=None, em_runs={}, convergence=conv)
     key = (res.arm, res.h)
     led = account(runs[key])
     nets = tuple(period_net(led, list(edges)))
@@ -120,7 +215,8 @@ def dev_selection(u: ResearchUniverse, provider: DecisionProvider, fold_models: 
         em_runs["ML*"] = run_book(res.arm, u, provider, window, res.h, now_ns, model=models[key],
                                   execution="E_M")
         em_runs["A0"] = run_book("A0", u, provider, window, res.h, now_ns, execution="E_M")
-    return DevSelection(window, edges, {**runs, **ref}, models, res, kill, nets, em_runs, conv)
+    return _issue_dev(window=window, quarter_edges=edges, runs={**runs, **ref}, models=models, result=res,
+                      kill=kill, fold_nets=nets, em_runs=em_runs, convergence=conv)
 
 
 def missing_funding_rate(runs: Sequence[BookRun]) -> float:
@@ -168,18 +264,21 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
     y_reg, dates), the A1 calibration = (P̂_cal, y_pos, dates); K8 = (the panel's invalid-label rate,
     ``missing_funding_rate`` of the required E_T runs). ``leakage_report``: the passed pre-opening
     ``leakage.LeakageReport`` of ML*; ``records``: the decision records of the holdout runs (L1 re-check,
-    ``leakage.run_holdout_checks``)."""
-    if not isinstance(auth, guard.HoldoutAuthorization):
-        raise guard.HoldoutBlocked("holdout inputs need the user's HoldoutAuthorization (DEC-19)")
+    ``leakage.run_holdout_checks``). Everything is bound to the opening's pin (module docstring)."""
+    pin = guard.verify_authorization(auth)  # HoldoutBlocked: forged, markers / pin missing or altered
     if dev is not None:
         if dev.ml_star is None or dev.kill is None:
             raise ValueError("the S-10.6 validity precondition failed: no ML* (the holdout stays sealed)")
+        if not verify_dev_selection(dev) or dev.sha256 != pin["dev_selection_sha256"]:
+            raise ValueError("the DevSelection is not the one pinned at the opening (dev_selection_sha256)")
         arm, h = dev.ml_star
         dev_run, kill = dev.runs[dev.ml_star], dev.kill
     else:
         if dev_ml_run is None or dev_kill is None:
             raise ValueError("W_DEV facts missing: pass dev or (dev_ml_run, dev_kill)")
         arm, h, dev_run, kill = dev_ml_run.arm, dev_ml_run.h_star, dev_ml_run, tuple(dev_kill)
+        if runrecord.run_output_sha256(dev_ml_run) != pin["dev_ml_run_sha256"]:
+            raise ValueError("dev_ml_run is not the W_DEV ML* run of the DevSelection pinned at the opening")
     if kill:
         raise ValueError("S-10.7 development kill: the holdout is never opened (K3, DEC-19)")
     for r, a, e in ((ml_T, arm, "E_T"), (a0_T, "A0", "E_T"), (ml_M, arm, "E_M"), (a0_M, "A0", "E_M")):
@@ -196,6 +295,11 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
                          f"{rep.blocking}")
     if rep.ml_star != (arm, int(h)):
         raise ValueError(f"the LeakageReport is for ML* = {rep.ml_star}, not {(arm, int(h))}")
+    if rep.sha256 != pin["leakage_report_sha256"]:
+        raise ValueError("the LeakageReport is not the one pinned at the opening (leakage_report_sha256)")
+    pinned_folds = {int(k): tuple(v) for k, v in pin["fold_model_hashes"].items()}
+    if dict(rep.fold_model_hashes) != pinned_folds:  # I-2: fold models bound on every path
+        raise ValueError("the LeakageReport's fold models are not the DevSelection's pinned at the opening")
     if dev is not None:
         dev_hashes = {hh: tuple(m.hashes) for (a, hh), m in dev.models.items() if a == arm}
         if dict(rep.fold_model_hashes) != dev_hashes:
@@ -209,6 +313,9 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
     cfams = getattr(final_model, "clf", None)  # deferred 19b minor: the A1 / P8 classifier of ML*'s family
     if (fams is None) != (cfams is None) or (cfams is not None and clf not in cfams):
         raise ValueError(f"the final model has no {clf} classifier (ML* = {arm}: {reg} / {clf})")
+    final_hash = leakage.model_hash(final_model)  # ValueError if unhashable: no provenance, fail closed
+    if final_hash != rep.final_model_hash or final_hash != pin["final_model_hash"]:  # None never matches
+        raise ValueError("the final model scored is not the one the pinned LeakageReport audited (I-2)")
     s = cv.canonical(panel.samples, h)
     if len(s) == 0:
         raise ValueError("no valid holdout labels for P7 / P8")
@@ -232,5 +339,5 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
                          secondary=secondary, a1_calib=a1, B=B, seed=seed)
 
 
-__all__ = ["DevSelection", "dev_leakage_checks", "dev_selection", "holdout_inputs", "missing_funding_rate",
-           "quarters"]
+__all__ = ["DevSelection", "dev_leakage_checks", "dev_selection", "dev_selection_record", "holdout_inputs",
+           "missing_funding_rate", "quarters", "verify_dev_selection"]

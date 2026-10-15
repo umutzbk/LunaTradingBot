@@ -422,7 +422,7 @@ NOT_CODED: list[tuple[str, str, str]] = [
     ("S-13.2 P5 holdout quarters", r"net > 0 in ≥ \d of the (4) holdout quarters",
      "structural: W_HOLD is one year (S-1.4); quarter edges are inputs of verdict.py:207 (p5)"),
     ("§15 L7 strict-default date", r"\*\*L7 ≥ (2027-10-14)\*\* under the strict default",
-     "derived at runtime from the hash-checked V6 artefacts (forward.py:105 r_v6_strict_default, S-1.1)"),
+     "derived at runtime from the hash-checked V6 artefacts (forward.py:107 r_v6_strict_default, S-1.1)"),
     ("§15 exchange-filter cadence", r"snapshotted at least daily and on change",
      "operational recorder cadence (forward recorder service, not in this engine)"),
     ("§15 depth snapshot cadence", r"a depth snapshot every (5) minutes",

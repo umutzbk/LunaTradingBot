@@ -14,7 +14,19 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from luna.v7 import cv, features, guard, models, runner, runrecord, selection, verdict, windows
+from luna.v7 import (
+    cv,
+    features,
+    guard,
+    leakage,
+    models,
+    opening,
+    runner,
+    runrecord,
+    selection,
+    verdict,
+    windows,
+)
 from luna.v7.arms import arm_scores, families
 from luna.v7.constants import FROZEN
 from luna.v7.data.instances import Instance
@@ -22,9 +34,17 @@ from luna.v7.data.notices import NoticeVersion
 from luna.v7.data.terminal import TerminalEvent
 from luna.v7.features import FEATURES
 from luna.v7.runner import DecisionProvider, FoldScoreModel, LabelPanel, ResearchUniverse
-from luna.v7.runner_select import dev_leakage_checks, dev_selection, holdout_inputs, missing_funding_rate
+from luna.v7.runner_select import (
+    dev_leakage_checks,
+    dev_selection,
+    dev_selection_record,
+    holdout_inputs,
+    missing_funding_rate,
+    verify_dev_selection,
+)
 from luna.v7.timeutil import MIN, D, H, to_ns
 from luna.v7.windows import Fold
+from tests.v7 import auth_fixtures as af
 from tests.v7 import fixtures_v7 as fx
 from tests.v7 import leak_fixtures as lf
 
@@ -37,11 +57,6 @@ LO = fx.BOOK[0]
 T = LO + D + 5 * MIN  # a decision (2022-12-06 00:05) with dense 1m bars and a day of history in BOOK
 NOW = fx.NOW
 B_SMALL = 200
-
-
-def auth() -> guard.HoldoutAuthorization:
-    """Test-only stand-in for the DEC-19 authorization object (no W_HOLD window is ever used)."""
-    return guard.HoldoutAuthorization(guard.HoldoutAuthorization._secret, {"synthetic": True})
 
 
 @pytest.fixture(scope="module")
@@ -627,8 +642,21 @@ def dev_valid(inputs):
     return dev_selection(u, p, fm, NOW, B=B_SMALL), q
 
 
+@pytest.fixture(scope="module")
+def opened(dev_valid, tmp_path_factory):
+    """A real synthetic opening (SC-05) bound to a DevSelection with dev_valid's books, ML* and E_M runs and
+    the leak_fixtures fold models (issued through the documented test hook, ``auth_fixtures``), and the real
+    passed LeakageReport of those fold models."""
+    dev, _ = dev_valid
+    arm, h = dev.ml_star
+    hooked = af.dev_selection(arm, h, runs=dev.runs, em_runs=dev.em_runs, result=dev.result,
+                              window=dev.window)
+    return af.authorize(tmp_path_factory.mktemp("opening"), dev=hooked)
+
+
 def test_dev_selection_runs_all_required(dev_valid):
     dev, q = dev_valid
+    assert verify_dev_selection(dev) and dev.sha256 == opening.content_sha256(dev_selection_record(dev))
     assert set(dev.runs) == set(selection.REQUIRED)
     assert all(r.window == (q[0][0], q[-1][1]) and r.execution == "E_T" for r in dev.runs.values())
     assert isinstance(dev.result, selection.Choice) and dev.ml_star is not None
@@ -646,7 +674,7 @@ def test_dev_selection_runs_all_required(dev_valid):
         assert {t for t in m.log if t >= q[1][0]} and all(m.log[t][0] == (t >= q[1][0]) for t in m.log)
 
 
-def test_dev_selection_invalid_precondition(inputs):
+def test_dev_selection_invalid_precondition(inputs, opened):
     """A held B / C terminal event (RELUSDT's instance 0 ends with no reconstructible settlement) in A0 at a
     horizon stops V7 before selection with the exact EC-2 / S-10.6 string; no kill, no E_M run. The exit is
     never filled from instance 1 bars (no cross-instance fill)."""
@@ -672,7 +700,7 @@ def test_dev_selection_invalid_precondition(inputs):
     rel = r72.fills[r72.fills["symbol"] == fx.RELIST]
     assert len(rel) > 0 and (rel["instance"] == i0.idx).all() and (rel["ts"] < i0.last_trade_ts).all()
     with pytest.raises(ValueError, match="no ML"):
-        holdout_inputs(auth=auth(), ml_T=r72, a0_T=r72, ml_M=r72, a0_M=r72, quarter_edges=(), panel=None,
+        holdout_inputs(auth=opened.auth, ml_T=r72, a0_T=r72, ml_M=r72, a0_M=r72, quarter_edges=(), panel=None,
                        final_model=None, leakage_report=None, records=None, integrity=(), dev=dev)
     with pytest.raises(ValueError, match="no ML"):  # no ML*: no leakage report either (holdout sealed)
         dev_leakage_checks(dev, {}, None, **lf.PROV)
@@ -688,16 +716,19 @@ def _panel(h: int, n_days: int = 4, rate: float = 0.002) -> LabelPanel:
     return LabelPanel(h, s.reset_index(drop=True), pd.DataFrame(), len(s), 0, 0, rate, ())
 
 
-def test_holdout_inputs_require_authorization(dev_valid):
+def test_holdout_inputs_require_authorization(dev_valid, opened):
     dev, q = dev_valid
     arm, h = dev.ml_star
+    reg, clf = families(arm)
+    final = lf.final(h, reg)  # the final model the pinned LeakageReport audited (I-2)
     kw = dict(ml_T=dev.runs[(arm, h)], a0_T=dev.runs[("A0", h)], ml_M=dev.em_runs["ML*"],
               a0_M=dev.em_runs["A0"],
               quarter_edges=(q[0][0], q[0][0] + 12 * H, q[1][0], q[1][0] + 12 * H, q[1][1]),
-              panel=_panel(h), final_model=FakeFold(fold(9, 0, 1), h, 1.0),
-              leakage_report=lf.passed_report(arm, h), records=lf.clean_records, integrity=(),
+              panel=_panel(h), final_model=final,
+              leakage_report=opened.report, records=lf.clean_records, integrity=(),
               dev_ml_run=dev.runs[(arm, h)], dev_kill=(), B=B_SMALL)
-    for bad in (None, object(), {"approved": True}):
+    auth = lambda: opened.auth  # noqa: E731  (the real opening of this module)
+    for bad in (None, object(), {"approved": True}, object.__new__(guard.HoldoutAuthorization)):
         with pytest.raises(guard.HoldoutBlocked):
             holdout_inputs(auth=bad, **kw)
     x = holdout_inputs(auth=auth(), **kw)
@@ -731,7 +762,6 @@ def test_holdout_inputs_require_authorization(dev_valid):
         with pytest.raises(ValueError, match="research"):
             holdout_inputs(auth=auth(), **{**kw, name: replace(kw[name], research=False)})
     # deferred 19b minor: the classifier mapping must belong to ML*'s family (A2 -> logit_en, A3 -> lgb_clf)
-    reg, clf = families(arm)
     other = "lgb_clf" if clf == "logit_en" else "logit_en"
     fm = FakeFold(fold(9, 0, 1), h, 1.0)
     for bad_clf in ({other: object()}, {}):
@@ -739,14 +769,32 @@ def test_holdout_inputs_require_authorization(dev_valid):
         with pytest.raises(ValueError, match="classifier"):
             holdout_inputs(auth=auth(), **{**kw, "final_model": bad})
     good = _FamilyFold(fm, reg={reg: object()}, clf={clf: object(), other: object()})
-    assert isinstance(holdout_inputs(auth=auth(), **{**kw, "final_model": good}), verdict.HoldoutInputs)
+    # I-2: the right families are not enough: the model scored must be the final model the report audited
+    for other_model in (good, FakeFold(fold(9, 0, 1), h, 1.0)):
+        with pytest.raises(ValueError, match="audited"):
+            holdout_inputs(auth=auth(), **{**kw, "final_model": other_model})
     rest = {k: v for k, v in kw.items() if k not in ("dev_ml_run", "dev_kill")}
     if dev.kill:  # the real W_DEV result: a kill never opens the holdout (DEC-19)
         with pytest.raises(ValueError, match="kill"):
             holdout_inputs(auth=auth(), **rest, dev=dev)
-    else:  # the report must have been run on this DevSelection's fold models (Task 24 link)
+    else:  # not the DevSelection pinned at the opening (its fold models are not the report's either)
         with pytest.raises(ValueError, match="DevSelection"):
             holdout_inputs(auth=auth(), **rest, dev=dev)
+    # the pinned DevSelection itself is accepted on the dev= path
+    assert isinstance(holdout_inputs(auth=auth(), **rest, dev=opened.dev), verdict.HoldoutInputs)
+    # SC-05: the W_DEV ML* run, the LeakageReport and the fold models are the pinned ones on every path
+    with pytest.raises(ValueError, match="pinned"):
+        holdout_inputs(auth=auth(), **{**kw, "dev_ml_run": replace(kw["dev_ml_run"], invalid_detail="x")})
+    content = leakage.report_content(opened.report)
+    content["data_manifests"] = [["W_DEV", "d" * 64]]  # a verified, passed report for ML*, not the pinned one
+    twin = leakage.load_persisted_report(content, opening.content_sha256(content))
+    assert twin.passed and twin.ml_star == (arm, h) and twin.sha256 != opened.report.sha256
+    with pytest.raises(ValueError, match="pinned"):
+        holdout_inputs(auth=auth(), **{**kw, "leakage_report": twin})
+    # M-4: a verified, passed report for another ML* reaches the ML* branch
+    other_ml = lf.passed_report("A2", 72) if (arm, h) != ("A2", 72) else lf.passed_report("A2", 24)
+    with pytest.raises(ValueError, match=r"is for ML\*"):
+        holdout_inputs(auth=auth(), **{**kw, "leakage_report": other_ml})
 
 
 def test_dev_leakage_checks_use_the_dev_fold_models():
@@ -778,7 +826,7 @@ def test_missing_funding_rate(dev_valid):
 # ----------------------------------------------------------------------------------------- fail closed
 
 
-def test_missing_required_inputs_fail_closed(inputs, dev_valid):
+def test_missing_required_inputs_fail_closed(inputs, dev_valid, opened):
     x = inputs["AAAUSDT"]
     cases = {
         "no hedge": lambda: ResearchUniverse({"AAAUSDT": x}),
@@ -814,7 +862,7 @@ def test_missing_required_inputs_fail_closed(inputs, dev_valid):
                         model=m24)
     dev, _ = dev_valid
     with pytest.raises(ValueError, match="W_DEV facts"):
-        holdout_inputs(auth=auth(), ml_T=dev.runs[("A2", 24)], a0_T=dev.runs[("A0", 24)],
+        holdout_inputs(auth=opened.auth, ml_T=dev.runs[("A2", 24)], a0_T=dev.runs[("A0", 24)],
                        ml_M=dev.em_runs["A0"], a0_M=dev.em_runs["A0"], quarter_edges=(), panel=_panel(24),
                        final_model=None, leakage_report=None, records=None, integrity=())
 

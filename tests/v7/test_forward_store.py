@@ -1,4 +1,6 @@
-"""Task 2 forward-store tests (spec S-1.7 M3-3, EC-8, DEC-45, §15, L7)."""
+"""Task 2 forward-store tests (spec S-1.7 M3-3, EC-8, DEC-45, §15, L7). The read gate is the canonical L7
+(SC-06): a canonical release / review-pass fixture repository and the pinned trusted clock
+(``auth_fixtures``); no time or L7 argument exists."""
 
 from __future__ import annotations
 
@@ -9,9 +11,10 @@ import pytest
 
 from luna.v7.forward_store import ForwardStore, SealedBeforeL7, extract_transport_id
 from luna.v7.timeutil import D, to_ns
+from tests.v7 import auth_fixtures as af
 
 T0 = to_ns("2026-10-15")
-L7 = T0 + 180 * D
+L7 = to_ns("2027-10-15")  # canonical: T_F7 = 2026-10-16, R_V6 = 2027-10-14 -> max(T_F7 + 180 d, R_V6) + 1 d
 
 
 def test_write_records_sha_and_is_append_only(tmp_path):
@@ -30,25 +33,31 @@ def test_write_records_sha_and_is_append_only(tmp_path):
         s.write_raw("https://example/a", body, 123)  # small int: ambiguous unit
 
 
-def test_forward_store_unreadable_before_l7(tmp_path):
-    s = ForwardStore(tmp_path / "fs")
-    rec = s.write_raw("https://example/a", b"abc", T0)
-    for now, l7 in ((L7 - 1, L7), (L7 + 5 * D, None)):  # before L7; L7 unknown (R_V6 undetermined)
+def test_forward_store_unreadable_before_l7(tmp_path, monkeypatch):
+    canon = af.canonical_repo(tmp_path / "canon")
+    none = af.canonical_repo(tmp_path / "none", r_v6=None)  # R_V6 undetermined: L7 unknown
+    rec = ForwardStore(tmp_path / "fs").write_raw("https://example/a", b"abc", T0)
+    for repo, now in ((canon, L7 - 1), (none, L7 + 5 * D), (None, L7 + 5 * D)):
+        s = ForwardStore(tmp_path / "fs", repo=repo)
+        af.clock(monkeypatch, now)
         with pytest.raises(SealedBeforeL7):
-            s.read(rec.sha256, now_ns=now, l7_ns=l7)
+            s.read(rec.sha256)
         with pytest.raises(SealedBeforeL7):
-            list(s.iter_records(now_ns=now, l7_ns=l7))
-    assert s.read(rec.sha256, now_ns=L7, l7_ns=L7) == b"abc"
-    assert [r.sha256 for r in s.iter_records(now_ns=L7, l7_ns=L7)] == [rec.sha256]
+            list(s.iter_records())
+    s = ForwardStore(tmp_path / "fs", repo=canon)
+    af.clock(monkeypatch, L7)
+    assert s.read(rec.sha256) == b"abc"
+    assert [r.sha256 for r in s.iter_records()] == [rec.sha256]
     assert not hasattr(s, "read_unchecked")
 
 
-def test_read_detects_tampering(tmp_path):
-    s = ForwardStore(tmp_path / "fs")
+def test_read_detects_tampering(tmp_path, monkeypatch):
+    s = ForwardStore(tmp_path / "fs", repo=af.canonical_repo(tmp_path / "canon"))
     rec = s.write_raw("u", b"abc", T0)
     (tmp_path / "fs" / "blobs" / rec.sha256).write_bytes(b"zzz")
+    af.clock(monkeypatch, L7)
     with pytest.raises(ValueError, match="sha256"):
-        s.read(rec.sha256, now_ns=L7, l7_ns=L7)
+        s.read(rec.sha256)
 
 
 def test_transport_extraction_no_semantics():

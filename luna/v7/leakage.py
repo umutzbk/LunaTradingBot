@@ -163,6 +163,119 @@ def _issue(cls: type, **content):
     return cls(**content, sha256=sha, _issuer=_ISSUER)
 
 
+def report_content(report: LeakageReport) -> dict:
+    """The canonical, JSON-serialisable content of a verified LeakageReport (what its sha256 covers): the
+    persisted form of the pre-opening record (``luna.v7.opening``, Task 24 I-1)."""
+    if not isinstance(report, LeakageReport) or not verify_report(report):
+        raise ValueError("report_content needs a LeakageReport issued by run_leakage_checks")
+    return json.loads(json.dumps(_content(report), sort_keys=True, allow_nan=False))
+
+
+def _num(v: object) -> float:
+    if v is None:
+        return float("nan")
+    if isinstance(v, bool) or not isinstance(v, int | float):
+        raise ValueError(f"not a number: {v!r}")
+    return float(v)
+
+
+def _exact(d: object, keys: tuple[str, ...]) -> dict:
+    if not isinstance(d, dict) or set(d) != set(keys):
+        raise ValueError(f"persisted report row: expected the fields {keys}")
+    return d
+
+
+def _typed(v: object, t: type, what: str):
+    if (isinstance(v, bool) and t is not bool) or not isinstance(v, t):
+        raise ValueError(f"persisted report: {what} must be {t.__name__}")
+    return v
+
+
+def _pairs(v: object, what: str) -> list:
+    if not isinstance(v, list) or not all(isinstance(x, list) and len(x) == 2 for x in v):
+        raise ValueError(f"persisted report: {what} must be a list of pairs")
+    return v
+
+
+def load_persisted_report(content: dict, sha256: str) -> LeakageReport:
+    """Rebuild a persisted LeakageReport (``report_content``) in another process (Task 24 I-1, AMB-34).
+
+    The content is parsed strictly (exact field sets and types), the rebuilt report must hash to ``sha256``
+    (the hash pinned by the pre-opening record), and only then is it registered as issued in this process, so
+    ``verify_report`` holds for it; ``passed`` is then re-derived from the content by the usual properties.
+    Called by the opening flow (``opening.load_pre_opening``, via ``guard.authorize_holdout``). A guard
+    against accidental or premature runs, not a cryptographic boundary: whoever rewrites a record and every
+    hash can rebuild a report; the opening's own checks (``passed`` semantics, links, commit == HEAD) still
+    apply."""
+    c = _exact(content, ("kind", "ml_star", "seed", "l9a", "l9b", "k7", "k7_expected", "commit", "dirty",
+                         "data_manifests", "panel_sha256s", "fold_model_hashes", "final_model_hash"))
+    if c["kind"] != "LeakageReport" or not isinstance(sha256, str) or not _SHA.match(sha256):
+        raise ValueError("persisted report: not a LeakageReport content / sha256")
+    ms = c["ml_star"]
+    if not isinstance(ms, list) or len(ms) != 2:
+        raise ValueError("persisted report: ml_star")
+    l9a_rows = []
+    for x in c["l9a"]:
+        d = _exact(x, ("family", "horizon", "ic", "se", "n_dates", "n_folds", "passed"))
+        l9a_rows.append(L9aResult(_typed(d["family"], str, "family"), _typed(d["horizon"], int, "horizon"),
+                                  _num(d["ic"]), _num(d["se"]), _typed(d["n_dates"], int, "n_dates"),
+                                  _typed(d["n_folds"], int, "n_folds"), _typed(d["passed"], bool, "passed")))
+    l9b_rows = []
+    for x in c["l9b"]:
+        d = _exact(x, ("horizon", "refused", "n_decisions", "n_refused", "first_refusal", "sandbox_column",
+                       "sandbox"))
+        box = tuple(SandboxIC(_typed(b["family"], str, "family"), _num(b["ic"]), _num(b["se"]),
+                              _typed(b["n_dates"], int, "n_dates"))
+                    for b in (_exact(y, ("family", "ic", "se", "n_dates")) for y in d["sandbox"]))
+        l9b_rows.append(L9bResult(_typed(d["horizon"], int, "horizon"), _typed(d["refused"], bool, "refused"),
+                                  _typed(d["n_decisions"], int, "n_decisions"),
+                                  _typed(d["n_refused"], int, "n_refused"),
+                                  _typed(d["first_refusal"], str, "first_refusal"),
+                                  _typed(d["sandbox_column"], str, "sandbox_column"), box))
+    k7_rows = []
+    for x in c["k7"]:
+        d = _exact(x, ("horizon", "model", "family", "evaluated", "max_share", "feature", "total", "trigger",
+                       "resolution", "resolution_text"))
+        if d["feature"] is not None:
+            _typed(d["feature"], str, "feature")
+        if d["resolution"] is not None and d["resolution"] not in RESOLUTIONS:
+            raise ValueError("persisted report: unknown K7 resolution")
+        k7_rows.append(K7Result(_typed(d["horizon"], int, "horizon"), _typed(d["model"], str, "model"),
+                                _typed(d["family"], str, "family"), _typed(d["evaluated"], bool, "evaluated"),
+                                _num(d["max_share"]), d["feature"], _num(d["total"]),
+                                _typed(d["trigger"], bool, "trigger"), d["resolution"],
+                                _typed(d["resolution_text"], str, "resolution_text")))
+    expected = []
+    for x in c["k7_expected"]:
+        if not isinstance(x, list) or len(x) != 3:
+            raise ValueError("persisted report: k7_expected")
+        expected.append((_typed(x[0], int, "k7_expected"), _typed(x[1], str, "k7_expected"),
+                         _typed(x[2], str, "k7_expected")))
+    fields = dict(
+        ml_star=(_typed(ms[0], str, "ml_star"), _typed(ms[1], int, "ml_star")),
+        seed=_typed(c["seed"], int, "seed"), l9a=tuple(l9a_rows), l9b=tuple(l9b_rows), k7=tuple(k7_rows),
+        k7_expected=tuple(expected), commit=_typed(c["commit"], str, "commit"),
+        dirty=_typed(c["dirty"], bool, "dirty"),
+        data_manifests=tuple((_typed(k, str, "manifest"), _typed(v, str, "manifest"))
+                             for k, v in _pairs(c["data_manifests"], "data_manifests")),
+        panel_sha256s=tuple((_typed(h, int, "panel"), _typed(v, str, "panel"))
+                            for h, v in _pairs(c["panel_sha256s"], "panel_sha256s")),
+        fold_model_hashes=tuple((_typed(h, int, "fold hashes"), tuple(_typed(x, str, "fold hash") for x in v))
+                                for h, v in _pairs(c["fold_model_hashes"], "fold_model_hashes")),
+        final_model_hash=(None if c["final_model_hash"] is None
+                          else _typed(c["final_model_hash"], str, "final_model_hash")))
+    probe = LeakageReport(**fields, sha256="", _issuer=_ISSUER)
+    if _content_sha(probe) != sha256:
+        raise ValueError("persisted report: the rebuilt content does not hash to the pinned sha256")
+    _ISSUED.add(sha256)
+    return LeakageReport(**fields, sha256=sha256, _issuer=_ISSUER)
+
+
+def panel_sha256(samples: pd.DataFrame, horizon: int) -> str:
+    """The sha256 the LeakageReport records for one horizon's W_DEV label panel (``panel_sha256s``, M-5)."""
+    return _frame_sha(cv.canonical(samples, int(horizon)))
+
+
 def verify_report(report: object) -> bool:
     """True iff ``report`` is a LeakageReport / HoldoutLeakageReport issued by this module (in this
     process) whose content still hashes to its ``sha256``."""
@@ -273,13 +386,17 @@ class HoldoutLeakageReport(_Sealed):
 
     @property
     def complete(self) -> bool:
-        return {c for c, _ in self.checks} >= set(HOLDOUT_CHECKS)
+        """Every holdout check executed on at least one decision (an empty check is not executed, M-3)."""
+        n = dict(self.checks)
+        return all(int(n.get(c, 0)) > 0 for c in HOLDOUT_CHECKS)
 
 
-def covers(report: HoldoutLeakageReport, runs: Sequence[BookRun]) -> bool:
-    """Every run's decisions were checked by this holdout report (output sha256 recorded)."""
+def covers(report: HoldoutLeakageReport, runs: Sequence[BookRun], *, exactly: bool = False) -> bool:
+    """Every run's decisions were checked by this holdout report (output sha256 recorded); ``exactly``: and
+    the report checked no other run (M-1)."""
     have = set(report.runs)
-    return all(run_output_sha256(r) in have for r in runs)
+    want = {run_output_sha256(r) for r in runs}
+    return want == have if exactly else want <= have
 
 
 # ---------------------------------------------------------------------------------------------- L9a
@@ -590,6 +707,6 @@ def run_holdout_checks(pre: LeakageReport, *, runs: Sequence[BookRun],
 
 __all__ = ["HOLDOUT_CHECKS", "HoldoutLeakageReport", "K7Result", "L9aResult", "L9bResult", "LABEL_COLS",
            "LeakageReport", "SANDBOX_COLUMN", "SHIFT_NAME", "SandboxIC", "concentration", "covers",
-           "feature_shares", "l9a", "l9a_result", "l9b", "l9b_refusal", "model_hash", "oof",
-           "permute_within_dates", "resolve_k7", "run_holdout_checks", "run_leakage_checks",
-           "shifted_label_feature", "verify_report"]
+           "feature_shares", "l9a", "l9a_result", "l9b", "l9b_refusal", "load_persisted_report", "model_hash",
+           "oof", "panel_sha256", "permute_within_dates", "report_content", "resolve_k7",
+           "run_holdout_checks", "run_leakage_checks", "shifted_label_feature", "verify_report"]

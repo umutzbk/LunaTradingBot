@@ -6,6 +6,7 @@ Synthetic, seeded, small: real ``cv`` / ``models`` fits under a tiny test-only s
 from __future__ import annotations
 
 import dataclasses
+import json
 from types import SimpleNamespace
 
 import numpy as np
@@ -316,6 +317,44 @@ def test_holdout_checks(report):
         assert str(t) in h.findings[0][1] and text in h.findings[0][1]
     with pytest.raises(ValueError, match="max_known_at"):
         lf.holdout_report(report, runs, lambda tt: object())
+
+
+def test_holdout_report_complete_needs_checked_decisions(report):
+    """M-3: a holdout check over zero decisions was not executed: the report is not complete."""
+    empty = pd.DataFrame({"t": pd.Series([], dtype="int64"), "killed": pd.Series([], dtype=bool)})
+    runs = [funding_run([0.001] * 5, arm="A2", h=72, decisions=empty)]
+    h = lf.holdout_report(report, runs)
+    assert leakage.verify_report(h) and dict(h.checks) == {"L1": 0} and not h.complete
+    assert lf.holdout_report(report, _runs()).complete
+
+
+def test_covers_exactly(report):
+    """M-1: ``covers(..., exactly=True)``: the report checked exactly the given runs."""
+    runs = _runs()
+    h = lf.holdout_report(report, runs)
+    assert leakage.covers(h, runs, exactly=True) and leakage.covers(h, runs[:1])
+    assert not leakage.covers(h, runs[:1], exactly=True)
+    assert not leakage.covers(h, [*runs, funding_run([0.002] * 5, arm="A2", h=72)], exactly=True)
+
+
+def test_persisted_report_round_trip(report, monkeypatch):
+    """Task 24 I-1: the persisted content rebuilds the identical report in a fresh process, only for the
+    pinned sha256; malformed content is refused."""
+    content = json.loads(json.dumps(leakage.report_content(report)))
+    monkeypatch.setattr(leakage, "_ISSUED", set())
+    assert not leakage.verify_report(report)  # a fresh process: nothing issued
+    r = leakage.load_persisted_report(content, report.sha256)
+    assert r == report and r.sha256 == report.sha256 and leakage.verify_report(r) and r.passed
+    with pytest.raises(ValueError, match="pinned"):
+        leakage.load_persisted_report(content, "0" * 64)
+    for mutate in (lambda c: c.pop("seed"), lambda c: c.update(seed="0"), lambda c: c.update(kind="X"),
+                   lambda c: c["l9a"][0].update(passed=1), lambda c: c["k7"][0].update(resolution="maybe")):
+        bad = json.loads(json.dumps(content))
+        mutate(bad)
+        with pytest.raises(ValueError):
+            leakage.load_persisted_report(bad, report.sha256)
+    with pytest.raises(ValueError, match="run_leakage_checks"):
+        leakage.report_content(dataclasses.replace(report, commit="c" * 40))
 
 
 def test_holdout_checks_need_a_passed_pre_report(report, leaky):

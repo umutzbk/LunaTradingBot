@@ -183,24 +183,31 @@ def _hold_inputs(**kw):
         dev_mean_daily_net=0.001, dev_kill=(), integrity=(), k8=V.K8Rates(0.0, 0.0), B=200,
         seed=7,
     )
-    pre = lf.passed_report("A2", 72)  # the holdout-phase report of the unmodified runs (verdict: pure)
+    pre = lf.passed_report("A2", 72)  # the holdout-phase report of exactly these runs (verdict: pure, M-1)
+    base.update(kw)
     base.update(leakage=pre, holdout_leakage=lf.holdout_report(
         pre, [base[k] for k in ("ml_T", "a0_T", "ml_M", "a0_M")]))
-    base.update(kw)
     return V.HoldoutInputs(**base)
+
+
+def _swap(x, **runs):
+    """``replace(x, **runs)`` with the holdout-phase report rebuilt over the new runs (it must cover exactly
+    the four runs given, Task 24 M-1)."""
+    y = replace(x, **runs)
+    return replace(y, holdout_leakage=lf.holdout_report(y.leakage, [y.ml_T, y.a0_T, y.ml_M, y.a0_M]))
 
 
 def test_verdict_accounting_error_is_invalid_k10():
     good = _hold_inputs()
     assert V.holdout(good).cls != V.INVALID
     for field_ in ("ml_T", "a0_T"):
-        v = V.holdout(replace(good, **{field_: _unaccountable(getattr(good, field_))}))  # never raised
+        v = V.holdout(_swap(good, **{field_: _unaccountable(getattr(good, field_))}))  # never raised
         assert v.cls == V.INVALID
         name = "ML* E_T" if field_ == "ml_T" else "A0 E_T"
         assert len(v.reasons) == 1 and v.reasons[0].startswith(f"{name}: {V.INTEGRITY_K10} (")
         assert "daily table" in v.reasons[0]
     # a secondary (E_M) run voids only its own comparison
-    v = V.holdout(replace(good, ml_M=_unaccountable(good.ml_M)))
+    v = V.holdout(_swap(good, ml_M=_unaccountable(good.ml_M)))
     assert v.cls != V.INVALID and v.p1_em is None and v.details["p1_em_unavailable"].startswith("ML* E_M")
 
 
@@ -223,7 +230,7 @@ def test_empty_engine_frames_carry_the_schema_columns():
 def test_holdout_returns_a_class_for_a_malformed_decision_log():
     good = _hold_inputs()
     bad = replace(good.ml_T, decisions=pd.DataFrame(dict(t=[good.ml_T.window[0]])))
-    v = V.holdout(replace(good, ml_T=bad))
+    v = V.holdout(_swap(good, ml_T=bad))
     assert v.cls == V.INVALID and any("killed" in s for s in v.reasons)
 
 
@@ -257,7 +264,8 @@ def test_research_runs_always_record_as_research():
 def test_non_neutral_decisions_are_counted():
     r = funding_run([0.0] * 3)
     assert r.non_neutral_decisions == 0  # no notes column
-    d = pd.DataFrame(dict(t=[1, 2, 3], killed=[False] * 3,
+    t0 = r.window[0]  # real ns decision times (the holdout L1 re-check reads them)
+    d = pd.DataFrame(dict(t=[t0, t0 + H, t0 + 2 * H], killed=[False] * 3,
                           notes=[("risk_gross", "non_neutral_post"), (), ("cap_gross_entry",)]))
     assert replace(r, decisions=d).non_neutral_decisions == 1
     e = run("A0", base_inputs(), (BLO, BLO + 2 * D), 24)
@@ -291,7 +299,7 @@ def test_missing_marks_column_is_a_value_error(col):
     with pytest.raises(ValueError, match=col):
         accounting.account(replace(r, marks=r.marks.drop(columns=col)))
     g = _hold_inputs()
-    v = V.holdout(replace(g, a0_T=replace(g.a0_T, marks=g.a0_T.marks.drop(columns=col))))
+    v = V.holdout(_swap(g, a0_T=replace(g.a0_T, marks=g.a0_T.marks.drop(columns=col))))
     assert v.cls == V.INVALID and v.reasons[0].startswith(f"A0 E_T: {V.INTEGRITY_K10} (")
 
 

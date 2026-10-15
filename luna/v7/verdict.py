@@ -349,7 +349,8 @@ def _check_inputs(x: HoldoutInputs) -> None:
 
 def _check_leakage(x: HoldoutInputs) -> None:
     """The pre-opening report must be issued by ``run_leakage_checks``, passed and for ML* at h*; the
-    holdout-phase report must be issued by ``run_holdout_checks``, complete and linked to it (AMB-33)."""
+    holdout-phase report must be issued by ``run_holdout_checks``, complete (every check over > 0 decisions),
+    linked to it and cover exactly the four runs given (AMB-33, Task 24 M-1 / M-3)."""
     pre, hold = x.leakage, x.holdout_leakage
     if not isinstance(pre, lk.LeakageReport) or not lk.verify_report(pre):
         raise ValueError("leakage: a pre-opening LeakageReport issued by leakage.run_leakage_checks is "
@@ -365,6 +366,9 @@ def _check_leakage(x: HoldoutInputs) -> None:
                          "required")
     if hold.pre_sha256 != pre.sha256 or not hold.complete:
         raise ValueError("holdout_leakage: not linked to the pre-opening report or a check was not executed")
+    if not lk.covers(hold, [x.ml_T, x.a0_T, x.ml_M, x.a0_M], exactly=True):  # M-1
+        raise ValueError("holdout_leakage: does not cover exactly the four holdout runs given "
+                         "(ML* / A0 under E_T / E_M)")
 
 
 def _usable(obj: BookRun | Ledger | None) -> tuple[Ledger | None, str | None]:

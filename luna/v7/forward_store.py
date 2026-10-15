@@ -1,8 +1,11 @@
 """Sealed, write-only forward store (spec S-1.7 M3-3, EC-8, DEC-45, section 15, L7, L10).
 
 Raw responses go directly into a content-addressed store with ``recv_ts``, source URL and SHA-256. There is
-no read path before L7: ``read`` / ``iter_records`` refuse unless L7 is known and ``now_ns >= L7``. L7
-itself needs R_V6, which is undetermined, so L7 is an injected parameter (ns or None; None = sealed).
+no read path before L7: ``read`` / ``iter_records`` take no time or L7 argument and refuse unless the
+canonical L7 exists (``release.l7``: the hash-checked R_V6 release and T_F7 review-pass records, SC-06 /
+AMB-34) and the guards' trusted clock (``release.trusted_now_ns``, the wall clock) has reached it. No caller
+value can unseal the store (red-team M5). The canonical source is injectable only like the other guards'
+(``repo``).
 
 ``extract_transport_id`` is the only parsing allowed before L7: the article id / code / URL needed to fetch
 the raw body. It never returns titles, bodies, dates or anything semantic (EC-8).
@@ -17,6 +20,7 @@ from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from luna.v7 import release
 from luna.v7.timeutil import to_ns
 
 
@@ -32,16 +36,20 @@ class Record:
     size: int
 
 
-def _gate(now_ns: int, l7_ns: int | None) -> None:
-    if l7_ns is None or now_ns < l7_ns:
-        raise SealedBeforeL7("the forward store is sealed until L7 (and while L7 / R_V6 is undetermined)")
+def _gate(repo: Path | None) -> None:
+    l7 = release.l7(repo)
+    if l7 is None or release.trusted_now_ns() < l7:
+        raise SealedBeforeL7("the forward store is sealed until the canonical L7 (and while L7 / R_V6 / T_F7 "
+                             "is undetermined)")
 
 
 class ForwardStore:
-    """Append-only: blobs/<sha256> (content addressed) + index.jsonl (one line per snapshot)."""
+    """Append-only: blobs/<sha256> (content addressed) + index.jsonl (one line per snapshot). ``repo``: the
+    repository holding the canonical records (default: the code repository)."""
 
-    def __init__(self, root: Path | str) -> None:
+    def __init__(self, root: Path | str, *, repo: Path | None = None) -> None:
         self.root = Path(root)
+        self._repo = repo
         self._blobs = self.root / "blobs"
         self._index = self.root / "index.jsonl"
 
@@ -61,15 +69,15 @@ class ForwardStore:
             f.write(json.dumps(asdict(rec), sort_keys=True) + "\n")
         return rec
 
-    def iter_records(self, *, now_ns: int, l7_ns: int | None) -> Iterator[Record]:
-        _gate(now_ns, l7_ns)
+    def iter_records(self) -> Iterator[Record]:
+        _gate(self._repo)
         if not self._index.exists():
             return
         for line in self._index.read_text(encoding="utf-8").splitlines():
             yield Record(**json.loads(line))
 
-    def read(self, sha256: str, *, now_ns: int, l7_ns: int | None) -> bytes:
-        _gate(now_ns, l7_ns)
+    def read(self, sha256: str) -> bytes:
+        _gate(self._repo)
         if not sha256.isalnum():
             raise ValueError("invalid sha256")
         data = (self._blobs / sha256).read_bytes()
