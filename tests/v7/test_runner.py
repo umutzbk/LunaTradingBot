@@ -937,7 +937,7 @@ def test_provider_cache_bounded_and_identical(inputs):
     for t in ts:
         _views_equal(small(t), full(t))
         assert len(small._views) <= 2 and len(small._records) <= 2
-        assert small._bars_t == t and len(small._bars) <= len(SUB)
+        assert small._win_t == t and len(small._wins) <= len(SUB) + 1  # bars of the current t only
         for s in SUB:
             got = small.instance_bars(s, t)
             cur = runner.current_instance(u.sd[s].insts, t)

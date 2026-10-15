@@ -18,6 +18,14 @@ wall-clock; the DT4 run record is written by ``luna.v7.runrecord`` to a caller-s
   over in-memory ``SymbolInputs``, e.g. the synthetic fixtures). The window must cover every lookback /
   label horizon of what is evaluated in it (the caller's responsibility; rows outside it do not exist for the
   universe).
+* ``decision_pass`` (SC-01 part 2, AMB-38): the outcome-free decision universe at real scale. Decisions are
+  processed in chunks; each chunk builds ``ResearchUniverse.for_decisions(source, lo, hi, history_lo=...)``
+  (15m / R4 bars from ``lo - pitindex.LOOKBACK_15M``, funding from ``history_lo``, 1-minute bars only inside
+  the U6 72 h windows of the symbol's scheduled delistings, no aggTrades: everything a decision view reads,
+  nothing else) and writes every view to a shared ``viewstore.ViewStore``, so peak memory is one chunk's
+  universe. A view equals the one of ``from_source(source, history_lo, hi)`` (the look-back covers every
+  read; a window that could differ because older rows were not loaded is refused). A decisions-only
+  universe refuses labels and books (``leg_data`` / ``engine_inputs``).
 * ``DecisionProvider``: ``provider(t)`` -> ``engine.DecisionView``, point in time (every element uses rows
   with ``known_at <= t - 1 min``; the overall max known_at is asserted): U1-U8 ``GateRow`` per candidate
   symbol (``features.xs_input`` -> ``universe.gates``), h-hat(t) (``spread.half_spread`` on the current
@@ -57,26 +65,39 @@ import pickle
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 import pandas as pd
 
 from luna.v7 import cv, features, guard, k9, labels, localdata
 from luna.v7.arms import arm_scores, cost_side, families
-from luna.v7.beta import beta_hat, hourly_close_from_15m, hourly_known_at_from_15m
+from luna.v7.beta import beta_hat, beta_hat_sorted, hourly_close_from_15m, hourly_known_at_from_15m
 from luna.v7.book import engine
 from luna.v7.book.engine import BookRun, DecisionView, EngineInputs, Instrument
 from luna.v7.constants import FROZEN
 from luna.v7.data.instances import Instance, current_instance
 from luna.v7.data.intervals import annotate
-from luna.v7.data.notices import NoticeVersion
+from luna.v7.data.notices import NoticeVersion, U6State
 from luna.v7.data.terminal import TerminalEvent
 from luna.v7.features import FEATURES, R4Bars, XSInput
 from luna.v7.labels import LabelInputs, LegData, leg_label
+from luna.v7.pitindex import LOOKBACK_15M
 from luna.v7.spread import half_spread
 from luna.v7.timeutil import MIN, H, ns_array
-from luna.v7.universe import BAR_15M, GateRow, Identity, LeakageError, SymbolData, eligible, pit_rows
+from luna.v7.universe import (
+    BAR_15M,
+    GateRow,
+    Identity,
+    LeakageError,
+    SymbolCache,
+    SymbolData,
+    eligible,
+    pit_rows,
+)
+
+if TYPE_CHECKING:  # runtime import cycle: viewstore -> runstore -> rawstore -> runner
+    from luna.v7.viewstore import ViewStore
 
 HEDGE = engine.HEDGE_SYMBOL
 HORIZONS = tuple(FROZEN.horizons_h)
@@ -95,6 +116,7 @@ EVENT_COLS: dict[str, tuple[str, ...]] = {"bars15": ("open_ts",), "bars1m": ("op
                                           "funding": ("funding_ts",), "r4": ("open_ts",),
                                           "aggtrades": ("ts",)}
 UNIVERSE = "research universe"
+DECISION_CHUNK_NS = 30 * 24 * H  # decision_pass chunk length (implementation parameter, AMB-38)
 
 
 def _need(df: pd.DataFrame | None, cols: Sequence[str], what: str) -> None:
@@ -158,6 +180,26 @@ def _window(df: pd.DataFrame, col: str, lo: int, hi: int, what: str) -> pd.DataF
     return df.iloc[int(np.searchsorted(ts, lo, "left")):int(np.searchsorted(ts, hi, "left"))]
 
 
+def halt_windows(symbol: str, notices: Sequence[NoticeVersion],
+                 insts: list[Instance]) -> list[tuple[int, int]]:
+    """[sched - 60 min, sched + 72 h) of every scheduled delisting U6 can test: the only 1-minute rows the
+    72 h halt test reads (``notices.U6State``; HALTED(tau) reads bars opening in [tau - 60 min, tau))."""
+    scheds = U6State(list(notices), symbol, insts).scheds()
+    return [(s - H, s + FROZEN.notices.u6_clear_h * H) for s in scheds]
+
+
+def _in_windows(df: pd.DataFrame, col: str, wins: Sequence[tuple[int, int]], lo: int, hi: int,
+                what: str) -> pd.DataFrame:
+    """The rows of a sorted frame with ``col`` in the union of ``wins``, clipped to [lo, hi)."""
+    parts = [_window(df, col, max(a, lo), min(b, hi), what) for a, b in sorted(wins)
+             if max(a, lo) < min(b, hi)]
+    if not parts:
+        return df.iloc[0:0]
+    out = pd.concat(parts) if len(parts) > 1 else parts[0]
+    ts = ns_array(out[col].to_numpy(), f"{what}.{col}") if len(out) else np.empty(0, np.int64)
+    return out.iloc[np.unique(ts, return_index=True)[1]] if len(parts) > 1 else out
+
+
 class InMemorySource:
     """``UniverseSource`` over in-memory ``SymbolInputs`` (synthetic fixtures, small runs): ``load`` returns
     the frames' rows with event time in [lo, hi) (``EVENT_COLS``; positional slices), other inputs as
@@ -182,6 +224,18 @@ class InMemorySource:
         agg = None if x.aggtrades is None else w(x.aggtrades, "aggtrades")
         return replace(x, bars15=w(x.bars15, "bars15"), bars1m=w(x.bars1m, "bars1m"),
                        funding=w(x.funding, "funding"), r4=r4, aggtrades=agg)
+
+    def load_decision_inputs(self, symbol: str, lo: int, hi: int, history_lo: int) -> SymbolInputs:
+        """The inputs a decision view reads (``ResearchUniverse.for_decisions``): bars / R4 of [lo, hi),
+        funding of [history_lo, hi), 1-minute bars of the U6 halt windows in [history_lo, hi), no
+        aggTrades."""
+        lo, hi, history_lo = int(lo), int(hi), int(history_lo)
+        x = self.load(symbol, lo, hi)
+        full = self.inputs[symbol]
+        wins = halt_windows(symbol, full.notices, list(full.insts))
+        return replace(x, funding=_window(full.funding, "funding_ts", history_lo, hi, f"{symbol}.funding"),
+                       bars1m=_in_windows(full.bars1m, "open_ts", wins, history_lo, hi, f"{symbol}.bars1m"),
+                       aggtrades=None)
 
 
 class ResearchUniverse:
@@ -219,11 +273,13 @@ class ResearchUniverse:
                 _need(x.aggtrades, ("ts", "price", "qty"), f"{sym}.aggtrades")
             fa = annotate(x.funding, list(x.insts))
             self.inputs[sym], self.funding_annot[sym] = x, fa
-            self.sd[sym] = SymbolData(sym, x.bars15, x.bars1m, fa, list(x.insts), list(x.notices), x.identity)
+            sd = SymbolData(sym, x.bars15, x.bars1m, fa, list(x.insts), list(x.notices), x.identity)
+            self.sd[sym] = replace(sd, cache=SymbolCache(sd))  # indexed inputs (Task 26b, AMB-38)
             mark15 = x.r4.mark[["open_ts", "c"]]
             self.instruments[sym] = Instrument(sym, x.bars1m, x.bars15, mark15, x.funding, list(x.insts),
                                                dict(x.terminals), x.aggtrades)
         self.candidates: tuple[str, ...] = tuple(s for s in sorted(self.inputs) if s != hedge)
+        self.decisions_only = False
 
     @classmethod
     def from_source(cls, source: UniverseSource, lo: int, hi: int, hedge: str = HEDGE) -> ResearchUniverse:
@@ -233,6 +289,36 @@ class ResearchUniverse:
         if hi <= lo:
             raise ValueError(f"empty window [{lo}, {hi})")
         return cls({s: source.load(s, lo, hi) for s in sorted(source.symbols())}, hedge)
+
+    @classmethod
+    def for_decisions(cls, source: UniverseSource, lo: int, hi: int, *, history_lo: int,
+                      hedge: str = HEDGE) -> ResearchUniverse:
+        """A decisions-only universe for decision times in [lo, hi) (module docstring, ``decision_pass``):
+        each symbol's ``source.load_decision_inputs(symbol, max(history_lo, lo - LOOKBACK_15M), hi,
+        history_lo)``. Labels and books are refused on it."""
+        lo, hi, history_lo = int(lo), int(hi), int(history_lo)
+        if hi <= lo or lo < history_lo:
+            raise ValueError(f"decision window [{lo}, {hi}) outside the history start {history_lo}")
+        bars_lo = max(history_lo, lo - LOOKBACK_15M)
+        u = cls({s: source.load_decision_inputs(s, bars_lo, hi, history_lo)  # type: ignore[attr-defined]
+                 for s in sorted(source.symbols())}, hedge)
+        u.decisions_only = True
+        for s, sd in u.sd.items():  # the look-back argument needs the indexed path (sorted, monotone ka)
+            c = sd.cache
+            assert c is not None
+            r4 = u.inputs[s].r4
+            if not (c.b15.ok and all(c.frame_index(getattr(r4, k), ("c",)).ok
+                                     for k in ("premium", "mark", "index"))):
+                raise ValueError(f"{s}: a decisions-only universe needs 15m / R4 bars with strictly "
+                                 "increasing open_ts and non-decreasing known_at (use from_source)")
+            if bars_lo > history_lo:  # rows before bars_lo exist in the full history: refuse what they change
+                c.bars_lo = bars_lo
+        return u
+
+    def _no_outcomes(self, what: str) -> None:
+        if self.decisions_only:
+            raise ValueError(f"{what}: a decisions-only universe (ResearchUniverse.for_decisions) holds no "
+                             "outcome inputs")
 
     def data_span(self) -> tuple[int, int] | None:
         """(min, max + 1) of every input timestamp, recomputed from the current inputs: the event times of
@@ -272,6 +358,7 @@ class ResearchUniverse:
 
     def leg_data(self, sym: str, t: int) -> LegData | None:
         """The label inputs of ``sym`` with the terminal event of its current instance at t (None: none)."""
+        self._no_outcomes("leg_data")
         cur = current_instance(self.sd[sym].insts, int(t))
         if cur is None:
             return None
@@ -279,12 +366,13 @@ class ResearchUniverse:
         if key not in self._legs:
             ins = self.instruments[sym]
             self._legs[key] = LegData(ins.bars1m, ins.bars15, ins.mark15, ins.funding, ins.insts,
-                                      ins.terminals.get(cur.idx))
+                                      ins.terminals.get(cur.idx), OrderedDict())
         return self._legs[key]
 
     def engine_inputs(self, view: Callable[[int], DecisionView], now_ns: int,
                       auth: guard.HoldoutAuthorization | None = None) -> EngineInputs:
         k9.require()
+        self._no_outcomes("engine_inputs")
         self.check_data(auth)
         return EngineInputs({s: self.instruments[s] for s in self.candidates}, self.instruments[self.hedge],
                             view, int(now_ns), auth)
@@ -314,12 +402,14 @@ class DecisionProvider:
     """Point-in-time ``DecisionView`` per decision t (see module docstring). ``with_features`` adds the §9
     features to the candidate rows (needed by the ML arms and the labels; A0 needs only its own inputs).
 
-    Memory: the per-(symbol, t) bar slices are kept for the CURRENT t only (a new t evicts them) and are
-    positional slices (no copy of the history) when the bars are sorted by ``open_ts`` with non-decreasing
-    ``known_at`` (else the boolean reference path). Views and records are an LRU of at most
-    ``max_cached_decisions`` decisions (None = unbounded); an evicted decision is recomputed on demand
-    (deterministic), so the bound trades memory for recomputation (the S-10.6 driver replays the same
-    decisions for each of its books).
+    Memory / compute (SC-01 part 2, AMB-38): the per-(symbol, t) bar slices are kept for the CURRENT t only
+    (a new t evicts them) and are positional slices (no copy of the history) limited to the look-back the
+    per-symbol inputs read (``universe.SymbolCache.window15``) when the bars are sorted by ``open_ts`` with
+    non-decreasing ``known_at`` (else the boolean reference path). Views and records are an LRU of at most
+    ``max_cached_decisions`` decisions (default 64; None = unbounded); an evicted decision is read back from
+    ``store`` (a shared ``viewstore.ViewStore``: every book run of the S-10.6 driver replays the views
+    computed once) or, without a store, recomputed (deterministic). A view read from the store equals the
+    computed one (stored only when it round-trips canonically).
 
     Guard (SC-03): ``auth`` is the hardened ``HoldoutAuthorization`` (None before the opening); a K9 log must
     be configured. The universe's data span is computed and checked at construction; that span (the inputs
@@ -329,10 +419,12 @@ class DecisionProvider:
     M6 until R_V6 (K9-logged), and an authorization invalidated later (verdict) stops serving."""
 
     def __init__(self, u: ResearchUniverse, with_features: bool = True,
-                 max_cached_decisions: int | None = 2048, *,
-                 auth: guard.HoldoutAuthorization | None = None) -> None:
+                 max_cached_decisions: int | None = 64, *,
+                 auth: guard.HoldoutAuthorization | None = None, store: ViewStore | None = None) -> None:
         if max_cached_decisions is not None and int(max_cached_decisions) < 1:
             raise ValueError("max_cached_decisions must be >= 1 or None")
+        if store is not None and bool(store.with_features) != bool(with_features):
+            raise ValueError("the view store holds views of another with_features setting")
         k9.require()
         self._span = u.check_data(auth)
         self.auth = auth
@@ -344,6 +436,9 @@ class DecisionProvider:
         self._bars: dict[str, pd.DataFrame | None] = {}
         self._bars_t: int | None = None
         self._pos: dict[str, tuple[bool, np.ndarray, np.ndarray]] = {}
+        self._wins: dict[str, pd.DataFrame | None] = {}
+        self._win_t: int | None = None
+        self.store = store
 
     def _positions(self, sym: str) -> tuple[bool, np.ndarray, np.ndarray]:
         """(sliceable, open_ts, known_at) of the symbol's 15m bars, validated once."""
@@ -377,17 +472,45 @@ class DecisionProvider:
             return sd.bars15.iloc[lo:max(lo, hi)]
         return _instance_bars_reference(sd, cur, t)
 
+    def _win(self, sym: str, t: int) -> pd.DataFrame | None:
+        """The bars the per-symbol inputs read at t: the PIT current-instance 15m bars limited to
+        ``pitindex.LOOKBACK_15M`` plus the last PIT bar (``SymbolCache.window15``: h-hat, beta-hat, qv24,
+        staleness and the max known_at read nothing older; identical values), or ``_instance_bars`` when the
+        index does not apply. None without a current instance. Kept for the current t only."""
+        t = int(t)
+        if self._win_t != t:
+            self._wins, self._win_t = {}, t
+        if sym not in self._wins:
+            c = self.u.sd[sym].cache
+            if c is not None and c.b15.ok:
+                cur = current_instance(self.u.sd[sym].insts, t)
+                self._wins[sym] = None if cur is None else c.window15(cur, t)
+            else:
+                self._wins[sym] = self._instance_bars(sym, t)
+        return self._wins[sym]
+
     def _h_hat(self, sym: str, t: int) -> float | None:
         """S-4.4 decision-time h-hat(t): the S-4.5 proxy at t on the current instance (None = missing)."""
-        b = self._instance_bars(sym, t)
-        return None if b is None or len(b) == 0 else half_spread(b, int(t))
+        b = self._win(sym, t)
+        if b is None or len(b) == 0:
+            return None
+        c = self.u.sd[sym].cache
+        if c is not None and c.b15.ok:
+            return c.h_hat(current_instance(self.u.sd[sym].insts, int(t)), int(t), b)  # type: ignore[arg-type]
+        return half_spread(b, int(t))
 
     def _beta(self, sym: str, t: int) -> float | None:
         """S-5.2 beta-hat(t) against the hedge instrument (current instances, hourly known_at series)."""
-        a, b = self._instance_bars(sym, t), self._instance_bars(self.u.hedge, t)
+        a, b = self._win(sym, t), self._win(self.u.hedge, t)
         if a is None or b is None or len(a) == 0 or len(b) == 0:
             return None
-        return beta_hat(hourly_close_from_15m(a), hourly_close_from_15m(b), int(t),
+        t = int(t)
+        ca, cb = self.u.sd[sym].cache, self.u.sd[self.u.hedge].cache
+        if ca is not None and cb is not None and ca.b15.ok and cb.b15.ok:  # hourly series once per decision
+            ha = ca.hourly(current_instance(self.u.sd[sym].insts, t), t)  # type: ignore[arg-type]
+            hb = cb.hourly(current_instance(self.u.sd[self.u.hedge].insts, t), t)  # type: ignore[arg-type]
+            return beta_hat_sorted((ha.hours, ha.close, ha.ka), (hb.hours, hb.close, hb.ka), t)
+        return beta_hat(hourly_close_from_15m(a), hourly_close_from_15m(b), t,
                         hourly_known_at_from_15m(a), hourly_known_at_from_15m(b))
 
     def _qv24(self, sym: str, t: int) -> tuple[float | None, int | None]:
@@ -395,7 +518,7 @@ class DecisionProvider:
         current instance's 15m bars whose close lies in (t - 24 h - 1 min, t - 1 min]; a non-finite value
         counts 0 (as ``universe.daily_sums``, AMB-07); no such bar -> None (missing). Returns (value, max
         known_at of the bars used)."""
-        b = self._instance_bars(sym, t)
+        b = self._win(sym, t)
         if b is None or len(b) == 0:
             return None, None
         close = ns_array(b["open_ts"], "open_ts") + BAR_15M
@@ -413,7 +536,7 @@ class DecisionProvider:
         unpriced, or its h-hat(t) is missing (S-4.5: a missing proxy is a staleness failure at decisions).
         Per-symbol freshness (U4, U5, U7, U8) is already a gate of that symbol."""
         t = int(t)
-        hb = self._instance_bars(self.u.hedge, t)
+        hb = self._win(self.u.hedge, t)
         if hb is None:
             return ("hedge_no_instance",)
         out: list[str] = []
@@ -487,6 +610,10 @@ class DecisionProvider:
         if t in self._views:
             self._views.move_to_end(t)
             self._records.move_to_end(t)
+            return self._views[t]
+        got = self.store.get(t) if self.store is not None else None
+        if got is not None:
+            self._views[t], self._records[t] = got  # type: ignore[assignment]
         else:
             u = self.u
             xs = self._xs(t)
@@ -497,7 +624,7 @@ class DecisionProvider:
             stale = self._stale_reasons(t)
             gates = {x.symbol: x.gate for x in xs}
             cands, ka = self._cands(t, xs, hh)
-            bars_ka = [_max_ka(b) for s in (*syms, u.hedge) if (b := self._instance_bars(s, t)) is not None]
+            bars_ka = [_max_ka(b) for s in (*syms, u.hedge) if (b := self._win(s, t)) is not None]
             mk = _mx(ka, *(x.max_known_at for x in xs), *(v[1] for v in qv.values()), *bars_ka)
             if mk is not None and mk > t - MIN:
                 raise LeakageError(f"decision {t}: an input known at {mk} > t - 1 min")
@@ -506,14 +633,46 @@ class DecisionProvider:
             el = tuple(x.symbol for x in xs if eligible(x.gate))
             self._records[t] = DecisionRecord(t, gates, hh, betas, vols, bool(stale), stale, el, len(cands),
                                               mk)
-            while self.max_cached is not None and len(self._views) > self.max_cached:
-                self._views.popitem(last=False)
-                self._records.popitem(last=False)
+            if self.store is not None:
+                self.store.put(self._views[t], self._records[t])
+        while self.max_cached is not None and len(self._views) > self.max_cached:
+            self._views.popitem(last=False)
+            self._records.popitem(last=False)
         return self._views[t]
 
     def record(self, t: int) -> DecisionRecord:
         self(int(t))
         return self._records[int(t)]
+
+
+def decision_pass(source: UniverseSource, decision_ts: Sequence[int], store: ViewStore, *, history_lo: int,
+                  with_features: bool = True, chunk_ns: int = DECISION_CHUNK_NS, hedge: str = HEDGE,
+                  auth: guard.HoldoutAuthorization | None = None) -> dict[str, int]:
+    """Every decision view of ``decision_ts`` into ``store`` (module docstring): one decisions-only universe
+    per chunk of ``chunk_ns`` (released before the next), a ``DecisionProvider`` per chunk (the per-call guard
+    as everywhere). Views already in the store are not recomputed. Returns counts."""
+    k9.require()
+    if bool(store.with_features) != bool(with_features):
+        raise ValueError("the view store holds views of another with_features setting")
+    ts = sorted({int(t) for t in decision_ts})
+    if not ts or ts[0] < int(history_lo):
+        raise ValueError("decision times must be non-empty and >= the history start")
+    n = chunks = 0
+    i = 0
+    while i < len(ts):
+        j = int(np.searchsorted(ts, ts[i] + int(chunk_ns), "left"))
+        todo = [t for t in ts[i:j] if store.get(t) is None]
+        if todo:
+            u = ResearchUniverse.for_decisions(source, todo[0], todo[-1] + 1, history_lo=history_lo,
+                                               hedge=hedge)
+            p = DecisionProvider(u, with_features, 1, auth=auth, store=store)
+            for t in todo:
+                p(t)
+            n += len(todo)
+            chunks += 1
+            del p, u
+        i = j
+    return {"decisions": len(ts), "computed": n, "chunks": chunks}
 
 
 def _instance_bars_reference(sd: SymbolData, cur: Instance, t: int) -> pd.DataFrame:
@@ -729,6 +888,7 @@ def decision_log(run: BookRun, provider: DecisionProvider,
     return pd.DataFrame(rows)
 
 
-__all__ = ["DecisionProvider", "DecisionRecord", "FoldScoreModel", "InMemorySource", "LabelPanel",
-           "ResearchUniverse", "SymbolInputs", "UniverseSource", "decision_log", "fit_fold_models",
-           "fold_convergence", "label_panel", "model_hash", "run_book"]
+__all__ = ["DECISION_CHUNK_NS", "DecisionProvider", "DecisionRecord", "FoldScoreModel", "InMemorySource",
+           "LabelPanel", "ResearchUniverse", "SymbolInputs", "UniverseSource", "decision_log",
+           "decision_pass",
+           "fit_fold_models", "fold_convergence", "halt_windows", "label_panel", "model_hash", "run_book"]

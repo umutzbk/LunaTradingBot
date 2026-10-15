@@ -213,3 +213,34 @@ def test_window_guard_and_window_mismatch(tmp_path, log):
     man_p.write_text(json.dumps(m), encoding="utf-8")
     with pytest.raises(IntegrityBlocker, match="window"):
         rs.load(sha2, file_sha256=run_file_sha256(run))
+
+
+# ------------------------------------------------------------------------------- Task 26b carried minors
+
+
+@pytest.mark.parametrize("dtype,kind", [("category", "json"), ("Sparse[float64, nan]", "ext"),
+                                        ("datetime64[ns]", "numpy"), ("object", "numpy"), ("float64", "json"),
+                                        ("int64", "ext"), ("complex128", "numpy")])
+def test_decode_reapplies_the_dtype_allowlist(dtype, kind):
+    """A run.json column entry whose (dtype, storage) the writer would refuse never decodes."""
+    files = encode_run(rf.funding_run([0.01, 0.02], costs=[0.001, 0.0]))
+    rec = json.loads(files["run.json"])
+    meta = rec["frames"]["fills"]
+    meta["columns"][0][1:] = [dtype, kind]
+    files["run.json"] = json.dumps(rec).encode()
+    with pytest.raises(IntegrityBlocker, match="persistable"):
+        runstore._decode_frame("fills", meta, files[meta["file"]])
+
+
+@pytest.mark.parametrize("name", ["C:fills.parquet", r"c:\x", "/etc/x", r"\\host\share\x", "..", "a/b"])
+def test_manifest_file_names_with_drive_or_absolute_refused(tmp_path, log, name):
+    rs = RunStore(tmp_path / "runs")
+    run = rf.funding_run([0.01], costs=[0.001])
+    sha = rs.put(run)
+    man_p = tmp_path / "runs" / "MANIFEST.json"
+    m = json.loads(man_p.read_text(encoding="utf-8"))
+    m["runs"][sha]["files"] = [*m["runs"][sha]["files"], name]
+    man_p.write_text(json.dumps(m), encoding="utf-8")
+    with pytest.raises(IntegrityBlocker, match="invalid file name"):
+        rs.load(sha, file_sha256=run_file_sha256(run))
+    assert runstore._plain_name("fills.parquet") and not runstore._plain_name(name)

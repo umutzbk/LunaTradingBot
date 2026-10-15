@@ -855,3 +855,26 @@ class StoreSource:
         return SymbolInputs(symbol, self.bars["R3"].frame(symbol, lo, hi),
                             self.bars["R5"].frame(symbol, lo, hi), self.funding.frame(symbol, lo, hi),
                             list(m.insts), r4, m.identity, tuple(m.notices), dict(m.terminals), agg)
+
+    def load_decision_inputs(self, symbol: str, lo: int, hi: int, history_lo: int) -> SymbolInputs:
+        """What a decision view reads (``runner.ResearchUniverse.for_decisions``, SC-01 part 2): R3 / R4 of
+        [lo, hi), merged R2 of [history_lo, hi), R5 only inside the symbol's U6 72 h halt windows
+        (``runner.halt_windows``) within [history_lo, hi), no aggTrades. Each read is guarded as usual."""
+        from luna.v7.runner import halt_windows  # runtime import: runner is imported by this module's caller
+
+        lo, hi, history_lo = int(lo), int(hi), int(history_lo)
+        m = self.meta[symbol]
+        r4 = R4Bars(*(self.bars[k].frame(symbol, lo, hi) for k in ("R4_premium", "R4_mark", "R4_index")))
+        wins = [(max(a, history_lo), min(b, hi)) for a, b in sorted(halt_windows(symbol, m.notices,
+                                                                                 list(m.insts)))]
+        parts = [self.bars["R5"].frame(symbol, a, b) for a, b in wins if a < b]
+        if parts:
+            b1 = pd.concat(parts, ignore_index=True)
+            keep = np.unique(b1["open_ts"].to_numpy(np.int64), return_index=True)[1]
+            b1 = b1.iloc[keep].reset_index(drop=True)
+        else:
+            t5 = TABLES["R5"]
+            b1 = pd.DataFrame({**_empty(t5, t5.names), "known_at": np.empty(0, np.int64)})
+        return SymbolInputs(symbol, self.bars["R3"].frame(symbol, lo, hi), b1,
+                            self.funding.frame(symbol, history_lo, hi), list(m.insts), r4, m.identity,
+                            tuple(m.notices), dict(m.terminals), None)

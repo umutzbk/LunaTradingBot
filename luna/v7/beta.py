@@ -76,8 +76,12 @@ def beta_hat(
     btc_close_1h = _pit(btc_close_1h, btc_known_at, t_ns)
     last = ((t_ns - MIN) // H) * H
     hours = np.arange(last - cfg.days * D + H, last + H, H, dtype=np.int64)
-    ra = _rets(asset_close_1h, hours)
-    rb = _rets(btc_close_1h, hours)
+    return _beta_from_returns(_rets(asset_close_1h, hours), _rets(btc_close_1h, hours))
+
+
+def _beta_from_returns(ra: np.ndarray, rb: np.ndarray) -> float | None:
+    """The S-5.2 estimate from the asset / BTC hourly log returns of the 30 d window (NaN = missing)."""
+    cfg = FROZEN.beta
     ok = np.isfinite(ra) & np.isfinite(rb)
     if int(ok.sum()) < cfg.min_obs:
         return None
@@ -88,3 +92,38 @@ def beta_hat(
     ols = float(np.mean((x - x.mean()) * (y - y.mean())) / var)
     lo, hi = cfg.clip
     return float(min(max(cfg.w * ols + (1.0 - cfg.w) * cfg.prior, lo), hi))
+
+
+def take_hours(hours: np.ndarray, vals: np.ndarray, at: np.ndarray) -> np.ndarray:
+    """``pd.Series(vals, index=hours).reindex(at)`` for a strictly increasing ``hours`` index (NaN where
+    absent)."""
+    out = np.full(len(at), np.nan)
+    if len(hours):
+        pos = np.minimum(np.searchsorted(hours, at, "left"), len(hours) - 1)
+        hit = hours[pos] == at
+        out[hit] = vals[pos[hit]]
+    return out
+
+
+def _rets_sorted(hours: np.ndarray, close: np.ndarray, at: np.ndarray) -> np.ndarray:
+    cur = take_hours(hours, close, at)
+    prev = take_hours(hours, close, at - H)
+    with np.errstate(all="ignore"):
+        r = np.log(cur / prev)
+    r[~np.isfinite(r)] = np.nan
+    return r
+
+
+def beta_hat_sorted(asset: tuple[np.ndarray, np.ndarray, np.ndarray],
+                    btc: tuple[np.ndarray, np.ndarray, np.ndarray], t_ns: int) -> float | None:
+    """``beta_hat`` on (hours, close, known_at) arrays with strictly increasing hours (the hourly series of
+    15m bars with strictly increasing ``open_ts``, Task 26b): the same PIT filter, the same aligned returns
+    (missing hours NaN) and the same estimate, so the same value (``tests/v7/test_perf_equivalence.py``)."""
+    def pit(x: tuple[np.ndarray, np.ndarray, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
+        keep = x[2] <= t_ns - MIN
+        return x[0][keep], x[1][keep]
+
+    (ah, ac), (bh, bc) = pit(asset), pit(btc)
+    last = ((t_ns - MIN) // H) * H
+    hours = np.arange(last - FROZEN.beta.days * D + H, last + H, H, dtype=np.int64)
+    return _beta_from_returns(_rets_sorted(ah, ac, hours), _rets_sorted(bh, bc, hours))

@@ -10,6 +10,11 @@
   verified invariant; unknown identity -> excluded.
 * U8 false blocks new entries / increases only (``entry_allowed``); it is not an exit trigger
   (``exit_triggered`` follows U6 only, S-2.5 / S-5.4).
+* Real-scale compute (SC-01 part 2, AMB-38): a ``SymbolData`` built by ``runner.ResearchUniverse`` carries a
+  ``SymbolCache`` (indexed PIT slices, the per-instance funding annotation, h-hat per (instance, tau), the
+  U6 state built once and the indexed 72 h halt test). ``gates`` then reads the same rows through
+  ``searchsorted`` slices; without a cache (or when an index does not apply) it runs the boolean reference
+  definition. Both give identical results (``tests/v7/test_perf_equivalence.py``).
 Interpretations the spec does not fix are logged as AMB-07 in docs/results/v7-impl/AMBIGUITIES.md.
 """
 
@@ -28,6 +33,7 @@ from luna.v7.data.instances import Instance, current_instance
 from luna.v7.data.intervals import annotate, u3_gap
 from luna.v7.data.notices import NoticeVersion, U6State, known_at
 from luna.v7.market import halted
+from luna.v7.pitindex import LOOKBACK_15M, LRU, FrameIndex, HaltIndex, HaltProbe, Hourly
 from luna.v7.spread import half_spread
 from luna.v7.timeutil import MIN, D, H, ns_array, to_ns
 
@@ -68,6 +74,8 @@ class SymbolData:
     insts: list[Instance]
     notices: list[NoticeVersion] = field(default_factory=list)
     identity: Identity | None = None
+    # indexed inputs (Task 26b): set by runner.ResearchUniverse; None = the boolean reference path
+    cache: SymbolCache | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -303,9 +311,13 @@ def _funding(f: pd.DataFrame, cur: Instance, t_ns: int) -> tuple[bool, bool, int
     ka = ns_array(a["known_at"], "known_at")
     nom = a["nominal_h"].astype("Float64").to_numpy(dtype=float, na_value=np.nan)
     ok = ~a["invalid"].to_numpy(bool)  # invalid records are missing (S-2.6), for U3 and U7 alike
-    tv, nv = ts[ok], nom[ok]
+    return _funding_core(ts[ok], nom[ok], int(ka.max()), t_ns)
+
+
+def _funding_core(tv: np.ndarray, nv: np.ndarray, ka_max: int, t_ns: int) -> tuple[bool, bool, int | None]:
+    """U3 / U7 from the valid PIT records (``funding_ts``, nominal interval) and their max known_at."""
     if len(tv) == 0:
-        return False, False, int(ka.max())
+        return False, False, ka_max
     # U7: the last valid settled record; an undetermined nominal fails closed
     u7 = bool(not np.isnan(nv[-1]) and t_ns - tv[-1] <= nv[-1] * H + U.u7_slack_min * MIN)
     u3 = bool(tv[0] <= t_ns - U.u3_days * D)
@@ -315,7 +327,7 @@ def _funding(f: pd.DataFrame, cur: Instance, t_ns: int) -> tuple[bool, bool, int
             if u3_gap(nv[i - 1], nv[i], int(tv[i] - tv[i - 1])):
                 u3 = False
                 break
-    return u3, u7, int(ka.max())
+    return u3, u7, ka_max
 
 
 def gates(sd: SymbolData, t_ns: int) -> GateRow:
@@ -327,29 +339,219 @@ def gates(sd: SymbolData, t_ns: int) -> GateRow:
     cur = current_instance(sd.insts, t_ns)
     if cur is None:
         return GateRow(*(False,) * 8, ("no_current_instance",), None)
-    b15 = pit_rows(sd.bars15, t_ns, "bars15")
-    if len(b15):
-        b15 = b15[ns_array(b15["open_ts"], "open_ts") >= cur.first_bar_ts]
+    c = sd.cache
+    fast = c is not None and c.b15.ok
+    if fast:  # the PIT instance rows U2 / U4 / U5 / U8 can read (LOOKBACK_15M): same values
+        b15 = c.window15(cur, t_ns)  # type: ignore[union-attr]
+    else:
+        b15 = pit_rows(sd.bars15, t_ns, "bars15")
+        if len(b15):
+            b15 = b15[ns_array(b15["open_ts"], "open_ts") >= cur.first_bar_ts]
     u1 = cur.first_bar_ts <= t_ns - U.u1_days * D
-    u2, k2 = _u2(b15, t_ns) if len(b15) else (False, None)
+    if fast and len(b15):  # ``_u2`` on the same rows, the median shared with F8 (once per decision)
+        med, k2 = c.median_quote_volume(cur, t_ns, U.u2_days)  # type: ignore[union-attr]
+        u2 = med >= U.u2_min_quote_vol
+    else:
+        u2, k2 = _u2(b15, t_ns) if len(b15) else (False, None)
     u4, k4 = _u4(b15, t_ns) if len(b15) else (False, None)
     u8, k8 = _u8(b15, t_ns) if len(b15) else (False, None)
-    h = half_spread(b15, t_ns) if len(b15) else None
+    if fast:
+        h = c.h_hat(cur, t_ns, b15) if len(b15) else None  # type: ignore[union-attr]
+    else:
+        h = half_spread(b15, t_ns) if len(b15) else None
     u5 = h is not None and h <= U.u5_max_half_spread
     k5 = None
     if len(b15):
         k5 = _max_ka(b15, ns_array(b15["open_ts"], "open_ts") >= t_ns - FROZEN.spread.window_ns)
-    u3, u7, kf = _funding(sd.funding_annot, cur, t_ns)
-    b1 = sd.bars1m
-    b1 = pit_rows(b1, t_ns, "bars1m")
+    u3, u7, kf = c.funding_gates(cur, t_ns) if c is not None else _funding(sd.funding_annot, cur, t_ns)
     kn = [n for n in sd.notices if (k := known_at(n)) is not None and k <= t_ns - MIN]
-    u6_active = U6State(kn, sd.symbol, sd.insts).active(cur, t_ns, lambda tau: halted(b1, tau))
+    if c is not None:
+        u6_active = c.u6_active(cur, t_ns)
+    else:
+        b1 = sd.bars1m
+        b1 = pit_rows(b1, t_ns, "bars1m")
+        u6_active = U6State(kn, sd.symbol, sd.insts).active(cur, t_ns, lambda tau: halted(b1, tau))
     k6 = _mx(*(known_at(n) for n in kn))
     flags = (u1, u2, u3, u4, u5, not u6_active, u7, u8)
     reasons = tuple(f"U{i + 1}" for i, ok in enumerate(flags) if not ok)
     row = GateRow(*flags, reasons, _mx(k2, k4, k5, k8, kf, k6))
     assert_pit(row, t_ns)
     return row
+
+
+
+# ------------------------------------------------------------------------------------- indexed inputs
+
+
+HS_MEMO_ENTRIES = 64  # h-hat values kept per symbol: the F6 7 d samples (21) + the current decision (AMB-38)
+FRAME_INDEX_ENTRIES = 8  # indexes of a symbol's other frames (the three R4 frames) (AMB-38)
+
+
+class SymbolCache:
+    """Indexed inputs of one ``SymbolData`` (SC-01 part 2, AMB-38), built by ``runner.ResearchUniverse`` and
+    valid while its frames are not mutated (they are not copied). Every method returns what the boolean
+    reference computes:
+
+    * ``window15``: the PIT current-instance 15m rows limited to ``LOOKBACK_15M`` (``pitindex.FrameIndex``);
+    * ``h_hat(cur, tau, rows)``: ``spread.half_spread`` of the PIT instance bars at tau <= t, memoised per
+      (instance start, tau): with strictly sorted bars and monotone known_at the S-4.5 pair set of tau only
+      holds bars known by tau - 1 min, a prefix of every later PIT set, so the value does not depend on t;
+    * ``pit_funding(cur, t)`` / ``funding_gates``: the Task 19b incremental annotation per instance, without
+      re-hashing the frame on every call, and U3 / U7 on prefix arrays;
+    * ``u6_active``: ``notices.U6State`` built ONCE from every notice version (``known_by = t - 1 min`` keeps
+      exactly the versions known at t) with the 72 h test on a ``pitindex.HaltIndex`` of the 1-minute bars
+      (built on first use; the reference ``halted`` closure when the index does not apply). The 1-minute
+      ``known_at`` column is validated once (``pit_rows`` raised on it at every call before; it still raises
+      at every call when invalid).
+    ``memo`` holds the feature engine's per-decision memos (one decision each)."""
+
+    def __init__(self, sd: SymbolData) -> None:
+        self.sd = sd
+        self.b15 = FrameIndex.build(sd.bars15, "open_ts", ("h", "l", "c", "vol_base"))
+        self._hs = LRU(HS_MEMO_ENTRIES)
+        self._pre: dict[tuple[int, int], tuple | None] = {}
+        self._u6: U6State | None = None
+        self._b1_valid: bool | None = None
+        self._halt: HaltIndex | None = None
+        self._fx = LRU(FRAME_INDEX_ENTRIES)
+        self.memo: dict[str, object] = {}
+        # decisions-only universes (runner.ResearchUniverse.for_decisions): the first event time loaded for
+        # the 15m / R4 bars; None = the frames hold the whole history of the evaluated window
+        self.bars_lo: int | None = None
+
+    def checked(self, ix: FrameIndex, a: int, k: int, cur: Instance) -> tuple[int, int]:
+        """Refuse (fail closed) a window that is empty only because rows before ``bars_lo`` were not loaded:
+        the instance started earlier, so the whole history could hold its last PIT row."""
+        if k <= a and self.bars_lo is not None and cur.first_bar_ts < self.bars_lo:
+            raise ValueError(f"{self.sd.symbol}: no PIT bar of the current instance since the loaded start "
+                             f"{self.bars_lo}; load a longer look-back (the result could differ)")
+        return a, k
+
+    def frame_index(self, df: pd.DataFrame, float_cols: tuple[str, ...]) -> FrameIndex:
+        """The ``FrameIndex`` of another frame of this symbol (the R4 bars), built once per frame object
+        (held, so its identity stays valid; at most ``FRAME_INDEX_ENTRIES``)."""
+        got = self._fx.get(id(df))
+        if got is None or got.df is not df:  # type: ignore[union-attr]
+            got = FrameIndex.build(df, "open_ts", float_cols)
+            self._fx.put(id(df), got)
+        return got  # type: ignore[return-value]
+
+    # 15m
+    def window15_range(self, cur: Instance, t_ns: int) -> tuple[int, int]:
+        return self.checked(self.b15, *self.b15.window_range(cur.first_bar_ts, t_ns, LOOKBACK_15M), cur)
+
+    def window15(self, cur: Instance, t_ns: int) -> pd.DataFrame:
+        a, k = self.window15_range(cur, t_ns)
+        return self.b15.df.iloc[a:k]
+
+    def _per_t(self, name: str, cur: Instance, t_ns: int, make):
+        """A per-decision memo (one decision per name) keyed by (t, instance start)."""
+        key = (int(t_ns), int(cur.first_bar_ts))
+        got = self.memo.get(name)
+        if got is not None and got[0] == key:  # type: ignore[index]
+            return got[1]  # type: ignore[index]
+        val = make()
+        self.memo[name] = (key, val)
+        return val
+
+    def hourly(self, cur: Instance, t_ns: int) -> Hourly:
+        """The hourly series of ``window15(cur, t)`` (``pitindex.Hourly``), once per decision."""
+        def make() -> Hourly:
+            a, k = self.window15_range(cur, t_ns)
+            return Hourly.build(self.b15.ts[a:k], self.b15.cols["c"][a:k], self.b15.ka[a:k])
+        return self._per_t("hourly", cur, t_ns, make)
+
+    def median_quote_volume(self, cur: Instance, t_ns: int, days: int) -> tuple[float, int | None]:
+        """``median_daily_quote_volume(window15(cur, t), t, days)`` once per decision (U2 and F8 share it)."""
+        return self._per_t(f"mdqv{int(days)}", cur, t_ns,
+                           lambda: median_daily_quote_volume(self.window15(cur, t_ns), t_ns, days))
+
+    def h_hat(self, cur: Instance, tau: int, rows: pd.DataFrame) -> float | None:
+        """h-hat(tau) of the PIT instance bars ``rows`` (``window15`` at some t >= tau, covering tau - 24 h 15
+        min); memoised per (instance start, tau)."""
+        key = (int(cur.first_bar_ts), int(tau))
+        if key in self._hs:
+            return self._hs.get(key)  # type: ignore[return-value]
+        v = half_spread(rows, int(tau))
+        self._hs.put(key, v)
+        return v
+
+    # funding
+    def _prefix(self, cur: Instance) -> tuple | None:
+        key = (int(cur.idx), int(cur.first_bar_ts))
+        if key not in self._pre:
+            pre = _build_prefix(self.sd.funding_annot, cur)
+            if pre is None:
+                self._pre[key] = None
+            else:
+                a = pre.ann
+                ts = ns_array(a["funding_ts"], "funding_ts")
+                nom = a["nominal_h"].astype("Float64").to_numpy(dtype=float, na_value=np.nan)
+                valid = np.flatnonzero(~a["invalid"].to_numpy(bool))
+                self._pre[key] = (pre, ts, nom, valid, np.maximum.accumulate(pre.ka))
+        return self._pre[key]
+
+    def _pit_k(self, cur: Instance, t_ns: int) -> int | None:
+        """k when the PIT set of t is the k-record prefix of the instance annotation (``pit_funding``'s fast
+        condition), else None."""
+        got = self._prefix(cur)
+        if got is None:
+            return None
+        ok = got[0].ka <= int(t_ns) - MIN
+        k = int(ok.sum())
+        return k if k > 0 and ok[:k].all() else None
+
+    def pit_funding(self, cur: Instance, t_ns: int) -> pd.DataFrame:
+        """``pit_funding(sd.funding_annot, cur, t)`` (a positional view, not a copy: read only)."""
+        return self.pit_funding_ka(cur, t_ns)[0]
+
+    def pit_funding_ka(self, cur: Instance, t_ns: int) -> tuple[pd.DataFrame, int | None]:
+        """(``pit_funding``, its max known_at; None when empty)."""
+        k = self._pit_k(cur, t_ns)
+        if k is None:
+            f = pit_funding(self.sd.funding_annot, cur, t_ns)
+            return f, (int(ns_array(f["known_at"], "known_at").max()) if len(f) else None)
+        got = self._prefix(cur)
+        return got[0].ann.iloc[:k], int(got[4][k - 1])  # type: ignore[index]
+
+    def funding_gates(self, cur: Instance, t_ns: int) -> tuple[bool, bool, int | None]:
+        """``_funding(sd.funding_annot, cur, t)`` (U3, U7, max known_at) on the prefix arrays."""
+        k = self._pit_k(cur, t_ns)
+        if k is None:
+            return _funding(self.sd.funding_annot, cur, t_ns)
+        _, ts, nom, valid, kmax = self._prefix(cur)  # type: ignore[misc]
+        v = valid[:int(np.searchsorted(valid, k, "left"))]
+        return _funding_core(ts[v], nom[v], int(kmax[k - 1]), int(t_ns))
+
+    # U6
+    def u6_state(self) -> U6State:
+        if self._u6 is None:
+            self._u6 = U6State(list(self.sd.notices), self.sd.symbol, self.sd.insts)
+        return self._u6
+
+    def u6_active(self, cur: Instance, t_ns: int) -> bool:
+        b1 = self.sd.bars1m
+        if self._b1_valid is None:
+            try:
+                pit_rows(b1, t_ns, "bars1m")
+                self._b1_valid = True
+            except ValueError:
+                self._b1_valid = False
+        if not self._b1_valid:
+            pit_rows(b1, t_ns, "bars1m")  # raises exactly as the reference does
+        state = self.u6_state()
+        if not state.has_events(cur.idx):  # never reads halted_fn: no 1-minute index needed
+            return state.active(cur, t_ns, halted, known_by=t_ns - MIN)  # type: ignore[arg-type]
+        if self._halt is None:
+            self._halt = HaltIndex(b1)
+        if self._halt.ok:
+            probe: object = HaltProbe(self._halt, self._halt.pit_end(t_ns))
+        else:
+            pb = pit_rows(b1, t_ns, "bars1m")
+
+            def probe(tau: int) -> bool:
+                return halted(pb, tau)
+        return state.active(cur, t_ns, probe, known_by=t_ns - MIN)  # type: ignore[arg-type]
 
 
 def _month_start(ns: int) -> pd.Timestamp:

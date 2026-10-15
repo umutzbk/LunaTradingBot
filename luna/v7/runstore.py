@@ -13,7 +13,8 @@ unpickled):
 Columns: numpy bool / int / uint / float and pandas string / nullable extension dtypes are parquet columns of
 their own arrow type; ``object`` columns (tuples of the decision log, ``None``, mixed cells) are parquet
 string columns of one canonical tagged-JSON value per cell (``_enc``: tuple / list / dict / str / int / bool /
-None / float by ``repr`` (NaN, inf and -0.0 exact) / numpy scalars with their type / ``pd.NA``); any other
+None / float by ``repr`` (inf and -0.0 exact; every NaN is the canonical NaN, its payload bits are not
+kept) / numpy scalars with their type / ``pd.NA``); any other
 dtype or cell type is refused at write. The parquet files carry no pandas or arrow schema metadata
 (``store_schema=False``), so a reader rebuilds every frame from run.json + plain columns and the
 ``BookRun`` dataclass explicitly (``decode_run``). Frames get a ``RangeIndex`` (the output identity ignores
@@ -40,7 +41,7 @@ import io
 import json
 import re
 from collections.abc import Mapping
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import numpy as np
 import pandas as pd
@@ -124,17 +125,37 @@ def _json_cell(v: object) -> str:
 # -------------------------------------------------------------------------------------------- frames
 
 
+_EXT = ("Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64", "Float32", "Float64",
+        "boolean")
+
+
 def _kind(s: pd.Series) -> str:
     dt = s.dtype
     if isinstance(dt, np.dtype) and dt.kind in "biuf":
         return "numpy"
-    if isinstance(dt, pd.StringDtype) or isinstance(dt, pd.api.extensions.ExtensionDtype) and \
-            str(dt) in ("Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64", "Float32",
-                        "Float64", "boolean"):
+    if isinstance(dt, pd.StringDtype) or isinstance(dt, pd.api.extensions.ExtensionDtype) and str(dt) in _EXT:
         return "ext"
     if isinstance(dt, np.dtype) and dt.kind == "O":
         return "json"
     raise TypeError(f"column {s.name!r}: dtype {dt} cannot be persisted")
+
+
+def _decode_kind(name: str, dtype: str, kind: str) -> None:
+    """The writer's dtype allowlist (``_kind``) re-applied to a run.json column entry (Task 26a review minor:
+    a pinned but crafted record must not decode into a dtype the writer refuses: category, Sparse, datetime,
+    a numpy object column declared numpy, ...)."""
+    ok = False
+    try:
+        if kind == "numpy":
+            ok = dtype in {np.dtype(c).name for c in "?bhilqBHILQefd"} and np.dtype(dtype).kind in "biuf"
+        elif kind == "ext":
+            ok = dtype in _EXT or isinstance(pd.api.types.pandas_dtype(dtype), pd.StringDtype)
+        elif kind == "json":
+            ok = dtype == "object"
+    except (TypeError, ValueError):
+        ok = False
+    if not ok:
+        raise IntegrityBlocker(f"{name}: column dtype {dtype!r} / storage {kind!r} is not a persistable kind")
 
 
 def _encode_frame(name: str, df: pd.DataFrame | None) -> tuple[dict | None, bytes | None]:
@@ -181,6 +202,7 @@ def _decode_frame(name: str, meta: dict | None, data: bytes | None) -> pd.DataFr
         raise IntegrityBlocker(f"{name}: stored columns / rows differ from run.json")
     out: dict[str, object] = {}
     for c, dtype, kind in meta["columns"]:
+        _decode_kind(f"{name}.{c}", str(dtype), str(kind))
         col = tbl.column(c)
         if kind == "numpy":
             out[c] = np.asarray(col.to_numpy(zero_copy_only=False)).astype(np.dtype(dtype), copy=True)
@@ -244,6 +266,17 @@ def run_file_sha256(run: BookRun) -> str:
 # ------------------------------------------------------------------------------------------------ store
 
 
+def _plain_name(name: object) -> bool:
+    """A run-manifest file name is a plain file name of the run directory: no separator, no drive prefix
+    (``C:x``), not absolute, not hidden (Task 26a review minor)."""
+    if not isinstance(name, str) or not name or name.startswith("."):
+        return False
+    if any(c in name for c in ("/", "\\", ":")):
+        return False
+    w = PureWindowsPath(name)
+    return not (w.drive or w.is_absolute() or PurePosixPath(name).is_absolute()) and w.name == name
+
+
 class RunStore:
     """Executed ``BookRun`` objects written once under ``root`` (module docstring). One writer per root."""
 
@@ -284,6 +317,8 @@ class RunStore:
         return sha
 
     def file_sha256(self, output_sha256: str) -> str:
+        """The run.json sha256 the store's (unpinned, rewritable) manifest records: information only, NOT a
+        pin. A caller that must trust a run passes the pinned value to ``load`` / uses ``load_pinned``."""
         return str(self.manifest()["runs"][output_sha256]["sha256"])
 
     def load(self, output_sha256: str, *, file_sha256: str,
@@ -303,7 +338,7 @@ class RunStore:
             _integrity(f"{d}: manifest run.json sha256 {e['sha256']} is not the pinned {file_sha256}", d)
         files: dict[str, bytes] = {}
         for name in e["files"]:
-            if "/" in name or "\\" in name or name.startswith("."):
+            if not _plain_name(name):
                 _integrity(f"{d}: invalid file name {name!r} in the run manifest", d)
             with open(d / name, "rb") as f:
                 files[name] = f.read()

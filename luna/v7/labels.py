@@ -22,6 +22,12 @@ usable 1-minute bar opening in [tau, tau + 60 min]; the fill TIME stays tau (AMB
 All frames are trimmed to timestamps strictly before the window end and to the current instance (E10)
 before use; no price is interpolated or invented (a price must be finite and > 0).
 
+Real-scale compute (SC-01 part 2, AMB-38): a ``LegData`` built by ``runner.ResearchUniverse`` carries a
+``cache``: its restricted ``refs.InstView`` is built once per (instance, window end), and HALTED, the
+reference prices, h-hat, the halted-exit search, beta-hat (``beta.beta_hat_sorted`` on the view's hourly
+arrays, built once per instance) and the funding schedule read the view's sorted arrays (``refs.InstIndex``).
+Identical results (``tests/v7/test_perf_equivalence.py``).
+
 ``invalid_reason`` enum (``INVALID_REASONS``):
   no_instance, entry_halted, btc_entry_halted, entry_price_missing, entry_proxy_missing, beta_missing,
   exit_price_missing, btc_exit_halted, no_executable_exit, terminal_not_reconstructible,
@@ -32,19 +38,28 @@ Interpretations the spec does not fix are logged as AMB-10 in docs/results/v7-im
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 import pandas as pd
 
 from luna.v7 import guard
-from luna.v7.beta import beta_hat, hourly_close_from_15m, hourly_known_at_from_15m
+from luna.v7.beta import beta_hat, beta_hat_sorted, hourly_close_from_15m, hourly_known_at_from_15m
 from luna.v7.constants import FROZEN
 from luna.v7.data.instances import Instance, current_instance
 from luna.v7.data.terminal import TerminalEvent
-from luna.v7.market import first_executable_after, halted
-from luna.v7.refs import FundingProblem, InstView, funding_schedule, pos, ref_price, restrict, trim
-from luna.v7.spread import half_spread
+from luna.v7.refs import (
+    FundingProblem,
+    InstView,
+    funding_schedule,
+    pos,
+    ref_price,
+    restrict,
+    x_first_executable_after,
+    x_half_spread,
+    x_halted,
+)
 from luna.v7.timeutil import MIN, H
 
 COMPONENTS = ("funding_leg", "price_resid", "fee_in", "fee_out", "ss_in", "ss_out", "hedge_cost",
@@ -83,6 +98,11 @@ class LegData:
     funding: pd.DataFrame
     insts: list[Instance]
     terminal: TerminalEvent | None = None
+    # restricted views per (instance, window end) (Task 26b); set by runner.ResearchUniverse.leg_data
+    cache: OrderedDict | None = field(default=None, compare=False, repr=False)
+
+
+VIEW_MEMO_ENTRIES = 8  # restricted views kept per LegData (instance x window end; AMB-38)
 
 
 @dataclass(frozen=True)
@@ -125,10 +145,24 @@ class _Invalid(Exception):
 # --- helpers (shared with the executed book: luna.v7.refs) ---------------------------------------------
 
 def _restrict(d: LegData, cur: Instance, w_end: int) -> InstView:
-    return restrict(d.bars1m, d.bars15, d.mark15, d.funding, cur, w_end)
+    if d.cache is None:
+        return restrict(d.bars1m, d.bars15, d.mark15, d.funding, cur, w_end)
+    key = (cur.idx, cur.first_bar_ts, cur.last_trade_ts, cur.end_known_at, int(w_end))
+    if key in d.cache:
+        d.cache.move_to_end(key)
+        return d.cache[key]
+    x = restrict(d.bars1m, d.bars15, d.mark15, d.funding, cur, w_end)
+    d.cache[key] = x
+    while len(d.cache) > VIEW_MEMO_ENTRIES:
+        d.cache.popitem(last=False)
+    return x
 
 
 def _beta(leg: InstView, btc: InstView, t: int) -> float | None:
+    ia, ib = leg.ix(), btc.ix()
+    if ia.ok and ib.ok:  # the views' hourly arrays (built once per view)
+        ha, hb = ia.hourly, ib.hourly
+        return beta_hat_sorted((ha.hours, ha.close, ha.ka), (hb.hours, hb.close, hb.ka), t)
     a, b = leg.b15, btc.b15
     return beta_hat(hourly_close_from_15m(a), hourly_close_from_15m(b), t,
                     hourly_known_at_from_15m(a), hourly_known_at_from_15m(b))
@@ -187,9 +221,9 @@ def _compute(inputs: LabelInputs, t: int, s: int, h: int, t_e: int, t_x: int, w_
     btc = _restrict(inputs.btc, cur_b, w_end)
 
     # --- entry (S-5.4 entry while halted, data gap; S-4.4 entry proxy) -----------------------------------
-    if halted(leg.b1, t_e):
+    if x_halted(leg, t_e):
         raise _Invalid("entry_halted")
-    if halted(btc.b1, t_e):
+    if x_halted(btc, t_e):
         raise _Invalid("btc_entry_halted")
     pe = ref_price(leg, t_e)
     be = ref_price(btc, t_e)
@@ -200,8 +234,8 @@ def _compute(inputs: LabelInputs, t: int, s: int, h: int, t_e: int, t_x: int, w_
         flags.append("entry_gap_price")
     if be[1]:
         flags.append("btc_entry_gap_price")
-    ha_e = half_spread(leg.b15, t_e)
-    hb_e = half_spread(btc.b15, t_e)
+    ha_e = x_half_spread(leg, t_e)
+    hb_e = x_half_spread(btc, t_e)
     if ha_e is None or hb_e is None:
         raise _Invalid("entry_proxy_missing")
     beta = _beta(leg, btc, t)
@@ -211,12 +245,12 @@ def _compute(inputs: LabelInputs, t: int, s: int, h: int, t_e: int, t_x: int, w_
     # --- exit (S-5.4) ------------------------------------------------------------------------------------
     ceased = cur.last_trade_ts is not None and cur.last_trade_ts <= t_x
     terminal = False
-    if not ceased and halted(leg.b1, t_x):
+    if not ceased and x_halted(leg, t_x):
         check(w_end)  # the wait may read up to the window end
-        fx = first_executable_after(trim(leg.b1, "open_ts", None, w_end - MIN), t_x, cur)  # fill < end
+        fx = x_first_executable_after(leg, t_x, w_end - MIN)  # fill < end
         if fx is not None:
             t_xe, P_x = fx
-            hf = half_spread(leg.b15, t_xe)
+            hf = x_half_spread(leg, t_xe)
             hx, sx = max(hf if hf is not None else 0.0, _FB_H), _FB_SLIP
             flags.append("halted_exit")
             if hf is None:
@@ -235,7 +269,7 @@ def _compute(inputs: LabelInputs, t: int, s: int, h: int, t_e: int, t_x: int, w_
         if px[1]:
             flags.append("exit_gap_price")
         P_x = px[0]
-        hf = half_spread(leg.b15, t_x)
+        hf = x_half_spread(leg, t_x)
         if hf is None:
             hx, sx = _FB_H, _FB_SLIP
             flags.append("exit_proxy_fallback")
@@ -261,7 +295,7 @@ def _compute(inputs: LabelInputs, t: int, s: int, h: int, t_e: int, t_x: int, w_
         flags.append("terminal_A")
 
     # --- pro-forma BTC hedge exit at the same time --------------------------------------------------------
-    if halted(btc.b1, t_xe):
+    if x_halted(btc, t_xe):
         raise _Invalid("btc_exit_halted", t_xe)
     bx = ref_price(btc, t_xe, lambda: check(t_xe + H + MIN))
     if bx is None:
@@ -269,7 +303,7 @@ def _compute(inputs: LabelInputs, t: int, s: int, h: int, t_e: int, t_x: int, w_
     if bx[1]:
         flags.append("btc_exit_gap_price")
     B_x = bx[0]
-    hbf = half_spread(btc.b15, t_xe)
+    hbf = x_half_spread(btc, t_xe)
     if hbf is None:
         hbx, sbx = _FB_H, _FB_SLIP
         flags.append("btc_exit_proxy_fallback")

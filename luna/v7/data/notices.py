@@ -156,8 +156,22 @@ class U6State:
         for evs in self._events.values():
             evs.sort(key=lambda e: e.order)
 
+    def scheds(self) -> tuple[int, ...]:
+        """Every scheduled delisting time a 72 h test can be evaluated for (sorted, unique)."""
+        return tuple(sorted({e.sched for evs in self._events.values() for e in evs if e.sched is not None}))
+
+    def has_events(self, idx: int) -> bool:
+        """Whether any matched version is attributed to instance ``idx`` (else ``active`` is False without
+        reading ``halted_fn``)."""
+        return bool(self._events.get(idx))
+
     def _no_halt(self, sched: int, halted_fn: Callable[[int], bool]) -> bool:
-        """True when the instrument is not HALTED at any time in [sched, sched + 72 h] (cached)."""
+        """True when the instrument is not HALTED at any time in [sched, sched + 72 h] (cached). A
+        ``halted_fn`` with a ``no_halt(sched, end, step)`` method (``pitindex.HaltProbe``, Task 26b) answers
+        the same grid test itself (indexed, cached per scheduled time and PIT prefix; identical result)."""
+        indexed = getattr(halted_fn, "no_halt", None)
+        if indexed is not None:
+            return bool(indexed(sched, sched + CLEAR_AFTER_NS, HALT_GRID_NS))
         key = (sched, halted_fn)
         if key not in self._clear_cache:
             end = sched + CLEAR_AFTER_NS
@@ -168,14 +182,20 @@ class U6State:
     def _cleared(self, sched: int | None, at: int, halted_fn: Callable[[int], bool]) -> bool:
         return sched is not None and sched + CLEAR_AFTER_NS <= at and self._no_halt(sched, halted_fn)
 
-    def active(self, instance: Instance, t_ns: int, halted_fn: Callable[[int], bool]) -> bool:
+    def active(self, instance: Instance, t_ns: int, halted_fn: Callable[[int], bool],
+               known_by: int | None = None) -> bool:
+        """U6 at t. ``known_by``: only versions with ``known_at <= known_by`` exist (Task 26b: one state
+        built from every version answers ``U6State(<versions known by t - 1 min>).active(...)`` exactly: the
+        events are ordered by ``known_at`` first, so the known versions are a prefix of each instance's
+        list)."""
         if t_ns - MIN < start_known_at(instance) or (  # not yet current (DK-108)
             instance.end_known_at is not None and t_ns >= instance.end_known_at
         ):
             return False  # U6 ends with its instance
+        lim = t_ns if known_by is None else min(t_ns, int(known_by))
         inforce: list[int | None] = []  # sched of each in-force version
         for e in self._events.get(instance.idx, []):
-            if e.ka > t_ns:
+            if e.ka > lim:
                 break
             inforce = [x for x in inforce if not self._cleared(x, e.ka, halted_fn)]
             if e.kind != "delisting":
