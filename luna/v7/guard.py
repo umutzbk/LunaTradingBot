@@ -282,13 +282,18 @@ _VERIFIED: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
 def _signature() -> tuple:
+    """Location + per file (markers, pins, verdict markers): stat (mtime, ctime, size, inode) and a sha256 of
+    the raw bytes. The digest catches a same-size in-place rewrite with a restored mtime, which stat alone
+    cannot see where ``st_ctime`` is the creation time (Windows; round 3 m-b). No JSON parsing, no git."""
     repo, home = _roots()
     sig: list = [release.repo_key(repo), str(Path(home))]
     for d in _dirs():
         for name in (MARKER, PIN, VERDICT):
+            p = d / name
             try:
-                st = os.stat(d / name)
-                sig.append((name, st.st_mtime_ns, st.st_size, st.st_ino))
+                st = os.stat(p)
+                digest = hashlib.sha256(p.read_bytes()).hexdigest()
+                sig.append((name, st.st_mtime_ns, st.st_ctime_ns, st.st_size, st.st_ino, digest))
             except OSError:
                 sig.append((name, None))
     return tuple(sig)
@@ -341,19 +346,19 @@ def verify_authorization(auth: object) -> dict:
 
 
 def check_outcome_window(lo: int, hi: int, *, auth: HoldoutAuthorization | None = None, now_ns: int,
-                         repo: Path | None = None, m6_span: tuple[int, int | None] | None = None,
-                         fresh: bool = False) -> None:
+                         m6_span: tuple[int, int | None] | None = None, fresh: bool = False) -> None:
     """Refuse an outcome window [lo, hi): M6 overlap before R_V6 (EmbargoBlocked, even with auth), W_FWD7
     overlap before L7 (SealedBeforeL7), then W_HOLD overlap without a verified authorisation (HoldoutBlocked).
 
-    M6, R_V6, T_F7 and L7 always come from the canonical, hash-checked sources of ``repo`` (default: the code
-    repository; ``windows.m6_cached`` / ``luna.v7.release``, read once per process). A supplied ``m6_span`` is
-    only a cross-check. ``now_ns`` can only keep a seal closed: lifting needs the trusted clock as well. A
-    W_HOLD window needs an authorization verified against the canonical opening (``_roots``, never
-    ``repo``); a cache hit needs the same location and unchanged marker / pin / verdict files, else (and
-    always with ``fresh=True``) the files are re-read."""
+    M6, R_V6, T_F7 and L7 always come from the canonical, hash-checked sources of the code repository
+    (``_roots``; no caller repository, round 3 m-c; ``windows.m6_cached`` / ``luna.v7.release``, read once per
+    process). A supplied ``m6_span`` is only a cross-check. ``now_ns`` can only keep a seal closed: lifting
+    needs the trusted clock as well. A W_HOLD window needs an authorization verified against the canonical
+    opening (``_roots``, never a caller value); a cache hit needs the same location and unchanged marker /
+    pin / verdict files, else (and always with ``fresh=True``) the files are re-read."""
     if hi <= lo:
         raise ValueError(f"empty outcome window [{lo}, {hi})")
+    repo = _roots()[0]
     span = windows.m6_cached(repo)
     if m6_span is not None and tuple(m6_span) != tuple(span):
         raise EmbargoBlocked(f"m6_span {m6_span} differs from the canonical M6 {span} (S-1.2, S-1.3)")
@@ -461,12 +466,18 @@ def _log_attempt(log: str, entry: Mapping) -> None:
     """Append one line to an attempt log in every canonical directory (append-only; never read as an
     authorization)."""
     line = json.dumps(dict(entry), sort_keys=True) + "\n"
-    for d in _log_dirs():
-        d.mkdir(parents=True, exist_ok=True)
-        with open(d / log, "a", encoding="utf-8") as f:
-            f.write(line)
-            f.flush()
-            os.fsync(f.fileno())
+    errors: list[str] = []
+    for d in _log_dirs():  # every directory is attempted; any failure is raised (round 3 m-d)
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            with open(d / log, "a", encoding="utf-8") as f:
+                f.write(line)
+                f.flush()
+                os.fsync(f.fileno())
+        except OSError as e:
+            errors.append(f"{d}: {e}")
+    if errors:
+        raise OSError("attempt log not written: " + "; ".join(errors))
 
 
 def _attempt(log: str, ok_result: str, fn):
@@ -477,8 +488,8 @@ def _attempt(log: str, ok_result: str, fn):
     except BaseException as e:
         try:
             _log_attempt(log, {**base, "result": "refused", "reason": f"{type(e).__name__}: {e}"})
-        except OSError:
-            pass
+        except OSError as le:  # still refused; the logging failure is reported, never swallowed (m-d)
+            e.add_note(f"attempt log failed: {le}")
         raise
     try:
         _log_attempt(log, {**base, "result": ok_result, "reason": "", "head": head,

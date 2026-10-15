@@ -6,6 +6,7 @@ monkeypatching ``release.trusted_now_ns`` (no API takes a date)."""
 from __future__ import annotations
 
 import inspect
+from unittest import mock
 
 import pytest
 
@@ -23,6 +24,12 @@ LATE_KEY = "data/futures/um/monthly/klines/BTCUSDT/15m/BTCUSDT-15m-2027-11.zip"
 OLD_KEY = "data/futures/um/monthly/klines/BTCUSDT/15m/BTCUSDT-15m-2025-06.zip"
 
 
+def _cow(repo, *args, **kw):
+    """``check_outcome_window`` with the guard's location seam at ``repo`` (round 3 m-c: no caller repo)."""
+    with mock.patch.object(guard, "_roots", lambda: (repo, repo.parent / "home")):
+        guard.check_outcome_window(*args, **kw)
+
+
 @pytest.fixture
 def canon(tmp_path):
     return af.canonical_repo(tmp_path / "canon")
@@ -35,7 +42,7 @@ def test_without_a_record_m6_is_open_and_l7_undefined(tmp_path, monkeypatch):
     assert release.r_v6(r) is None and release.t_f7(r) is None and forward.l7(r) is None
     af.clock(monkeypatch, to_ns("2040-01-01"))
     with pytest.raises(guard.EmbargoBlocked):
-        guard.check_outcome_window(M6_START, M6_START + D, now_ns=to_ns("2040-01-01"), repo=r)
+        _cow(r, M6_START, M6_START + D, now_ns=to_ns("2040-01-01"))
     with pytest.raises(SealedBeforeL7):
         forward.require_l7(r)
     # the real repository has no release record either
@@ -143,14 +150,14 @@ def test_outcome_guard_releases_m6_only_by_record_and_trusted_clock(monkeypatch,
     lo, hi = M6_START + D, M6_START + 2 * D  # inside M6, before T_F7
     af.clock(monkeypatch, R_V6 - 1)
     with pytest.raises(guard.EmbargoBlocked):  # a caller date cannot lift M6 before the trusted clock
-        guard.check_outcome_window(lo, hi, now_ns=to_ns("2040-01-01"), repo=canon)
+        _cow(canon, lo, hi, now_ns=to_ns("2040-01-01"))
     af.clock(monkeypatch, R_V6)
-    guard.check_outcome_window(lo, hi, now_ns=R_V6, repo=canon)
+    _cow(canon, lo, hi, now_ns=R_V6)
     with pytest.raises(guard.EmbargoBlocked):  # the caller's own clock must have reached R_V6 as well
-        guard.check_outcome_window(lo, hi, now_ns=R_V6 - 1, repo=canon)
+        _cow(canon, lo, hi, now_ns=R_V6 - 1)
     with pytest.raises(guard.EmbargoBlocked, match="canonical"):  # a span is still only a cross-check
-        guard.check_outcome_window(lo, hi, now_ns=R_V6, repo=canon, m6_span=(M6_START, None))
-    guard.check_outcome_window(lo, hi, now_ns=R_V6, repo=canon, m6_span=(M6_START, R_V6))
+        _cow(canon, lo, hi, now_ns=R_V6, m6_span=(M6_START, None))
+    _cow(canon, lo, hi, now_ns=R_V6, m6_span=(M6_START, R_V6))
 
 
 def test_w_fwd7_replay_runnable_only_at_l7(tmp_path, monkeypatch, canon):
@@ -160,20 +167,20 @@ def test_w_fwd7_replay_runnable_only_at_l7(tmp_path, monkeypatch, canon):
     ext = (win[1], forward.w_fwd7(TF7, extended=True)[1])
     af.clock(monkeypatch, R_V6 + H)  # M6 released, L7 not reached
     with pytest.raises(SealedBeforeL7):
-        guard.check_outcome_window(*win, now_ns=R_V6 + H, repo=canon)
+        _cow(canon, *win, now_ns=R_V6 + H)
     af.clock(monkeypatch, L7)
     with pytest.raises(SealedBeforeL7):  # the caller's clock too
-        guard.check_outcome_window(*win, now_ns=L7 - 1, repo=canon)
-    guard.check_outcome_window(*win, now_ns=L7, repo=canon)
-    guard.check_outcome_window(*ext, now_ns=L7, repo=canon)  # extended L7 = max(T_F7 + 270 d, R_V6) + 1 d
+        _cow(canon, *win, now_ns=L7 - 1)
+    _cow(canon, *win, now_ns=L7)
+    _cow(canon, *ext, now_ns=L7)  # extended L7 = max(T_F7 + 270 d, R_V6) + 1 d
     early = af.canonical_repo(tmp_path / "early", r_v6="2027-01-01T00:00:00Z", basis="c",
                               status="released_in_writing")
     af.clock(monkeypatch, TF7 + 181 * D)
-    guard.check_outcome_window(*win, now_ns=TF7 + 181 * D, repo=early)
+    _cow(early, *win, now_ns=TF7 + 181 * D)
     with pytest.raises(SealedBeforeL7):  # the extension window waits for the extended look
-        guard.check_outcome_window(*ext, now_ns=TF7 + 181 * D, repo=early)
+        _cow(early, *ext, now_ns=TF7 + 181 * D)
     af.clock(monkeypatch, TF7 + 271 * D)
-    guard.check_outcome_window(*ext, now_ns=TF7 + 271 * D, repo=early)
+    _cow(early, *ext, now_ns=TF7 + 271 * D)
 
 
 
@@ -206,3 +213,9 @@ def test_extension_records_stay_sealed_until_the_extended_l7(tmp_path, monkeypat
     af.clock(monkeypatch, TF7 + 271 * D)
     assert s.read(b.sha256) == b"in extension"
     assert [x.recv_ts for x in s.iter_records()] == [a.recv_ts, b.recv_ts, again.recv_ts]
+
+
+def test_outcome_guard_takes_no_caller_repo():
+    """Round 3 m-c: the M6 / R_V6 / T_F7 / L7 source of the outcome guard is the canonical code repository
+    (``guard._roots``), never a caller argument."""
+    assert "repo" not in inspect.signature(guard.check_outcome_window).parameters

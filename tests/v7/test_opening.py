@@ -722,3 +722,66 @@ def test_persisted_report_loader_is_private_to_the_opening():
     users = sorted(p.name for p in root.rglob("*.py")
                    if "_load_persisted_report" in p.read_text(encoding="utf-8"))
     assert users == ["leakage.py", "opening.py"]
+
+
+# ---------------------------------------------------------------------------------------- round 3 minors
+
+
+def test_same_size_in_place_rewrite_is_detected_on_the_cached_path(tmp_path):
+    """Round 3 m-b: a same-size rewrite of a pin with its mtime restored still invalidates the cached
+    verification (the signature has ctime and a digest of the raw bytes: on Windows ctime is the creation
+    time, so stat alone cannot see it)."""
+    import os
+
+    o = _opened(tmp_path)
+    _open(o)
+    pin = guard.marker_paths()[0].parent / guard.PIN
+    st = os.stat(pin)
+    orig = pin.read_bytes()
+    forged = orig.replace(af.MANIFEST.encode(), b"d" * 64)
+    assert len(forged) == len(orig) and forged != orig
+    with open(pin, "r+b") as f:  # in place, same size
+        f.write(forged)
+    os.utime(pin, ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert os.stat(pin).st_mtime_ns == st.st_mtime_ns and os.stat(pin).st_size == st.st_size
+    with pytest.raises(guard.HoldoutBlocked):
+        _open(o, fresh=False)
+    with open(pin, "r+b") as f:
+        f.write(orig)
+    _open(o, fresh=False)
+
+
+def test_attempt_log_failure_fails_closed_and_is_reported(tmp_path, monkeypatch):
+    """Round 3 m-d: a refusal whose attempt cannot be logged still raises, with the logging failure noted; a
+    success whose attempt cannot be logged is refused."""
+    o = _opened(tmp_path)
+
+    def broken(log, entry):
+        raise OSError("log disk full")
+
+    monkeypatch.setattr(guard, "_log_attempt", broken)
+    with pytest.raises(guard.HoldoutBlocked) as e:
+        _resume(o, phrase="wrong")
+    assert "resume phrase" in str(e.value) and any("log disk full" in n for n in e.value.__notes__)
+    with pytest.raises(guard.HoldoutBlocked, match="could not be logged"):
+        _resume(o)
+
+
+def test_log_attempt_writes_every_directory_and_fails_if_any_fails(tmp_path, monkeypatch):
+    """Round 3 m-d: both canonical directories are attempted; any failure is raised (never swallowed)."""
+    o = _opened(tmp_path)
+    dirs = guard._log_dirs()
+    real_open = open
+    bad = str(dirs[0])
+
+    def flaky(path, *a, **k):
+        if str(path).startswith(bad) and str(path).endswith(guard.RESUME_LOG):
+            raise OSError("home log unwritable")
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr("builtins.open", flaky)
+    with pytest.raises(OSError, match="home log unwritable"):
+        guard._log_attempt(guard.RESUME_LOG, {"x": 1})
+    monkeypatch.setattr("builtins.open", real_open)
+    assert (dirs[1] / guard.RESUME_LOG).read_text(encoding="utf-8").strip() == '{"x": 1}'
+    assert o.auth is not None

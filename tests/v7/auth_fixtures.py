@@ -59,7 +59,7 @@ def frozen_repo(path: Path) -> Path:
     """The deterministic code-frozen repository (HEAD == HEAD_COMMIT, both V7 tags annotated on HEAD)."""
     r = _init(Path(path))
     (r / "a.txt").write_text("x", encoding="utf-8")
-    _v6_files(r)  # the canonical M6 source of this repository (``check_outcome_window(repo=...)``)
+    _v6_files(r)  # the canonical M6 source when ``guard._roots`` points at this repository
     git(r, "add", "-A")
     git(r, "commit", "-q", "-m", "c")
     git(r, "tag", "-a", spec.V6_TAG, "-m", "v6")

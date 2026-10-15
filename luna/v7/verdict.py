@@ -431,9 +431,36 @@ def _p1_em(x: HoldoutInputs) -> tuple[stats.CBBResult | None, str | None]:
     return stats.cbb_test(rm, xm, stats.BLOCKS, x.B, x.seed), None
 
 
+_RUN_TS = (("marks", "ts"), ("daily", "start_ts"), ("daily", "end_ts"), ("decisions", "t"), ("fills", "ts"),
+           ("funding_flows", "ts"))
+
+
+def _reaches_hold(values) -> bool:
+    a = np.asarray(values)
+    if a.size == 0:
+        return False
+    a = ns_array(a, "verdict gate timestamps")
+    return bool(((a >= windows.W_HOLD[0]) & (a < windows.W_HOLD[1])).any())
+
+
 def _on_w_hold(x: HoldoutInputs) -> bool:
-    return any(windows.overlaps(int(r.window[0]), int(r.window[1]), windows.W_HOLD)
-               for r in (x.ml_T, x.a0_T, x.ml_M, x.a0_M) if isinstance(r, BookRun))
+    """Do these inputs touch W_HOLD? Fail closed (round 3 m-a): every required run must be a BookRun, and the
+    data are checked, not only the runs' ``window`` label: the windows, the timestamps of every run table
+    (marks, daily table, decisions, fills, funding flows), the quarter edges and the IC / calibration / A1
+    calibration dates."""
+    for r in (x.ml_T, x.a0_T, x.ml_M, x.a0_M):
+        if not isinstance(r, BookRun):
+            raise ValueError(f"the holdout verdict needs BookRun inputs, got {type(r).__name__} "
+                             "(fail closed)")
+        if windows.overlaps(int(r.window[0]), int(r.window[1]), windows.W_HOLD):
+            return True
+        for table, col in _RUN_TS:
+            df = getattr(r, table)
+            if isinstance(df, pd.DataFrame) and col in df.columns and _reaches_hold(df[col].to_numpy()):
+                return True
+    if _reaches_hold(list(x.quarter_edges)):
+        return True
+    return any(t is not None and len(t) >= 3 and _reaches_hold(t[2]) for t in (x.ic, x.calib, x.a1_calib))
 
 
 def holdout(x: HoldoutInputs) -> Verdict:

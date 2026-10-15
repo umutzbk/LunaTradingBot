@@ -486,8 +486,9 @@ def test_secondary_family_holm_and_a1_claim():
     pairs = {name: (weak[2 * i], weak[2 * i + 1]) for i, name in enumerate(V.SECONDARY)}
     pairs["A1 vs A0"] = (strong, a0)
     lo_bin, hi_bin = [1.0, 1.0] + [0.0] * 8, [1.0] * 8 + [0.0] * 2  # each 10-row bin calibrated
-    good_cal = (np.repeat([0.2, 0.8], 50), np.array(lo_bin * 5 + hi_bin * 5), np.arange(100))
-    bad_cal = (np.full(100, 0.9), np.zeros(100), np.arange(100))
+    days = LO + np.arange(100) * D  # real ns dates (the verdict's W_HOLD gate fails closed on anything else)
+    good_cal = (np.repeat([0.2, 0.8], 50), np.array(lo_bin * 5 + hi_bin * 5), days)
+    bad_cal = (np.full(100, 0.9), np.zeros(100), days)
     sec, a1 = V.secondary_family(pairs, good_cal, 2000, 7)
     p_a1 = sec["A1 vs A0"]["p"]
     assert p_a1 == pytest.approx(1 / 2001)
@@ -578,6 +579,35 @@ def test_public_verdict_refuses_w_hold_inputs():
         hold = replace(run, window=(windows.W_HOLD[0], windows.W_HOLD[0] + (run.window[1] - run.window[0])))
         with pytest.raises(ValueError, match="holdout_verdict"):
             V.holdout(replace(good, **{field_: hold}))
+
+
+def test_public_verdict_gate_checks_data_not_labels():
+    """Round 3 m-a: the public gate fails closed on a non-BookRun, and looks at the data timestamps (marks,
+    daily table, decisions, fills, funding), the quarter edges and the IC / calibration dates, not only at the
+    runs' ``window`` label."""
+    from luna.v7 import windows
+
+    good = _inputs()
+    shift = windows.W_HOLD[0] + 10 * D - int(good.ml_T.window[0])
+    m = good.ml_T.marks.copy()
+    m["ts"] = m["ts"] + shift  # the data reach W_HOLD; the window label still says W_DEV
+    relabelled = replace(good.ml_T, marks=m)
+    assert relabelled.window == good.ml_T.window
+    with pytest.raises(ValueError, match="holdout_verdict"):
+        V.holdout(replace(good, ml_T=relabelled))
+    d = good.a0_M.daily.copy()
+    d["end_ts"] = d["end_ts"] + shift
+    with pytest.raises(ValueError, match="holdout_verdict"):
+        V.holdout(replace(good, a0_M=replace(good.a0_M, daily=d)))
+    with pytest.raises(ValueError, match="holdout_verdict"):
+        V.holdout(replace(good, quarter_edges=[*good.quarter_edges[:-1], windows.W_HOLD[0] + D]))
+    pred, y, dates = good.ic
+    with pytest.raises(ValueError, match="holdout_verdict"):
+        V.holdout(replace(good, ic=(pred, y, dates + shift)))
+    with pytest.raises(ValueError, match="holdout_verdict"):
+        V.holdout(replace(good, calib=(good.calib[0], good.calib[1], good.calib[2] + shift)))
+    with pytest.raises(ValueError, match="BookRun"):
+        V.holdout(replace(good, a0_T=acc.account(good.a0_T)))  # a Ledger is not a run: fail closed
 
 
 def test_holdout_report_must_link_to_the_pre_report():
