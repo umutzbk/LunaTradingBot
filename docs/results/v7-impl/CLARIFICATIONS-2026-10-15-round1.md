@@ -68,11 +68,11 @@ Tests must prove the runner cannot:
 
 Every other normative item stays unresolved and is presented in one consolidated decision docket (`docs/results/v7-impl/DECISION-DOCKET.md`) before code freeze. Any unresolved item capable of changing research outcomes is a code-freeze blocker. Provisional behaviour is never finalized silently.
 
-## Implementation status of these decisions
+## Implementation status of these decisions (updated after Task 19c, commit b18ea86)
 
 | Item | Code status |
 |---|---|
-| AMB-16(d) | Implemented as the interim (flatten when a side is empty, even inside the minimum hold). Runner-level test added in Task 19b. |
-| AMB-16(e) | To change: add the marked-gross hard limit at decisions (reduce-only, proportional, never while halted). Per-leg and liquidity caps stay target / entry caps, with the 25 % drift rule. |
-| AMB-20 | Implemented (INVALID on a missing unwind-minute bar; the detail string distinguishes a data gap from a halt). |
-| AMB-21(b) | To change: missing required BTC price → INVALID inside the engine (hedge trade required, hedge held at a tick, or leg held / leg fill needing B(e)), never an exception and never a stale BTC mark; no invalidation when BTC is not required. |
+| AMB-16(d) | Implemented. A one-sidedness check runs at every 15-minute tick and at decisions. The ENTIRE book, legs and the S-7.4 BTC hedge, is flattened at S-4.2 forced timing (taker, first 1-minute bar ≥ trigger + 1 min), including under E_M, where resting maker exits are replaced. The minimum hold does not block. No replacement entries. Halted legs follow S-5.4. Tests: `tests/v7/book/test_engine_round1.py`, runner test `test_one_sided_book_is_flattened_at_next_executable_opportunity`. |
+| AMB-16(e) | Implemented per reading R35. Per-leg and liquidity caps bind targets and entries, with the 25 % drift rule. The hard marked-book limit gross ≤ 1.0·E is enforced at every decision (proportional, reduce-only, `risk_gross`, never while halted). The drift rule stays reachable (tested). R35 is listed in the decision docket for confirmation. |
+| AMB-20 | Implemented (INVALID on a missing unwind-minute bar; the detail distinguishes a data gap from a halt). |
+| AMB-21(b) | Implemented. A missing BTC price gives INVALID (`INVALID_BTC`, with timestamp) only when it is required: hedge construction or close, a held hedge's mark, or B(e) for a held leg or a leg fill. There is no stale BTC carry, and a flat book with missing BTC stays valid. Verdict propagation: a required arm ⇒ INVALID RUN; a secondary arm ⇒ its comparison is void. |
