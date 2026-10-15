@@ -9,7 +9,7 @@ import pytest
 
 from luna.v7.arms import arm_scores
 from luna.v7.book import LONG, SHORT, Leg, Order
-from luna.v7.book.constructor import Targets, targets
+from luna.v7.book.constructor import Targets, _ranked, targets
 from luna.v7.book.risk import RiskLayer, RiskState
 from luna.v7.timeutil import MIN, D
 from luna.v7.universe import eligible
@@ -71,6 +71,24 @@ def closes(tg: Targets) -> dict[tuple[str, int], str]:
 def side_rows(prefix: str, side: int, n: int, fail: tuple[int, ...] = ()) -> list:
     """n candidates ranked 1..n (rank_key n..1); ranks in ``fail`` do not pass the hurdle."""
     return [(f"{prefix}{i}", side, float(n - i + 1), i not in fail) for i in range(1, n + 1)]
+
+
+def test_a1_veto_is_entry_only():
+    """DK-42 / red-team M8 (S-7.2 A1 = A0's entries minus the vetoed): a vetoed candidate is not entered and
+    its slot is not backfilled; a held leg past h* that passes A0's hurdle but is vetoed is KEPT (the veto
+    never triggers an exit); a failed A0 hurdle still exits it."""
+    shorts = tuple(leg(f"S{i}", SHORT) for i in range(1, 4))
+    rows = side_rows("S", SHORT, 3) + [("AAA", LONG, 9.0, True, True), ("BBB", LONG, 8.0, True, True),
+                                       ("CCC", LONG, 7.0, True, False)]
+    tg = run(shorts + (leg("AAA", LONG, age_h=72),), rows)
+    assert closes(tg) == {}
+    assert set(opens(tg)) == {("CCC", LONG)} and "a1_veto:BBB" in tg.notes
+    assert tg.post["AAA"] > 0
+    rows[-3] = ("AAA", LONG, 9.0, False, True)
+    assert closes(run(shorts + (leg("AAA", LONG, age_h=72),), rows)) == {("AAA", LONG): "hurdle"}
+    with pytest.raises(ValueError, match="vetoed"):  # the veto flag is required (fail closed)
+        _ranked(pd.DataFrame([("AAA", LONG, 1.0, True)], columns=["symbol", "side", "rank_key",
+                                                                  "passes_hurdle"]))
 
 
 def test_top_k_and_hurdle():

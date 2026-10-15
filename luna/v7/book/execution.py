@@ -6,12 +6,19 @@ before the window end, ``refs.restrict``; E10, S-1.5) and returns one of
 * ``Fill`` -- booked at its own timestamp (S-8.1); costs are split into fee, spread and slippage, all >= 0,
   charged against ``ref_mid`` (the reference mid of S-8.3: P(tau), the halted bar's close, the official
   settlement price, or the maker limit price);
-* ``Pending`` -- an exit due at ``due`` that cannot fill now (halted, or no reference price): it waits for the
-  first executable bar of the SAME instance (``halted_exit``), never filled retroactively or synthetically;
+* ``Pending`` -- an exit due at ``due`` while the instrument is HALTED (S-5.4): it waits for the first
+  executable bar of the SAME instance (``halted_exit``), never filled retroactively or synthetically; with
+  ``terminal`` set, the instance ceases inside the 60-minute data-gap window before any bar: the position
+  reaches its cessation and the terminal rule (DEC-43) settles it;
 * ``NoTrade`` -- an entry / increase that cannot trade (halted, price or fill-time proxy missing; S-4.4,
   S-5.4: no order while halted);
 * ``RunInvalid`` -- the exact INVALID RUN string (S-5.4, S-13.4; ``INVALID_BTC``: AMB-21 (b), raised by the
-  engine).
+  engine; ``INVALID_EXIT_GAP``: a required non-halted exit without any 1-minute bar within the 60-minute
+  data-gap window, round-2 override 2 / DK-69).
+
+Data-gap fills (S-5.4, DK-10 approved 2026-10-15): when P(tau) is missing and the price is the open of the
+first 1-minute bar within 60 min after tau, the fill is booked at THAT bar's open time (S-8.1 "every fill is
+booked at its own timestamp"), with h_fill at that time; under E_M the limit rests from that time.
 
 Prices (S-5.3): a trade in direction d (+1 buy, -1 sell) at reference p with half-spread h and slippage s
 fills at ``p * (1 + d (h + s))``; fee = rate x qty x fill price; spread cost = qty p h; slippage = qty p s.
@@ -54,6 +61,12 @@ INVALID_NO_EXIT = "INVALID RUN — no executable exit before the window's termin
 # AMB-21 (b), user decision 2026-10-15: a BTC price required at that timestamp (hedge construction, hedge
 # marking, canonical section 8 accounting B(e)) is missing; never a stale / interpolated BTC price
 INVALID_BTC = "INVALID RUN — required BTC reference price missing"
+# round-2 override 2 (DK-69, user decision 2026-10-15): a required exit of a NON-HALTED instrument with no
+# executable 1-minute bar within the frozen 60-minute data-gap window (S-5.4); never carried to a later bar
+INVALID_EXIT_GAP = "INVALID RUN — required exit without a reference bar within the 60-minute data-gap window"
+# round-2 override 3 (DK-70, user decision 2026-10-15): a held leg with neither the mark-price nor the
+# last-price 15-minute close at a tick (S-8.1, S-4.6 chain); no previous-event stale carry
+INVALID_MARK = "INVALID RUN — required leg mark missing"
 
 Liquidity = Literal["taker", "maker", "settlement"]
 
@@ -112,6 +125,7 @@ class Fill:
 class Pending:
     trade: Trade
     due: int  # S-5.4: the wait starts at the time the exit became due
+    terminal: bool = False  # no bar before the instance's cessation inside the gap window: terminal rule
 
 
 @dataclass(frozen=True)
@@ -123,14 +137,14 @@ class NoTrade:
 
 @dataclass(frozen=True)
 class RunInvalid:
-    reason: str  # INVALID_TERMINAL | INVALID_NO_EXIT | INVALID_BTC
+    reason: str  # INVALID_TERMINAL | INVALID_NO_EXIT | INVALID_BTC | INVALID_EXIT_GAP | INVALID_MARK
     symbol: str
     instance: int
     ts: int
     detail: str = ""
 
 
-Outcome = Fill | Pending | NoTrade
+Outcome = Fill | Pending | NoTrade | RunInvalid  # RunInvalid: a required exit only (DK-69)
 
 
 @dataclass(frozen=True)
@@ -202,6 +216,20 @@ class ExecView:
         v = replace(self.x, b1=self.b1(tau, tau + H + MIN), b15=self.b15(tau, tau + 1))
         return ref_price(v, tau)
 
+    def ref_at(self, tau: int) -> tuple[int, float, bool] | None:
+        """(booking time, price, gap_used) of a fill intended at tau (DK-10): P(tau) booked at tau, else the
+        open of the first usable 1-minute bar within 60 min after tau (S-5.4 data-gap rule, the same bar as
+        ``ref``) booked at that bar's open time; None if neither exists."""
+        r = self.ref(tau)
+        if r is None:
+            return None
+        if not r[1]:
+            return int(tau), r[0], False
+        g = first_bar_within(usable_open(self.b1(tau, tau + H + MIN)), tau, H)
+        if g is None or float(g[1]) != r[0]:
+            raise RuntimeError("internal: the data-gap bar differs from the reference price")
+        return int(g[0]), r[0], True
+
     def p_exact(self, tau: int) -> float | None:
         """P(tau) without the gap rule (adverse-move report)."""
         return P(self.b1(tau, tau + 1), self.b15(tau, tau + 1), tau)
@@ -231,25 +259,45 @@ def _book(v: ExecView, tr: Trade, ts: int, ref: float, h: float, s: float, fee_r
                 fee_rate * q * price, q * ref * h, q * ref * s, liq, tr.reason, tr.position_id, flags)
 
 
+def _no_reference(v: ExecView, tr: Trade, tau: int) -> NoTrade | Pending | RunInvalid:
+    """No 1-minute bar within the 60-minute data-gap window after tau, the instrument NOT halted at tau.
+
+    Entry / increase: no trade (S-4.4, S-5.4). A required exit: INVALID RUN (round-2 override 2, DK-69; the
+    S-5.4 stressed wait is for HALTED instruments only, an exit is never carried to an arbitrarily later bar),
+    except when the instance ceases inside that window before the window end: the position then reaches its
+    cessation and the terminal rule (S-5.4 / DEC-43, unchanged) settles it (``Pending(terminal=True)``)."""
+    if tr.opening:
+        return NoTrade(tr, tau, "price_missing")
+    last = v.inst.last_trade_ts
+    if last is not None and last <= tau + H and last < v.x.end:
+        return Pending(tr, tau, terminal=True)
+    return RunInvalid(INVALID_EXIT_GAP, v.symbol, v.inst.idx, int(tau),
+                      f"{tr.reason} exit due at {int(tau)}: no 1-minute bar within 60 min "
+                      "(not halted; DK-69)")
+
+
 def taker_at(v: ExecView, tr: Trade, tau: int) -> Outcome:
-    """S-6.1 taker fill at tau (S-5.3 price rules, S-4.4 h_fill, S-5.4 halted / data gap)."""
+    """S-6.1 taker fill intended at tau (S-5.3 price rules, S-4.4 h_fill, S-5.4 halted / data gap). A data-gap
+    price is booked at its bar's open time, with h_fill there (DK-10)."""
     if v.halted(tau):
         return NoTrade(tr, tau, "halted") if tr.opening else Pending(tr, tau)
-    r = v.ref(tau)
+    r = v.ref_at(tau)
     if r is None:
-        return NoTrade(tr, tau, "price_missing") if tr.opening else Pending(tr, tau)
-    flags = ("gap_price",) if r[1] else ()
-    h = v.h_fill(tau)
+        return _no_reference(v, tr, tau)
+    ts, ref, gap = r
+    flags = ("gap_price",) if gap else ()
+    h = v.h_fill(ts)
     if h is None:
         if tr.opening:
             return NoTrade(tr, tau, "proxy_missing")
-        return _book(v, tr, tau, r[0], FB_H, FB_SLIP, TAKER, "taker", flags + ("proxy_fallback",))
-    return _book(v, tr, tau, r[0], h, SLIP, TAKER, "taker", flags)
+        return _book(v, tr, ts, ref, FB_H, FB_SLIP, TAKER, "taker", flags + ("proxy_fallback",))
+    return _book(v, tr, ts, ref, h, SLIP, TAKER, "taker", flags)
 
 
 def forced_at(v: ExecView, tr: Trade, trigger_ts: int) -> Outcome:
     """S-4.2 forced risk exit: the first 1-minute bar opening >= trigger + 1 min (within the 60-min gap rule),
-    taker at its open at its open time; halted at trigger + 1 min (or no bar) -> ``Pending`` (S-5.4)."""
+    taker at its open at its open time; halted at trigger + 1 min -> ``Pending`` (S-5.4); no bar within the
+    60 min (not halted) -> INVALID RUN (DK-69) or, if the instance ceases first, the terminal rule."""
     if tr.opening:
         raise ValueError("a forced exit never opens exposure")
     tau = int(trigger_ts) + FORCED_DELAY
@@ -257,7 +305,7 @@ def forced_at(v: ExecView, tr: Trade, trigger_ts: int) -> Outcome:
         return Pending(tr, tau)
     g = first_bar_within(usable_open(v.b1(tau, tau + H + 1)), tau, H)
     if g is None:
-        return Pending(tr, tau)
+        return _no_reference(v, tr, tau)
     ts, o = g
     h = v.h_fill(ts)
     if h is None:
@@ -308,33 +356,45 @@ def _adverse(v: ExecView, ts: int, price: float, d: int) -> tuple[float | None, 
     return tuple(out)
 
 
+def maker_post(v: ExecView, t_e: int, h_hat: float | None) -> int | None:
+    """The time an E_M limit order intended at t_e is posted (it then rests for W = 30 min): t_e, or the
+    data-gap bar's open time when P(t_e) is missing (DK-10); None if no limit is posted (halted at t_e, no
+    reference price within 60 min, or h-hat(t) missing). Shared by ``maker_at`` and the engine (DK-77)."""
+    if v.halted(t_e) or h_hat is None or not math.isfinite(h_hat):
+        return None
+    r = v.ref_at(t_e)
+    return None if r is None else r[0]
+
+
 def maker_at(v: ExecView, tr: Trade, t_e: int, h_hat: float | None, usd_per_unit: float,
              cutoff: int | None = None) -> list[Outcome]:
-    """S-6.2 E_M: post at t_e at the touch L = P(t_e) (1 - d h-hat(t)); fill only from aggTrades strictly
-    through L (buy: price < L; sell: price > L) with t_e < ts <= t_e + 30 min, filled qty = min(remaining,
-    cumulative trade-through qty) at L with the maker fee; the remainder fills taker at t_e + 30 min.
+    """S-6.2 E_M: post at t0 at the touch L = P(t_e) (1 - d h-hat(t)), t0 = t_e, or the open time of the
+    data-gap bar that supplies P(t_e) (DK-10, ``maker_post``); fill only from aggTrades strictly through L
+    (buy: price < L; sell: price > L) with t0 < ts <= t0 + 30 min, filled qty = min(remaining, cumulative
+    trade-through qty) at L with the maker fee; the remainder fills taker at t0 + 30 min.
     Trade quantities are compared at ``usd_per_unit`` USD per book unit (L-norm: E_ref; AMB-19 (g)).
-    Halted at t_e or no P(t_e): S-5.4 (exit ``Pending``, entry ``NoTrade``); h-hat(t) missing: no limit can
-    be posted, the order goes taker at t_e (AMB-19 (g)). ``cutoff`` (the terminal unwind): no maker fill at or
-    after it, and a remainder due at or after it is ``NoTrade("after_unwind")`` (the unwind closes a held
-    position; an entry stays partial)."""
+    Halted at t_e: S-5.4 (exit ``Pending``, entry ``NoTrade``); no P(t_e) within 60 min: entry ``NoTrade``,
+    exit ``RunInvalid`` (DK-69); h-hat(t) missing: no limit can be posted, the order goes taker at t_e
+    (AMB-19 (g)). ``cutoff`` (the terminal unwind): no maker fill at or after it, and a remainder due at or
+    after it is ``NoTrade("after_unwind")`` (the unwind closes a held position; an entry stays partial)."""
     if v.trades is None:
         raise ValueError(f"E_M needs aggTrades for {v.symbol}")
     if v.halted(t_e):
         return [NoTrade(tr, t_e, "halted") if tr.opening else Pending(tr, t_e)]
-    r = v.ref(t_e)
+    r = v.ref_at(t_e)
     if r is None:
-        return [NoTrade(tr, t_e, "price_missing") if tr.opening else Pending(tr, t_e)]
+        return [_no_reference(v, tr, t_e)]
     if h_hat is None or not math.isfinite(h_hat):
         return [taker_at(v, tr, t_e)]
+    t0, ref, _ = r
     d = tr.direction
-    lim = r[0] * (1 - d * float(h_hat))
-    qty = tr.qty if tr.qty is not None else tr.notional / r[0]  # type: ignore[operator]
+    lim = ref * (1 - d * float(h_hat))
+    qty = tr.qty if tr.qty is not None else tr.notional / ref  # type: ignore[operator]
     rem = float(qty) * usd_per_unit
-    hi = t_e + MAKER_WINDOW
+    hi = t0 + MAKER_WINDOW
     if cutoff is not None:
         hi = min(hi, int(cutoff) - 1)
-    t = v.trades_in(t_e + 1, hi + 1)  # t_e < ts <= hi
+    t = v.trades_in(t0 + 1, hi + 1)  # t0 < ts <= hi
     ts = ns_array(t["ts"], "ts") if len(t) else np.empty(0, np.int64)
     px = t["price"].to_numpy(np.float64) if len(t) else np.empty(0)
     qq = t["qty"].to_numpy(np.float64) if len(t) else np.empty(0)
@@ -350,8 +410,8 @@ def maker_at(v: ExecView, tr: Trade, t_e: int, h_hat: float | None, usd_per_unit
         out.append(replace(f, adverse=_adverse(v, int(k), lim, d)))
     if rem > EPS * qty * usd_per_unit:
         rest = replace(tr, qty=rem / usd_per_unit, notional=None)
-        if cutoff is not None and t_e + MAKER_WINDOW >= cutoff:
-            out.append(NoTrade(rest, t_e + MAKER_WINDOW, "after_unwind"))
+        if cutoff is not None and t0 + MAKER_WINDOW >= cutoff:
+            out.append(NoTrade(rest, t0 + MAKER_WINDOW, "after_unwind"))
         else:
-            out.append(taker_at(v, rest, t_e + MAKER_WINDOW))
+            out.append(taker_at(v, rest, t0 + MAKER_WINDOW))
     return out

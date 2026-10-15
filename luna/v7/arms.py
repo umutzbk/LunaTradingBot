@@ -3,7 +3,9 @@
 A0 rule score ``s_rule = c * h* - 1.5 * 2 * cost - 5 bps`` with ``c`` the frozen V5 ``carry_per_hour`` on
 FL30 (FL30 is a mean r8, i.e. per 8 h: ``c = carry_per_hour(side, FL30 / 8)``, AMB-13), ``h*`` in hours,
 ``cost`` = taker fee + h-hat(t) + slip per side. Hurdle ``s_rule > 0``. A1 = A0's entries minus those with
-calibrated P-hat < 0.50, ranked in A0 order. A2 / A3 rank by raw ``yhat(h*)`` with hurdle ``yhat_cal > 0``.
+calibrated P-hat < 0.50, ranked in A0 order: its hurdle is A0's (``passes_hurdle`` = ``s_rule > 0``) and the
+veto is a separate ENTRY-ONLY flag ``vetoed`` (DK-42 / red-team M8: it removes entry candidates and never
+triggers an exit). A2 / A3 rank by raw ``yhat(h*)`` with hurdle ``yhat_cal > 0``.
 ML only orders / removes (S-0.6): the scorers take already-gated candidates and refuse anything else.
 Reference arms (A0-V5, TS EWMA / AR(1)) are reference only (no test).
 """
@@ -104,13 +106,15 @@ def ml_score(yhat: float, yhat_cal: float) -> tuple[float, bool]:
     return (float(yhat) if math.isfinite(yhat) else -math.inf, bool(ok))
 
 
-def _sorted(df: pd.DataFrame, key: np.ndarray, passes: np.ndarray) -> pd.DataFrame:
+def _sorted(df: pd.DataFrame, key: np.ndarray, passes: np.ndarray, vetoed: np.ndarray | None = None
+            ) -> pd.DataFrame:
     out = pd.DataFrame(
         {
             "symbol": df["symbol"].to_numpy(),
             "side": df["side"].to_numpy(),
             "rank_key": key,
             "passes_hurdle": passes,
+            "vetoed": np.zeros(len(df), bool) if vetoed is None else vetoed,
         }
     )
     out["_k"] = np.where(np.isfinite(out["rank_key"]), out["rank_key"], -np.inf)
@@ -119,7 +123,9 @@ def _sorted(df: pd.DataFrame, key: np.ndarray, passes: np.ndarray) -> pd.DataFra
 
 
 def arm_scores(arm: str, cands: pd.DataFrame, h_star: float, ml_star: str | None = None) -> pd.DataFrame:
-    """(rank_key, passes_hurdle) per candidate side, deterministic, ties by (symbol, side), best first.
+    """(rank_key, passes_hurdle, vetoed) per candidate side, deterministic, ties by (symbol, side), best
+    first. ``vetoed`` is the A1 entry-only veto (calibrated P-hat < 0.50 or missing; always False for A0 /
+    A2 / A3); ``passes_hurdle`` is the arm's hurdle (A1: A0's ``s_rule > 0``), used for entries AND exits.
 
     ``cands`` holds ALREADY-GATED candidates only (column ``gate_ok`` must be all True: ML cannot add
     gate-failing candidates, S-0.6) with columns symbol, side, fl30_r8, cost_side and, for ML arms, the
@@ -155,7 +161,7 @@ def arm_scores(arm: str, cands: pd.DataFrame, h_star: float, ml_star: str | None
         if ml_star not in _FAMILY:
             raise ValueError("A1 needs ml_star in {'A2','A3'} (classifier family of ML*)")
         p = cands[f"p_{_FAMILY[ml_star][1]}_cal"].to_numpy(np.float64)
-        ok = ok & np.array([a1_keep(v) for v in p], bool)
+        return _sorted(cands, s, ok, ~np.array([a1_keep(v) for v in p], bool))  # entry-only veto (DK-42)
     return _sorted(cands, s, ok)
 
 

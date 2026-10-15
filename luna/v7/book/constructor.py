@@ -7,10 +7,12 @@ One constructor for every arm; only the scores change. At decision t, in this or
    engine's). Legs with a ``pending_exit`` get no new order.
 2. **Decision exits**, only after the minimum hold h* (measured from the entry decision, AMB-16 (g)): a gate
    failure (any of U1-U7; U8 is never an exit trigger), a rank outside K + 2 on its side (or not ranked), or a
-   score below the hurdle (``passes_hurdle`` False). A held leg that is unscored only because U8 is false gets
+   score below the hurdle (``passes_hurdle`` False; for A1 that is A0's ``s_rule > 0``: the A1 veto never
+   triggers an exit, DK-42 / red-team M8). A held leg that is unscored only because U8 is false gets
    no rank / hurdle exit at that decision (AMB-16 (l)). Before h* only risk exits close a leg.
 3. **Entries** (only if the risk layer allows entries at t): per side, the candidates ranked in the top K of
    that side by the arm's score (re-derived: rank_key desc, NaN last, ties by symbol) that pass the hurdle,
+   are not vetoed (A1's entry-only ``vetoed`` flag, note ``a1_veto``),
    pass U1-U8 (``universe.eligible``; no gate row fails closed), are not in cooldown / U8-blocked, are not
    held on either side (the other side: no same-decision flip), are not halted, and have a finite beta and
    24 h quote volume. A slot lost to any of these is NOT backfilled by a lower rank (A1 = A0's entries minus
@@ -93,14 +95,16 @@ def _finite(x: object) -> float | None:
     return v if math.isfinite(v) else None
 
 
-def _ranked(scores: pd.DataFrame) -> dict[int, list[tuple[str, bool]]]:
-    """Per side: [(symbol, passes_hurdle)] best first (rank_key desc, NaN last, ties by symbol)."""
-    for col in ("symbol", "side", "rank_key", "passes_hurdle"):
+def _ranked(scores: pd.DataFrame) -> dict[int, list[tuple[str, bool, bool]]]:
+    """Per side: [(symbol, passes_hurdle, entry_ok)] best first (rank_key desc, NaN last, ties by symbol).
+    ``entry_ok`` is False when the A1 entry-only veto applies (``vetoed`` True, or not a bool: fail closed;
+    DK-42)."""
+    for col in ("symbol", "side", "rank_key", "passes_hurdle", "vetoed"):
         if col not in scores:
             raise ValueError(f"scores lacks column {col!r}")
     if scores.duplicated(["symbol", "side"]).any():
         raise ValueError("duplicate (symbol, side) scores")
-    out: dict[int, list[tuple[str, bool]]] = {s: [] for s in SIDES}
+    out: dict[int, list[tuple[str, bool, bool]]] = {s: [] for s in SIDES}
     if len(scores) == 0:
         return out
     key = pd.to_numeric(scores["rank_key"], errors="coerce").to_numpy(np.float64)
@@ -110,11 +114,12 @@ def _ranked(scores: pd.DataFrame) -> dict[int, list[tuple[str, bool]]]:
             "side": [check_side(int(x)) for x in scores["side"]],
             "k": np.where(np.isfinite(key), key, -np.inf),
             "p": [isinstance(x, (bool, np.bool_)) and bool(x) for x in scores["passes_hurdle"]],
+            "e": [isinstance(x, (bool, np.bool_)) and not bool(x) for x in scores["vetoed"]],
         }
     )
     df = df.sort_values(["k", "symbol"], ascending=[False, True], kind="mergesort")
-    for sym, side, p in zip(df["symbol"], df["side"], df["p"], strict=True):
-        out[int(side)].append((str(sym), bool(p)))
+    for sym, side, p, e in zip(df["symbol"], df["side"], df["p"], df["e"], strict=True):
+        out[int(side)].append((str(sym), bool(p), bool(e)))
     return out
 
 
@@ -163,7 +168,8 @@ def targets(
     if missing_halt:
         raise ValueError(f"no halted flag for held legs {missing_halt} (fail closed)")
     ranked = _ranked(scores)
-    rank = {s: {sym: (i + 1, p) for i, (sym, p) in enumerate(ranked[s])} for s in SIDES}
+    # exits use the arm's hurdle only, never the A1 entry-only veto (DK-42 / red-team M8)
+    rank = {s: {sym: (i + 1, p) for i, (sym, p, _) in enumerate(ranked[s])} for s in SIDES}
     notes: list[str] = []
     is_halted = {x.symbol: bool(halted[x.symbol]) for x in held}
 
@@ -220,7 +226,7 @@ def targets(
         notes.append(f"entries_blocked:{risk.entry_block}")
     else:
         for s in SIDES:
-            for sym, p in ranked[s][: BK.K]:
+            for sym, p, entry_ok in ranked[s][: BK.K]:
                 held_side = next((x.side for x in held if x.symbol == sym), None)
                 why = None
                 if held_side == s:
@@ -229,6 +235,8 @@ def targets(
                     why = "flip"
                 elif not p:
                     why = "hurdle"
+                elif not entry_ok:
+                    why = "a1_veto"  # S-7.2: A0's entries minus the vetoed (entry-only, DK-42)
                 elif gates.get(sym) is None or not eligible(gates[sym]):  # type: ignore[arg-type]
                     why = "gate"
                 elif not risk.allows_entry(sym):

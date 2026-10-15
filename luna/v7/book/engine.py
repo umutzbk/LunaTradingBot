@@ -10,11 +10,21 @@ the already-gated candidate rows of ``arms.arm_scores`` and the staleness flag).
 Events (heap; same timestamp: funding settlement, 15-minute tick, fills in booking order, terminal check,
 one-sided check, decision, terminal unwind):
 * **tick** (every 15 min from lo): marks every open position (mark-price bar ending at the tick, else the
-  last-price bar, else, for a leg only, the previous price event, AMB-19 (e)), equity, ``RiskLayer.on_tick``;
-  its forced exits (kill, leg stop) fill per S-4.2; a kill also closes the hedge and cancels unfilled entries
-  (AMB-19 (c)). After the tick's fills and terminal checks, the **one-sided check** (AMB-16 (d), user
-  decision 2026-10-15): if holdable legs remain on exactly one side, they all exit with the S-4.2 timing
-  (reason ``one_sided_flatten``; ``on_neutral``).
+  last-price bar of the same period, S-4.6; nothing else: a held leg without either -> ``INVALID RUN —
+  required leg mark missing``, round-2 override 3 / DK-70; only a HALTED or ceased leg keeps the previous
+  price event, ``mark_source`` ``stale``, AMB-29: a stopped sub-case, normative amendment required), equity,
+  ``RiskLayer.on_tick``; its forced exits (kill, leg stop) fill per S-4.2; a kill also closes the hedge and
+  cancels unfilled entries and in-flight hedge opens (AMB-19 (c), DK-78). After the tick's fills and terminal
+  checks, the **one-sided check** (AMB-16 (d), user decision 2026-10-15): if holdable legs remain on exactly
+  one side, they all exit with the S-4.2 timing (reason ``one_sided_flatten``; ``on_neutral``), and an
+  in-flight hedge open is cancelled (DK-78).
+* **required exits** (round-2 override 2 / DK-69): a non-halted exit (decision, risk / forced, U6, flatten,
+  hedge) with no 1-minute bar within the 60-minute data-gap window -> ``INVALID RUN — required exit without a
+  reference bar within the 60-minute data-gap window`` (detail: symbol#instance@time); never carried to a
+  later bar. A gap-rule fill is booked at the substitute bar's open time (DK-10), so funding and B(e) follow
+  that time. A partial reduce without a price is skipped (``unfilled_reduce``), as an entry is not traded.
+* **E_M resting exits** (DK-77): a leg's exit counts as a resting maker order (replaceable by a forced exit,
+  shown active to the risk layer) only inside [post, post + 30 min) of a limit actually posted.
 * **BTC price required** (AMB-21 (b), user decision 2026-10-15): a hedge trade due at t_e with no BTC
   reference (not halted), a held hedge without a BTC mark / last-price bar at a tick, or B(e) missing at a
   tick with a leg held or at a leg fill -> ``INVALID RUN — required BTC reference price missing``; when BTC
@@ -60,7 +70,9 @@ from luna.v7.book import EPS, Leg, Order, hedge
 from luna.v7.book.constructor import Targets, targets
 from luna.v7.book.execution import (
     INVALID_BTC,
+    INVALID_MARK,
     INVALID_NO_EXIT,
+    MAKER_WINDOW,
     ExecView,
     Fill,
     NoTrade,
@@ -71,6 +83,7 @@ from luna.v7.book.execution import (
     forced_at,
     halted_exit,
     maker_at,
+    maker_post,
     settle,
     taker_at,
 )
@@ -93,7 +106,7 @@ HEDGE_SYMBOL = "BTCUSDT"
 B_ACCOUNTING = "BTC reference B(e) required for canonical accounting"  # AMB-21 (b) detail
 E0 = 1.0  # L-norm (§14)
 ARMS = ("A0", "A1", "A2", "A3")
-SCORE_COLS = ["symbol", "side", "rank_key", "passes_hurdle"]
+SCORE_COLS = ["symbol", "side", "rank_key", "passes_hurdle", "vetoed"]
 
 
 @dataclass(frozen=True)
@@ -270,13 +283,15 @@ class _Sim:
         r = bv.ref(ts) if bv is not None else None
         return None if r is None else float(r[0])
 
-    def legs(self) -> list[Leg]:
-        """Held legs. A leg whose exit rests as an E_M maker order is passed as active (``pending_exit``
-        None): a forced exit replaces it with a taker exit (S-6.2: forced exits are always taker)."""
+    def legs(self, now: int) -> list[Leg]:
+        """Held legs at ``now``. A leg whose exit rests as an E_M maker limit at ``now`` is passed as active
+        (``pending_exit`` None): a forced exit replaces it with a taker exit (S-6.2: forced exits are always
+        taker). Outside the resting window (before the post, or once the remainder has gone taker / into a
+        halted S-5.4 wait) the leg is pending and is never re-exited (DK-77)."""
         out = []
         for p in sorted(self.led.pos.values(), key=lambda x: x.symbol):
             if p.role == "leg" and p.q != 0 and p.p_last is not None:
-                pend = None if p.maker_exit else p.pending_exit
+                pend = None if p.maker_resting(now) else p.pending_exit
                 out.append(Leg(p.symbol, p.side, abs(p.q) * p.p_last, p.avg_entry, p.entry_decision_ts, p.pid,
                                pend))
         return out
@@ -297,6 +312,12 @@ class _Sim:
 
     def schedule(self, outs: list[Outcome], pid: str, kind: str, now: int, p: Position | None) -> None:
         for o in outs:
+            if isinstance(o, RunInvalid):
+                if kind == "reduce":  # a partial reduce is not a required exit: skipped, as before (AMB-29)
+                    self.notes.append(f"unfilled_{kind}:{o.symbol}")
+                    continue
+                self.fail(o)  # a required exit without a bar within 60 min (DK-69 override)
+                return
             if isinstance(o, Fill):
                 if o.ts < now:
                     raise RuntimeError("internal: a fill before its scheduling time")
@@ -311,6 +332,8 @@ class _Sim:
                 if kind != "exit" or p is None:
                     self.notes.append(f"unfilled_{kind}:{o.trade.symbol}")
                     continue
+                if o.terminal:  # the instance ceases inside the gap window: the terminal check settles it
+                    continue
                 r = halted_exit(p.view, o)
                 if isinstance(r, Fill):
                     self.schedule([r], pid, kind, now, p)
@@ -322,7 +345,7 @@ class _Sim:
              h_hat: float | None = None) -> None:
         self.cancel(p.pid)
         p.pending_exit = reason
-        p.maker_exit = False
+        p.maker_rest = None
         tr = Trade(p.symbol, -1 if p.q > 0 else 1, abs(p.q), None, False, reason, p.pid)
         if forced and reason in FORCED_TIMING:
             if trigger_ts is None:
@@ -332,7 +355,9 @@ class _Sim:
             outs = [taker_at(p.view, tr, t_e)]
         else:
             outs = maker_at(p.view, tr, t_e, h_hat, self.upu, self.unwind_ts)
-            p.maker_exit = True
+            post = maker_post(p.view, t_e, h_hat)
+            if post is not None:  # DK-77: only a limit actually posted rests, for W (cut at the unwind)
+                p.maker_rest = (post, min(post + MAKER_WINDOW, self.unwind_ts))
         self.schedule(outs, p.pid, "exit", min(t_e, trigger_ts if trigger_ts is not None else t_e), p)
 
     def open_position(self, f: Fill, pid: str, role: str, side: int, decision_ts: int, beta: float | None,
@@ -415,7 +440,15 @@ class _Sim:
                     return
                 if p.p_last is None:
                     raise RuntimeError("internal: an open position without a price event")
-                m, src = p.p_last, "stale"  # legs: AMB-19 (e), unchanged (not decided)
+                if not self.mark_exempt(p, ts):  # round-2 override 3 (DK-70): no stale leg mark
+                    self.fail(RunInvalid(INVALID_MARK, p.symbol, p.view.inst.idx, ts,
+                                         f"no mark-price or last-price 15-minute close at tick {ts} "
+                                         "(not halted; DK-70)"))
+                    return
+                # AMB-29 (normative amendment required; sub-case STOPPED, current code kept): a HALTED (or
+                # ceased, awaiting its terminal settlement) held leg without any 15m close at the tick: no
+                # frozen rule supplies its mark -> the previous price event is carried (it moves no P&L)
+                m, src = p.p_last, "stale"
             elif p.role == "leg":
                 fresh[p.symbol] = m
             prices[pid] = (m, src)
@@ -426,13 +459,21 @@ class _Sim:
             return
         eq = self.led.mark(ts, prices, bmark)
         self.fresh = fresh
-        self.state, acts = self.risk.on_tick(self.state, ts, eq, self.legs(), fresh)
+        self.state, acts = self.risk.on_tick(self.state, ts, eq, self.legs(ts), fresh)
         self.forced(acts, ts + FILL_DELAY)
         if ts % D == 0 and ts > self.led.day_start_ts:
             self.led.close_day(ts, eq)
         self.push(ts, EV_NEUTRAL, None)  # after this tick's fills and terminal checks (AMB-16 (d))
         if ts + TICK < self.unwind_ts:
             self.push(ts + TICK, EV_TICK, None)
+
+    @staticmethod
+    def mark_exempt(p: Position, ts: int) -> bool:
+        """AMB-29 (stopped sub-case of DK-70): the leg is HALTED at the tick (S-5.4: no volume > 0 1m bar in
+        [ts - 60 min, ts)), or its instance has ceased (no bar of the instance can end at ts) and the terminal
+        rule (DEC-43) settles it. Only then may a missing mark keep the current (stale) code."""
+        last = p.view.inst.last_trade_ts
+        return p.view.halted(ts) or (last is not None and ts - TICK >= last)
 
     def on_neutral(self, ts: int) -> None:
         """AMB-16 (d) (user decision 2026-10-15), at every 15-minute tick after its fills: if held legs remain
@@ -455,9 +496,22 @@ class _Sim:
                     alive[tk.fill.direction] = True
         if alive[1] == alive[-1] or not holdable[1 if alive[1] else -1]:
             return  # balanced, empty, or the surviving side is only being built (nothing held to flatten)
+        self.cancel_hedge_open("one_sided_flatten")  # DK-78: never opened after the flatten
         for p in sorted(self.led.pos.values(), key=lambda x: (x.role != "leg", x.symbol)):
-            if p.q != 0 and (p.pending_exit is None or p.maker_exit):
+            if p.q != 0 and (p.pending_exit is None or p.maker_resting(ts)):
                 self.exit(p, "one_sided_flatten", True, ts, ts + FILL_DELAY)
+
+    def cancel_hedge_open(self, why: str) -> None:
+        """DK-78: a flatten of the entire book (one-sided flatten, kill) cancels in-flight hedge-open tokens
+        (a hedge ordered at a decision whose position does not exist yet); an existing hedge's own in-flight
+        trades are cancelled by its exit (``exit`` -> ``cancel``)."""
+        for pid in sorted(self.tokens):
+            if pid in self.led.pos:
+                continue
+            for tk in self.tokens[pid]:
+                if tk.kind == "hedge" and not tk.cancelled:
+                    tk.cancelled = True
+                    self.integrity.append(f"hedge_open_cancelled_by_{why}:{pid}")
 
     def forced(self, acts: RiskActions, t_e: int) -> None:
         if acts.killed and not self.kill_done:
@@ -467,9 +521,10 @@ class _Sim:
                     if tk.kind == "open":
                         tk.cancelled = True
                         self.integrity.append(f"entry_cancelled_by_kill:{pid}")
+            self.cancel_hedge_open("kill")  # "exit everything": no hedge opened after the kill (DK-78)
         for fx in acts.forced:
             p = self.leg_pos(fx.symbol)
-            if p.pending_exit is None or p.maker_exit:  # a resting maker exit is replaced (S-6.2)
+            if p.pending_exit is None or p.maker_resting(acts.t):  # a RESTING maker exit is replaced (S-6.2)
                 self.exit(p, fx.reason, True, fx.trigger_ts, t_e)
         h = self.hedge_pos()
         if acts.killed and h is not None and h.pending_exit is None:  # "exit everything" incl. the hedge
@@ -511,8 +566,8 @@ class _Sim:
             self.cancel(p.pid)
             p.pending_exit = p.pending_exit or "terminal_unwind"
             tr = Trade(p.symbol, -1 if p.q > 0 else 1, abs(p.q), None, False, "terminal_unwind", p.pid)
-            out = taker_at(p.view, tr, u)
-            if isinstance(out, Pending):
+            out = taker_at(p.view, tr, u)  # no bar (not halted): RunInvalid -> the AMB-20 INVALID below
+            if isinstance(out, Pending) and not out.terminal:
                 r = halted_exit(p.view, out)
                 out = r if isinstance(r, Fill) else None  # type: ignore[assignment]
             if not isinstance(out, Fill) or out.ts >= self.end:
@@ -542,7 +597,7 @@ class _Sim:
             raise ValueError("the decision view belongs to another time")
         for g in v.gates.values():
             assert_pit(g, t)
-        legs = self.legs()
+        legs = self.legs(t)
         held = {lg.symbol for lg in legs}
         marks = {s: m for s, m in self.fresh.items() if s in held}
         self.state, acts = self.risk.pre_decision(self.state, t, legs, v.gates, v.h_hat, marks, v.stale)

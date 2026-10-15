@@ -43,6 +43,8 @@ def leg(
     )
 
 
-def scores(rows: list[tuple[str, int, float, bool]]) -> pd.DataFrame:
-    """(symbol, side, rank_key, passes_hurdle) rows, like ``arms.arm_scores``."""
-    return pd.DataFrame(rows, columns=["symbol", "side", "rank_key", "passes_hurdle"])
+def scores(rows: list[tuple]) -> pd.DataFrame:
+    """(symbol, side, rank_key, passes_hurdle[, vetoed]) rows, like ``arms.arm_scores`` (``vetoed``: the A1
+    entry-only veto, DK-42; default False)."""
+    rows = [tuple(r) + (False,) if len(r) == 4 else tuple(r) for r in rows]
+    return pd.DataFrame(rows, columns=["symbol", "side", "rank_key", "passes_hurdle", "vetoed"])

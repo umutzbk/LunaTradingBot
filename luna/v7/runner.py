@@ -563,7 +563,8 @@ def decision_log(run: BookRun, provider: DecisionProvider,
             fold_id, mh = model.log[t]
             sc = arm_scores(run.arm, model.predictions[t], float(run.h_star), model.ml_star)
         scores = () if sc is None else tuple(
-            (str(r.symbol), int(r.side), float(r.rank_key), bool(r.passes_hurdle)) for r in sc.itertuples())
+            (str(r.symbol), int(r.side), float(r.rank_key), bool(r.passes_hurdle), bool(r.vetoed))
+            for r in sc.itertuples())  # vetoed: A1's entry-only veto (DK-42)
         rows.append(dict(
             t=t, max_known_at=rec.max_known_at, stale=bool(d["stale"]), stale_reasons=rec.stale_reasons,
             eligible=rec.eligible,

@@ -14,7 +14,13 @@ from luna.v7 import accounting as acc
 from luna.v7 import stats
 from luna.v7 import verdict as V
 from luna.v7.accounting import Cluster, Episode
-from luna.v7.book.execution import INVALID_BTC, INVALID_NO_EXIT, INVALID_TERMINAL
+from luna.v7.book.execution import (
+    INVALID_BTC,
+    INVALID_EXIT_GAP,
+    INVALID_MARK,
+    INVALID_NO_EXIT,
+    INVALID_TERMINAL,
+)
 from luna.v7.timeutil import MIN, D
 from tests.v7.run_fixtures import LO, funding_run
 
@@ -354,13 +360,21 @@ def test_em_runs_are_secondary():
     for field_ in ("ml_M", "a0_M"):
         for spoil in (lambda r: replace(r, invalid=INVALID_TERMINAL), _bad_funding_role,
                       lambda r: replace(r, invalid=INVALID_BTC, invalid_detail="BTCUSDT#0@1: BTC price "
-                                        "required for hedge construction missing at 1")):  # AMB-21 (b)
+                                        "required for hedge construction missing at 1"),  # AMB-21 (b)
+                      lambda r: replace(r, invalid=INVALID_EXIT_GAP, invalid_detail="AAAUSDT#0@2: gate exit "
+                                        "due at 2: no 1-minute bar within 60 min"),  # round-2 DK-69
+                      lambda r: replace(r, invalid=INVALID_MARK,  # round-2 DK-70
+                                        invalid_detail="AAAUSDT#0@3: no mark")):
             # P1(E_T) holds: the class is unaffected, P1(E_M) unavailable, no flag
             v = V.holdout(replace(good, **{field_: spoil(getattr(good, field_))}))
             assert v.cls == V.INCONCLUSIVE and v.p1_em is None and not v.maker_split_undecidable
             assert v.details["p1_em_unavailable"]
             if "hedge construction" in str(spoil(getattr(good, field_)).invalid_detail):
                 assert "hedge construction missing at 1" in v.details["p1_em_unavailable"]  # detail reported
+            sp = spoil(getattr(good, field_))
+            if getattr(sp, "invalid", None) in (INVALID_EXIT_GAP, INVALID_MARK):  # reason + symbol#inst@ts
+                assert sp.invalid in v.details["p1_em_unavailable"]
+                assert sp.invalid_detail.split(":")[0] in v.details["p1_em_unavailable"]
             # P1(E_T) fails, E_M unavailable: NO-GO with the explicit flag (never MAKER / NO_EDGE / ADVANCE);
             # it outranks the INCONCLUSIVE of the failing P4 (both candidate classes would)
             weak = _inputs(ml_mu=0.0, ml_m_mu=0.002)
@@ -383,7 +397,8 @@ def test_em_runs_are_secondary():
 def test_holdout_invalid_required_arm():
     good = _inputs()
     for field_ in ("ml_T", "a0_T"):
-        for why in (INVALID_TERMINAL, INVALID_NO_EXIT, INVALID_BTC):  # INVALID_BTC: AMB-21 (b)
+        # INVALID_BTC: AMB-21 (b); INVALID_EXIT_GAP / INVALID_MARK: round-2 overrides 2 / 3 (DK-69, DK-70)
+        for why in (INVALID_TERMINAL, INVALID_NO_EXIT, INVALID_BTC, INVALID_EXIT_GAP, INVALID_MARK):
             run = replace(getattr(good, field_), invalid=why)
             v = V.holdout(replace(good, **{field_: run}, leakage=("L1",)))
             assert v.cls == V.INVALID and any(why in s for s in v.reasons)

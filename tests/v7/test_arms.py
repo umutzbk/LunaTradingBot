@@ -72,16 +72,22 @@ def test_a0_a1_order_and_veto():
     # A and B tie on score -> by symbol; C (long on negative FL) scores highest
     assert list(r0.symbol) == ["C", "A", "B", "D"]
     assert list(r0.passes_hurdle) == [True, True, True, False]  # D: 2.5e-5*72-.003-.0005 < 0
+    assert not r0.vetoed.any()
     r1 = arm_scores("A1", _cands(), 72, ml_star="A2")  # logit_en: C vetoed
     assert list(r1.symbol) == ["C", "A", "B", "D"]  # A0 order kept
-    assert list(r1.passes_hurdle) == [False, True, True, False]
+    # DK-42 / red-team M8: the veto is a separate, entry-only flag; A1's hurdle is A0's s_rule > 0
+    assert list(r1.passes_hurdle) == [True, True, True, False]
+    assert list(r1.vetoed) == [True, False, False, False]
     r1b = arm_scores("A1", _cands(), 72, ml_star="A3")  # lgb_clf: A vetoed
-    assert dict(zip(r1b.symbol, r1b.passes_hurdle, strict=True)) == {
-        "C": True,
-        "A": False,
-        "B": True,
+    assert dict(zip(r1b.symbol, r1b.vetoed, strict=True)) == {
+        "C": False,
+        "A": True,
+        "B": False,
         "D": False,
     }
+    assert list(r1b.passes_hurdle) == list(r0.passes_hurdle)
+    nan = _cands().assign(p_logit_en_cal=float("nan"))
+    assert arm_scores("A1", nan, 72, ml_star="A2").vetoed.all()  # a missing P-hat vetoes (fail closed)
     with pytest.raises(ValueError):
         arm_scores("A1", _cands(), 72)
 
@@ -94,6 +100,7 @@ def test_ml_hurdle():
     # ranked by raw yhat (C 9, then A/B tie by symbol, then D), hurdle on the calibrated value
     assert list(r2.symbol) == ["C", "A", "B", "D"]
     assert list(r2.passes_hurdle) == [False, True, True, True]
+    assert not r2.vetoed.any()
     r3 = arm_scores("A3", _cands(), 72)
     assert list(r3.symbol) == ["D", "C", "A", "B"] and r3.passes_hurdle.all()
 

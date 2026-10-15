@@ -38,7 +38,13 @@ class Position:
     p_last: float | None = None  # latest event price (fill ref mid / tick mark)
     pending_exit: str | None = None  # exit reason once an exit is issued
     waiting: bool = False  # S-5.4 wait without any executable bar before the window end
-    maker_exit: bool = False  # the exit rests as an E_M maker order (a forced exit may replace it)
+    # [post, end) of the E_M maker limit of the issued exit (DK-77): the exit rests as a maker order only
+    # inside it (a forced exit may replace it then); None when no limit was posted
+    maker_rest: tuple[int, int] | None = None
+
+    def maker_resting(self, now: int) -> bool:
+        """The issued exit is an E_M maker limit actually resting at ``now`` (DK-77, red-team m7)."""
+        return self.maker_rest is not None and self.maker_rest[0] <= now < self.maker_rest[1]
 
 
 @dataclass

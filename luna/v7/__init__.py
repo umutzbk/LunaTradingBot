@@ -54,7 +54,9 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "S-5.1": _m("features", "data.schema", "runner"),
     "S-5.2": _m("market", "refs", "beta"),
     "S-5.3": _m("labels"),
-    "S-5.4": _m("labels", "market", "book.execution", "data.terminal"),
+    "S-5.4": (*_m("labels", "market", "book.execution", "book.engine", "data.terminal"),
+              "doc: book data-gap fills booked at the substitute bar (DK-10) and a required non-halted exit "
+              "without a bar within 60 min -> INVALID RUN (override 2 / DK-69), round 2; AMB-29"),
     "S-5.5": (*_m("labels"), "doc: AMB-10 (g) beta-missing invalid cause pending user decision"),
     "S-5.6": _m("labels"),
     "S-6.1": _m("book.execution", "book.engine"),
@@ -63,13 +65,15 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "S-7.1": (*_m("book.constructor"),
               "doc: AMB-16 (d) / (e) resolved by user decision 2026-10-15 (clarifications round 1); the (e) "
               "marked-gross reading R35 awaits docket confirmation"),
-    "S-7.2": _m("arms"),
+    "S-7.2": (*_m("arms", "book.constructor"), "doc: the A1 veto is entry-only (DK-42, AMB-13 (c))"),
     "S-7.3": (*_m("book.risk", "runner"),
               "doc: staleness inputs AMB-25 (b) pending user decision; one-sided flattening timing AMB-28 "
               "resolved by user decision 2026-10-15"),
     "S-7.4": _m("book.hedge"),
     "S-8.1": (*_m("book.engine", "book.ledger", "accounting"),
-              "doc: AMB-20 and AMB-21 (b) resolved by user decision 2026-10-15 (clarifications round 1)"),
+              "doc: AMB-20 and AMB-21 (b) resolved by user decision 2026-10-15 (clarifications round 1); no "
+              "stale leg mark -> INVALID RUN (round 2 override 3 / DK-70); halted-leg mark sub-case "
+              "AMB-29 (a) pending a normative amendment"),
     "S-8.2": _m("accounting"),
     "S-8.3": _m("accounting"),
     "S-8.4": _m("accounting"),

@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from luna.v7.book.execution import (
+    INVALID_EXIT_GAP,
     INVALID_TERMINAL,
     MAKER_WINDOW,
     ExecView,
@@ -16,6 +17,7 @@ from luna.v7.book.execution import (
     forced_at,
     halted_exit,
     maker_at,
+    maker_post,
     settle,
     taker_at,
 )
@@ -176,3 +178,68 @@ def test_terminal_settlement_a_and_bc():
     other = TerminalEvent(Instance(1, TE + H, None, None), TE, "A", TE, 97.0, "official_historical")
     with pytest.raises(ValueError):
         settle(v, sell(), other)  # E10: another instance's settlement never closes this position
+
+
+# ------------------------------------------------------------- round 2 (CLARIFICATIONS-2026-10-15-round2)
+
+
+def test_gap_rule_fill_booked_at_substitute_bar():
+    """DK-10: P(t_e) missing (no 1m bar at t_e, t_e off the 15m grid): the fill is booked at the first 1m bar
+    within 60 min, at that bar's open TIME and open price (S-8.1), entries and exits alike."""
+    path = lambda ts: np.where(ts < TE + 5 * MIN, 100.0, 104.0)  # noqa: E731
+    v = view(m1(path, dead=((TE, TE + 5 * MIN),)))
+    for tr in (buy(), sell()):
+        f = taker_at(v, tr, TE)
+        assert isinstance(f, Fill) and f.ts == TE + 5 * MIN and f.ref_mid == 104.0 and "gap_price" in f.flags
+        assert f.price == pytest.approx(104.0 * (1 + tr.direction * (HMIN + SLIP)), rel=1e-12)
+    exact = taker_at(view(m1(path)), buy(), TE)  # P(t_e) exists: booked at t_e, no gap flag
+    assert exact.ts == TE and exact.ref_mid == 100.0 and exact.flags == ()
+
+
+def test_maker_posts_at_gap_substitute_bar():
+    """DK-10 under E_M: the touch L derives from the substitute bar's open, so the limit rests from that bar's
+    open time: a trade-through before it never fills; the remainder goes taker 30 min after the post."""
+    path = lambda ts: np.where(ts < TE + 5 * MIN, 100.0, 104.0)  # noqa: E731
+    lim = 104.0 * (1 - HMIN)
+    rows = trades([(TE + 2 * MIN, lim - 0.01, 1e6), (TE + 7 * MIN, lim - 0.01, 3.0)])
+    outs = maker_at(view(m1(path, dead=((TE, TE + 5 * MIN),)), trades=rows), buy(), TE, HMIN, E_REF)
+    mk = [o for o in outs if isinstance(o, Fill) and o.liquidity == "maker"]
+    assert [(o.ts, o.price) for o in mk] == [(TE + 7 * MIN, pytest.approx(lim, rel=1e-15))]
+    assert mk[0].qty * E_REF == pytest.approx(3.0, rel=1e-12)
+    rest = [o for o in outs if isinstance(o, Fill) and o.liquidity == "taker"]
+    assert [o.ts for o in rest] == [TE + 5 * MIN + MAKER_WINDOW]
+    assert maker_post(view(m1(path, dead=((TE, TE + 5 * MIN),)), trades=rows), TE, HMIN) == TE + 5 * MIN
+    assert maker_post(view(m1(path), trades=rows), TE, HMIN) == TE
+    assert maker_post(view(m1(path), trades=rows), TE, None) is None  # no h-hat: no limit is posted
+
+
+def test_required_exit_without_bar_within_60_min_is_invalid():
+    """DK-69 override: a non-halted exit with no 1m bar within the 60-min data-gap window -> RunInvalid naming
+    symbol, instance and time (never the S-5.4 stressed wait); an entry is still not traded."""
+    v = view(m1(100.0, dead=((TE, TE + 61 * MIN),)))  # traded in the hour before TE: not halted
+    assert not v.halted(TE)
+    r = taker_at(v, sell(reason="gate"), TE)
+    assert isinstance(r, RunInvalid) and r.reason == INVALID_EXIT_GAP
+    assert (r.symbol, r.instance, r.ts) == ("AAAUSDT", 0, TE) and "gate" in r.detail
+    nt = taker_at(v, buy(), TE)
+    assert isinstance(nt, NoTrade) and nt.reason == "price_missing"
+    # the last bar inside the window (opening at TE + 60 min) still fills, at its own time (DK-10)
+    f = taker_at(view(m1(100.0, dead=((TE, TE + 60 * MIN),))), sell(), TE)
+    assert isinstance(f, Fill) and f.ts == TE + 60 * MIN
+    # forced exit (S-4.2): searched from trigger + 1 min
+    rf = forced_at(v, sell(reason="leg_stop"), TE - MIN)
+    assert isinstance(rf, RunInvalid) and rf.reason == INVALID_EXIT_GAP and rf.ts == TE
+    # E_M exit: no P(t_e) -> no limit, RunInvalid; a remainder due at t_e + 30 min without a bar -> RunInvalid
+    assert [type(o) for o in maker_at(view(m1(100.0, dead=((TE, TE + 61 * MIN),)), trades=trades([])),
+                                      sell(), TE, HMIN, E_REF)] == [RunInvalid]
+    late = view(m1(100.0, dead=((TE + MAKER_WINDOW, TE + MAKER_WINDOW + 61 * MIN),)), trades=trades([]))
+    out = maker_at(late, sell(), TE, HMIN, E_REF)
+    assert len(out) == 1 and isinstance(out[0], RunInvalid) and out[0].ts == TE + MAKER_WINDOW
+    # HALTED keeps the S-5.4 wait
+    halt = view(m1(100.0, dead=((TE - 90 * MIN, TE + 30 * MIN),)))
+    p = taker_at(halt, sell(), TE)
+    assert isinstance(p, Pending) and not p.terminal
+    # the instance ceases inside the window before any bar: the terminal rule (DEC-43) applies, unchanged
+    ceased = Instance(0, S0, TE + 30 * MIN, TE + 7 * 24 * H)
+    pt = taker_at(view(m1(100.0, dead=((TE, END),)), inst=ceased), sell(), TE)
+    assert isinstance(pt, Pending) and pt.terminal and pt.due == TE
