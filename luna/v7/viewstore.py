@@ -20,9 +20,10 @@ universe itself, never passed as a free string: the data identity of its source 
 table-manifest sha256s and a hash of the per-symbol metadata, or a content hash of in-memory inputs), the
 history start (the funding annotation and U3 depend on it), the symbols, the hedge, ``with_features``, the
 code identity (``code_identity``: sha256 of every ``luna/v7`` source file, LF-normalised, in path order) and
-``FORMAT``. ``bind(body)`` writes ``KEY.json`` on first use and refuses (``IntegrityBlocker``) a store holding
-another body: a store filled for one universe / history start / code is never read by another. Files are
-written once (``rawstore._create_once``: an existing file is never overwritten; a
+``FORMAT`` and the library versions (``library_versions``: Python, numpy, pandas, pyarrow, scikit-learn,
+lightgbm; Task 26c). ``bind(body)`` writes ``KEY.json`` on first use and refuses (``IntegrityBlocker``) a
+store holding another body: a store filled for one universe / history start / code / library set is never
+read by another. Files are written once (``rawstore._create_once``: an existing file is never overwritten; a
 second writer of the same t must produce identical bytes, else ``IntegrityBlocker``). A view is stored only
 when it round-trips canonically (decode(encode(x)) re-encodes to the same bytes and its frame has a default
 ``RangeIndex``); otherwise it stays in memory only (recomputed on demand). A stored file that does not decode,
@@ -38,7 +39,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import platform
 from collections.abc import Mapping
+from importlib import metadata
 from pathlib import Path
 
 import pandas as pd
@@ -49,11 +52,13 @@ from luna.v7.rawstore import _canonical, _create_once
 from luna.v7.runstore import _dec, _decode_frame, _enc, _encode_frame
 from luna.v7.universe import GateRow
 
-__all__ = ["FORMAT", "KEY_FILE", "ViewStore", "code_identity", "key_of"]
+__all__ = ["FORMAT", "KEY_FILE", "LIBRARIES", "ViewStore", "code_identity", "key_of", "library_versions"]
 
-FORMAT = "decisionview/parquet+json/v2"
+FORMAT = "decisionview/parquet+json/v3"  # v3 (Task 26c): the key body carries the library versions
 KEY_FILE = "KEY.json"
+LIBRARIES = ("numpy", "pandas", "pyarrow", "scikit-learn", "lightgbm")
 _CODE_ID: list[str] = []
+_LIBS: list[dict[str, str]] = []
 _GATE_FIELDS = ("u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "reasons", "max_known_at")
 _REC_FIELDS = ("stale_reasons", "eligible", "n_cands", "max_known_at")
 
@@ -69,6 +74,17 @@ def code_identity() -> str:
             h.update(p.read_bytes().replace(b"\r\n", b"\n") + b"\0")
         _CODE_ID.append(h.hexdigest())
     return _CODE_ID[0]
+
+
+def library_versions() -> dict[str, str]:
+    """The Python version and the installed versions of ``LIBRARIES`` (the computations a stored view holds
+    depend on them as much as on the code; Task 26c carried item 2); read once per process."""
+    if not _LIBS:
+        out = {"python": platform.python_version()}
+        for lib in LIBRARIES:
+            out[lib] = metadata.version(lib)
+        _LIBS.append(out)
+    return dict(_LIBS[0])
 
 
 def key_of(body: Mapping) -> str:

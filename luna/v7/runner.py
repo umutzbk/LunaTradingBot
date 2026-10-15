@@ -368,6 +368,17 @@ class ResearchUniverse:
                                      for k in ("premium", "mark", "index"))):
                 raise ValueError(f"{s}: a decisions-only universe needs 15m / R4 bars with strictly "
                                  "increasing open_ts and non-decreasing known_at (use from_source)")
+            # Task 26c carried item 1: an anchor row (loaded from before the look-back start) stands in for
+            # the instance's last PIT row at EVERY decision of the chunk: exact only if known by lo - 1 min
+            for name, df in (("bars15", u.inputs[s].bars15),
+                             *((f"r4.{k}", getattr(r4, k)) for k in ("premium", "mark", "index"))):
+                anchor = df["open_ts"].to_numpy(np.int64) < bars_lo
+                if anchor.any():
+                    ka = ns_array(df["known_at"].to_numpy()[anchor], f"{s}.{name}.known_at")
+                    if int(ka.max()) > lo - MIN:
+                        raise ValueError(f"{s}.{name}: an anchor row known at {int(ka.max())} > lo - 1 min "
+                                         f"({lo - MIN}) is not point-in-time for every decision of the chunk "
+                                         f"[{lo}, {hi})")
         return u
 
     def view_identity(self, with_features: bool) -> dict:
@@ -724,9 +735,9 @@ def _source_identity(source: object) -> object:
 
 def view_body(data: object, history_lo: int | None, symbols: Sequence[str], hedge: str,
               with_features: bool) -> dict:
-    from luna.v7.viewstore import FORMAT, code_identity  # runtime import (cycle: viewstore -> ... -> runner)
+    from luna.v7.viewstore import FORMAT, code_identity, library_versions  # runtime import (cycle)
 
-    return {"format": FORMAT, "code": code_identity(), "data": data,
+    return {"format": FORMAT, "code": code_identity(), "libraries": library_versions(), "data": data,
             "history_lo": None if history_lo is None else int(history_lo),
             "symbols": sorted(str(s) for s in symbols), "hedge": str(hedge),
             "with_features": bool(with_features)}
