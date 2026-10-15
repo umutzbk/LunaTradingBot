@@ -844,7 +844,7 @@ class SymbolMeta:
     identity, R11 notice versions, classified terminal events, optional (E_M) aggTrades."""
 
     insts: list[Instance]
-    identity: Identity | None
+    identity: Identity | Mapping[int, Identity] | None  # per symbol, or per instance idx (R1)
     notices: tuple[NoticeVersion, ...]
     terminals: Mapping[int, TerminalEvent]
     aggtrades: pd.DataFrame | None = None

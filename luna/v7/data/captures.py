@@ -1,32 +1,34 @@
-"""Immutable Wayback captures of Binance announcement pages -> deterministic text, ``releaseDate``, notice
-identity and the closed-list notice kind (spec S-2.5, DEC-26 / DEC-36 / DEC-40, S-1.7 N5 / N6, R11; DK-05;
-Task 26c, AMB-39).
+"""Immutable Wayback captures of Binance announcement pages -> the notice's own title / body text,
+``releaseDate``, notice identity and the closed-list notice kind (spec S-2.5, DEC-26 / DEC-36 / DEC-40, S-1.7
+N5 / N6, R11; DK-05; Task 26c, AMB-39).
 
 Everything here is pure (no I/O, no clock) and deterministic.
 
-* **Text** (``extract``): the Stage-0 extraction (``docs/results/v7-stage0/scripts/m31_notices.py``
-  ``analyse``) ported to the stdlib ``html.parser``: the raw bytes are gunzipped when they carry the gzip
-  magic and decoded as UTF-8 (errors replaced); the JSON escapes Stage 0 undid (``\\u003c``, ``\\u003e``,
-  ``\\u0026``, ``\\n``, ``\\"``) are undone in the same order; the markup is parsed with ``<script>`` /
-  ``<style>`` NOT treated as raw text (Stage 0 stripped every ``<...>`` tag everywhere, so the embedded
-  article HTML of the page's JSON is text too); character references are unescaped; the data chunks are
-  joined by spaces and every whitespace run collapses to one space. The title is the first ``<title>``
-  element's text, whitespace-collapsed, cut at the first `` | `` (Stage 0). ``CaptureText.text`` =
-  title + newline + page text (the title is its own sentence for ``notices.scheduled_ts``).
-* **releaseDate** (``release_date``): only from inside the capture, never from the CMS. Every JSON object of
-  the page's ``<script>`` elements (the whole script, else its outermost ``{...}``) that has an integer
-  ``releaseDate`` and a ``code`` equal to the notice code of the URL is a candidate; they must agree; a URL
-  with a code and no such object has no release date (a related article's date is never taken). Only for a
-  URL without a code is the value taken when the page carries exactly one distinct ``"releaseDate":<ms>``.
-  Anything else: no release date (the capture yields no version; reported, never guessed).
+* **The notice's article object** (``article``): the JSON objects of the page's ``<script>`` elements (the
+  whole script, else its outermost ``{...}``) whose ``code`` equals the 32-hex article code of the original
+  URL. They must agree on ``title`` / ``body`` / ``releaseDate``. A URL without a code, no such object, an
+  object without a string title and body, or disagreeing objects: the capture is *unusable* (reported with
+  the reason, never guessed). A related article (another code) is never read.
+* **Text** (``extract``, S-2.5 / DEC-40 "in the archived title or body"): ``CaptureText.text`` = the article
+  title + newline + the article body as text. HTML -> text is the Stage-0 extraction
+  (``docs/results/v7-stage0/scripts/m31_notices.py`` ``analyse``) ported to the stdlib ``html.parser``: the
+  JSON escapes Stage 0 undid (``\\u003c``, ``\\u003e``, ``\\u0026``, ``\\n``, ``\\"``) are undone in that
+  order, every tag is stripped (``<script>`` / ``<style>`` contents parsed as markup, as Stage 0's tag regex
+  did), character references are unescaped, data chunks joined by spaces, whitespace collapsed. The whole
+  page text (gunzipped when the bytes carry the gzip magic, UTF-8 with errors replaced) and the page
+  ``<title>`` (cut at the first `` | ``) are kept as diagnostics only (``page_text``, ``page_title``); they
+  are never matched.
+* **releaseDate**: the article object's integer ``releaseDate`` (ms) only; never from the CMS, never from a
+  related article. Missing / not a plausible ms epoch: unusable.
 * **Notice identity** (``notice_id``): ``<locale>:<32-hex article code>`` from the original URL (the slug and
-  host spelling do not matter); a URL without a code is identified by ``url:<host+path>`` (lower-cased, no
-  scheme / query / fragment / trailing slash).
-* **Kind** (``classify_kind``): a CLOSED phrase list on the NFKC-casefolded, whitespace-collapsed title only;
-  no semantic inference (DK-05 approach; the list is AMB-39, to be ratified with the DK-05 validation
-  report). A cancellation / postponement phrase decides the kind unless both occur, or a delisting phrase is
-  still present once those phrases are removed (a mixed title): then the version is unclassified. Otherwise
-  any delisting phrase -> delisting. No phrase -> unclassified. Unclassified versions never enter R11 or U6.
+  host spelling do not matter); a URL without a code is identified by ``url:<host+path>``.
+* **Kind** (``classify_kind``): CLOSED phrase lists on the NFKC-casefolded, whitespace-collapsed article title
+  only; no semantic inference (DK-05 approach; AMB-39 (e), to be ratified with the DK-05 validation report).
+  An explicit cancellation / postponement phrase decides the kind unless both occur, or a delisting phrase is
+  still present once those phrases are removed (a mixed title): then unclassified. Otherwise a delisting
+  phrase gives delisting only when no MODIFIER stem (``MODIFIER_STEMS``: cancel, postpon, delay, extend,
+  revok, ...) occurs in the title; with one, the title is unclassified (``ambiguous_kind:modifier:<stem>``).
+  No phrase -> unclassified. Unclassified versions never enter R11 or U6.
 """
 
 from __future__ import annotations
@@ -43,10 +45,11 @@ from urllib.parse import urlsplit
 from luna.v7.data.notices import Kind
 from luna.v7.timeutil import to_ns
 
-__all__ = ["CANCELLATION_PHRASES", "DELISTING_PHRASES", "POSTPONEMENT_PHRASES", "Capture", "CaptureText",
-           "capture_ts_ns", "classify_kind", "decode", "extract", "notice_id", "release_date"]
+__all__ = ["CANCELLATION_PHRASES", "DELISTING_PHRASES", "MODIFIER_STEMS", "POSTPONEMENT_PHRASES", "Capture",
+           "CaptureText", "article", "capture_ts_ns", "classify_kind", "decode", "extract", "html_text",
+           "notice_id", "release_date"]
 
-# AMB-39: the closed kind phrase lists (compared on the NFKC-casefolded, whitespace-collapsed title).
+# AMB-39 (e): the closed kind phrase lists (compared on the NFKC-casefolded, whitespace-collapsed title).
 CANCELLATION_PHRASES: tuple[str, ...] = (
     "cancel the delisting", "cancels the delisting", "cancellation of the delisting",
     "delisting cancellation",
@@ -58,6 +61,10 @@ POSTPONEMENT_PHRASES: tuple[str, ...] = (
     "delisting postponement", "delisting has been postponed", "delisting is postponed", "postpone delisting",
     "postpone the automatic settlement", "postponement of the automatic settlement")
 DELISTING_PHRASES: tuple[str, ...] = ("delist", "automatic settlement", "close all positions")
+# Fix round 1 (I1): a delisting title carrying any of these stems is not a delisting (unclassified).
+# Matched on the title padded with spaces (" not " needs its spaces).
+MODIFIER_STEMS: tuple[str, ...] = ("cancel", "postpon", "delay", "extend", "extens", "revok", "revoc",
+                                   "revers", "resum", " not ", "n't", "updat", "withdraw", "suspend")
 
 _JSON_ESCAPES = (("\\u003c", "<"), ("\\u003e", ">"), ("\\u0026", "&"), ("\\n", " "), ('\\"', '"'))
 _WS = re.compile(r"\s+")
@@ -65,7 +72,6 @@ _TS14 = re.compile(r"\d{14}", re.ASCII)
 _CODE = re.compile(r"(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])", re.ASCII)
 _LOCALE = re.compile(r"[a-z]{2}(?:-[a-z]{2,4})?", re.ASCII)
 _SCRIPT = re.compile(r"<script\b[^>]*>(.*?)</script\s*>", re.IGNORECASE | re.DOTALL)
-_RELEASE = re.compile(r'"releaseDate"\s*:\s*(\d{1,16})(?![\d.])', re.ASCII)
 _DATE_KEY = re.compile(r'"([A-Za-z_]*(?:Date|Time))"\s*:\s*\d{13}(?![\d.])', re.ASCII)
 _MS_LO, _MS_HI = 1_483_228_800_000, 4_102_444_800_000  # 2017-01-01 .. 2100-01-01 (a plausible ms epoch)
 
@@ -98,12 +104,22 @@ class Capture:
 
 @dataclass(frozen=True)
 class CaptureText:
+    """``text`` / ``title`` / ``release_ts``: the notice's own article (None when ``article_reason`` is not
+    ``ok``: the capture is unusable). ``text_sha256``: of ``text``, or of the page text for an unusable
+    capture (version chaining only). ``page_title`` / ``page_text`` / ``date_keys``: diagnostics only."""
+
     title: str | None
-    text: str  # title + "\n" + page text (module docstring)
+    text: str | None
     text_sha256: str
-    release_ts: int | None  # ns
-    release_reason: str
-    date_keys: tuple[str, ...]  # JSON keys ending in Date / Time with a 13-digit value (diagnostic only)
+    release_ts: int | None
+    article_reason: str
+    page_title: str | None
+    page_text: str
+    date_keys: tuple[str, ...]
+
+    @property
+    def release_reason(self) -> str:
+        return "article_release_date" if self.release_ts is not None else self.article_reason
 
 
 def capture_ts_ns(ts: str) -> int:
@@ -160,6 +176,18 @@ def _unescape_json(t: str) -> str:
     return t
 
 
+def _parse(html: str) -> _Text:
+    p = _Text()
+    p.feed(_unescape_json(html))
+    p.close()
+    return p
+
+
+def html_text(html: str) -> str:
+    """Stage-0 HTML -> text (module docstring)."""
+    return _collapse(" ".join(_parse(html).parts))
+
+
 def _json_objects(raw: str):
     for m in _SCRIPT.finditer(raw):
         body = m.group(1).strip()
@@ -212,46 +240,56 @@ def notice_id(original: str) -> str:
     return "url:" + (host + path.lower()).rstrip("/")
 
 
-def release_date(raw: str, original: str) -> tuple[int | None, str]:
-    """(``releaseDate`` in ns, reason) from inside the decoded capture ``raw`` (module docstring)."""
+def _release_ms(v: object) -> int | None:
+    return v if isinstance(v, int) and not isinstance(v, bool) and _MS_LO <= v < _MS_HI else None
+
+
+def article(raw: str, original: str) -> tuple[tuple[str, str, int] | None, str]:
+    """((title, body, releaseDate ms) of the notice's own article object, "ok") or (None, reason): reasons
+    ``no_article_code``, ``no_article_object``, ``article_conflict``, ``article_incomplete``,
+    ``no_release_date`` (module docstring)."""
     code = _code(original)
-    bound: set[int] = set()
-    if code is not None:
-        for obj in _json_objects(raw):
-            for d in _walk(obj):
-                v = d.get("releaseDate")
-                if isinstance(v, int) and not isinstance(v, bool) and str(d.get("code", "")).lower() == code:
-                    bound.add(v)
-    if len(bound) > 1:
-        return None, "release_date_conflict"
-    if bound:
-        ms, why = bound.pop(), "code_bound_json"
-    elif code is not None:  # the page's own article is identifiable: only its object may give the date
-        return None, "no_code_bound_release_date"
-    else:
-        vals = {int(m.group(1)) for m in _RELEASE.finditer(_unescape_json(raw))}
-        if not vals:
-            return None, "no_release_date"
-        if len(vals) > 1:
-            return None, "release_date_ambiguous"
-        ms, why = vals.pop(), "unique_in_page"
-    if not _MS_LO <= ms < _MS_HI:
-        return None, "release_date_not_ms_epoch"
-    return ms * 10**6, why
+    if code is None:
+        return None, "no_article_code"
+    found: set[tuple[object, object, object]] = set()
+    for obj in _json_objects(raw):
+        for d in _walk(obj):
+            if str(d.get("code", "")).lower() == code:
+                found.add((d.get("title"), d.get("body"), d.get("releaseDate")))
+    if not found:
+        return None, "no_article_object"
+    if len(found) > 1:
+        return None, "article_conflict"
+    title, body, rel = found.pop()
+    if not isinstance(title, str) or not isinstance(body, str) or not (title.strip() or body.strip()):
+        return None, "article_incomplete"
+    ms = _release_ms(rel)
+    if ms is None:
+        return None, "no_release_date"
+    return (title, body, ms), "ok"
+
+
+def release_date(raw: str, original: str) -> tuple[int | None, str]:
+    """(``releaseDate`` in ns, reason) of the notice's own article object only (module docstring)."""
+    a, why = article(raw, original)
+    return (None, why) if a is None else (a[2] * 10**6, "article_release_date")
 
 
 def extract(body: bytes, original: str) -> CaptureText:
-    """Deterministic title / text / ``releaseDate`` of one capture (module docstring)."""
+    """Deterministic notice title / text / ``releaseDate`` of one capture plus page diagnostics."""
     raw = decode(body)
-    p = _Text()
-    p.feed(_unescape_json(raw))
-    p.close()
-    title = None if p.title is None else (_collapse(p.title).split(" | ")[0].strip() or None)
-    page = _collapse(" ".join(p.parts))
-    text = f"{title or ''}\n{page}"
-    rel, why = release_date(raw, original)
+    page = _parse(raw)
+    page_title = None if page.title is None else (_collapse(page.title).split(" | ")[0].strip() or None)
+    page_text = _collapse(" ".join(page.parts))
     keys = tuple(sorted({m.group(1) for m in _DATE_KEY.finditer(_unescape_json(raw))}))
-    return CaptureText(title, text, hashlib.sha256(text.encode("utf-8")).hexdigest(), rel, why, keys)
+    a, why = article(raw, original)
+    if a is None:
+        sha = hashlib.sha256(("unusable\n" + page_text).encode("utf-8")).hexdigest()
+        return CaptureText(None, None, sha, None, why, page_title, page_text, keys)
+    title = _collapse(html_text(a[0])) or None
+    text = f"{title or ''}\n{html_text(a[1])}"
+    return CaptureText(title, text, hashlib.sha256(text.encode("utf-8")).hexdigest(), a[2] * 10**6, "ok",
+                       page_title, page_text, keys)
 
 
 def _norm(title: str) -> str:
@@ -259,8 +297,8 @@ def _norm(title: str) -> str:
 
 
 def classify_kind(title: str | None) -> tuple[Kind | None, str]:
-    """(kind, reason) of a notice from its title by the closed phrase lists (module docstring); None =
-    unclassified (ignored: never a delisting / postponement / cancellation)."""
+    """(kind, reason) of a notice from its title by the closed phrase lists and the modifier veto (module
+    docstring); None = unclassified (ignored: never a delisting / postponement / cancellation)."""
     if not title:
         return None, "no_title"
     t = _norm(title)
@@ -277,6 +315,10 @@ def classify_kind(title: str | None) -> tuple[Kind | None, str]:
             return None, f"ambiguous_kind:{kind}+delisting"
         return kind, f"{kind}:" + "|".join(cancel or post)
     hits = [p for p in DELISTING_PHRASES if p in t]
-    if hits:
-        return "delisting", "delisting:" + "|".join(hits)
-    return None, "no_kind_phrase"
+    if not hits:
+        return None, "no_kind_phrase"
+    padded = f" {t} "
+    mods = [s for s in MODIFIER_STEMS if s in padded]
+    if mods:
+        return None, "ambiguous_kind:modifier:" + "|".join(m.strip() for m in mods)
+    return "delisting", "delisting:" + "|".join(hits)

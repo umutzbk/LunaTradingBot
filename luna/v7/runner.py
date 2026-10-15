@@ -153,7 +153,7 @@ class SymbolInputs:
     funding: pd.DataFrame
     insts: list[Instance]
     r4: R4Bars
-    identity: Identity | None
+    identity: Identity | Mapping[int, Identity] | None  # per symbol, or per instance idx (R1, Task 26c I3)
     notices: tuple[NoticeVersion, ...]
     terminals: Mapping[int, TerminalEvent]
     aggtrades: pd.DataFrame | None = None

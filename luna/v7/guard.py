@@ -88,7 +88,8 @@ E6_CAPTURES = "E6_CAPTURES.jsonl"  # append-only pins of the E6 captures fetched
 RUN_ID = "v7-" + SPEC_BLOB_SHA256[:16]  # canonical run identity of the single opening
 
 # E8 (S-1.7): the only exchangeInfo fields that may establish history (immutable identity / schema, DEC-31).
-IDENTITY_FIELDS = frozenset({"baseAsset", "contractType", "underlyingType", "multiplier"})
+# quoteAsset: added by the user decision on AMB-40 (a)(ii) (2026-10-15 round-2 addendum; S-2.1 needs it).
+IDENTITY_FIELDS = frozenset({"baseAsset", "contractType", "underlyingType", "multiplier", "quoteAsset"})
 _SHA = re.compile(r"\A[0-9a-f]{64}\Z")
 _PIN_SHAS = ("manifest_sha256", "pre_opening_sha256", "dev_selection_sha256", "leakage_report_sha256",
              "final_model_hash", "dev_ml_run_sha256", "dev_ml_run_file_sha256", "marker_sha256", "opening_id")

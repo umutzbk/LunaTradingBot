@@ -4,25 +4,33 @@ S-1.7 E8, §3 R1, L1, DEC-30 / DEC-31 / DEC-44, EC-1; DK-15; Task 26c, AMB-40).
 * **Instances** come from the bar data only (``data.instances.build_instances``: activity-based, 7-day
   dormancy, ``instance_end_known_at`` = last volume > 0 bar close + 7 d, EC-1). R1 stores one row per instance
   (S-2.2 "instance boundaries are derived from R3 alone and stored in R1").
-* **Identity** (base, contract type, underlying type, multiplier) only from an ``IdentitySource``: an
-  ``exchangeInfo`` body from N4 (current, ``ts`` = its ``recv_ts``) or from a timestamped Wayback capture
-  (``ts`` = the capture time). Only the E8 whitelist ``guard.IDENTITY_FIELDS`` is read
-  (``guard.historical_field``); status, listing / onboard dates, filters and every other field are never
-  read as identity. Verified invariant (DEC-31 / R1): the sources dated WITHIN the instance
-  (``first_bar_ts <= ts <= last_trade_ts``; an instance with no observed end is open-ended, so a current N4
-  snapshot counts only for an instance that has not ended) must state every field (``missing:<field>``),
-  agree (``conflict:<field>``) and give a finite multiplier > 0 (``invalid:multiplier``); no such source:
-  ``no_source_within_instance``. Anything else excludes the instance (fail closed, DK-15): its identity
-  columns are null. Its ``known_at`` is the instance's ``first_bar_ts`` (L1 whitelist).
+* **Identity** (base, contract type, underlying type, quote asset; the multiplier derived from the base) only
+  from an ``IdentitySource``: an ``exchangeInfo`` body from N4 (current, ``ts`` = its ``recv_ts``) or from a
+  timestamped Wayback capture (``ts`` = the capture time). Only the E8 whitelist ``guard.IDENTITY_FIELDS`` is
+  read (``guard.historical_field``; ``quoteAsset`` added by the user decision on AMB-40 (a)(ii)); status,
+  listing / onboard dates, filters and every other field are never read as identity. Verified invariant
+  (DEC-31 / R1): only the sources dated WITHIN the instance count (``first_bar_ts <= ts <= last_trade_ts``;
+  an instance with no observed end is open-ended, so a current N4 snapshot counts only for an instance that
+  has not ended; literal reading kept by the user, AMB-40 (d)); "no source conflicts" is evaluated on those
+  sources (a source outside the instance describes another period / instance). They must state every field
+  (``missing:<field>``) and agree (``conflict:<field>``); no such source: ``no_source_within_instance``.
+* **Multiplier** (user decision on AMB-40 (a)(i)): derived mechanically from the invariant ``baseAsset`` by
+  the CLOSED prefix list ``MULTIPLIER_PREFIXES`` (``1000000`` -> 1e6, ``1000`` -> 1000, ``1M`` -> 1e6; the
+  remainder must start with a letter); a base starting with no digit -> 1; any other digit / multiplier-like
+  start (e.g. ``10000X``, ``1INCH``) -> excluded (``invalid:multiplier_prefix``). A source that states a
+  ``multiplier`` field must agree with the derivation (``conflict:multiplier``). Nothing is guessed.
+* Anything else excludes the instance (fail closed, DK-15): its identity columns are null. Its ``known_at``
+  is the instance's ``first_bar_ts`` (L1 whitelist). ``quote_asset`` is stored as one extra R1 column after
+  the frozen S-3 columns (AMB-40 (e)).
 * **Time-varying filters** (tick, step, min_notional) are never R1 identity and never backdated (E8): R1's
   filter columns stay null (a single row per instance cannot carry their effective / known timestamps,
   AMB-40 (c)); point-in-time filter snapshots come only from timestamped captures (``pit_filters``:
   ``deploy.Filters`` with provenance ``pit_historical`` and ``known_at`` = the capture time). Current N4
   filters serve only the DEC-21 / S-14.1 approximation layer (``current_filters``: provenance
   ``current_approximation``, refused on every point-in-time path by ``deploy.assert_not_backdated``).
-* ``symbol_identity``: the per-symbol ``universe.Identity`` the universe consumes. Verified only when every
-  instance of the symbol is verified with the same identity (AMB-40 (b)); the quote asset is not on the E8
-  list and is left unknown (AMB-40 (a), normative: stopped), so ``universe.instrument_exclusion`` excludes it.
+* ``instance_identities``: per INSTANCE the ``universe.Identity`` the universe consumes (fix round 1, I3:
+  the literal R1 "the instance is excluded"; an unverifiable earlier instance no longer excludes the later
+  verified instances of the same symbol).
 """
 
 from __future__ import annotations
@@ -42,14 +50,29 @@ from luna.v7.data.schema import TABLES
 from luna.v7.deploy import Filters
 from luna.v7.universe import Identity
 
-__all__ = ["FIELD_COLUMNS", "IdentitySource", "InstrumentRow", "Instruments", "VENUE", "build_instruments",
-           "current_filters", "identity_source", "pit_filters", "symbol_identity", "verify_identity"]
+__all__ = ["FIELD_COLUMNS", "MULTIPLIER_PREFIXES", "IdentitySource", "InstrumentRow", "Instruments", "VENUE",
+           "build_instruments", "current_filters", "identity_source", "instance_identities", "multiplier_of",
+           "pit_filters", "row_identity", "verify_identity"]
 
 VENUE = "binance"
-# E8 whitelist field (exchangeInfo name) -> R1 column; order = the R1 column order
+# E8 whitelist field (exchangeInfo name) -> R1 column (the multiplier is derived from baseAsset)
 FIELD_COLUMNS: dict[str, str] = {"baseAsset": "base", "contractType": "contract_type",
-                                 "underlyingType": "underlying_type", "multiplier": "multiplier"}
-assert set(FIELD_COLUMNS) == set(guard.IDENTITY_FIELDS)
+                                 "underlyingType": "underlying_type", "quoteAsset": "quote_asset"}
+assert set(FIELD_COLUMNS) | {"multiplier"} == set(guard.IDENTITY_FIELDS)
+# AMB-40 (a)(i), user decision: the closed baseAsset prefix list (longest first)
+MULTIPLIER_PREFIXES: tuple[tuple[str, float], ...] = (("1000000", 1e6), ("1000", 1e3), ("1M", 1e6))
+
+
+def multiplier_of(base: str) -> float | None:
+    """The multiplier of a ``baseAsset`` by the closed prefix list, or None (excluded) for any other digit /
+    multiplier-like start (module docstring)."""
+    if not base or not base[0].isdigit():
+        return 1.0
+    for p, f in MULTIPLIER_PREFIXES:
+        rest = base[len(p):]
+        if base.startswith(p) and rest[:1].isascii() and rest[:1].isalpha():
+            return f
+    return None
 
 
 @dataclass(frozen=True)
@@ -125,10 +148,15 @@ def verify_identity(symbol: str, inst: Instance, sources: Sequence[IdentitySourc
             return None, f"missing:{name}", used
         if len(vals) > 1:
             return None, f"conflict:{name}", used
-        v = vals.pop()
-        if isinstance(v, tuple):
-            return None, f"invalid:{name}", used
-        ident[col] = v
+        ident[col] = vals.pop()
+    mult = multiplier_of(str(ident["base"]))
+    if mult is None:
+        return None, "invalid:multiplier_prefix", used
+    stated = {_norm("multiplier", s.symbols[symbol]["multiplier"]) for s in used
+              if "multiplier" in s.symbols[symbol]}
+    if stated and stated != {mult}:
+        return None, "conflict:multiplier", used
+    ident["multiplier"] = mult
     return ident, "verified", used
 
 
@@ -154,8 +182,10 @@ class Instruments:
 _R1_DTYPES = {"venue": object, "symbol": object, "instance": "int64", "base": object, "contract_type": object,
               "underlying_type": object, "multiplier": "float64", "first_bar_ts": "Int64",
               "last_trade_ts": "Int64", "instance_end_known_at": "Int64", "tick": "float64",
-              "step": "float64", "min_notional": "float64", "source": object, "retrieved_at": "Int64"}
-assert list(_R1_DTYPES) == [*TABLES["R1"].key, *TABLES["R1"].columns]
+              "step": "float64", "min_notional": "float64", "source": object, "retrieved_at": "Int64",
+              "quote_asset": object}  # extra identity column after the frozen S-3 columns (AMB-40 (e))
+R1_FROZEN = [*TABLES["R1"].key, *TABLES["R1"].columns]
+assert list(_R1_DTYPES) == [*R1_FROZEN, "quote_asset"]
 
 
 def r1_frame(records: Sequence[Mapping[str, object]]) -> pd.DataFrame:
@@ -192,15 +222,21 @@ def build_instruments(insts_by_symbol: Mapping[str, Sequence[Instance]], sources
     return Instruments(r1_frame(recs), tuple(rows))
 
 
-def symbol_identity(rows: Sequence[InstrumentRow]) -> Identity:
-    """The per-symbol ``universe.Identity`` (module docstring): verified only when every instance is verified
-    with one identity; ``quote_asset`` unknown (AMB-40 (a))."""
-    ids = {tuple(sorted(r.identity.items())) for r in rows if r.identity is not None}
-    if not rows or len(ids) != 1 or any(r.identity is None for r in rows):
+def row_identity(r: InstrumentRow) -> Identity:
+    """The ``universe.Identity`` of one R1 row (unverified when the instance is excluded)."""
+    d = r.identity
+    if d is None:
         return Identity(None, None, None, None, None, False)
-    d = dict(ids.pop())
-    return Identity(str(d["base"]), str(d["contract_type"]), None, str(d["underlying_type"]),
+    return Identity(str(d["base"]), str(d["contract_type"]), str(d["quote_asset"]), str(d["underlying_type"]),
                     float(d["multiplier"]), True)  # type: ignore[arg-type]
+
+
+def instance_identities(rows: Sequence[InstrumentRow]) -> dict[int, Identity]:
+    """{instance idx: Identity} of ONE symbol's R1 rows (``SymbolInputs.identity`` per instance; fix round 1,
+    I3), sorted by idx."""
+    if len({r.symbol for r in rows}) > 1:
+        raise ValueError("instance_identities takes the rows of one symbol")
+    return {int(r.instance.idx): row_identity(r) for r in sorted(rows, key=lambda r: r.instance.idx)}
 
 
 def _filters(s: dict) -> tuple[float, float, float] | None:

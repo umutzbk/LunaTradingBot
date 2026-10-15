@@ -42,7 +42,8 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
               "(SC-03, AMB-35)"),
     "S-1.8": _m("universe", "windows"),
     "S-2.1": (*_m("universe", "data.instruments"),
-              "doc: identity from the E8 whitelist only; multiplier / quoteAsset sources stopped (AMB-40)"),
+              "doc: identity from the E8 whitelist (quoteAsset added); multiplier from the baseAsset prefix "
+              "(AMB-40, user decision)"),
     "S-2.2": (*_m("data.instances", "data.klines", "universe"),
               "doc: the current instance switches at its first bar's known_at (round 2 DK-108, AMB-31)"),
     "S-2.3": _m("universe"),
@@ -223,7 +224,7 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "D3": _m("deploy"),
     # --- raw / derived tables -------------------------------------------------------------------------------
     "R1": (*_m("data.schema", "data.instances", "data.instruments", "metaingest", "metastore", "universe"),
-           "doc: per-instance rows; filters never backdated; identity stopped on multiplier / quote "
+           "doc: per-instance rows and identity; filters never backdated; extra quote_asset column "
            "(AMB-40)"),
     "R2": _m("data.schema", "data.funding", "data.intervals"),
     "R3": _m("data.schema", "data.klines"),

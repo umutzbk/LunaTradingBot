@@ -7,7 +7,10 @@
 * U1-U5, U7, U8 use the current instance only (S-2.2); ``instances.current_instance`` is the only
   point-in-time membership. Undetermined / missing inputs fail the gate (fail closed).
 * Instrument exclusions (S-2.1, DEC-30/31, E8) are data-driven from an ``Identity`` whose source is
-  verified invariant; unknown identity -> excluded.
+  verified invariant; unknown identity -> excluded. ``SymbolData.identity`` is one ``Identity`` for the
+  symbol, or (R1, Task 26c fix round 1 I3) a mapping {instance idx: Identity}: then the CURRENT instance's
+  identity decides (an instance without an entry is unverified), so an excluded earlier instance never
+  excludes a later verified one.
 * U8 false blocks new entries / increases only (``entry_allowed``); it is not an exit trigger
   (``exit_triggered`` follows U6 only, S-2.5 / S-5.4).
 * Real-scale compute (SC-01 part 2, AMB-38): a ``SymbolData`` built by ``runner.ResearchUniverse`` carries a
@@ -73,7 +76,7 @@ class SymbolData:
     funding_annot: pd.DataFrame  # intervals.annotate output + known_at
     insts: list[Instance]
     notices: list[NoticeVersion] = field(default_factory=list)
-    identity: Identity | None = None
+    identity: Identity | Mapping[int, Identity] | None = None
     # indexed inputs (Task 26b): set by runner.ResearchUniverse; None = the boolean reference path
     cache: SymbolCache | None = field(default=None, compare=False, repr=False)
 
@@ -333,10 +336,15 @@ def _funding_core(tv: np.ndarray, nv: np.ndarray, ka_max: int, t_ns: int) -> tup
 def gates(sd: SymbolData, t_ns: int) -> GateRow:
     """Evaluate U1-U8 for one symbol at decision time t (S-2.3)."""
     t_ns = int(t_ns)
-    why = instrument_exclusion(sd.symbol, sd.identity)
+    cur = current_instance(sd.insts, t_ns)
+    ident = sd.identity
+    if isinstance(ident, Mapping):  # per-instance identity (R1): the current instance's
+        if cur is None:
+            return GateRow(*(False,) * 8, ("no_current_instance",), None)
+        ident = ident.get(cur.idx)
+    why = instrument_exclusion(sd.symbol, ident)
     if why is not None:
         return GateRow(*(False,) * 8, (f"excluded:{why}",), None)
-    cur = current_instance(sd.insts, t_ns)
     if cur is None:
         return GateRow(*(False,) * 8, ("no_current_instance",), None)
     c = sd.cache

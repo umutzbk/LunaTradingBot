@@ -7,20 +7,26 @@ Task 26c, AMB-39 / AMB-40).
   mode's bound (20250630235959 before the opening; the E6 bound only with the verified authorization), sent
   through the ONE fetch layer, which registers the returned (ts, original) pairs (a row beyond the bound is a
   guard failure: raised, nothing of the batch kept). Each pair is then fetched once as N6 (exact pair, no
-  redirect, HTTP 200, ``Memento-Datetime`` == ts, else the fetch layer discards it and K9-logs; recorded here
-  as ``refused`` and the run continues) and stored immutably in the ``MetaStore`` (sha256, capture ts,
-  original URL, ``recv_ts``). A pair already stored is not fetched again. Runs under the fetcher's K9 log.
+  redirect, HTTP 200, ``Memento-Datetime`` == ts) and stored immutably in the ``MetaStore`` (sha256, capture
+  ts, original URL, ``recv_ts``). A seal-class refusal (redirect, memento substitution, a bound, W_HOLD / M6:
+  ``GuardFailure`` / ``HoldoutBlocked`` / ``EmbargoBlocked``) is K9-logged by the fetch layer and ABORTS the
+  run (raised; fix round 1, m5); an ordinary fetch error (``FetchError``, no content) is non-fatal, recorded
+  as ``cdx_failed`` / ``fetch_failed`` and ledgered in ``<out_dir>/INGEST_LEDGER.jsonl``. A pair already
+  stored is not fetched again. Runs under the fetcher's K9 log. A stored capture's own ``releaseDate`` is
+  checked when the notices are built (``build_notices`` refuses one in W_HOLD / M6; fix round 1, m4).
 * ``build_notices(captures, insts_by_symbol)``: every capture time and every ``releaseDate`` passes
   ``guard.check_data_span`` (W_HOLD refused before the opening, M6 before R_V6: raised, K9-logged). Captures
   are grouped by notice identity (``captures.notice_id``) and ordered by (capture time, sha256); a capture
   whose extracted text differs from the previous capture's starts a new version (numbered 1, 2, ... per
   notice; a later archived revision is a new version, S-2.5 / DEC-36; AMB-39 (d)) with the first such
-  capture's time as ``capture_ts`` and its sha256. A version is *unusable* without a ``releaseDate`` from
-  inside the capture, *unclassified* when the closed kind list does not classify its title; only
-  *classified* versions become ``NoticeVersion`` / R11 rows. Matching (``notices.match_reason``) is against
-  the universe symbols that occur as tokens of the text; a match is attributed to the instance live at the
-  version's ``known_at`` (``instances.started_instance``, as ``U6State``); ``scheduled_delist_ts`` per
-  matched instance comes from ``notices.scheduled_reason`` (delisting versions only).
+  capture's time as ``capture_ts`` and its sha256. A version is *unusable* without the notice's own article
+  object (title, body, ``releaseDate``; ``captures.article``), *unclassified* when the closed kind list does
+  not classify its title; only *classified* versions become ``NoticeVersion`` / R11 rows. Matching
+  (``notices.match_reason``) is against the universe symbols that occur as tokens of the notice's own title +
+  body (S-2.5 / DEC-40; fix round 1, I2: the whole page is a diagnostic only); a match is attributed to the
+  instance live at the version's ``known_at`` (``instances.started_instance``, as ``U6State``);
+  ``scheduled_delist_ts`` per matched instance comes from ``notices.scheduled_reason`` (delisting versions
+  only).
 * ``ingest_metadata(store, insts_by_symbol, sources, scope=..., report_path=...)``: the stored announcement
   captures (original URL under ``/support/announcement/``; the store also holds ``exchangeInfo`` captures) ->
   R11, the instances + identity sources -> R1 (``data.instruments``), R12 = the empty table (no exact
@@ -37,6 +43,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,9 +67,10 @@ from luna.v7.data.notices import (
 )
 from luna.v7.deploy import Filters
 from luna.v7.fetch import Fetcher, FetchError
-from luna.v7.guard import GuardFailure
+from luna.v7.ingest import _ledger
 from luna.v7.metastore import MetaStore, empty_table
 from luna.v7.rawstore import RawStore, TableLoader, _canonical, _create_once
+from luna.v7.universe import instrument_exclusion
 
 __all__ = ["CaptureOutcome", "CdxQuery", "MetaResult", "NoticeBuild", "REPORT_FORMAT", "build_notices",
            "fetch_exchange_info", "identity_from_capture", "identity_sources", "ingest_captures",
@@ -111,13 +119,18 @@ class CaptureOutcome:
     query: str
     ts: str | None
     original: str | None
-    status: str  # stored | already_stored | refused | cdx_failed
+    status: str  # stored | already_stored | cdx_failed | fetch_failed
     reason: str
     sha256: str | None = None
 
     def as_dict(self) -> dict:
         return {"query": self.query, "ts": self.ts, "original": self.original, "status": self.status,
                 "reason": self.reason, "sha256": self.sha256}
+
+
+def _ledgered(fetcher: Fetcher, o: CaptureOutcome) -> CaptureOutcome:
+    _ledger(fetcher, {"kind": "wayback_capture", **o.as_dict()})
+    return o
 
 
 def ingest_captures(fetcher: Fetcher, store: MetaStore, queries: Sequence[CdxQuery], *,
@@ -129,18 +142,20 @@ def ingest_captures(fetcher: Fetcher, store: MetaStore, queries: Sequence[CdxQue
         for q in queries:
             try:
                 rows = fetcher.fetch(q.request(auth), auth=auth).cdx_pairs
-            except FetchError as e:
-                out.append(CaptureOutcome(q.url, None, None, "cdx_failed", str(e)))
+            except FetchError as e:  # an ordinary fetch error: non-fatal, ledgered
+                out.append(_ledgered(fetcher, CaptureOutcome(q.url, None, None, "cdx_failed", str(e))))
                 continue
             for ts, original in sorted(set(rows)):
                 if (ts, original) in stored:
                     out.append(CaptureOutcome(q.url, ts, original, "already_stored", "stored earlier"))
                     continue
                 url = f"https://web.archive.org/web/{ts}id_/{original}"
+                # a seal-class GuardFailure (redirect, memento substitution, bound) is raised: run aborted
                 try:
                     f = fetcher.fetch(netguard.Request(url), auth=auth)
-                except (GuardFailure, FetchError) as e:  # discarded by the fetch layer (K9-logged there)
-                    out.append(CaptureOutcome(q.url, ts, original, "refused", str(e)))
+                except FetchError as e:  # an ordinary fetch error (no content): non-fatal, ledgered
+                    o = CaptureOutcome(q.url, ts, original, "fetch_failed", str(e))
+                    out.append(_ledgered(fetcher, o))
                     continue
                 c = cap.Capture(ts, original, f.body or b"", f.sha256, f.recv_ts)
                 store.put_capture(c, auth=auth)
@@ -235,13 +250,17 @@ def build_notices(captures: Sequence[cap.Capture], insts_by_symbol: Mapping[str,
         for n, (c, t, n_caps) in enumerate(chain, start=1):
             if t.release_ts is not None:
                 _check_time(t.release_ts, f"releaseDate of {nid} v{n}", auth)
-            kind, kind_reason = cap.classify_kind(t.title)
-            status = "unusable" if t.release_ts is None else ("classified" if kind else "unclassified")
+            kind, kind_reason = cap.classify_kind(t.title) if t.text is not None else (None, "unusable")
+            status = "unusable" if t.text is None else ("classified" if kind else "unclassified")
+            text = t.text or ""
             # internal (matching / known_at only): only a classified version with a release date is emitted
-            v = NoticeVersion(nid, n, kind or "delisting", t.release_ts or 0, c.capture_ts, t.text, c.sha256)
+            v = NoticeVersion(nid, n, kind or "delisting", t.release_ts or 0, c.capture_ts, text, c.sha256)
             ka = None if t.release_ts is None else known_at(v)
-            words = set(_WORD.findall(t.text))
+            words = set(_WORD.findall(text))
             cands = sorted(s for s in universe if s in words)
+            page_words = set(_WORD.findall(t.page_text))
+            page_lc = unicodedata.normalize("NFKC", t.page_text).casefold()
+            text_lc = unicodedata.normalize("NFKC", text).casefold()
             matches = []
             for s in cands:
                 ok, why = match_reason(v, s)
@@ -259,16 +278,24 @@ def build_notices(captures: Sequence[cap.Capture], insts_by_symbol: Mapping[str,
                                                     "no_known_at" if ka is None else
                                                     "no_instance_live_at_known_at"),
                                 "scheduled_ts": sched, "scheduled_reason": sr,
-                                "evidence": _evidence(t.text, s)})
+                                "evidence": _evidence(text, s)})
             rec = {"notice_id": nid, "version": n, "status": status, "kind": kind, "kind_reason": kind_reason,
-                   "title": t.title, "release_ts": t.release_ts, "release_reason": t.release_reason,
+                   "title": t.title, "article_reason": t.article_reason, "release_ts": t.release_ts,
+                   "release_reason": t.release_reason,
                    "date_keys": list(t.date_keys), "capture_ts": c.capture_ts, "known_at": ka,
                    "archive_url": c.archive_url, "capture_sha256": c.sha256, "text_sha256": t.text_sha256,
                    "n_captures": n_caps, "matches": matches,
-                   "match_reason": ("matched" if any(m["match"] for m in matches) else
-                                    "no_match" if matches else "no_universe_symbol_token")}
+                   "match_reason": ("unusable" if t.text is None else
+                                    "matched" if any(m["match"] for m in matches) else
+                                    "no_match" if matches else "no_universe_symbol_token"),
+                   # diagnostics only (never matched): what the whole page adds to the notice's title + body
+                   "page": {"title": t.page_title,
+                            "symbols_not_in_notice": sorted(s for s in universe
+                                                            if s in page_words and s not in words),
+                            "coin_m_not_in_notice": [p for p in COIN_M_PHRASES
+                                                     if p in page_lc and p not in text_lc]}}
             if not matches:
-                rec["symbol_tokens"] = sorted({m.group(0) for m in _SYM_RE.finditer(t.text)})[:MAX_TOKENS]
+                rec["symbol_tokens"] = sorted({m.group(0) for m in _SYM_RE.finditer(text)})[:MAX_TOKENS]
             recs.append(rec)
             if status != "classified":
                 continue
@@ -326,14 +353,22 @@ def notices_by_symbol(nb: NoticeBuild) -> dict[str, tuple[NoticeVersion, ...]]:
 # -------------------------------------------------------------------------------------------- R1 / R12
 
 
-def instances_from_store(store: RawStore, symbols: Sequence[str], lo: int, hi: int, *,
+def instances_from_store(store: RawStore, symbols: Sequence[str], hi: int, *, lo: int | None = None,
                          auth: guard.HoldoutAuthorization | None = None) -> dict[str, list[Instance]]:
     """Instances of each symbol from its R3 bars of [lo, hi) (``data_end`` = hi; ``build_instances``), read
-    through the guarded loader (open_ts and vol_base only)."""
+    through the guarded loader (open_ts and vol_base only). ``lo`` must be the history start (S-2.2: a
+    symbol's first instance starts at its first archived bar; a later ``lo`` would cut an instance and move
+    its ``first_bar_ts``); by default it is derived per symbol: the start of its first stored R3 chunk (fix
+    round 1, m6)."""
     ld = TableLoader(store, "R3", auth=auth)
     out = {}
     for s in sorted(symbols):
-        a = ld.arrays(s, lo, hi, ["vol_base"])
+        if not ld._known(s):
+            continue
+        start = int(ld._chunks(s)[1][0]) if lo is None else int(lo)
+        if start >= int(hi):
+            continue
+        a = ld.arrays(s, start, hi, ["vol_base"])
         insts = build_instances(pd.DataFrame({"open_ts": a["open_ts"], "vol_base": a["vol_base"]}), int(hi))
         if insts:
             out[s] = insts
@@ -350,15 +385,21 @@ def r12_table() -> pd.DataFrame:
 
 def ingest_report(notices: NoticeBuild, instruments: ins.Instruments, r12: pd.DataFrame, *, scope: str,
                   capture_outcomes: Sequence[CaptureOutcome] = (), tables: Mapping | None = None) -> dict:
-    """The outcome-free ingest report (module docstring)."""
+    """The outcome-free ingest report (module docstring). Per instance: the R1 identity result and the S-2.1
+    universe exclusion of that instance (``universe.instrument_exclusion`` on its own identity; null =
+    in the instrument set), with counts per reason (fix round 1, A3 / m2: for the C6 dry run)."""
     rows = [{"symbol": r.symbol, "instance": r.instance.idx, "first_bar_ts": r.instance.first_bar_ts,
              "last_trade_ts": r.instance.last_trade_ts, "instance_end_known_at": r.instance.end_known_at,
-             "included": r.included, "reason": r.reason, "sources": list(r.sources)}
+             "included": r.included, "reason": r.reason, "sources": list(r.sources),
+             "universe_exclusion": instrument_exclusion(r.symbol, ins.row_identity(r))}
             for r in instruments.rows]
     excl: dict[str, int] = {}
+    uni: dict[str, int] = {}
     for r in rows:
         if not r["included"]:
             excl[r["reason"]] = excl.get(r["reason"], 0) + 1
+        k = r["universe_exclusion"] or "in_instrument_set"
+        uni[k] = uni.get(k, 0) + 1
     return {
         "kind": "V7_METADATA_INGEST_REPORT", "format": REPORT_FORMAT, "outcome_free": True, "scope": scope,
         "rules": {"kind_phrases": {"cancellation": list(cap.CANCELLATION_PHRASES),
@@ -371,7 +412,8 @@ def ingest_report(notices: NoticeBuild, instruments: ins.Instruments, r12: pd.Da
         "notices": notices.report,
         "instruments": {"counts": {"instances": len(rows), "included": sum(r["included"] for r in rows),
                                    "excluded": sum(not r["included"] for r in rows)},
-                        "excluded_by_reason": dict(sorted(excl.items())), "rows": rows},
+                        "excluded_by_reason": dict(sorted(excl.items())),
+                        "universe_by_reason": dict(sorted(uni.items())), "rows": rows},
         "r12": {"rows": int(len(r12)), "valid": True},
         "tables": dict(tables or {}),
     }

@@ -42,7 +42,7 @@ RECV = to_ns("2026-10-15")
 
 def page(title: str, body_html: str, *, code: str = CODE, release: int | None = RELEASE,
          related: tuple = ((OTHER, "Binance Futures Will Launch USDⓈ-M DEFUSDT Perpetual Contract",
-                            to_ns("2024-03-01")),), gz: bool = False) -> bytes:
+                            to_ns("2024-03-01")),), gz: bool = False, nav: str = "") -> bytes:
     art = {"code": code, "title": title, "body": body_html}
     if release is not None:
         art["releaseDate"] = release // 10**6
@@ -52,7 +52,7 @@ def page(title: str, body_html: str, *, code: str = CODE, release: int | None = 
     js = json.dumps(app, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e").replace(
         "&", "\\u0026")
     html = (f'<!DOCTYPE html><html><head><meta charset="utf-8"><title>{title} | Binance Support</title>'
-            f'<meta name="description" content="{title}"></head><body><header><a href="/en">Home</a>'
+            f'<meta name="description" content="{title}"></head><body><header><a href="/en">Home</a>{nav}'
             f'</header><main><h1 class="css-title">{title}</h1><div class="css-article">{body_html}</div>'
             f'</main><script id="__APP_DATA" type="application/json">{js}</script></body></html>')
     b = html.encode("utf-8")
@@ -75,13 +75,15 @@ def capture(ts: str, body: bytes, original: str = URL) -> cap.Capture:
 def test_title_and_body_extraction_is_deterministic():
     raw = page(DELIST_TITLE, DELIST_BODY)
     t = cap.extract(raw, URL)
-    assert t.title == DELIST_TITLE  # cut at " | " (Stage 0)
+    assert t.title == DELIST_TITLE and t.article_reason == "ok"  # the article object's own title
+    assert t.page_title == DELIST_TITLE  # diagnostic: the page <title> cut at " | " (Stage 0)
     assert t.text.startswith(DELIST_TITLE + "\n")
+    assert "Home" not in t.text and "Home" in t.page_text  # the notice's title + body only (S-2.5)
     assert "at 2024-03-15 09:00 (UTC). After that" in t.text  # tags stripped, whitespace collapsed
     assert "Thanks & regards," in t.text and "&amp;" not in t.text  # character references unescaped
     assert "<p>" not in t.text and "\\u003c" not in t.text  # the JSON-embedded article HTML is stripped too
     assert "  " not in t.text
-    assert t.release_ts == RELEASE and t.release_reason == "code_bound_json"
+    assert t.release_ts == RELEASE and t.release_reason == "article_release_date"
     assert t.date_keys == ("releaseDate",)
     again = cap.extract(raw, URL)
     assert again == t and t.text_sha256 == hashlib.sha256(t.text.encode()).hexdigest()
@@ -89,18 +91,19 @@ def test_title_and_body_extraction_is_deterministic():
 
 
 def test_release_date_only_from_inside_the_capture_and_fail_closed():
-    # code-bound: the related article's releaseDate never wins
-    assert cap.release_date(cap.decode(page(DELIST_TITLE, DELIST_BODY)), URL) == (RELEASE, "code_bound_json")
+    # the article object's own date; the related article's releaseDate never wins
+    raw = cap.decode(page(DELIST_TITLE, DELIST_BODY))
+    assert cap.release_date(raw, URL) == (RELEASE, "article_release_date")
     no_code = "https://www.binance.com/en/support/announcement/some-slug"
-    assert cap.release_date(cap.decode(page(DELIST_TITLE, DELIST_BODY)), no_code) == (
-        None, "release_date_ambiguous")
-    assert cap.release_date(cap.decode(page(DELIST_TITLE, DELIST_BODY, related=())), no_code) == (
-        RELEASE, "unique_in_page")
-    bare = cap.decode(page(DELIST_TITLE, DELIST_BODY, release=None, related=()))
-    assert cap.release_date(bare, no_code) == (None, "no_release_date")
-    # the article's own date missing: the related article's date is never taken
+    assert cap.release_date(raw, no_code) == (None, "no_article_code")
+    other = f"https://www.binance.com/en/support/announcement/{'f' * 32}"
+    assert cap.release_date(raw, other) == (None, "no_article_object")
+    # the article's own date missing: the related article's date is never taken; the capture is unusable
     t = cap.extract(page(DELIST_TITLE, DELIST_BODY, release=None), URL)
-    assert (t.release_ts, t.release_reason) == (None, "no_code_bound_release_date")
+    assert (t.release_ts, t.release_reason, t.text, t.title) == (None, "no_release_date", None, None)
+    assert t.page_title == DELIST_TITLE  # diagnostics stay
+    a, why = cap.article(cap.decode(page(DELIST_TITLE, DELIST_BODY).replace(b'"body"', b'"bodx"', 1)), URL)
+    assert (a, why) == (None, "article_incomplete")
 
 
 def test_notice_identity_from_the_url():
@@ -138,6 +141,29 @@ def test_unclassified_and_ambiguous_titles_are_never_guessed():
         None, "ambiguous_kind:postponement+delisting")
     assert cap.classify_kind("Postpone the Delisting and Cancel the Delisting") == (
         None, "ambiguous_kind:cancellation+postponement")
+
+
+@pytest.mark.parametrize(("title", "stem"), [
+    ("Binance Futures Postponement of Delisting of USDⓈ-M OMGUSDT", "postpon"),
+    ("Binance Futures Cancellation of Delisting of USDⓈ-M OMGUSDT", "cancel"),
+    ("Binance Futures Will Delay the Delisting of USDⓈ-M OMGUSDT", "delay"),
+    ("Binance Futures Will Not Delist USDⓈ-M OMGUSDT", "not"),
+    ("Delisting of USDⓈ-M OMGUSDT Postponed", "postpon"),
+    ("Binance Futures Will Extend the Delisting Time of USDⓈ-M OMGUSDT", "extend"),
+    ("Binance Futures Will Revoke the Delisting of USDⓈ-M OMGUSDT", "revok"),
+    ("Update: Binance Futures Will Delist USDⓈ-M OMGUSDT", "updat"),
+])
+def test_modifier_veto_never_classifies_a_modified_delisting_title(title, stem):
+    kind, why = cap.classify_kind(title)
+    assert kind is None and why.startswith("ambiguous_kind:modifier:")
+    assert stem in why.split(":")[-1].split("|")
+
+
+def test_explicit_lists_keep_their_kind_despite_the_modifier_stems():
+    pre = "Binance Futures Will "
+    assert cap.classify_kind(pre + "Postpone the Delisting of USDⓈ-M OMGUSDT")[0] == "postponement"
+    assert cap.classify_kind(pre + "Cancel the Delisting of USDⓈ-M OMGUSDT")[0] == "cancellation"
+    assert cap.classify_kind(DELIST_TITLE) == ("delisting", "delisting:delist")
 
 
 # ------------------------------------------------------------------------------- notices -> versions
@@ -200,15 +226,28 @@ def test_no_match_reasons_are_reported():
     assert rep["matched_instances"] == []
 
 
-def test_whole_page_scope_counts_related_article_tokens_and_shows_the_evidence():
-    """AMB-39 (Stage-0 port): the text is the whole page, so a universe symbol named only by a related
-    article on the page matches too; the report shows where (to be judged in the DK-05 validation)."""
+def test_only_the_notice_title_and_body_are_matched_the_page_is_a_diagnostic():
+    """S-2.5 / DEC-40 "in the archived title or body" (fix round 1, I2): a universe symbol named only by a
+    related article is NOT a match and a COIN-M navigation item does NOT veto; both show up as page
+    diagnostics in the report."""
     rel = ((OTHER, "Binance Futures Will Launch USDⓈ-M ABCUSDT Perpetual Contract", to_ns("2024-03-01")),)
-    rep = metaingest.build_notices([capture("20240308095620", page(DELIST_TITLE, DELIST_BODY, related=rel))],
-                                   INSTS).report
-    m = {x["symbol"]: x for x in rep["versions"][0]["matches"]}
-    assert m["ABCUSDT"]["match"] is True and "Will Launch USDⓈ-M ABCUSDT" in m["ABCUSDT"]["evidence"]
-    assert sorted(x["instance"] for x in rep["matched_instances"]) == ["ABCUSDT#0", "XYZUSDT#0"]
+    raw = page(DELIST_TITLE, DELIST_BODY, related=rel, nav='<a href="/en/futures">COIN-M Futures</a>')
+    rec = metaingest.build_notices([capture("20240308095620", raw)], INSTS).report["versions"][0]
+    assert [(m["symbol"], m["match"], m["reason"]) for m in rec["matches"]] == [
+        ("XYZUSDT", True, "usdm_context:usds-m")]
+    assert rec["page"]["symbols_not_in_notice"] == ["ABCUSDT"]
+    assert rec["page"]["coin_m_not_in_notice"] == ["coin-m"]
+    assert rec["page"]["title"] == DELIST_TITLE
+
+
+def test_a_capture_without_the_article_object_is_unusable():
+    no_obj = page(DELIST_TITLE, DELIST_BODY, code=OTHER, related=())  # the URL names CODE
+    rec = metaingest.build_notices([capture("20240308095620", no_obj)], INSTS).report
+    assert rec["counts"]["unusable"] == 1 and rec["counts"]["classified"] == 0
+    v = rec["versions"][0]
+    assert (v["status"], v["article_reason"], v["match_reason"], v["matches"]) == (
+        "unusable", "no_article_object", "unusable", [])
+    assert v["page"]["symbols_not_in_notice"] == ["XYZUSDT"]
 
 
 def test_capture_in_w_hold_or_m6_is_refused_before_the_opening(tmp_path):
@@ -228,7 +267,13 @@ def test_capture_in_w_hold_or_m6_is_refused_before_the_opening(tmp_path):
         with pytest.raises(guard.HoldoutBlocked):
             metaingest.build_notices([pre], INSTS)
         assert len(lg.records()) == 5
-    assert not list((tmp_path / "m").rglob("*.bin"))
+        assert not list((tmp_path / "m").rglob("*.bin"))
+        # m4: the store checks the capture time only; the in-capture releaseDate is checked when the notices
+        # are built, which refuses it (nothing of it reaches a version / R11)
+        st = MetaStore(tmp_path / "m")
+        st.put_capture(pre)
+        with pytest.raises(guard.HoldoutBlocked):
+            metaingest.build_notices([st.get_capture(pre.ts, pre.sha256)], INSTS)
 
 
 # -------------------------------------------------------------------------------- the fetch layer
@@ -265,13 +310,20 @@ def test_ingest_captures_through_the_fetch_layer_with_memento_check(tmp_path):
         n = len(t.calls)
         res2 = metaingest.ingest_captures(Fetcher(t, out, clock=lambda: RECV), st, [q])
         assert [r.status for r in res2] == ["already_stored"] and len(t.calls) == n + 1  # the N5 only
-        # timestamp substitution: refused by the fetch layer (K9-logged), discarded, nothing stored
+        # timestamp substitution: a seal-class refusal of the fetch layer (K9-logged, discarded) aborts
         t2 = FakeTransport()
         serve(t2, [("20240309000000", URL, body)], lie="20240309000001")
-        res3 = metaingest.ingest_captures(Fetcher(t2, out, clock=lambda: RECV), st, [q])
-        assert res3[0].status == "refused" and "Memento" in res3[0].reason
+        with pytest.raises(GuardFailure, match="Memento"):
+            metaingest.ingest_captures(Fetcher(t2, out, clock=lambda: RECV), st, [q])
         assert len(st.captures()) == 1
         assert [r["exception"] for r in k9.K9Log(out / "k9").records()] == ["GuardFailure"]
+        # an ordinary fetch error (CDX HTTP 503): non-fatal, recorded and ledgered
+        t4 = FakeTransport()
+        t4.routes[CDX] = Response(503, {}, b"busy", CDX)
+        res4 = metaingest.ingest_captures(Fetcher(t4, out, clock=lambda: RECV), st, [q, q])
+        assert [r.status for r in res4] == ["cdx_failed", "cdx_failed"]
+        led = [json.loads(x) for x in (out / "INGEST_LEDGER.jsonl").read_text().splitlines()]
+        assert [x["status"] for x in led] == ["cdx_failed", "cdx_failed"]
         # a CDX row at / after 2025-07-01: the batch is a guard failure, no N6 request is made
         t3 = FakeTransport()
         serve(t3, [("20250701000000", URL, body)])
@@ -300,7 +352,7 @@ def xinfo(**syms) -> bytes:
     return json.dumps({"timezone": "UTC", "symbols": out}).encode()
 
 
-FULL = {"baseAsset": "XYZ", "contractType": "PERPETUAL", "underlyingType": "COIN", "multiplier": 1}
+FULL = {"baseAsset": "XYZ", "contractType": "PERPETUAL", "underlyingType": "COIN"}  # quoteAsset USDT (xinfo)
 
 
 def src(kind: str, ts: int, body: bytes) -> ins.IdentitySource:
@@ -308,11 +360,19 @@ def src(kind: str, ts: int, body: bytes) -> ins.IdentitySource:
                                sha256=hashlib.sha256(body).hexdigest())
 
 
+LIVE = Instance(0, to_ns("2023-06-01"), None, None)
+
+
+def one(fields: dict, symbol: str = "XYZUSDT") -> ins.InstrumentRow:
+    return ins.build_instruments({symbol: [LIVE]}, [src("N4", RECV, xinfo(**{symbol: fields}))]).rows[0]
+
+
 def test_identity_source_reads_only_the_e8_whitelist():
-    s = src("N4", RECV, xinfo(XYZUSDT=FULL))
+    s = src("N4", RECV, xinfo(XYZUSDT={**FULL, "multiplier": 1}))
     assert dict(s.symbols["XYZUSDT"]) == {"baseAsset": "XYZ", "contractType": "PERPETUAL",
-                                          "underlyingType": "COIN", "multiplier": 1}
+                                          "underlyingType": "COIN", "quoteAsset": "USDT", "multiplier": 1}
     assert set(s.symbols["XYZUSDT"]) <= guard.IDENTITY_FIELDS
+    assert "quoteAsset" in guard.IDENTITY_FIELDS and guard.historical_field("quoteAsset") == "quoteAsset"
 
 
 def test_identity_invariance_pass_and_fail():
@@ -326,35 +386,85 @@ def test_identity_invariance_pass_and_fail():
                                                                        (1, True, "verified")]
     assert r.rows[0].sources == (in_ended.ref,) and r.rows[1].sources == (n4.ref,)  # N4 only for the live one
     validate("R1", r.table)
-    assert r.table["multiplier"].tolist() == [1.0, 1.0]
+    assert r.table["multiplier"].tolist() == [1.0, 1.0] and r.table["quote_asset"].tolist() == ["USDT"] * 2
     assert r.table["tick"].isna().all() and r.table["step"].isna().all()  # never backdated (E8)
-    ident = ins.symbol_identity([x for x in r.rows if x.symbol == "XYZUSDT"])
-    assert ident.invariant_verified and ident.base == "XYZ" and ident.multiplier == 1.0
-    assert ident.quote_asset is None  # not on the E8 list: AMB-40 (stopped) -> the universe excludes it
-    assert instrument_exclusion("XYZUSDT", ident) == "identity_unknown"
-    # a conflicting source within the instance -> excluded (DK-15, DEC-31)
+    ids = ins.instance_identities([x for x in r.rows if x.symbol == "XYZUSDT"])
+    assert list(ids) == [0, 1] and all(i.invariant_verified for i in ids.values())
+    assert (ids[1].base, ids[1].quote_asset, ids[1].multiplier) == ("XYZ", "USDT", 1.0)
+    assert instrument_exclusion("XYZUSDT", ids[1]) is None  # in the instrument set (S-2.1)
+    # a conflicting source within the instance -> that instance excluded (DK-15, DEC-31); the other stays
     other = src("capture", to_ns("2022-09-01"), xinfo(XYZUSDT={**FULL, "underlyingType": "INDEX"}))
     r2 = ins.build_instruments(insts, [in_ended, other, n4])
     assert [(x.included, x.reason) for x in r2.rows] == [(False, "conflict:underlyingType"),
                                                          (True, "verified")]
     assert r2.table["base"].isna().tolist() == [True, False]
-    assert not ins.symbol_identity(list(r2.rows)).invariant_verified
-    # no source dated within the ended instance (N4 is dated after its end) -> excluded
+    ids2 = ins.instance_identities(list(r2.rows))
+    assert not ids2[0].invariant_verified and ids2[1].invariant_verified
+    # a conflicting source OUTSIDE the instance is about another instance: not a conflict of this one (m1)
+    r_out = ins.build_instruments({"XYZUSDT": [live]}, [other, n4])
+    assert r_out.rows[0].reason == "verified"
+    # no source dated within the ended instance (N4 is dated after its end) -> excluded (literal, AMB-40 (d))
     r3 = ins.build_instruments(insts, [n4])
     assert [(x.included, x.reason) for x in r3.rows] == [(False, "no_source_within_instance"),
                                                          (True, "verified")]
 
 
-def test_missing_multiplier_excludes_the_instrument():
-    live = Instance(0, to_ns("2023-06-01"), None, None)
-    no_mult = {k: v for k, v in FULL.items() if k != "multiplier"}
-    r = ins.build_instruments({"XYZUSDT": [live]}, [src("N4", RECV, xinfo(XYZUSDT=no_mult))])
-    assert [(x.included, x.reason) for x in r.rows] == [(False, "missing:multiplier")]
-    ident = ins.symbol_identity(list(r.rows))
-    assert not ident.invariant_verified
-    assert instrument_exclusion("XYZUSDT", ident) == "identity_unverified"
-    bad = src("N4", RECV, xinfo(XYZUSDT={**FULL, "multiplier": 0}))
-    assert ins.build_instruments({"XYZUSDT": [live]}, [bad]).rows[0].reason == "invalid:multiplier"
+@pytest.mark.parametrize(("base", "mult"), [
+    ("PEPE", 1.0), ("1000PEPE", 1000.0), ("1000000MOG", 1e6), ("1MBABYDOGE", 1e6), ("1000SATS", 1000.0),
+    ("10000LADYS", None), ("1INCH", None), ("1000", None), ("1M", None), ("1000000", None), ("2X", None),
+    ("1K", None), ("1000_X", None)])
+def test_multiplier_from_the_closed_base_prefix_list(base, mult):
+    assert ins.multiplier_of(base) == mult
+    row = one({**FULL, "baseAsset": base})
+    if mult is None:
+        assert (row.included, row.reason) == (False, "invalid:multiplier_prefix")
+    else:
+        assert row.included and row.identity["multiplier"] == mult
+
+
+def test_multiplier_and_quote_invariance_and_exclusions():
+    assert one({**FULL, "multiplier": 1}).reason == "verified"  # a stated multiplier agreeing
+    assert one({**FULL, "baseAsset": "1000XYZ", "multiplier": 1}).reason == "conflict:multiplier"
+    assert one({k: v for k, v in FULL.items() if k != "baseAsset"}).reason == "missing:baseAsset"
+    # quote asset: missing, conflicting within the instance, not USDT
+    assert one({**FULL, "quoteAsset": None}).reason == "missing:quoteAsset"
+    a = src("capture", to_ns("2024-01-01"), xinfo(XYZUSDT=FULL))
+    b = src("capture", to_ns("2024-02-01"), xinfo(XYZUSDT={**FULL, "quoteAsset": "USDC"}))
+    assert ins.build_instruments({"XYZUSDT": [LIVE]}, [a, b]).rows[0].reason == "conflict:quoteAsset"
+    usdc = one({**FULL, "quoteAsset": "USDC"}, "XYZUSDC")
+    assert usdc.reason == "verified"
+    assert instrument_exclusion("XYZUSDC", ins.row_identity(usdc)) == "quote_not_usdt"
+    # a base whose multiplier prefix is off the list: excluded, the universe sees it unverified
+    bad = one({**FULL, "baseAsset": "10000XYZ"})
+    assert instrument_exclusion("XYZUSDT", ins.row_identity(bad)) == "identity_unverified"
+
+
+def test_per_instance_identity_in_the_universe():
+    """I3: the current instance's identity decides; an unverifiable earlier instance does not exclude the
+    later verified one (and vice versa)."""
+    from luna.v7 import runner, universe
+    from luna.v7.universe import Identity
+    from tests.v7 import perf_fixtures as pf
+
+    full = pf.build_inputs()
+    rel = full["RELUSDT"]
+    assert [i.idx for i in rel.insts] == [0, 1]
+    ok = Identity("REL", "PERPETUAL", "USDT", "COIN", 1.0, True)
+    bad = Identity(None, None, None, None, None, False)
+    t0, t1 = pf.START + 65 * D + 8 * H + 5 * MIN, pf.START + 100 * D + 8 * H + 5 * MIN
+    for ident, ex0, ex1 in (({0: bad, 1: ok}, True, False), ({0: ok, 1: bad}, False, True),
+                            ({0: ok}, False, True)):
+        from dataclasses import replace
+
+        u = runner.ResearchUniverse({"BTCUSDT": full["BTCUSDT"], "RELUSDT": replace(rel, identity=ident)})
+        r0, r1 = (universe.gates(u.sd["RELUSDT"], t) for t in (t0, t1))
+        assert (r0.reasons == ("excluded:identity_unverified",)) is ex0
+        assert (r1.reasons == ("excluded:identity_unverified",)) is ex1
+    both = replace(rel, identity={0: ok, 1: ok})
+    u = runner.ResearchUniverse({"BTCUSDT": full["BTCUSDT"], "RELUSDT": both})
+    plain = runner.ResearchUniverse({"BTCUSDT": full["BTCUSDT"], "RELUSDT": replace(rel, identity=ok)})
+    for t in (t0, t1):  # an all-verified mapping gives exactly the per-symbol result
+        assert universe.gates(u.sd["RELUSDT"], t) == universe.gates(plain.sd["RELUSDT"], t)
 
 
 def test_filters_only_from_timestamped_captures():
@@ -486,7 +596,8 @@ def test_instances_from_the_raw_store(tmp_path):
                        "known_at": ts + 15 * MIN})
     rs = RawStore(tmp_path / "raw")
     rs.put_chunk("R3", "XYZUSDT", "2024-01", df, sources=[])
-    got = metaingest.instances_from_store(rs, ["XYZUSDT"], t0, to_ns("2024-02-01"))
+    got = metaingest.instances_from_store(rs, ["XYZUSDT"], to_ns("2024-02-01"))  # lo: first chunk
+    assert got == metaingest.instances_from_store(rs, ["XYZUSDT"], to_ns("2024-02-01"), lo=t0)
     assert got == {"XYZUSDT": build_instances(df[["open_ts", "vol_base"]], to_ns("2024-02-01"))}
     assert got["XYZUSDT"][0].last_trade_ts == int(ts[-1]) + 15 * MIN
 
@@ -504,3 +615,47 @@ def test_identity_sources_from_stored_exchange_info_captures(tmp_path):
     r = ins.build_instruments({"XYZUSDT": [Instance(0, to_ns("2022-01-01"), to_ns("2022-12-01"),
                                                     to_ns("2022-12-08"))]}, srcs)
     assert r.rows[0].reason == "verified" and r.rows[0].sources == (srcs[0].ref,)
+
+
+# ------------------------------------------------------------------------------- E6 (after the opening)
+
+
+@pytest.fixture(scope="module")
+def _opening(tmp_path_factory):
+    from tests.v7 import auth_fixtures as af
+
+    return af.opening_once(tmp_path_factory.mktemp("opening"))
+
+
+def test_e6_authorized_capture_path(_opening, monkeypatch, tmp_path):
+    """m7: with the verified authorization a W_HOLD capture (< 2026-07-01) is fetched under the raised E6
+    bound, stored, read and built into a version; without it every step is refused."""
+    from tests.v7 import auth_fixtures as af
+
+    o = af.use_opening(monkeypatch, _opening)
+    ts = "20260115000000"
+    body = page(DELIST_TITLE, DELIST_BODY.replace("2024-03-15 09:00", "2026-01-20 09:00"),
+                release=to_ns("2026-01-14 09:00"))
+    t = FakeTransport()
+    serve(t, [(ts, URL, body)])
+    out = tmp_path / "run"
+    q = metaingest.CdxQuery(url=URL.replace("https://", ""), to="20260630235959")
+    with pytest.raises(ValueError, match="to"):
+        q.request(None)  # the raised bound needs the authorization
+    with k9.using(k9.K9Log(out / "k9")):
+        st = MetaStore(tmp_path / "m")
+        res = metaingest.ingest_captures(Fetcher(t, out, clock=lambda: RECV), st, [q], auth=o.auth)
+        assert [r.status for r in res] == ["stored"]
+        with pytest.raises(guard.HoldoutBlocked):
+            st.get_capture(ts, res[0].sha256)
+        c = st.get_capture(ts, res[0].sha256, auth=o.auth)
+        insts = {"XYZUSDT": [Instance(0, to_ns("2025-01-01"), None, None)]}
+        with pytest.raises(guard.HoldoutBlocked):
+            metaingest.build_notices([c], insts)
+        nb = metaingest.build_notices([c], insts, auth=o.auth)
+        v = nb.versions[0]
+        assert known_at(v) == to_ns("2026-01-15") and scheduled_ts(v, "XYZUSDT") == to_ns("2026-01-20 09:00")
+        st.put_table("R11", "W_HOLD", nb.table, auth=o.auth)
+        with pytest.raises(guard.HoldoutBlocked):
+            st.load_table("R11", "W_HOLD")
+        assert st.load_notice_versions("W_HOLD", auth=o.auth) == nb.versions

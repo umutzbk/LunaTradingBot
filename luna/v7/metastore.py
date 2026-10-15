@@ -13,7 +13,9 @@ writer per store, K9 required, guarded read-only loads)::
 * ``put_capture``: the capture time passes ``guard.check_data_span`` first (W_HOLD refused before the opening,
   M6 before R_V6, always; K9-logged): nothing dated at or after the W_HOLD start is stored before the
   opening. The file name is content-addressed; a second put of the same capture is a no-op, a different
-  original URL for it an ``ImmutabilityViolation``.
+  original URL for it an ``ImmutabilityViolation``. Only the capture TIME is checked here: a capture whose own
+  ``releaseDate`` lies in W_HOLD / M6 can be stored, but ``metaingest.build_notices`` refuses it (nothing of
+  it reaches a version or R11; fix round 1, m4).
 * ``put_table(table, scope, df)``: R11 / R1 / R12 per scope (e.g. ``W_DEV``), with exactly the S-3 columns;
   every row time (R11 ``releaseDate`` / ``capture_ts``; R1 ``first_bar_ts`` / ``last_trade_ts`` /
   ``instance_end_known_at``; R12 ``settlement_ts`` / ``source_timestamp`` / ``known_at``) passes the same
@@ -69,8 +71,8 @@ DTYPES: dict[str, dict[str, object]] = {
     "R12": {"venue": object, "contract_instance_id": object, "settlement_ts": "int64",
             "settlement_price": "float64", "source": object, "source_timestamp": "int64", "known_at": "int64",
             "retrieved_at": "int64", "sha256": object}}
-for _t, _d in DTYPES.items():
-    assert list(_d) == [*TABLES[_t].key, *TABLES[_t].columns], _t
+for _t, _d in DTYPES.items():  # R1 carries one extra identity column, quote_asset (AMB-40 (e))
+    assert list(_d) == [*TABLES[_t].key, *TABLES[_t].columns, *(["quote_asset"] if _t == "R1" else [])], _t
 _SCOPE = re.compile(r"[A-Za-z0-9_]{1,40}\Z", re.ASCII)
 
 
