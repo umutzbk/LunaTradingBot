@@ -12,6 +12,21 @@ Abbreviations in the "affects" column: **L** labels, **R** model inputs / rankin
 
 Classification: **IC** = IMPLEMENTATION CLARIFICATION; **NAR** = NORMATIVE AMENDMENT REQUIRED; **BUG** = CODE BUG — NO USER DECISION REQUIRED.
 
+## Resolution status — user round 2 (2026-10-15)
+
+Binding record: `CLARIFICATIONS-2026-10-15-round2.md`.
+
+| Class | Items | Status |
+|---|---|---|
+| NAR (31) | DK-01, 05, 06, 10, 16, 28, 29, 36, 37, 52, 54, 59, 62, 63, 64, 66, 67, 72, 75, 79, 84, 89, 94, 95, 96, 97, 99, 100 | **APPROVED as recommended** |
+| NAR override | SC-04 | **Implement the Kraken exploratory path before code freeze** (override 1) |
+| NAR override | DK-69 | **Overridden:** first executable 1-minute bar within the 60-minute data-gap window, else the required path is INVALID (override 2) |
+| NAR override | DK-70 | **Overridden:** no stale carry; mark → same-period last close, else the required path is INVALID (override 3) |
+| IC (72) | all IC rows, incl. DK-39, DK-51, DK-76 | **Confirmed** as recommended (controller ruling R38, reading the user's approval as covering them; flagged in the report) |
+| BUG (16) | SC-01, 02, 03, 05, 06, DK-09, 42, 77, 78, 105, 106, 110-114 | **Authorized**; implementation status in `IMPLEMENTATION-STATUS.md` |
+
+The per-item "Recommendation" and "Blocker" texts below are kept as written at HEAD `2dc7344`; this table supersedes their open status.
+
 ## Summary table
 
 | ID | Title | Affects | Class | Blocker | Recommendation (<= 12 words) |

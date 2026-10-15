@@ -1,5 +1,7 @@
 # V7 implementation ambiguities
 
+> **Status (2026-10-15):** every open entry below was resolved by the user in `CLARIFICATIONS-2026-10-15-round1.md` and `CLARIFICATIONS-2026-10-15-round2.md` (docket mapping in `DECISION-DOCKET.md`). AMB-19(d) and AMB-19(e) were resolved by override (INVALID instead of the stressed wait / stale carry). Entries added after round 2 carry their own status.
+
 Entries are appended as they are found, numbered AMB-01, AMB-02, ... Format of one entry:
 
 `## AMB-nn — <title>`, then: spec section, literal text, options, classification
