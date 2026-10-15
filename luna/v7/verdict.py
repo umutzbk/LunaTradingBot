@@ -31,10 +31,12 @@ the leakage reports, integrity findings). No I/O, no data access, no training.
   P1 fails under E_T and under E_M) > NO-GO: maker-dependent (P1 fails under E_T, holds under E_M) >
   INCONCLUSIVE (P4) > NO-GO (P2, P3, P5–P11) > V7 HOLDOUT ADVANCE (all of P1–P11).
 * **S-13.3 secondary family of exactly 6** (CBB diff test, Holm across the 6): reported only, never changes
-  the class. A secondary pair with an invalid / non-accountable run is "unavailable" (voids only its own
-  comparison) and stays in the Holm family as a non-rejection (AMB-22 (c)). A1 counts as better than A0 only
-  if its Holm-adjusted p < 0.05 and P8-classifier (ECE ≤ 0.05, 10 equal-frequency bins, date-equal weights)
-  holds.
+  the class. A secondary pair with an invalid / non-accountable run, or given as ``Unavailable(why)``, is
+  "unavailable" (voids only its own comparison) and stays in the Holm family as a non-rejection (AMB-22 (c),
+  DK-83). Comparison #5 (ML* Binance vs Kraken, S-1.6) always carries the label ``EXPLORATORY``; it enters
+  only through ``runner_select.holdout_inputs(kraken=kraken.comparison(...))`` (L11; STOPPED, AMB-41). A1
+  counts as better than A0 only if its Holm-adjusted p < 0.05 and P8-classifier (ECE ≤ 0.05, 10
+  equal-frequency bins, date-equal weights) holds.
 """
 
 from __future__ import annotations
@@ -85,6 +87,16 @@ SECONDARY = (  # S-13.3, exactly this family of 6; each pair is (first, second),
     "ML* E_M vs E_T",
     "ML* Binance vs Kraken",
 )
+KRAKEN = SECONDARY[5]  # comparison #5 (S-1.6): exploratory; enters only via holdout_inputs(kraken=...)
+EXPLORATORY = "exploratory (previously observed window)"  # S-1.6 label of every Kraken result
+
+
+@dataclass(frozen=True)
+class Unavailable:
+    """A secondary comparison that is known to be unavailable, with its reason (e.g. comparison #5 STOPPED,
+    AMB-41). It stays in the Holm family as a voided member (m = 6, DK-83)."""
+
+    why: str
 
 K_TABLE: dict[str, tuple[str, str]] = {  # §16 (trigger, consequence)
     "K1": ("Any L1–L14 or known-at failure (any model)",
@@ -299,7 +311,7 @@ class HoldoutInputs:
     holdout_leakage: lk.HoldoutLeakageReport  # holdout-phase L1–L14 findings (any -> NO-GO: leakage)
     integrity: Sequence[str]  # guard / Stage 0-type integrity findings (any -> INVALID RUN)
     k8: K8Rates
-    secondary: Mapping[str, tuple[BookRun | Ledger, BookRun | Ledger] | None] | None = None
+    secondary: Mapping[str, tuple[BookRun | Ledger, BookRun | Ledger] | Unavailable | None] | None = None
     a1_calib: tuple | None = None  # (P̂_cal, y_pos, dates) of the A1 classifier on W_HOLD (P8-classifier)
     B: int = stats.B_DEFAULT
     seed: int = stats.SEED
@@ -396,9 +408,13 @@ def secondary_family(pairs: Mapping[str, tuple | None], a1_calib: tuple | None, 
     raw: dict[str, float | None] = {}
     for name in SECONDARY:
         pair = pairs[name]
-        la, why_a = _usable(pair[0] if pair is not None else None)
-        lb, why_b = _usable(pair[1] if pair is not None else None)
-        why = why_a or why_b
+        if isinstance(pair, Unavailable):
+            la = lb = None
+            why = pair.why
+        else:
+            la, why_a = _usable(pair[0] if pair is not None else None)
+            lb, why_b = _usable(pair[1] if pair is not None else None)
+            why = why_a or why_b
         p = mean_x = None
         if why is None:
             try:
@@ -409,6 +425,8 @@ def secondary_family(pairs: Mapping[str, tuple | None], a1_calib: tuple | None, 
                 why = f"not comparable: {e}"
         raw[name] = p
         out[name] = dict(available=why is None, p=p, mean_x=mean_x, why=why)
+        if name == KRAKEN:
+            out[name]["label"] = EXPLORATORY  # S-1.6: reported, never the primary test / acceptance / gates
     adj = stats.holm(raw)
     for name in SECONDARY:
         out[name]["p_holm"] = adj[name]
@@ -546,7 +564,8 @@ def _holdout(x: HoldoutInputs) -> Verdict:
     return Verdict(cls, tuple(reasons), tuple(app), crit, p1_em, undecidable, det, sec, a1)
 
 
-__all__ = ["ADVANCE", "CLASSES", "HoldoutInputs", "INCONCLUSIVE", "INVALID", "K8Rates", "K_TABLE", "LEAKAGE",
+__all__ = ["ADVANCE", "CLASSES", "EXPLORATORY", "HoldoutInputs", "INCONCLUSIVE", "INVALID", "K8Rates",
+           "KRAKEN", "K_TABLE", "LEAKAGE",
            "MAKER", "NOGO", "NO_EDGE", "P_IDS", "SECONDARY", "Verdict", "active_days", "applicable",
            "classify", "closed_legs", "drawdown_killed", "ece", "holdout", "max_drawdown", "p4", "p5", "p7",
-           "p8_ok", "p8_slope", "secondary_family"]
+           "p8_ok", "p8_slope", "secondary_family", "Unavailable"]

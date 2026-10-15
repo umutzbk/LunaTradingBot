@@ -498,3 +498,13 @@ def test_every_dec_has_code_or_doc_owner():
                 continue
             assert o.startswith("luna."), (sid, o)
             importlib.import_module(o)  # every named module exists
+
+
+def test_kraken_rows_name_the_implementation_and_the_stop():
+    """Task 27 (SC-04, override 1): the Kraken rows cite luna.v7.kraken and the AMB-41 stop; none says "not
+    implemented" any more."""
+    cov = v7.SPEC_COVERAGE
+    for sid in ("S-1.6", "S-2.4", "S-13.3", "L11", "DEC-17"):
+        assert "luna.v7.kraken" in cov[sid], sid
+        assert any("AMB-41" in o for o in cov[sid]), sid
+        assert not any("not implemented" in o for o in cov[sid]), sid

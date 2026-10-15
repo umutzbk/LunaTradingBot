@@ -18,8 +18,10 @@ def _m(*names: str) -> tuple[str, ...]:
 
 GOV = "doc: governance - not code"
 STAGE0 = "doc: Stage-0 record (docs/results/v7-stage0-audit.md, outcome-free, before freeze) - not code"
-KRAKEN = ("doc: Kraken exploratory control - not implemented in this engine "
-          "(computed only at the W_HOLD opening)")
+KRAKEN = ("doc: Kraken exploratory control (luna.v7.kraken): frozen V5 copy verified against its pinned "
+          "manifest, the L11 Kraken outcome guard at the W_HOLD opening, label 'exploratory (previously "
+          "observed window)'; the Kraken gate evaluation and ML* book are STOPPED, normative amendment "
+          "required (AMB-41)")
 
 SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     # --- S-rules -------------------------------------------------------------------------------------------
@@ -35,7 +37,7 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "S-1.3": _m("guard", "windows", "forward"),
     "S-1.4": _m("windows", "constants"),
     "S-1.5": _m("labels", "book.engine", "refs"),
-    "S-1.6": (*_m("verdict"), KRAKEN),
+    "S-1.6": (*_m("verdict", "kraken", "runner_select", "runrecord"), KRAKEN),
     "S-1.7": (*_m("netguard", "fetch", "guard", "localdata", "k9", "runner", "forward_store"),
               "doc: one fetch layer (netguard before I/O, N1 checksum, N2 truncation fail-closed per DK-01, "
               "N6 memento); read-only guarded local data; no W_HOLD features / labels before the opening "
@@ -47,14 +49,16 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "S-2.2": (*_m("data.instances", "data.klines", "universe"),
               "doc: the current instance switches at its first bar's known_at (round 2 DK-108, AMB-31)"),
     "S-2.3": _m("universe"),
-    "S-2.4": (KRAKEN,),
+    "S-2.4": (*_m("kraken"), KRAKEN,
+              "doc: frozen 20-symbol V6 universe, BTC hedge and V6 fees from the hash-checked V6 constants; "
+              "the same gate definitions on Kraken data are not literally implementable (AMB-41 (b)-(e))"),
     "S-2.5": (*_m("data.notices", "data.captures", "metaingest", "metastore", "universe"),
               "doc: versions from bounded Wayback captures; closed kind list to be ratified with the DK-05 "
               "validation report (AMB-39)"),
     "S-2.6": _m("data.funding", "data.intervals"),
     "S-4.1": _m("windows", "constants"),
     "S-4.2": _m("book.engine", "book.execution", "labels"),
-    "S-4.3": _m("constants", "data.schema"),
+    "S-4.3": (*_m("constants", "data.schema", "kraken"), "doc: Kraken fees from the V6 frozen fee snapshot"),
     "S-4.4": (*_m("spread", "book.execution", "book.constructor", "labels", "runner"),
               "doc: qv24 window convention AMB-25"),
     "S-4.5": _m("spread"),
@@ -96,7 +100,9 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "S-10.7": _m("selection", "runner_select"),
     "S-13.1": _m("stats"),
     "S-13.2": _m("verdict", "accounting"),
-    "S-13.3": _m("verdict", "stats"),
+    "S-13.3": (*_m("verdict", "stats", "kraken", "runner_select"),
+               "doc: comparison #5 only via kraken.comparison (exploratory; UNAVAILABLE while STOPPED, "
+               "AMB-41); m = 6 (DK-83)"),
     "S-13.4": _m("verdict", "leakage"),
     "S-14.1": _m("deploy"),
     # --- DEC ------------------------------------------------------------------------------------------------
@@ -116,7 +122,7 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "DEC-14": (*_m("forward"), "doc: venue / account eligibility verified after a scientific GO - not code"),
     "DEC-15": _m("windows", "constants"),
     "DEC-16": _m("beta"),
-    "DEC-17": (*_m("verdict"), KRAKEN),
+    "DEC-17": (*_m("verdict", "kraken"), KRAKEN),
     "DEC-18": _m("constants"),
     "DEC-19": _m("guard", "opening", "verdict", "leakage", "runner_select"),
     "DEC-20": _m("arms"),
@@ -179,8 +185,9 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
             "doc: one canonical, hash-checked R_V6 / T_F7 / L7 / M6 source; the forward store, netguard "
             "and the outcome guard take no caller span / date (SC-06, AMB-34); refusal tests per refused "
             "endpoint class through the fetch layer, before any transport call (SC-03, AMB-35)"),
-    "L11": (*_m("arms"),
-            "doc: audit item (no V5 / V6 outcome input; the Kraken outcome guard is not implemented)"),
+    "L11": (*_m("arms", "kraken"),
+            "doc: audit item (no V5 / V6 outcome input); the Kraken outcome guard is kraken.authorize_kraken "
+            "(hardened authorization, M6, DEC-17 window, pinned V5 manifest; K9-logged), AMB-41"),
     "L12": (*_m("timeutil", "data.klines"),
             "doc: integer ns window-checked, floats refused by to_ns (DK-106 / DK-110, AMB-32 (a))"),
     "L13": _m("stats", "cv"),

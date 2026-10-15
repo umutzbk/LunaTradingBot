@@ -272,7 +272,7 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
                    records: Callable[[int], object], integrity: Sequence[str],
                    dev: DevSelection | None = None, dev_ml_run: BookRun | None = None,
                    dev_kill: Sequence[str] | None = None, dev_run_store: object = None,
-                   secondary: Mapping | None = None,
+                   secondary: Mapping | None = None, kraken: object = None,
                    B: int = stats.B_DEFAULT, seed: int = stats.SEED) -> HoldoutInputs:
     """``verdict.HoldoutInputs`` (see module docstring). W_DEV facts come from ``dev`` or from ``dev_ml_run``
     + ``dev_kill``; in a later (opening) process ``dev_run_store`` (a ``runstore.RunStore``) supplies the
@@ -282,7 +282,8 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
     (the panel's invalid-label rate, ``missing_funding_rate`` of the required E_T runs). ``leakage_report``:
     the passed pre-opening ``leakage.LeakageReport`` of ML*; ``records``: the decision records of the holdout
     runs (L1 re-check, ``leakage.run_holdout_checks``). Everything is bound to the opening's pin (module
-    docstring)."""
+    docstring). ``secondary``: the S-13.3 family; comparison #5 (ML* Binance vs Kraken) enters ONLY as
+    ``kraken`` = ``kraken.comparison(...)`` of this opening for this ML* E_T run (``_kraken_secondary``)."""
     # HoldoutBlocked: forged, the canonical opening missing / not this one, or the verdict already produced
     pin = guard.verify_authorization(auth)
     if dev is not None:
@@ -352,6 +353,7 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
     if not math.isfinite(panel.invalid_rate):
         raise ValueError("K8: the invalid-label rate is undefined (no labels)")
     k8 = K8Rates(float(panel.invalid_rate), missing_funding_rate([ml_T, a0_T]))
+    secondary = _kraken_secondary(secondary, kraken, pin, ml_T)
     hold = leakage.run_holdout_checks(rep, runs=[ml_T, a0_T, ml_M, a0_M], records=records)
     x = HoldoutInputs(ml_T=ml_T, a0_T=a0_T, ml_M=ml_M, a0_M=a0_M,
                          quarter_edges=tuple(int(x) for x in quarter_edges), ic=ic, calib=calib,
@@ -361,6 +363,31 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
     _ISSUED_INPUTS[id(x)] = x  # the inputs holdout_verdict accepts (issued here, for this opening)
     _INPUT_OPENING[id(x)] = pin["opening_id"]
     return x
+
+
+def _kraken_secondary(secondary: Mapping | None, kraken: object, pin: Mapping, ml_T: BookRun  # noqa: N803
+                      ) -> dict | None:
+    """S-13.3 #5 wiring (S-1.6, L11; AMB-41): a caller-supplied Kraken entry other than None is refused (no
+    Kraken pair bypasses the L11 guard); ``kraken`` must be a ``kraken.KrakenComparison`` issued at THIS
+    opening (``opening_id``) for THIS ML* E_T run (output sha256); its ``pair`` (an exploratory, labelled
+    entry; here ``verdict.Unavailable``: STOPPED) becomes member #5. Absent: the member stays "not
+    supplied" (m = 6)."""
+    from luna.v7 import kraken as kr  # local: kraken imports this package's guard / verdict stack
+
+    if secondary is not None and secondary.get(verdict_mod.KRAKEN) is not None:
+        raise ValueError("comparison #5 (ML* Binance vs Kraken) enters only as kraken=kraken.comparison(...) "
+                         "(L11 Kraken outcome guard)")
+    if kraken is None:
+        return None if secondary is None else dict(secondary)
+    if secondary is None:
+        raise ValueError("kraken given without the secondary family (S-13.3)")
+    if not kr.verify_comparison(kraken):
+        raise ValueError("kraken: not a KrakenComparison issued by kraken.comparison")
+    if kraken.opening_id != pin["opening_id"]:  # type: ignore[attr-defined]
+        raise ValueError("kraken: the comparison was issued for another opening")
+    if kraken.ml_run_sha256 != runrecord.run_output_sha256(ml_T):  # type: ignore[attr-defined]
+        raise ValueError("kraken: the comparison is not for this ML* E_T run")
+    return {**secondary, verdict_mod.KRAKEN: kraken.pair}  # type: ignore[attr-defined]
 
 
 def holdout_verdict(x: HoldoutInputs, *, auth: guard.HoldoutAuthorization) -> verdict_mod.Verdict:

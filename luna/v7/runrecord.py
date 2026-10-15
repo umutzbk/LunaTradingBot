@@ -124,7 +124,7 @@ def run_record(*, commit: str, dirty: bool, config: Mapping, data_manifests: Map
                seeds: Mapping[str, int], uv_lock_sha256: str, libraries: Mapping[str, str],
                convergence: Sequence[Mapping], runs: Sequence[BookRun], research: bool = False,
                extra: Mapping | None = None, leakage_reports: Sequence = (),
-               opening: Mapping | None = None) -> dict:
+               opening: Mapping | None = None, kraken: object = None) -> dict:
     """The DT4 record with the ``data.schema`` DT4 columns (``run_id`` key, ``code_commit``,
     ``config_sha256``, ``data_manifest_sha256s``, ``seeds``, ``library_versions``) plus the working-tree
     state, the ``uv.lock`` sha256, the identity and output sha256 of every executed book, the per-fit
@@ -135,7 +135,9 @@ def run_record(*, commit: str, dirty: bool, config: Mapping, data_manifests: Map
     working tree; otherwise ``code_dirty`` records it. The record is a research record when any covered run
     comes from a research entry point (``BookRun.research``, set by ``runner.run_book``, so also every
     ``dev_selection`` book and every ``holdout_inputs`` run) or the caller passes ``research=True``; the
-    caller's flag can never unset it (DK-114 / red-team m10: no longer a caller convention)."""
+    caller's flag can never unset it (DK-114 / red-team m10: no longer a caller convention). ``kraken``: the
+    ``kraken.KrakenComparison`` of the opening (S-1.6 / L11); its frozen V5 manifest sha256 and V6 artefact
+    hashes join ``data_manifest_sha256s`` and its exploratory block is recorded as ``kraken_exploratory``."""
     if not _COMMIT.match(str(commit)):
         raise ValueError("commit must be a 40-hex git commit")
     if not isinstance(dirty, bool):
@@ -147,6 +149,17 @@ def run_record(*, commit: str, dirty: bool, config: Mapping, data_manifests: Map
         raise ValueError("a research run record needs a clean working tree (code_dirty)")
     if not data_manifests:
         raise ValueError("data manifest sha256s are required")
+    kr_block = None
+    if kraken is not None:
+        from luna.v7 import kraken as kr  # local: kraken imports this module
+
+        if not kr.verify_comparison(kraken):
+            raise ValueError("kraken: not a KrakenComparison issued by kraken.comparison")
+        clash = sorted(set(kraken.provenance) & set(data_manifests))  # type: ignore[attr-defined]
+        if clash:
+            raise ValueError(f"data manifests already name {clash}")
+        data_manifests = {**data_manifests, **kraken.provenance}  # type: ignore[attr-defined]
+        kr_block = kr.dt4_extra(kraken)  # type: ignore[arg-type]
     for name, sha in {**data_manifests, "uv.lock": uv_lock_sha256}.items():
         if not _SHA.match(str(sha)):
             raise ValueError(f"{name}: not a sha256")
@@ -183,6 +196,8 @@ def run_record(*, commit: str, dirty: bool, config: Mapping, data_manifests: Map
         "leakage_reports": leak,
         "extra": json.loads(canonical_json(dict(extra or {}))),
     }
+    if kr_block is not None:  # S-1.6: exploratory (previously observed window)
+        body["kraken_exploratory"] = json.loads(canonical_json(kr_block))
     if opening is not None:  # the holdout opening (``guard.opening_summary``): id, pin, resume attempts
         if not isinstance(opening, Mapping) or not _SHA.match(str(opening.get("opening_id", ""))):
             raise ValueError("opening: a guard.opening_summary is required")

@@ -791,6 +791,13 @@ def test_holdout_inputs_require_authorization(dev_valid, opened, tmp_path, monke
         holdout_inputs(auth=auth(), **{**kw, "ml_T": kw["a0_T"]})
     with pytest.raises(ValueError, match="undefined"):
         holdout_inputs(auth=auth(), **{**kw, "panel": _panel(h, rate=float("nan"))})
+    # Task 27 (L11, AMB-41): a caller-supplied Kraken pair never enters the S-13.3 family
+    raw_kraken = {**{n: None for n in verdict.SECONDARY}, verdict.KRAKEN: (kw["ml_T"], kw["ml_T"])}
+    with pytest.raises(ValueError, match="kraken.comparison"):
+        holdout_inputs(auth=auth(), **{**kw, "secondary": raw_kraken})
+    with pytest.raises(ValueError, match="KrakenComparison"):
+        holdout_inputs(auth=auth(), **{**kw, "secondary": {n: None for n in verdict.SECONDARY},
+                                        "kraken": object()})
     # DK-114 / m10: only runs of the research entry point (run_book) are accepted
     for name in ("ml_T", "a0_T", "ml_M", "a0_M", "dev_ml_run"):
         with pytest.raises(ValueError, match="research"):
