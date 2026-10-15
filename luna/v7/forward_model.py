@@ -20,10 +20,20 @@
   verdict is ``V7 HOLDOUT ADVANCE`` (``forward.forward_evaluate`` precondition; AMB-43 (b)). The data span of
   the input rows goes through ``guard.check_data_span``: M6 (= [2026-07-01, R_V6)) rows / labels are refused
   before the canonical R_V6 (``EmbargoBlocked``, K9-logged), W_FWD7 rows before L7.
-* **Hash:** ``forward_model_hash`` (= ``leakage.model_hash``) is the identity to freeze before T_F7.
+* **Freeze (controller ruling R54, part of the W_HOLD freeze):** the samples are BOUND (``bound_samples``:
+  the pinned W_DEV label panel of h* and the W_HOLD panels ``runner.label_panel`` issued under this opening);
+  the refit is pinned once per opening by ``guard.pin_forward_model`` (write-once record + model blob next to
+  the opening markers; an identical re-refit returns the record, a different one is refused, K9-logged);
+  ``load_forward_model`` verifies the record and the blob (also after the verdict marker) and is the only way
+  the forward replay gets the model (``ForwardScoreModel``).
 """
 
 from __future__ import annotations
+
+import hashlib
+import pickle
+import weakref
+from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
@@ -41,7 +51,7 @@ from luna.v7.cv import (
     decision_dates,
 )
 from luna.v7.features import Preprocessor, features_for_horizon
-from luna.v7.runner import FoldScoreModel
+from luna.v7.runner import FoldScoreModel, LabelPanel, holdout_panel_issued
 from luna.v7.timeutil import ns_array, to_ns
 from luna.v7.windows import D0, W_HOLD, Fold, final_blocks
 
@@ -87,23 +97,61 @@ def _frozen(final: object, pin: dict, horizon: int) -> tuple[str, str]:
     return reg, clf
 
 
-def forward_model(samples: pd.DataFrame, final: FoldModel, *,
+def bound_samples(dev_panel: pd.DataFrame, holdout_panels: Sequence[LabelPanel], pin: dict) -> pd.DataFrame:
+    """The forward refit's samples (ruling R54): the canonical concatenation of the W_DEV label panel of h*
+    whose sha256 is pinned by the opening's LeakageReport (``panel_sha256s``, equal to the pre-opening
+    record's ``dev_label_panels``) and the W_HOLD label panels issued by ``runner.label_panel`` under this
+    opening. Any other frame, row subset or alteration is refused (HoldoutBlocked)."""
+    h = int(pin["ml_star"][1])
+    want = dict(_pinned_report(pin).panel_sha256s).get(h)
+    if not isinstance(dev_panel, pd.DataFrame) or leakage.panel_sha256(dev_panel, h) != want:
+        raise guard.HoldoutBlocked(f"the W_DEV samples are not the pinned label panel (h = {h})")
+    hold = list(holdout_panels)
+    if not hold:
+        raise guard.HoldoutBlocked("the forward refit needs the W_HOLD label panels of the opening")
+    for p in hold:
+        if not holdout_panel_issued(p, pin["opening_id"]) or int(p.h) != h:
+            raise guard.HoldoutBlocked("a W_HOLD panel was not issued by label_panel under this opening")
+    return canonical(pd.concat([dev_panel, *(p.samples for p in hold)], ignore_index=True), h)
+
+
+_AUTH_REPORT: dict[str, object] = {}
+
+
+def _pinned_report(pin: dict):
+    rep = _AUTH_REPORT.get(pin["opening_id"])
+    if rep is None or getattr(rep, "sha256", None) != pin["leakage_report_sha256"]:
+        raise guard.HoldoutBlocked("the opening's pinned LeakageReport is not available (authorization)")
+    return rep
+
+
+def _config(fm: FoldModel, reg: str) -> dict:
+    def one(f) -> dict:
+        return {"family": f.cfg.family, "params": sorted([k, v] for k, v in f.cfg.params.items()),
+                "best_iteration": f.best_iteration}
+
+    return {"regressor": one(fm.reg[reg]), "classifiers": {k: one(fm.clf[k].fitted) for k in sorted(fm.clf)}}
+
+
+def forward_model(dev_panel: pd.DataFrame, holdout_panels: Sequence[LabelPanel], final: FoldModel, *,
                   auth: guard.HoldoutAuthorization | None) -> FoldModel:
-    """The §15 forward refit of the pinned final model ``final`` on the purged T_fit / T_cal rows of
-    ``samples`` (horizon h* of the pinned ML*). Refused (K9-logged) without the verified opening, after the
-    verdict marker, for M6 rows before R_V6 and W_FWD7 rows before L7. Returns a ``cv.FoldModel`` on
-    ``FORWARD_FOLD`` with the final model's ``selection`` (provenance) and refitted models / calibrators."""
+    """The §15 forward refit of the pinned final model ``final`` on the purged T_fit / T_cal rows of the
+    bound samples (``bound_samples``; h* of the pinned ML*), pinned once per opening
+    (``guard.pin_forward_model``: a different second refit is refused, an identical one returns the existing
+    record). Refused (K9-logged) without the verified opening, after the verdict marker, for unbound samples,
+    M6 rows before R_V6 and W_FWD7 rows before L7. Returns the refitted ``cv.FoldModel`` on ``FORWARD_FOLD``
+    (the replay loads it only through ``load_forward_model``)."""
     k9.require()
+    req = {"kind": "forward_refit", "what": "the §15 forward refit (opening required, ruling R54)"}
     try:
         pin = guard.verified_opening(auth)
+        _AUTH_REPORT[pin["opening_id"]] = auth.leakage_report  # type: ignore[union-attr]
+        horizon = int(pin["ml_star"][1])
+        reg, _ = _frozen(final, pin, horizon)
+        s = bound_samples(dev_panel, holdout_panels, pin)
     except guard.HoldoutBlocked as e:
-        _refuse(e, {"kind": "forward_refit", "what": "W_HOLD rows of the forward refit (opening required)"})
+        _refuse(e, req)
         raise
-    horizon = int(pin["ml_star"][1])
-    reg, clf = _frozen(final, pin, horizon)
-    s = canonical(samples, horizon)
-    if len(s) == 0:
-        raise ValueError("no samples for the forward refit")
     ts = ns_array(s["decision_ts"], "decision_ts")
     lka = ns_array(s["label_known_at"], "label_known_at")
     # the rows' data span (K9-logged refusals): M6 before R_V6, W_FWD7 before L7, W_HOLD with the opening
@@ -127,21 +175,64 @@ def forward_model(samples: pd.DataFrame, final: FoldModel, *,
                           _design(c.cfg, fit_df, cols, pre), fit_df["y_pos"].to_numpy())
         iso = IsotonicCalibrator().fit(rc.predict(_design(c.cfg, cal, cols, pre)), cal["y_pos"], cal_dates)
         clfs[fam] = _Clf(rc, iso)
-    return FoldModel(FORWARD_FOLD, horizon, {reg: sel}, {reg: r}, {reg: lin}, clfs, pre, cols)
+    fm = FoldModel(FORWARD_FOLD, horizon, {reg: sel}, {reg: r}, {reg: lin}, clfs, pre, cols)
+    blob = pickle.dumps(fm, protocol=4)  # the serialisation of leakage.model_hash
+    body = {"kind": guard.FORWARD_KIND, "run_id": guard.RUN_ID, "opening_id": pin["opening_id"],
+            "code_commit": pin["code_commit"], "ml_star": pin["ml_star"], "horizon": horizon,
+            "forward_model_hash": hashlib.sha256(blob).hexdigest(),
+            "samples_sha256": leakage.panel_sha256(s, horizon), "final_model_hash": pin["final_model_hash"],
+            "config": _config(fm, reg)}
+    try:
+        guard.pin_forward_model(auth, body, blob)
+    except guard.HoldoutBlocked as e:
+        _refuse(e, req)
+        raise
+    return fm
 
 
 def forward_model_hash(fm: FoldModel) -> str:
-    """The forward model's identity (``leakage.model_hash``): hashed and frozen before T_F7 (§15)."""
+    """The forward model's identity (``leakage.model_hash``), recorded in the write-once record (§15)."""
     return leakage.model_hash(fm)
 
 
+_LOADED: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
+_LOADED_SHA: dict[int, str] = {}  # id of a loaded model -> the record's forward_model_hash (its blob sha256)
+
+
+def load_forward_model() -> FoldModel:
+    """The frozen forward model of the canonical opening (ruling R54): the write-once record verified
+    (``guard.forward_model_record``: bound to the opening, untampered), the blob hashing to its
+    ``forward_model_hash``, the unpickled model on ``FORWARD_FOLD`` at the record's h*. Works after the W_HOLD
+    verdict (it reads no W_HOLD data). HoldoutBlocked otherwise."""
+    rec = guard.forward_model_record()
+    if rec is None:
+        raise guard.HoldoutBlocked("no frozen forward model for the canonical opening")
+    fm = pickle.loads(guard.forward_model_blob(rec))  # own pinned, hash-checked blob
+    if not isinstance(fm, FoldModel) or fm.fold != FORWARD_FOLD or fm.horizon != int(rec["horizon"]):
+        raise guard.HoldoutBlocked("the pinned blob is not a forward model of the record")
+    _LOADED[id(fm)] = fm
+    _LOADED_SHA[id(fm)] = rec["forward_model_hash"]
+    return fm
+
+
+def loaded(fm: object) -> bool:
+    """True iff ``fm`` came from ``load_forward_model`` in this process."""
+    return _LOADED.get(id(fm)) is fm
+
+
+def loaded_hash(fm: object) -> str | None:
+    """The record's ``forward_model_hash`` a loaded model was verified against (its blob's sha256; a
+    re-pickle of an unpickled model need not be byte-identical), else None."""
+    return _LOADED_SHA.get(id(fm)) if loaded(fm) else None
+
+
 class ForwardScoreModel(FoldScoreModel):
-    """``engine.ScoreModel`` of the forward replay: the ONE forward model predicts every decision from the
-    T_cal end on (W_FWD7 lies after it); earlier decisions are refused."""
+    """``engine.ScoreModel`` of the forward replay: the ONE frozen forward model (``load_forward_model`` only)
+    predicts every decision from the T_cal end on (W_FWD7 lies after it); earlier decisions are refused."""
 
     def __init__(self, fm: FoldModel, ml_star: str) -> None:
-        if fm.fold != FORWARD_FOLD:
-            raise ValueError("not a forward model (forward_model)")
+        if not loaded(fm):
+            raise ValueError("the forward replay takes the model only through load_forward_model (R54)")
         super().__init__([fm], ml_star, fm.horizon)
 
     def fold_index(self, t: int) -> int:
@@ -151,4 +242,5 @@ class ForwardScoreModel(FoldScoreModel):
 
 
 __all__ = ["FORWARD_BLOCKS", "FORWARD_FOLD", "FORWARD_FOLD_ID", "ForwardScoreModel", "T_CAL", "T_FIT",
-           "forward_model", "forward_model_hash", "forward_rows"]
+           "bound_samples", "forward_model", "forward_model_hash", "forward_rows", "load_forward_model",
+           "loaded", "loaded_hash"]

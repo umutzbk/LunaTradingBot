@@ -10,6 +10,8 @@ AMB-43).
   when ``forward.require_l7`` does. The recorded data come from the sealed ``ForwardStore`` (readable only
   from the canonical L7 on); building ``EngineInputs`` from the recorder's raw format is the recorder's
   (not yet specified) loader, so ``inputs`` are passed in.
+* **Model** (ruling R54): an ML arm scores only with the frozen forward model: a ``ForwardScoreModel`` over
+  ``forward_model.load_forward_model()`` whose hash is the canonical write-once record's.
 * **Evaluability** (DEC-42; DK-101): ``evaluable`` maps each quarter start of W_FWD7 to the
   ``forward.evaluable_quarter`` result (a missing / non-True entry is NOT evaluable: fail closed); evaluable
   days = ``forward.count_evaluable_days`` (≥ 87 of 96 quarters, minus the days a > 24 h recorder gap touches).
@@ -37,6 +39,7 @@ from luna.v7 import forward, guard, k9, release, stats, windows
 from luna.v7.book import engine
 from luna.v7.book.engine import BookRun, EngineInputs, ScoreModel
 from luna.v7.forward import ForwardInputs, ForwardVerdict, TerminalHit
+from luna.v7.forward_model import ForwardScoreModel, loaded_hash
 from luna.v7.forward_store import SealedBeforeL7
 from luna.v7.timeutil import MIN, D
 
@@ -109,6 +112,23 @@ def _canonical() -> object:
     return guard._roots()[0]
 
 
+def _check_model(arm: str, model: ScoreModel | None, h_star: int) -> None:
+    """ML arms score with the frozen forward model only (ruling R54): a ``ForwardScoreModel`` over a model
+    from ``forward_model.load_forward_model`` whose hash is the canonical record's, at the record's h* and
+    ML*."""
+    if arm == "A0":
+        return
+    rec = guard.forward_model_record()
+    if rec is None or not isinstance(model, ForwardScoreModel):
+        raise guard.HoldoutBlocked("the forward replay of an ML arm needs the frozen forward model "
+                                   "(forward_model.load_forward_model)")
+    fm = model.models[0]
+    if loaded_hash(fm) != rec["forward_model_hash"]:
+        raise guard.HoldoutBlocked("the score model is not the frozen forward model of the record")
+    if int(h_star) != int(rec["horizon"]) or model.ml_star != rec["ml_star"][0]:
+        raise ValueError("the forward replay runs at the record's h* with ML*'s ranker")
+
+
 def replay(arm: str, inputs: EngineInputs, evaluable: Mapping[int, bool], h_star: int,
            model: ScoreModel | None = None, *, gaps: Sequence[tuple[int, int]] = (),
            extended: bool = False) -> ForwardReplay:
@@ -123,6 +143,7 @@ def replay(arm: str, inputs: EngineInputs, evaluable: Mapping[int, bool], h_star
         k9.log_refusal(e, request={"kind": "forward_replay", "arm": str(arm), "extended": bool(extended)},
                        rule=guard.k9_rule(e))
         raise
+    _check_model(arm, model, h_star)
     win = forward.w_fwd7(release.t_f7(repo), extended)  # type: ignore[arg-type]
     plan = decision_plan(win, evaluability(evaluable))
     run_inputs = replace(inputs, decisions=plan.schedule, now_ns=release.trusted_now_ns())

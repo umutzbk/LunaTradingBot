@@ -53,6 +53,10 @@ A guard against accidental or premature runs inside this codebase, not a securit
   trusted clock. ``verified_opening`` is the only way a post-opening mode (E6 fetches, W_HOLD data) is
   entered: the hardened authorization, re-verified (never a boolean). ``pin_e6_capture`` pins each E6
   capture's sha256 next to the opening markers (``E6_CAPTURES.jsonl``; fetched once, pinned and hashed).
+- §15 forward model (ruling R54): ``pin_forward_model`` writes, once per opening and only under the verified
+  authorization (so before the verdict marker), ``FORWARD_MODEL.json`` and its blob next to the markers;
+  ``forward_model_record`` / ``forward_model_blob`` verify them against the canonical opening, also after the
+  verdict (no W_HOLD data is opened by reading them).
 - E8: only whitelisted immutable identity fields of current ``exchangeInfo`` may be used as history.
 
 The M6 / R_V6 / T_F7 sources are injectable through ``repo`` (SC-06); the opening's location only through
@@ -85,6 +89,13 @@ VERDICT = "HOLDOUT_VERDICT.json"  # written once, when the W_HOLD verdict is pro
 RESUME_LOG = "RESUME_ATTEMPTS.jsonl"  # append-only log of every resume attempt (never an authorization)
 OPENING_LOG = "OPENING_ATTEMPTS.jsonl"  # append-only log of every opening attempt (never an authorization)
 E6_CAPTURES = "E6_CAPTURES.jsonl"  # append-only pins of the E6 captures fetched after the opening (S-1.7 E6)
+FORWARD_MODEL = "FORWARD_MODEL.json"  # write-once record of the §15 forward refit (ruling R54)
+FORWARD_BLOB = "FORWARD_MODEL.pkl"  # its pickled model (sha256 == the record's forward_model_hash)
+FORWARD_LOG = "FORWARD_MODEL_ATTEMPTS.jsonl"  # append-only log of every forward-model pin attempt
+FORWARD_KIND = "V7_FORWARD_MODEL"
+FORWARD_FIELDS = frozenset({"kind", "run_id", "opening_id", "code_commit", "ml_star", "horizon",
+                            "forward_model_hash", "samples_sha256", "final_model_hash", "config",
+                            "created_utc", "record_sha256"})
 RUN_ID = "v7-" + SPEC_BLOB_SHA256[:16]  # canonical run identity of the single opening
 
 # E8 (S-1.7): the only exchangeInfo fields that may establish history (immutable identity / schema, DEC-31).
@@ -485,6 +496,99 @@ def pin_e6_capture(auth: object, *, ts: str, original: str, sha256: str, recv_ts
         _log_attempt(E6_CAPTURES, rec)
     except OSError as e:
         raise GuardFailure(f"E6 capture {ts} {original} could not be pinned ({e}): discarded") from None
+    return rec
+
+
+# --- the §15 forward model record (ruling R54): write-once, next to the opening markers ------------------
+
+
+def forward_model_record() -> dict | None:
+    """The verified write-once forward-model record of the canonical opening, else None when none exists.
+    HoldoutBlocked when it is partial (one directory), unequal, tampered (``record_sha256``), not this run or
+    not bound to the canonical opening (``opening_id``, ``code_commit``, ML*, ``final_model_hash`` of the
+    pin). Readable also after the W_HOLD verdict: it opens no W_HOLD data."""
+    paths = [d / FORWARD_MODEL for d in _dirs()]
+    if not any(p.exists() for p in paths):
+        return None
+    recs = [_read(p) for p in paths]
+    rec = recs[0]
+    if any(r is None for r in recs) or recs[0] != recs[1] or not isinstance(rec, dict):
+        raise HoldoutBlocked("forward-model record partial or unequal in the canonical directories")
+    if set(rec) != FORWARD_FIELDS or rec["kind"] != FORWARD_KIND or rec["run_id"] != RUN_ID:
+        raise HoldoutBlocked("forward-model record: unexpected fields, kind or run")
+    if rec["record_sha256"] != _sha({k: v for k, v in rec.items() if k != "record_sha256"}):
+        raise HoldoutBlocked("forward-model record: record_sha256 does not verify (tampered)")
+    pin = pinned_manifest()
+    if pin is None:
+        raise HoldoutBlocked("forward-model record without a complete canonical opening")
+    for k in ("opening_id", "code_commit", "final_model_hash", "ml_star"):
+        if rec[k] != pin[k]:
+            raise HoldoutBlocked(f"forward-model record: {k} is not the canonical opening's")
+    return rec
+
+
+def forward_model_blob(rec: Mapping) -> bytes:
+    """The pinned model bytes of a verified record: equal in both directories and hashing to its
+    ``forward_model_hash``; HoldoutBlocked otherwise."""
+    blobs = []
+    for d in _dirs():
+        try:
+            blobs.append((d / FORWARD_BLOB).read_bytes())
+        except OSError:
+            raise HoldoutBlocked("forward-model blob missing (governance)") from None
+    if blobs[0] != blobs[1] or hashlib.sha256(blobs[0]).hexdigest() != rec["forward_model_hash"]:
+        raise HoldoutBlocked("forward-model blob does not hash to the record's forward_model_hash (tampered)")
+    return blobs[0]
+
+
+def pin_forward_model(auth: object, body: Mapping, blob: bytes) -> dict:
+    """Pin the §15 forward model once per opening (ruling R54): needs the verified opening (so never after the
+    verdict marker); the record (``body`` + ``created_utc`` + ``record_sha256``) and the blob are written by
+    exclusive create in both canonical directories. A later pin with identical content (every field except
+    ``created_utc``) returns the existing record; any other content is refused (HoldoutBlocked). Every attempt
+    is appended to ``FORWARD_MODEL_ATTEMPTS.jsonl``."""
+    pin = verified_opening(auth)
+    base = {"utc": pd.Timestamp.now(tz="UTC").isoformat(), "run_id": RUN_ID, "opening_id": pin["opening_id"],
+            "forward_model_hash": body.get("forward_model_hash")}
+    try:
+        core = dict(body)
+        if set(core) != FORWARD_FIELDS - {"created_utc", "record_sha256"}:
+            raise ValueError("forward-model record body: unexpected fields")
+        if any(core[k] != pin[k] for k in ("opening_id", "code_commit", "final_model_hash", "ml_star")):
+            raise HoldoutBlocked("forward-model record body is not bound to the canonical opening")
+        if hashlib.sha256(blob).hexdigest() != core["forward_model_hash"]:
+            raise ValueError("forward-model blob does not hash to forward_model_hash")
+        prior = forward_model_record()
+        if prior is not None:
+            if {k: prior[k] for k in core} != core:
+                raise HoldoutBlocked("a different forward model is already pinned for this opening")
+            _log_attempt(FORWARD_LOG, {**base, "result": "identical"})
+            return prior
+        rec = {**core, "created_utc": pd.Timestamp.now(tz="UTC").isoformat()}
+        rec["record_sha256"] = _sha(rec)
+        written: list[Path] = []
+        try:
+            for d in _dirs():
+                p = d / FORWARD_BLOB
+                p.parent.mkdir(parents=True, exist_ok=True)
+                fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0))
+                with os.fdopen(fd, "wb") as f:
+                    f.write(blob)
+                written.append(p)
+            _write_exclusive([(d / FORWARD_MODEL, json.dumps(rec, indent=1)) for d in _dirs()])
+        except FileExistsError:
+            _rollback(written)
+            raise HoldoutBlocked("forward-model blob already exists (partial state, governance)") from None
+        except BaseException:
+            _rollback(written)
+            raise
+    except BaseException as e:
+        try:
+            _log_attempt(FORWARD_LOG, {**base, "result": "refused", "reason": f"{type(e).__name__}: {e}"})
+        except OSError as le:
+            e.add_note(f"attempt log failed: {le}")
+        raise
+    _log_attempt(FORWARD_LOG, {**base, "result": "pinned"})
     return rec
 
 

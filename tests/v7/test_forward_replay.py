@@ -10,14 +10,17 @@ from __future__ import annotations
 
 import inspect
 import json
+from dataclasses import replace
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from luna.v7 import forward, forward_replay, guard, k9, release, runrecord, verdict
+from luna.v7 import forward, forward_replay, guard, k9, release, runrecord, verdict, windows
 from luna.v7.book.engine import EngineInputs, Instrument, run
 from luna.v7.data.instances import Instance
+from luna.v7.features import FEATURES
+from luna.v7.forward_model import ForwardScoreModel, forward_model, load_forward_model
 from luna.v7.forward_replay import DecisionPlan, decision_plan, replay
 from luna.v7.forward_store import SealedBeforeL7
 from luna.v7.timeutil import MIN, D, H, to_ns
@@ -108,6 +111,43 @@ def test_skipped_decision_still_exits():
     assert not r.fills["position_id"].astype(str).str.endswith(f"@{G0 + 8 * H}").any()  # nothing opened
 
 
+def _btc(r, ts):
+    return r.fills[(r.fills["symbol"] == BTC) & (r.fills["ts"] == ts)]
+
+
+def test_exits_only_decision_rehedges_after_its_exits():
+    """AMB-43 (c): the S-7.4 hedge follows the exits-only post-decision book."""
+    def g6(t, s):
+        return gate_row(t, u6=False) if (s == "AAAUSDT" and t >= LO + 8 * H) else gate_row(t)
+
+    r = run("A0", _with_plan({G0: True, G0 + 8 * H: False}, gates=g6), (LO, LO + 2 * D), 24)
+    te = G0 + 8 * H + 15 * MIN
+    assert r.valid and len(_btc(r, G0 + 15 * MIN)) == 1  # hedged at the entry decision
+    assert len(_btc(r, te)) == 1  # AAA (beta 2) exits: the hedge is re-decided on the remaining book
+    assert "forward_exits_only" in r.decisions.iloc[1]["notes"]
+
+
+def test_exits_only_decision_drift_only_hedge_increase():
+    """AMB-43 (c), drift-only case: no leg order at the exits-only decision, only beta-hat drifts (AAA 2 ->
+    4); the hedge follows the unchanged legs' new beta book: the hedge INCREASES at an exits-only
+    decision."""
+    base = base_inputs()
+    v0 = base.view
+
+    def view(t):
+        v = v0(t)
+        return replace(v, betas={**v.betas, "AAAUSDT": 4.0}) if t >= LO + 8 * H else v
+
+    inp = EngineInputs(**{**base.__dict__, "view": view, "decisions": {G0: True, G0 + 8 * H: False}})
+    r = run("A0", inp, (LO, LO + 2 * D), 24)
+    te = G0 + 8 * H + 15 * MIN
+    legs = r.fills[(r.fills["symbol"] != BTC) & (r.fills["ts"] == te)]
+    h0, h1 = _btc(r, G0 + 15 * MIN), _btc(r, te)
+    assert r.valid and legs.empty and len(h0) == 1 and len(h1) == 1
+    assert abs(h1.iloc[0]["q_after"]) > abs(h0.iloc[0]["q_after"])  # the hedge grew (an opening hedge trade)
+    assert h1.iloc[0]["direction"] == h0.iloc[0]["direction"]
+
+
 def test_engine_schedule_outside_the_window_refused():
     with pytest.raises(ValueError):
         run("A0", _with_plan({LO - Q: True}), (LO, LO + 2 * D), 24)
@@ -170,7 +210,7 @@ def test_replay_refused_before_l7(canon, monkeypatch, fwd_inputs, tmp_path):
     _point(monkeypatch, canon["ok"], canon["home"], L7 - 1)
     with k9.using(k9.K9Log(tmp_path / "k9")) as log:
         with pytest.raises(SealedBeforeL7):
-            replay("A2", fwd_inputs, _evaluable(), 24, _Model())
+            replay("A0", fwd_inputs, _evaluable(), 24)
         assert log.records()[-1]["rule"] == "§15 W_FWD7 sealed before L7"
 
 
@@ -181,11 +221,59 @@ def test_forged_l7_is_impossible(canon, monkeypatch, fwd_inputs):
     _point(monkeypatch, canon["forged"], canon["home"], to_ns("2030-01-01"))
     assert release.l7(canon["forged"]) is None
     with pytest.raises(SealedBeforeL7):
-        replay("A2", fwd_inputs, _evaluable(), 24, _Model())
+        replay("A0", fwd_inputs, _evaluable(), 24)
     # a caller clock past L7 cannot open the engine's W_FWD7 seal either (trusted clock before L7)
     _point(monkeypatch, canon["ok"], canon["home"], L7 - 1)
     with pytest.raises(SealedBeforeL7):
         run("A2", EngineInputs(**{**fwd_inputs.__dict__, "now_ns": to_ns("2030-01-01")}), WIN, 24, _Model())
+
+
+@pytest.fixture(scope="module")
+def frozen(tmp_path_factory):
+    """A synthetic opening whose repository also carries the canonical R_V6 / T_F7 records, and its frozen
+    forward model (refit inside the opening, pinned, then loaded through the record)."""
+    from tests.v7 import test_forward_refit as tr
+
+    o = af.opening_once(tmp_path_factory.mktemp("fwd_e2e"))
+    af.add_release(o.repo, "2027-10-14T00:00:00Z")
+    af.add_review(o.repo, "2026-10-15T00:00:00Z")
+    release.cache_clear()
+    windows._m6_by_repo.cache_clear()
+    mp = pytest.MonkeyPatch()
+    try:
+        _point(mp, o.repo, o.home, L7)
+        hs = tr._hold_samples()
+        hs["y_reg"] = 200 * hs["f1_fl1"] + 1  # a strong W_HOLD signal: the frozen model trades in the replay
+        hs["y_pos"] = (hs["y_reg"] > 0).astype(float)
+        forward_model(tr.dev(), [tr.issued(o, hs)], tr.final(), auth=o.auth)
+    finally:
+        mp.undo()
+    release.cache_clear()
+    return o
+
+
+def _with_features(inputs):
+    v0 = inputs.view
+
+    def view(t):  # the §9 feature columns the forward model scores (synthetic, deterministic)
+        v = v0(t)
+        c = v.cands.copy()
+        for f in FEATURES:
+            if f not in c.columns:  # "side" is itself a feature
+                c[f] = 0.0
+        c["f1_fl1"] = -c["fl30_r8"].astype(float) * c["side"].astype(float) * 1e3
+        return replace(v, cands=c)
+
+    return replace(inputs, view=view)
+
+
+def test_replay_ml_arm_needs_the_frozen_model(frozen, monkeypatch, fwd_inputs):
+    _point(monkeypatch, frozen.repo, frozen.home, L7)
+    with pytest.raises(guard.HoldoutBlocked, match="frozen forward model"):
+        replay("A2", fwd_inputs, _evaluable(), 72, _Model())
+    fm = load_forward_model()
+    with pytest.raises(ValueError, match="record's h"):
+        replay("A2", fwd_inputs, _evaluable(), 24, ForwardScoreModel(fm, "A2"))
 
 
 def _bytes(fr, v) -> bytes:
@@ -197,14 +285,16 @@ def _bytes(fr, v) -> bytes:
     return json.dumps(body, sort_keys=True, default=str).encode()
 
 
-def test_end_to_end_forward_pass_byte_identical(canon, monkeypatch, fwd_inputs):
-    _point(monkeypatch, canon["ok"], canon["home"], L7)
+def test_end_to_end_forward_pass_byte_identical(frozen, monkeypatch, fwd_inputs):
+    _point(monkeypatch, frozen.repo, frozen.home, L7)
+    inputs = _with_features(fwd_inputs)
     g = TF7 + 8 * H + 5 * MIN  # the second grid decision: shifted by 2 quarters
     day3 = TF7 + 3 * D  # a whole stale day: its first decision is skipped, the day is not evaluable
     bad = [g - 5 * MIN, g + 10 * MIN] + list(range(day3, day3 + D, Q))
     outs = []
     for _ in range(2):
-        fr = replay("A2", fwd_inputs, _evaluable(bad), 24, _Model())
+        model = ForwardScoreModel(load_forward_model(), "A2")  # the frozen model, through its record only
+        fr = replay("A2", inputs, _evaluable(bad), 72, model)
         v = forward_replay.evaluate(fr, None, holdout_class=verdict.ADVANCE, integrity=(),
                                     outcome_before_l7=(), unrecovered_funding=(), terminal_events=(), B=200)
         outs.append(_bytes(fr, v))
@@ -214,6 +304,7 @@ def test_end_to_end_forward_pass_byte_identical(canon, monkeypatch, fwd_inputs):
     assert fr.plan.skipped[0][0] == day3 + 5 * MIN
     assert fr.evaluable_days == 179
     assert list(fr.run.decisions["t"]) == sorted(fr.plan.schedule)
+    assert model.log and set(model.log) <= set(fr.plan.schedule)  # the frozen model scored the decisions
     assert len(fr.run.fills) and fr.run.positions["ts"].max() < TF7 + 11 * D  # traded, then flat
     # 10 active days then flat, costs > funding: NO-GO (H_F, P2, P6), P4 evidence short (DK-99 precedence)
     assert v.cls == forward.NOGO and v.reasons == ("H_F fails", "P2 fails", "P6 fails", "evidence: p4")

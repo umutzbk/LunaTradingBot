@@ -95,6 +95,7 @@ from luna.v7.universe import (
     eligible,
     pit_rows,
 )
+from luna.v7.windows import W_HOLD
 
 if TYPE_CHECKING:  # runtime import cycle: viewstore -> runstore -> rawstore -> runner
     from luna.v7.viewstore import ViewStore
@@ -933,8 +934,42 @@ def label_panel(u: ResearchUniverse, provider: DecisionProvider, decision_ts: Se
         if r is not None and r.invalid_reason is not None:
             inv[r.invalid_reason] = inv.get(r.invalid_reason, 0) + 1
     n = sum(r is not None for r in res)
-    return LabelPanel(h, pd.DataFrame(rows), pd.DataFrame(lab_rows), n, sum(inv.values()),
-                      sum(r is None for r in res), labels.invalid_rate(res), tuple(sorted(inv.items())))
+    panel = LabelPanel(h, pd.DataFrame(rows), pd.DataFrame(lab_rows), n, sum(inv.values()),
+                       sum(r is None for r in res), labels.invalid_rate(res), tuple(sorted(inv.items())))
+    if auth is not None and ts[0] < W_HOLD[1] and W_HOLD[0] < ts[-1] + 1:
+        _issue_holdout_panel(panel, auth)
+    return panel
+
+
+# W_HOLD label panels issued by ``label_panel`` under a verified authorization: panel sha256
+# (``leakage.panel_sha256``) -> opening_id (this process). The §15 forward refit accepts only these
+# (ruling R54).
+_HOLD_PANELS: dict[str, str] = {}
+
+
+def _issue_holdout_panel(panel: LabelPanel, auth: guard.HoldoutAuthorization | None) -> str:
+    """Register a W_HOLD label panel of ``label_panel`` under the verified opening ``auth`` (module-private
+    issuer; TEST HOOK in ``tests/v7/test_forward_refit.py``). Returns its sha256."""
+    from luna.v7.leakage import panel_sha256  # leakage imports runner
+
+    pin = guard.verified_opening(auth)
+    sha = panel_sha256(panel.samples, panel.h)
+    _HOLD_PANELS[sha] = pin["opening_id"]
+    return sha
+
+
+def holdout_panel_issued(panel: LabelPanel, opening_id: str) -> bool:
+    """True iff ``panel`` (its canonical samples) was issued by ``label_panel`` under the opening
+    ``opening_id`` in this process."""
+    from luna.v7.leakage import panel_sha256
+
+    if not isinstance(panel, LabelPanel):
+        return False
+    try:
+        sha = panel_sha256(panel.samples, panel.h)
+    except (ValueError, KeyError, TypeError):
+        return False
+    return _HOLD_PANELS.get(sha) == opening_id
 
 
 # ------------------------------------------------------------------------------------------------ books
@@ -995,4 +1030,6 @@ def decision_log(run: BookRun, provider: DecisionProvider,
 __all__ = ["DECISION_CHUNK_NS", "DecisionProvider", "DecisionRecord", "FoldScoreModel", "InMemorySource",
            "LabelPanel", "ResearchUniverse", "SymbolInputs", "UniverseSource", "decision_log",
            "decision_pass",
-           "fit_fold_models", "fold_convergence", "halt_windows", "label_panel", "model_hash", "run_book"]
+           "fit_fold_models", "fold_convergence", "halt_windows", "holdout_panel_issued", "label_panel",
+           "model_hash",
+           "run_book"]

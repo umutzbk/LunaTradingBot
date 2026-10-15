@@ -1355,6 +1355,7 @@ The per-item "Recommendation" and "Blocker" texts below are kept as written at H
 7. **Alternatives:** —
 8. **Classification:** CODE BUG — NO USER DECISION REQUIRED (missing implementation).
 9. **Blocker:** yes for the forward-stage freeze; no for the W_DEV / W_HOLD freeze.
+10. **Status (Task 28 + fix round 1, rulings R39 / R54):** forward refit, the write-once forward-model record bound to the canonical panels (part of the W_HOLD freeze) and the forward replay / verdict integration are built (`luna/v7/forward_model.py`, `luna/v7/forward_replay.py`, `guard.pin_forward_model`). Open for the forward stage: the forward-store -> `EngineInputs` loader (AMB-43 (e) part 2); STOPPED, normative, blocking the forward freeze only: the tick-level stale-quarter risk no-op (AMB-43 (d)).
 
 ## I. Guards / infra
 
