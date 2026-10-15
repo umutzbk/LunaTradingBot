@@ -8,7 +8,7 @@
 | Call | `bidask::spread(x, width, method = "AR", sign = TRUE, na.rm = TRUE)` |
 | Kit | `scripts/v7/cran_bidask/` (vectors, R script, comparator, README, R output, comparator outputs) |
 | Vectors | `vectors.json` sha256 `382b879ae88e68386b0dc46068e1a50b0f95cd39ab6970a1df15c96e6f346f61` |
-| R output | `r_output.json` sha256 `c612195a72ffb461fa8bdde82ae1b4c83ad4e89b26b419a2e874850eb2086e10` |
+| R output | `r_output.json` sha256 `c612195a72ffb461fa8bdde82ae1b4c83ad4e89b26b419a2e874850eb2086e10` as written by R (CRLF); committed LF blob `6cabfc8ddb3612bc58344b94fcc8ab9c8b35b9396cc60cff1fd23236a7a28426` |
 
 ## Result
 
