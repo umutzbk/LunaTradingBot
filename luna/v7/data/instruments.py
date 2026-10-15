@@ -70,13 +70,14 @@ def _letter(c: str) -> bool:
 
 
 def multiplier_of(base: str) -> float | None:
-    """The multiplier of a ``baseAsset`` (ruling R49): ``1M`` + a letter -> 1e6; a leading digit run that is a
-    power of ten >= 10 is multiplier-like: ``1000`` / ``1000000`` followed by a letter -> that factor, any
-    other (``10``, ``100``, ``10000``, ... or a closed-list run not followed by a letter) -> None (excluded);
+    """The multiplier of a ``baseAsset`` (ruling R49): ``1M`` + a letter -> 1e6 (``1M`` + anything else ->
+    None); a leading digit run that is a power of ten >= 10 is multiplier-like: ``1000`` / ``1000000``
+    followed by a letter -> that factor, any other (``10``, ``100``, ``10000``, ... or a closed-list run not
+    followed by a letter) -> None (excluded);
     any other base (no leading digit, or a digit run that is not a power of ten >= 10, e.g. ``1INCH``,
     ``2Z``) -> 1, the base kept as is."""
-    if base.startswith("1M") and _letter(base[2:]):
-        return 1e6  # the user's closed list (Binance convention 1MBABYDOGE = 1e6 x BABYDOGE; AMB-40 (a)(i))
+    if base.startswith("1M"):  # the user's closed list (Binance convention 1MBABYDOGE = 1e6 x BABYDOGE)
+        return 1e6 if _letter(base[2:]) else None  # "1M", "1M2X": excluded like "1000", "1000_X" (round 2)
     run = base[:len(base) - len(base.lstrip("0123456789"))]
     if not (len(run) >= 2 and run[0] == "1" and set(run[1:]) == {"0"}):
         return 1.0  # not multiplier-like

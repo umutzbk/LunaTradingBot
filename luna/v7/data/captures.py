@@ -6,9 +6,11 @@ Everything here is pure (no I/O, no clock) and deterministic.
 
 * **The notice's article object** (``article``): the JSON objects of the page's ``<script>`` elements (the
   whole script, else its outermost ``{...}``) whose ``code`` equals the 32-hex article code of the original
-  URL. They must agree on ``title`` / ``body`` / ``releaseDate``. A URL without a code, no such object, an
-  object without a string title and body, or disagreeing objects: the capture is *unusable* (reported with
-  the reason, never guessed). A related article (another code) is never read.
+  URL AND that carry a string ``body`` (a catalog / "latest" list / SEO entry of the same code without a body
+  is not a candidate; fix round 2, N1). The candidates must agree on ``title`` / ``body`` /
+  ``releaseDate``. A URL without a code, no same-code object, none carrying a body, or disagreeing
+  candidates: the capture is *unusable* (reported with the reason, never guessed). A related article
+  (another code) is never read.
 * **Text** (``extract``, S-2.5 / DEC-40 "in the archived title or body"): ``CaptureText.text`` = the article
   title + newline + the article body as text. HTML -> text is the Stage-0 extraction
   (``docs/results/v7-stage0/scripts/m31_notices.py`` ``analyse``) ported to the stdlib ``html.parser``: the
@@ -251,17 +253,22 @@ def article(raw: str, original: str) -> tuple[tuple[str, str, int] | None, str]:
     code = _code(original)
     if code is None:
         return None, "no_article_code"
+    same = False
     found: set[tuple[object, object, object]] = set()
     for obj in _json_objects(raw):
         for d in _walk(obj):
             if str(d.get("code", "")).lower() == code:
-                found.add((d.get("title"), d.get("body"), d.get("releaseDate")))
-    if not found:
+                same = True
+                if isinstance(d.get("body"), str):  # a candidate carries the body (round 2, N1)
+                    found.add((d.get("title"), d.get("body"), d.get("releaseDate")))
+    if not same:
         return None, "no_article_object"
+    if not found:
+        return None, "article_incomplete"  # only catalog / list / SEO entries of the code (no body)
     if len(found) > 1:
         return None, "article_conflict"
     title, body, rel = found.pop()
-    if not isinstance(title, str) or not isinstance(body, str) or not (title.strip() or body.strip()):
+    if not isinstance(title, str) or not (title.strip() or body.strip()):  # type: ignore[union-attr]
         return None, "article_incomplete"
     ms = _release_ms(rel)
     if ms is None:

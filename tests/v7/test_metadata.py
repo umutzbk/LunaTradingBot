@@ -240,6 +240,29 @@ def test_only_the_notice_title_and_body_are_matched_the_page_is_a_diagnostic():
     assert rec["page"]["title"] == DELIST_TITLE
 
 
+def _with_extra(objs: list) -> bytes:
+    """The standard page plus another __APP_DATA-like script holding ``objs`` (catalog / list entries)."""
+    js = json.dumps({"catalog": objs}, ensure_ascii=False)
+    return page(DELIST_TITLE, DELIST_BODY).replace(
+        b"</body>", f'<script type="application/json">{js}</script></body>'.encode(), 1)
+
+
+def test_catalog_entries_of_the_same_code_without_a_body_are_not_candidates():
+    """Round 2, N1: a catalog / "latest" / SEO entry {code, title} of the same article is ignored; only
+    same-code objects carrying a body are candidates; two full candidates that disagree stay a conflict."""
+    raw = cap.decode(_with_extra([{"code": CODE, "title": DELIST_TITLE},
+                                  {"code": CODE, "title": "Short", "releaseDate": 1}]))
+    a, why = cap.article(raw, URL)
+    assert why == "ok" and a == (DELIST_TITLE, DELIST_BODY, RELEASE // 10**6)
+    clash = cap.decode(_with_extra([{"code": CODE, "title": DELIST_TITLE, "body": "<p>other</p>",
+                                     "releaseDate": RELEASE // 10**6}]))
+    assert cap.article(clash, URL) == (None, "article_conflict")
+    only_list = page("x", "y", code=OTHER, related=()).replace(
+        b"</body>", f'<script type="application/json">{json.dumps({"l": [{"code": CODE, "title": "T"}]})}'
+                    f'</script></body>'.encode(), 1)
+    assert cap.article(cap.decode(only_list), URL) == (None, "article_incomplete")
+
+
 def test_a_capture_without_the_article_object_is_unusable():
     no_obj = page(DELIST_TITLE, DELIST_BODY, code=OTHER, related=())  # the URL names CODE
     rec = metaingest.build_notices([capture("20240308095620", no_obj)], INSTS).report
@@ -410,10 +433,10 @@ def test_identity_invariance_pass_and_fail():
 
 
 @pytest.mark.parametrize(("base", "mult"), [  # ruling R49
-    ("PEPE", 1.0), ("1INCH", 1.0), ("2Z", 1.0), ("1K", 1.0), ("1M", 1.0), ("12X", 1.0),
+    ("PEPE", 1.0), ("1INCH", 1.0), ("2Z", 1.0), ("1K", 1.0), ("1M", None), ("12X", 1.0),
     ("1000PEPE", 1000.0), ("1000000MOG", 1e6), ("1MBABYDOGE", 1e6), ("1000SATS", 1000.0),
     ("100X", None), ("10000SATS", None), ("10000LADYS", None), ("10X", None), ("1000", None),
-    ("1000000", None), ("1000_X", None)])
+    ("1000000", None), ("1000_X", None), ("1M2X", None), ("1M_X", None)])
 def test_multiplier_from_the_closed_base_prefix_list(base, mult):
     assert ins.multiplier_of(base) == mult
     row = one({**FULL, "baseAsset": base})

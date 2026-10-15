@@ -363,9 +363,10 @@ def instances_from_store(store: RawStore, symbols: Sequence[str], hi: int, *, lo
     ld = TableLoader(store, "R3", auth=auth)
     out = {}
     for s in sorted(symbols):
-        if not ld._known(s):
+        first = ld.first_period(s)
+        if first is None:
             continue
-        start = int(ld._chunks(s)[1][0]) if lo is None else int(lo)
+        start = first if lo is None else int(lo)
         if start >= int(hi):
             continue
         a = ld.arrays(s, start, hi, ["vol_base"])

@@ -668,6 +668,13 @@ class TableLoader:
     def rows(self, symbol: str) -> int:
         return int(self._symbols[symbol]["rows"]) if symbol in self._symbols else 0
 
+    def first_period(self, symbol: str) -> int | None:
+        """The start of the symbol's first stored chunk period (its history start), None without data."""
+        if not self._known(symbol):
+            return None
+        los = self._chunks(symbol)[1]
+        return int(los[0]) if los.size else None
+
     def _known(self, symbol: str) -> bool:
         """Whether the symbol has data; a symbol manifest the table manifest does not list is refused."""
         if symbol in self._symbols:
