@@ -433,21 +433,26 @@ def test_risk_layer_cannot_be_bypassed(inputs):
     assert not (pause.fills["reason"] == "leg_stop").any()
 
 
-def test_one_sided_book_is_flattened_at_next_decision_interim(inputs):
-    """AMB-16 (d) (user decision): when one side has no holdable leg, the whole book is flat at the next
-    executable opportunity, even inside the minimum hold; no replacement keeps the other side alone. The
-    timing asserted is the INTERIM reading "next executable opportunity = the next decision's t + 15 min"
-    (AMB-28, normative, pending the user's decision; the controller's next task may change it)."""
+def test_one_sided_book_is_flattened_at_next_executable_opportunity(inputs):
+    """AMB-16 (d) (user decision 2026-10-15, CLARIFICATIONS-2026-10-15-round1.md; supersedes the interim
+    AMB-28 "next decision" reading): when one side has no holdable leg, the whole book is flattened at the
+    next executable opportunity, even inside the minimum hold: the remaining legs exit as forced exits with
+    the S-4.2 timing of the tick that emptied the side; no replacement keeps the other side alone."""
     tau = LO + 12 * H
     run = _shocked_run(inputs, {s: 0.8 for s in LONGS}, tau, h=168)  # every long leg stops out
+    assert run.valid
     f = run.fills
     stops = f[f["reason"] == "leg_stop"]
     assert set(stops["symbol"]) == set(LONGS)
-    neu = f[(f["reason"] == "neutrality") & f["symbol"].isin(SHORTS)]
-    assert set(neu["symbol"]) == set(SHORTS)
-    assert (neu["ts"] < neu["entry_decision_ts"] + 168 * H).all()  # inside the minimum hold
-    flat_from = int(neu["ts"].max())
-    assert flat_from == tau + 4 * H + 5 * MIN + 15 * MIN  # the next decision (16:05) fill
+    flat = f[(f["reason"] == "one_sided_flatten") & f["symbol"].isin(SHORTS)]
+    assert set(flat["symbol"]) == set(SHORTS) and (flat["liquidity"] == "taker").all()
+    assert (flat["ts"] < flat["entry_decision_ts"] + 168 * H).all()  # inside the minimum hold
+    # the same S-4.2 fill bar as the leg stops (first 1m bar after the emptying tick + 1 min), long before the
+    # next decision (16:05) would fill at 16:20
+    assert set(flat["ts"]) == set(stops["ts"]) and len(set(flat["ts"])) == 1
+    flat_from = int(flat["ts"].max())
+    assert tau < flat_from < tau + H
+    assert not (f["reason"] == "neutrality").any()
     cool_end = int(stops["ts"].max()) + D
     pos = run.positions
     legs = pos[(pos["role"] == "leg") & (pos["ts"] > flat_from) & (pos["ts"] < cool_end)]

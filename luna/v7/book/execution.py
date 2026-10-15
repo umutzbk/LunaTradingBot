@@ -10,7 +10,8 @@ before the window end, ``refs.restrict``; E10, S-1.5) and returns one of
   first executable bar of the SAME instance (``halted_exit``), never filled retroactively or synthetically;
 * ``NoTrade`` -- an entry / increase that cannot trade (halted, price or fill-time proxy missing; S-4.4,
   S-5.4: no order while halted);
-* ``RunInvalid`` -- the exact INVALID RUN string (S-5.4, S-13.4).
+* ``RunInvalid`` -- the exact INVALID RUN string (S-5.4, S-13.4; ``INVALID_BTC``: AMB-21 (b), raised by the
+  engine).
 
 Prices (S-5.3): a trade in direction d (+1 buy, -1 sell) at reference p with half-spread h and slippage s
 fills at ``p * (1 + d (h + s))``; fee = rate x qty x fill price; spread cost = qty p h; slippage = qty p s.
@@ -50,6 +51,9 @@ BAR_15M = 15 * MIN
 
 INVALID_TERMINAL = "INVALID RUN — terminal settlement not reconstructible"  # S-5.4 / S-13.4 exact text
 INVALID_NO_EXIT = "INVALID RUN — no executable exit before the window's terminal unwind"  # S-5.4 (AMB-19)
+# AMB-21 (b), user decision 2026-10-15: a BTC price required at that timestamp (hedge construction, hedge
+# marking, canonical section 8 accounting B(e)) is missing; never a stale / interpolated BTC price
+INVALID_BTC = "INVALID RUN — required BTC reference price missing"
 
 Liquidity = Literal["taker", "maker", "settlement"]
 
@@ -119,7 +123,7 @@ class NoTrade:
 
 @dataclass(frozen=True)
 class RunInvalid:
-    reason: str  # INVALID_TERMINAL | INVALID_NO_EXIT
+    reason: str  # INVALID_TERMINAL | INVALID_NO_EXIT | INVALID_BTC
     symbol: str
     instance: int
     ts: int

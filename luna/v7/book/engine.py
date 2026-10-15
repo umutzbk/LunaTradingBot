@@ -8,10 +8,17 @@ hedge instrument, and a point-in-time decision provider (gates, h-hat(t), beta-h
 the already-gated candidate rows of ``arms.arm_scores`` and the staleness flag). No I/O, no wall-clock.
 
 Events (heap; same timestamp: funding settlement, 15-minute tick, fills in booking order, terminal check,
-decision, terminal unwind):
+one-sided check, decision, terminal unwind):
 * **tick** (every 15 min from lo): marks every open position (mark-price bar ending at the tick, else the
-  last-price bar, else the previous price event, AMB-19 (e)), equity, ``RiskLayer.on_tick``; its forced exits
-  (kill, leg stop) fill per S-4.2; a kill also closes the hedge and cancels unfilled entries (AMB-19 (c)).
+  last-price bar, else, for a leg only, the previous price event, AMB-19 (e)), equity, ``RiskLayer.on_tick``;
+  its forced exits (kill, leg stop) fill per S-4.2; a kill also closes the hedge and cancels unfilled entries
+  (AMB-19 (c)). After the tick's fills and terminal checks, the **one-sided check** (AMB-16 (d), user
+  decision 2026-10-15): if holdable legs remain on exactly one side, they all exit with the S-4.2 timing
+  (reason ``one_sided_flatten``; ``on_neutral``).
+* **BTC price required** (AMB-21 (b), user decision 2026-10-15): a hedge trade due at t_e with no BTC
+  reference (not halted), a held hedge without a BTC mark / last-price bar at a tick, or B(e) missing at a
+  tick with a leg held or at a leg fill -> ``INVALID RUN — required BTC reference price missing``; when BTC
+  is not required (flat, no hedge trade due), nothing is invalidated.
 * **funding**: each settlement of each held instance: ``-q * M * r`` (S-4.6); missing / invalid records and
   marks are reported in ``integrity`` (never invented); the DEC-29 gap test runs per closed episode.
 * **decision** (00:05 / 08:05 / 16:05 with t + 15 min before the unwind): provider view -> ``pre_decision``
@@ -51,6 +58,7 @@ from luna.v7.arms import arm_scores
 from luna.v7.book import EPS, Leg, Order, hedge
 from luna.v7.book.constructor import Targets, targets
 from luna.v7.book.execution import (
+    INVALID_BTC,
     INVALID_NO_EXIT,
     ExecView,
     Fill,
@@ -74,11 +82,13 @@ from luna.v7.refs import FundingSchedule, funding_schedule, restrict
 from luna.v7.timeutil import MIN, D
 from luna.v7.universe import GateRow, assert_pit
 
-EV_FUNDING, EV_TICK, EV_FILL, EV_TERMINAL, EV_DECISION, EV_UNWIND = range(6)
+EV_FUNDING, EV_TICK, EV_FILL, EV_TERMINAL, EV_NEUTRAL, EV_DECISION, EV_UNWIND = range(7)
 TICK = 15 * MIN
 FILL_DELAY = FROZEN.decision.fill_delay_min * MIN
-FORCED_TIMING = frozenset({"kill", "leg_stop", "ineligible"})  # S-4.2 timing; U6: t + 15 min (S-7.3)
+# S-4.2 timing (U6: t + 15 min, S-7.3); one_sided_flatten: AMB-16 (d), user decision 2026-10-15
+FORCED_TIMING = frozenset({"kill", "leg_stop", "ineligible", "one_sided_flatten"})
 HEDGE_SYMBOL = "BTCUSDT"
+B_ACCOUNTING = "BTC reference B(e) required for canonical accounting"  # AMB-21 (b) detail
 E0 = 1.0  # L-norm (§14)
 ARMS = ("A0", "A1", "A2", "A3")
 SCORE_COLS = ["symbol", "side", "rank_key", "passes_hurdle"]
@@ -245,6 +255,19 @@ class _Sim:
             self.invalid_detail = f"{r.symbol}#{r.instance}@{r.ts}" + (f": {r.detail}" if r.detail else "")
             self.invalid_ts = int(r.ts)
 
+    def btc_missing(self, ts: int, what: str) -> None:
+        """AMB-21 (b) (user decision 2026-10-15): a BTC price required at ``ts`` is missing -> INVALID RUN
+        (never an exception, never a stale / interpolated BTC price)."""
+        bv = self.view_of(HEDGE_SYMBOL, ts)
+        self.fail(RunInvalid(INVALID_BTC, HEDGE_SYMBOL, bv.inst.idx if bv is not None else -1, ts,
+                             f"{what} missing at {ts}"))
+
+    def btc_ref(self, ts: int) -> float | None:
+        """B(ts): the BTC reference price P(ts) (S-5.2 rule) of its current instance; None if missing."""
+        bv = self.view_of(HEDGE_SYMBOL, ts)
+        r = bv.ref(ts) if bv is not None else None
+        return None if r is None else float(r[0])
+
     def legs(self) -> list[Leg]:
         """Held legs. A leg whose exit rests as an E_M maker order is passed as active (``pending_exit``
         None): a forced exit replaces it with a taker exit (S-6.2: forced exits are always taker)."""
@@ -335,16 +358,19 @@ class _Sim:
         f = tk.fill
         self.tokens[tk.pid].remove(tk)
         p = self.led.pos.get(tk.pid)
+        if p is None and tk.kind not in ("open", "hedge"):
+            return
+        bref = self.btc_ref(f.ts)
+        is_leg = p.role == "leg" if p is not None else tk.kind == "open"
+        if bref is None and is_leg:  # B(e) of a leg fill (S-8.3 mkt_c; AMB-21 (b))
+            self.btc_missing(f.ts, B_ACCOUNTING)
+            return
         if p is None:
-            if tk.kind not in ("open", "hedge"):
-                return
             side = f.direction
             view = self.views[(f.symbol, f.instance)]
             p = self.open_position(f, tk.pid, "hedge" if tk.kind == "hedge" else "leg", side,
                                    *self.open_meta[tk.pid], view)
-        btc = self.view_of(HEDGE_SYMBOL, f.ts)
-        bref = btc.ref(f.ts) if btc is not None else None
-        f = _with(f, beta=p.beta if tk.kind == "open" else None, btc_ref=None if bref is None else bref[0])
+        f = _with(f, beta=p.beta if tk.kind == "open" else None, btc_ref=bref)
         closes = tk.kind == "exit" and f.qty >= abs(p.q) * (1 - 1e-9)
         if tk.kind == "hedge" and abs(p.q + f.dq) <= 1e-12 * max(abs(p.q), f.qty):
             closes = True
@@ -382,21 +408,53 @@ class _Sim:
         for pid, p in self.led.pos.items():
             m, src = p.view.mark(ts)
             if m is None:
+                if p.role == "hedge":  # AMB-21 (b): a held hedge is marked at every tick, no stale BTC carry
+                    self.btc_missing(ts, "BTC mark required for hedge marking")
+                    return
                 if p.p_last is None:
                     raise RuntimeError("internal: an open position without a price event")
-                m, src = p.p_last, "stale"
+                m, src = p.p_last, "stale"  # legs: AMB-19 (e), unchanged (not decided)
             elif p.role == "leg":
                 fresh[p.symbol] = m
             prices[pid] = (m, src)
         btc = self.view_of(HEDGE_SYMBOL, ts)
-        eq = self.led.mark(ts, prices, btc.mark(ts)[0] if btc is not None else None)
+        bmark = btc.mark(ts)[0] if btc is not None else None
+        if bmark is None and any(p.role == "leg" for p in self.led.pos.values()):
+            self.btc_missing(ts, B_ACCOUNTING)  # B(e) at the tick of a held leg (S-8.3 mkt_c; AMB-21 (b))
+            return
+        eq = self.led.mark(ts, prices, bmark)
         self.fresh = fresh
         self.state, acts = self.risk.on_tick(self.state, ts, eq, self.legs(), fresh)
         self.forced(acts, ts + FILL_DELAY)
         if ts % D == 0 and ts > self.led.day_start_ts:
             self.led.close_day(ts, eq)
+        self.push(ts, EV_NEUTRAL, None)  # after this tick's fills and terminal checks (AMB-16 (d))
         if ts + TICK < self.unwind_ts:
             self.push(ts + TICK, EV_TICK, None)
+
+    def on_neutral(self, ts: int) -> None:
+        """AMB-16 (d) (user decision 2026-10-15), at every 15-minute tick after its fills: if held legs remain
+        on exactly one side, every remaining leg of that side exits as a forced exit with the S-4.2 timing
+        (first 1m bar after the tick + 1 min, taker; halted -> S-5.4 pending; reason ``one_sided_flatten``).
+        The minimum hold does not block it and nothing is entered to keep K. A leg whose exit is already
+        issued (``pending_exit``, incl. a resting E_M exit) is not holdable. A side with an entry order
+        still in flight (ordered for t + 15 min, or resting in an E_M maker window) is not empty (the book is
+        being built); once those orders have filled or lapsed, a one-sided result is flattened at the next
+        tick (AMB-28)."""
+        holdable: dict[int, list[Position]] = {1: [], -1: []}
+        for p in self.led.pos.values():
+            if p.role == "leg" and p.q != 0 and p.pending_exit is None:
+                holdable[p.side].append(p)
+        alive = {s: bool(holdable[s]) for s in (1, -1)}
+        for pid, tks in self.tokens.items():
+            for tk in tks:
+                if tk.kind == "open" and not tk.cancelled and pid not in self.led.pos:
+                    alive[tk.fill.direction] = True
+        if alive[1] == alive[-1]:
+            return
+        side = 1 if alive[1] else -1
+        for p in sorted(holdable[side], key=lambda x: x.symbol):
+            self.exit(p, "one_sided_flatten", True, ts, ts + FILL_DELAY)
 
     def forced(self, acts: RiskActions, t_e: int) -> None:
         if acts.killed and not self.kill_done:
@@ -426,8 +484,12 @@ class _Sim:
             return
         if out.ts != ts:
             raise RuntimeError("internal: settlement time differs from the terminal check time")
+        bref = self.btc_ref(ts)
+        if bref is None and p.role == "leg":  # B(e) of the settlement fill (S-8.3 mkt_c; AMB-21 (b))
+            self.btc_missing(ts, B_ACCOUNTING)
+            return
         p.pending_exit = p.pending_exit or "terminal"
-        self.led.apply_fill(out, p, True)
+        self.led.apply_fill(_with(out, btc_ref=bref), p, True)
         self.close_episode(p, ts)
 
     def on_unwind(self) -> None:
@@ -455,14 +517,18 @@ class _Sim:
                        else "no reference price at the unwind minute (data gap, not halted; AMB-20)")
                 self.fail(RunInvalid(INVALID_NO_EXIT, p.symbol, p.view.inst.idx, u, why))
                 return
-            self.on_fill_now(out, p)
+            if not self.on_fill_now(out, p):
+                return
         self.led.close_day(u, self.led.equity(), final=True)
 
-    def on_fill_now(self, f: Fill, p: Position) -> None:
-        btc = self.view_of(HEDGE_SYMBOL, f.ts)
-        bref = btc.ref(f.ts) if btc is not None else None
-        self.led.apply_fill(_with(f, btc_ref=None if bref is None else bref[0]), p, True)
+    def on_fill_now(self, f: Fill, p: Position) -> bool:
+        bref = self.btc_ref(f.ts)
+        if bref is None and p.role == "leg":  # B(e) of a leg fill (S-8.3 mkt_c; AMB-21 (b))
+            self.btc_missing(f.ts, B_ACCOUNTING)
+            return False
+        self.led.apply_fill(_with(f, btc_ref=bref), p, True)
         self.close_episode(p, f.ts)
+        return True
 
     # --- decisions --------------------------------------------------------------------------------------
     def on_decision(self, t: int) -> None:
@@ -546,7 +612,8 @@ class _Sim:
         if o.kind == "reduce" and o.target > EPS * self.e0:
             leg_n = abs(p.q) * p.p_last  # type: ignore[operator]
             tr = Trade(sym, -o.side, abs(p.q) * o.notional / leg_n, None, False, o.reason, p.pid)
-            outs = [taker_at(p.view, tr, t_e)] if self.exe == "E_T" else maker_at(
+            taker = self.exe == "E_T" or o.forced  # a risk_gross reduce is a risk order: taker (S-6.2)
+            outs = [taker_at(p.view, tr, t_e)] if taker else maker_at(
                 p.view, tr, t_e, v.h_hat.get(sym), self.upu, self.unwind_ts)
             self.schedule(outs, p.pid, "reduce", t_e, None)
             return
@@ -570,16 +637,20 @@ class _Sim:
             return hd, None, None
         if h is not None and h.pending_exit is not None:
             return hd, ("note", "hedge_exit_pending"), None
+        if hd.target == 0.0 and h is None:
+            return hd, None, None
         bv = self.view_of(HEDGE_SYMBOL, t)
-        if bv is None or (h is not None and h.view is not bv):
-            raise ValueError("BTC hedge instance missing or changed while hedged (E10)")
+        if bv is None:  # a required hedge trade without any current BTC instance: no BTC price (AMB-21 (b))
+            return hd, ("invalid", t_e), None
+        if h is not None and h.view is not bv:
+            raise ValueError("BTC hedge instance changed while hedged (E10)")
         if bv.halted(t_e):  # S-5.4 / S-7.1: no order of any kind while halted
             return hd, ("note", "hedge_halted"), None
-        if hd.target == 0.0:
-            return hd, (("exit", h) if h is not None else None), None
         r = bv.ref(t_e)
-        if r is None:
-            return hd, ("note", "hedge_price_missing"), None
+        if r is None:  # required, not halted, no reference: INVALID RUN (AMB-21 (b)), never a stale price
+            return hd, ("invalid", t_e), None
+        if hd.target == 0.0:
+            return hd, ("exit", h), None
         q0 = h.q if h is not None else 0.0
         dq = hd.target / r[0] - q0
         if dq == 0.0:
@@ -596,6 +667,9 @@ class _Sim:
             return
         if act[0] == "note":
             self.notes.append(act[1])
+            return
+        if act[0] == "invalid":
+            self.btc_missing(act[1], "BTC price required for hedge construction")
             return
         if act[0] == "exit":
             self.exit(act[1], "hedge", False, None, t_e)
@@ -662,6 +736,15 @@ class _Sim:
                     out = _scaled(out, q)
                     post[sym] = p.side * (abs(p.q) - q) * p.p_last  # type: ignore[operator]
                 plan[i] = ("reduce", out)
+        if n_entries and len({x > 0 for x in post.values() if x != 0}) == 1:
+            # AMB-16 (d) / AMB-28: infeasible legs left one side empty -> no entry builds a one-sided book
+            # (the remaining held legs, if any, are flattened by the next tick's one-sided check)
+            infeasible.append("one_sided:entries_forbidden")
+            for i, o in enumerate(tg.orders):
+                if o.kind == "open" and isinstance(plan.get(i), tuple):
+                    post.pop(o.symbol, None)
+                    plan[i] = "forbidden"
+            n_entries = 0
         hd, act, bad = self.hedge_plan(t, t_e, post, v, eq, killed)
         if bad is not None and n_entries:  # S-7.4 / section 14: an infeasible required hedge forbids entries
             infeasible.append("hedge:entries_forbidden")
@@ -708,6 +791,8 @@ class _Sim:
                 self.on_fill(payload)  # type: ignore[arg-type]
             elif kind == EV_TERMINAL:
                 self.on_terminal(ts, payload)  # type: ignore[arg-type]
+            elif kind == EV_NEUTRAL:
+                self.on_neutral(ts)
             elif kind == EV_DECISION:
                 self.on_decision(ts)
             else:

@@ -27,6 +27,12 @@ One constructor for every arm; only the scores change. At decision t, in this or
    R24, AMB-16 (e)): the marked book may drift within the 25 % band; an entrant is sized at its capped
    target, and entrants are scaled down together when the post-decision gross (held legs at their marked /
    resized notional plus entrants) would exceed 1.0 E (``cap_gross_entry``). Halted: no resize.
+6. **Hard marked-book gross limit** (AMB-16 (e), user decision 2026-10-15, implementation reading R35): if
+   the held book after this decision's exits and drift resizes (halted / pending legs at their marked
+   notional) exceeds 1.0 E, every kept non-halted leg is reduced proportionally (reduce-only, taker as a
+   risk order, reason ``risk_gross``) back to 1.0 E; halted / pending legs get no order but count in the
+   gross (``risk_gross_halted`` when they alone exceed it). The per-leg and liquidity caps stay target /
+   entry caps, so the 25 % drift rule stays reachable.
 
 Halted instruments (``halted`` evaluated by the engine AT the decision time t, point-in-time: 1m bars opening
 in [t - 60 min, t), AMB-16 (j); required for every held leg): no open and no reduce is emitted; an exit is
@@ -314,6 +320,14 @@ def targets(
             fixed += lg.notional
     gmax = FROZEN.risk.gross_max * e
     held_after = fixed + sum(v for v, _ in new.values())
+    if held_after > gmax * (1 + EPS):  # S-7.3 hard marked-book gross limit (AMB-16 (e), user decision; R35)
+        reducible = sum(v for v, _ in new.values())
+        f = max(gmax - fixed, 0.0) / reducible if reducible > 0 else 0.0
+        new = {k: (v * f, "risk_gross") for k, (v, _) in new.items()}
+        held_after = fixed + sum(v for v, _ in new.values())
+        notes.append("risk_gross")
+        if fixed > gmax * (1 + EPS):
+            notes.append("risk_gross_halted")  # halted / pending legs alone exceed it (no order, S-5.4)
     if entries and held_after + sum(entries.values()) > gmax * (1 + EPS):  # S-7.3 gross cap binds entries
         f = max(gmax - held_after, 0.0) / sum(entries.values())
         entries = {k: v * f for k, v in entries.items()}
@@ -324,7 +338,7 @@ def targets(
     for sym, (v, r) in new.items():
         lg = by_sym[sym]
         if v < lg.notional * (1 - EPS):
-            reduces.append(order(lg, "reduce", lg.notional - v, v, r, False))
+            reduces.append(order(lg, "reduce", lg.notional - v, v, r, r == "risk_gross"))
         post[sym] = lg.side * v
     for sym, v in entries.items():
         if v <= EPS * e:

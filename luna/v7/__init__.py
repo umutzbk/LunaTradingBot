@@ -61,11 +61,12 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "S-6.2": _m("book.execution"),
     "S-6.3": _m("verdict"),
     "S-7.1": (*_m("book.constructor"),
-              "doc: AMB-16 (d) / (e) pending user decision (pre-run blockers R23, R24)"),
+              "doc: AMB-16 (d) / (e) resolved by user decision 2026-10-15 (clarifications round 1); the (e) "
+              "marked-gross reading R35 awaits docket confirmation"),
     "S-7.2": _m("arms"),
     "S-7.3": (*_m("book.risk", "runner"),
               "doc: staleness inputs AMB-25 (b) pending user decision; one-sided flattening timing AMB-28 "
-              "pending user decision"),
+              "resolved by user decision 2026-10-15"),
     "S-7.4": _m("book.hedge"),
     "S-8.1": (*_m("book.engine", "book.ledger", "accounting"),
               "doc: AMB-20 pending user decision (pre-run blocker)"),

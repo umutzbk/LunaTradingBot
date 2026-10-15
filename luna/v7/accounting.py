@@ -13,8 +13,10 @@ re-simulates anything. An invalid run (``run.invalid`` set) is refused (``ValueE
   β̂_episode = the ``beta`` of the episode's opening fill (β̂ of the opening decision). **Clusters:** episodes
   of the same (instance, side), each starting ≤ ``gap_h`` (72) h after the previous one ended; N_a and the
   per-asset ρ pool a symbol's instances (asset = symbol, AMB-21 (a)). PR_c, mkt_c = Σ q(e_k⁺) p(e_k) β̂
-  (B(e_{k+1}) / B(e_k) − 1) with B the fill's ``btc_ref`` / the tick's ``marks.btc_mark`` (a missing B
-  raises, AMB-21 (b)); ρ_c = PR_c − mkt_c; MKT = Σ mkt_c + PR_BTC.
+  (B(e_{k+1}) / B(e_k) − 1) with B the fill's ``btc_ref`` / the tick's ``marks.btc_mark``; ρ_c = PR_c −
+  mkt_c; MKT = Σ mkt_c + PR_BTC. AMB-21 (b) (user decision 2026-10-15): the engine turns a required missing
+  B into ``INVALID RUN`` (refused here), so a valid run never reaches this with a missing B; a missing B
+  still raises (defence in depth, never an invented price).
 * **K10:** |Σ ρ_c + MKT − PR| ≤ 1e-9 · Σ |qty · ref_mid| and PR equal to the engine's daily price column
   (per day and in total, same tolerance; AMB-21 (c)); summation by parts holds (q_after = q + dq up to the
   engine's 1e-9 close clamp, and −Σ dq·p(f) = PR). A held position without a tick row raises.

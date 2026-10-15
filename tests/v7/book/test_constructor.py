@@ -191,13 +191,14 @@ def test_min_hold_blocks_non_risk_exit():
 
 
 def test_resize_drift_rule():
-    """Resizes only on drift > 25 %, reduce-only (S-7.1); the caps bind targets / entries, not the marked
-    book (controller ruling R24, AMB-16 (e))."""
+    """Resizes only on drift > 25 %, reduce-only (S-7.1); the per-leg / liquidity caps bind targets / entries,
+    not the marked book (AMB-16 (e), user decision 2026-10-15). The post-decision gross stays <= 1.0 E here
+    (0.995), so the hard marked-gross limit does not act (round 1 changed L3 from 0.07 to 0.04 for that)."""
     shorts = tuple(leg(f"S{i}", SHORT) for i in range(1, 6))
     longs = (
         leg("L1", LONG, 0.126),  # +26 % > 25 % -> reduce to the target
         leg("L2", LONG, 0.125),  # +25 % is not > 25 %: no resize, although above the per-leg cap 0.1
-        leg("L3", LONG, 0.07),  # -30 %: increases are never made (reduce-only)
+        leg("L3", LONG, 0.04),  # -60 %: increases are never made (reduce-only)
         leg("L4", LONG, 0.13),  # halted: no order of any kind
         leg("L5", LONG, 0.1),
     )
@@ -206,8 +207,8 @@ def test_resize_drift_rule():
     assert [(o.symbol, o.kind, round(o.notional, 12), o.target, o.reason) for o in tg.orders] == [
         ("L1", "reduce", 0.026, 0.1, "drift"),
     ]
-    assert "no_increase:L3" in tg.notes and "halted_resize:L4" in tg.notes
-    assert tg.post["L1"] == 0.1 and tg.post["L2"] == 0.125 and tg.post["L3"] == 0.07 and tg.post["L4"] == 0.13
+    assert "no_increase:L3" in tg.notes and "halted_resize:L4" in tg.notes and "risk_gross" not in tg.notes
+    assert tg.post["L1"] == 0.1 and tg.post["L2"] == 0.125 and tg.post["L3"] == 0.04 and tg.post["L4"] == 0.13
     # inside the drift band: no resize (5 longs vs 4 shorts: long targets 0.08, held 0.1 = +25 %)
     tg = run(tuple(leg(f"L{i}", LONG) for i in range(1, 6)) + shorts[:4], rows[:5] + rows[5:9])
     assert tg.orders == ()
@@ -297,11 +298,17 @@ def test_caps_bind_targets_and_entries_not_marked_book():
     longs = tuple(leg(f"L{i}", LONG) for i in range(2, 6)) + (leg("L1", LONG, 0.09),)
     tg = run(longs + shorts, rows, qv={"L1": 160_000.0})
     assert tg.orders == () and tg.post["L1"] == 0.09
-    # gross 1.2 E with a halted leg at 0.3: nothing the drift rule does not ask for is traded
+    # gross 1.2 E with a halted leg at 0.3: round 1 (AMB-16 (e), user decision) changed this case from "no
+    # order" to the hard marked-gross limit: the halted leg gets no order but counts; the 9 other legs are
+    # reduced proportionally to 0.7 / 0.9 of their notional, back to 1.0 E
     longs = tuple(leg(f"L{i}", LONG) for i in range(2, 6)) + (leg("L1", LONG, 0.3),)
     tg = run(longs + shorts, rows, halted={"L1": True})
-    assert tg.orders == () and "halted_resize:L1" in tg.notes
-    assert sum(abs(v) for v in tg.post.values()) == pytest.approx(1.2, abs=1e-12)
+    assert "halted_resize:L1" in tg.notes and "risk_gross" in tg.notes
+    assert {o.symbol for o in tg.orders} == {f"L{i}" for i in range(2, 6)} | {f"S{i}" for i in range(1, 6)}
+    assert all(o.kind == "reduce" and o.reason == "risk_gross" and o.forced for o in tg.orders)
+    assert all(o.target == pytest.approx(0.1 * 7 / 9, abs=1e-12) for o in tg.orders)
+    assert tg.post["L1"] == 0.3
+    assert sum(abs(v) for v in tg.post.values()) == pytest.approx(1.0, abs=1e-12)
     # an entry is capped: held gross 0.98 (four longs drifted to 0.12) leaves 0.02 E for the entrant L5
     longs = tuple(leg(f"L{i}", LONG, 0.12) for i in range(1, 5))
     tg = run(longs + shorts, rows)
@@ -320,3 +327,48 @@ def test_halted_flag_required_for_held_legs():
     with pytest.raises(ValueError, match="halted"):
         targets(t=T0, equity=E, held=held, scores=scores([]), gates=g, risk=risk, halted={"AAA": False},
                 betas={}, quote_vol_24h={}, h_star_h=24.0, usd_per_unit=E_REF)
+
+
+def test_marked_gross_hard_limit():
+    """AMB-16 (e) (user decision 2026-10-15, implementation reading R35): the gross <= 1.0 E limit binds the
+    marked book at every decision (proportional, reduce-only, reason ``risk_gross``); the 25 % drift rule
+    stays reachable for a single leg while the gross is under 1.0 E."""
+    rows4 = side_rows("L", LONG, 4) + side_rows("S", SHORT, 4)
+    shorts4 = tuple(leg(f"S{i}", SHORT) for i in range(1, 5))
+    longs3 = tuple(leg(f"L{i}", LONG) for i in range(2, 5))
+    # targets 0.1 (min(0.5 / 4, 0.5 / 5)); L1 +20 % with the gross 0.82 E: no trade
+    tg = run(longs3 + (leg("L1", LONG, 0.12),) + shorts4, rows4)
+    assert tg.orders == () and tg.post["L1"] == 0.12
+    # L1 +30 %: the drift resize to its target (not a gross reduce)
+    tg = run(longs3 + (leg("L1", LONG, 0.13),) + shorts4, rows4)
+    assert [(o.symbol, o.kind, round(o.target, 12), o.reason, o.forced) for o in tg.orders] == [
+        ("L1", "reduce", 0.1, "drift", False)]
+    # marked gross 1.1 E (every long +20 %, inside the drift band): every leg scaled by 1 / 1.1
+    rows5 = side_rows("L", LONG, 5) + side_rows("S", SHORT, 5)
+    held = tuple(leg(f"L{i}", LONG, 0.12) for i in range(1, 6))
+    held += tuple(leg(f"S{i}", SHORT) for i in range(1, 6))
+    tg = run(held, rows5)
+    got = {o.symbol: (o.kind, o.reason, o.forced, o.target) for o in tg.orders}
+    assert set(got) == {x.symbol for x in held}
+    for x in held:
+        assert got[x.symbol][:3] == ("reduce", "risk_gross", True)
+        assert got[x.symbol][3] == pytest.approx(x.notional / 1.1, abs=1e-12)
+    assert sum(abs(v) for v in tg.post.values()) == pytest.approx(1.0, abs=1e-12)
+    # a drift-resized leg counts at its resized notional: L1 +30 % -> 0.1, then 0.1 + 4 * 0.12 + 0.5 = 1.08
+    held = (leg("L1", LONG, 0.13),) + held[1:]
+    tg = run(held, rows5)
+    l1 = next(o for o in tg.orders if o.symbol == "L1")
+    assert (l1.reason, l1.target) == ("risk_gross", pytest.approx(0.1 / 1.08, abs=1e-12))
+    assert sum(abs(v) for v in tg.post.values()) == pytest.approx(1.0, abs=1e-12)
+    # an entrant gets no room while the held book is at the limit
+    held = tuple(leg(f"L{i}", LONG, 0.125) for i in range(1, 5)) + tuple(leg(f"S{i}", SHORT, 0.11)
+                                                                       for i in range(1, 6))
+    tg = run(held, rows5)  # 0.5 + 0.55 = 1.05 E -> scaled to 1.0 E; L5 qualifies but has no room
+    assert opens(tg) == {} and "cap_gross:L5" in tg.notes and "risk_gross" in tg.notes
+    # halted legs alone above the limit: no order for them, the others reduced to 0
+    held = (leg("L1", LONG, 0.6), leg("S1", SHORT, 0.6), leg("L2", LONG, 0.05))
+    tg = run(held, [("L1", LONG, 2.0, True), ("L2", LONG, 1.0, True), ("S1", SHORT, 1.0, True)],
+             halted={"L1": True, "S1": True})
+    assert "risk_gross_halted" in tg.notes
+    got = [(o.symbol, o.kind, o.target, o.reason) for o in tg.orders]
+    assert got == [("L2", "reduce", 0.0, "risk_gross")]

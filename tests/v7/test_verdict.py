@@ -14,7 +14,7 @@ from luna.v7 import accounting as acc
 from luna.v7 import stats
 from luna.v7 import verdict as V
 from luna.v7.accounting import Cluster, Episode
-from luna.v7.book.execution import INVALID_NO_EXIT, INVALID_TERMINAL
+from luna.v7.book.execution import INVALID_BTC, INVALID_NO_EXIT, INVALID_TERMINAL
 from luna.v7.timeutil import MIN, D
 from tests.v7.run_fixtures import LO, funding_run
 
@@ -352,7 +352,9 @@ def _bad_funding_role(run):
 def test_em_runs_are_secondary():
     good = _inputs()
     for field_ in ("ml_M", "a0_M"):
-        for spoil in (lambda r: replace(r, invalid=INVALID_TERMINAL), _bad_funding_role):
+        for spoil in (lambda r: replace(r, invalid=INVALID_TERMINAL), _bad_funding_role,
+                      lambda r: replace(r, invalid=INVALID_BTC, invalid_detail="BTCUSDT#0@1: BTC price "
+                                        "required for hedge construction missing at 1")):  # AMB-21 (b)
             # P1(E_T) holds: the class is unaffected, P1(E_M) unavailable, no flag
             v = V.holdout(replace(good, **{field_: spoil(getattr(good, field_))}))
             assert v.cls == V.INCONCLUSIVE and v.p1_em is None and not v.maker_split_undecidable
@@ -379,7 +381,7 @@ def test_em_runs_are_secondary():
 def test_holdout_invalid_required_arm():
     good = _inputs()
     for field_ in ("ml_T", "a0_T"):
-        for why in (INVALID_TERMINAL, INVALID_NO_EXIT):
+        for why in (INVALID_TERMINAL, INVALID_NO_EXIT, INVALID_BTC):  # INVALID_BTC: AMB-21 (b)
             run = replace(getattr(good, field_), invalid=why)
             v = V.holdout(replace(good, **{field_: run}, leakage=("L1",)))
             assert v.cls == V.INVALID and any(why in s for s in v.reasons)

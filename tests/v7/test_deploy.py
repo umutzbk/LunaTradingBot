@@ -88,8 +88,13 @@ def test_hedge_infeasible_blocks_entries():
 def test_missing_symbol_excluded_and_flagged():
     r = run_layer(spec(), 265, filters(drop=("BBBUSDT",)))
     assert r.valid and r.filters_missing == ("BBBUSDT",)
-    assert "BBBUSDT" not in set(r.fills["symbol"])
-    assert set(r.fills.loc[r.fills["ts"] == TE1, "symbol"]) == {"AAAUSDT", BTC}
+    # AMB-16 (d) / AMB-28 (user decision 2026-10-15): with BBB infeasible the book would be one-sided, so
+    # the AAA entry is forbidden too (round 1 changed this from "AAA and the hedge enter at 00:20")
+    assert len(r.fills) == 0
+    d = r.decisions.set_index("t")
+    assert "one_sided:entries_forbidden" in d.loc[T1, "infeasible"]
+    assert "forbidden_open:AAAUSDT" in d.loc[T1, "notes"]
+    assert d.loc[T1, "n_post"] == 0
     assert deploy.label(r) == deploy.INCOMPLETE and not deploy.exact_evidence(r)
     assert "leg:BBBUSDT" in r.decisions.set_index("t").loc[T1, "infeasible"]
 

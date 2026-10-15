@@ -22,7 +22,9 @@ model input, and the constructor applies ``RiskActions.forced`` before any score
 * **Precedence** (the reason recorded when several apply): kill > leg stop > U6 > ineligibility for exits;
   kill > daily-loss pause > staleness for the decision-wide entry block; per symbol cooldown, then U8.
 * Gross <= 1.0 E, per leg <= 0.5 E / K and the liquidity cap bind the targets and the entries, applied by
-  ``constructor.targets``; the marked book drifts within the S-7.1 25 % band (ruling R24, AMB-16 (e)).
+  ``constructor.targets``; the marked book drifts within the S-7.1 25 % band, and the gross <= 1.0 E limit
+  also binds the marked book at every decision (proportional reduce-only ``risk_gross``; AMB-16 (e), user
+  decision 2026-10-15, implementation reading R35).
 
 A halted instrument gets no order of any kind: forced exits are emitted as intents and the constructor flags
 them ``halted`` so the engine defers them (S-5.4); legs with a ``pending_exit`` get no new exit.
