@@ -1,6 +1,6 @@
 import pandas as pd
 
-from luna.v7.data.instances import assign, build_instances, current_instance, instance_of
+from luna.v7.data.instances import assign, build_instances, current_instance, instance_of, started_instance
 from luna.v7.timeutil import MIN, NS, D, to_ns
 
 DAY0 = to_ns("2022-05-01")
@@ -61,8 +61,14 @@ def test_current_instance_before_end_known():
     a = insts[0]
     assert current_instance(insts, a.end_known_at - 1).idx == 0
     assert current_instance(insts, a.end_known_at) is None
-    assert current_instance(insts, insts[1].first_bar_ts).idx == 1
+    # DK-108: current once the first bar is known (first_bar_ts + 15 min <= t - 1 min)
+    assert current_instance(insts, insts[1].first_bar_ts) is None
+    assert current_instance(insts, insts[1].first_bar_ts + 16 * 60 * NS - 1) is None
+    assert current_instance(insts, insts[1].first_bar_ts + 16 * 60 * NS).idx == 1
     assert current_instance(insts, insts[0].first_bar_ts - 1) is None
+    # attribution (notices) keeps the literal first_bar_ts <= t
+    assert started_instance(insts, insts[1].first_bar_ts).idx == 1
+    assert started_instance(insts, a.end_known_at) is None
 
 
 def test_relist_new_instance():

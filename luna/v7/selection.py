@@ -6,7 +6,9 @@
   ``INVALID RUN — historical terminal execution not reconstructible``; nothing is dropped, replaced or re-run.
   A required run whose §8 accounting fails K10 or the daily-table identity (``accounting.k10_ok`` /
   ``daily_ok``) is an S-13.4 integrity failure: ``INVALID RUN — K10 / accounting integrity failure``
-  (AMB-22 (e)).
+  (AMB-22 (e)); so is a required run that cannot be accounted at all (``account()`` raises ``ValueError``:
+  missing tick row, not flat at the end, missing B, ...): the same class with ``"<arm>@<h>h: <error>"`` as the
+  detail, never an exception (DK-112 / red-team m8).
   Reference arms (A0-V5, TS) are only reported (valid / invalid) and never tested or required.
 * **LB (S-10.6 step 2):** LB = r̄ − q₀.₉₅(r̄* − r̄) of the S-13.1 daily returns, CBB with ℓ = 14, B = 10,000.
 * **Choice (steps 3–5, AMB-22 (f)):** the A3 family is chosen only if its best LB ≥ the best A2 LB + 1 bp/day;
@@ -95,8 +97,14 @@ def choose(runs: Mapping[tuple[str, int], BookRun | Ledger], *, B: int = FROZEN.
            if isinstance(runs[(a, h)], BookRun) and not runs[(a, h)].valid]
     if bad:
         return Invalid(INVALID_DEV, tuple(bad), ref_invalid)
-    leds = {k: _ledger_of(runs[k]) for k in REQUIRED}
-    broken = [f"{a}@{h}h" for (a, h), led in leds.items() if not (k10_ok(led) and daily_ok(led))]
+    leds: dict[tuple[str, int], Ledger] = {}
+    broken: list[str] = []
+    for a, h in REQUIRED:
+        try:
+            leds[(a, h)] = _ledger_of(runs[(a, h)])
+        except ValueError as e:  # missing tick / not flat / missing B ...: K10 integrity (DK-112 / m8)
+            broken.append(f"{a}@{h}h: {e}")
+    broken += [f"{a}@{h}h" for (a, h), led in leds.items() if not (k10_ok(led) and daily_ok(led))]
     if broken:
         return Invalid(INVALID_K10, tuple(broken), ref_invalid)
     ell = FROZEN.stats.sel_block

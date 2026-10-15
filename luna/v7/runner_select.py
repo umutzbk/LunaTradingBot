@@ -9,7 +9,11 @@ S-13.2 / S-13.4 inputs, K3, K8, K11, EC-2, DEC-19; AMB-27). Orchestration only (
   at h* follow.
 * ``holdout_inputs``: ``verdict.HoldoutInputs`` from already-executed runs, the final model's predictions on
   the holdout label panel and the W_DEV facts. No data access; refuses without a
-  ``guard.HoldoutAuthorization`` and after an S-10.7 kill (DEC-19).
+  ``guard.HoldoutAuthorization`` and after an S-10.7 kill (DEC-19); refuses runs not produced by the research
+  entry point ``runner.run_book`` (``BookRun.research``, DK-114) and a final model whose regressor or
+  classifier family is not ML*'s (A2: ``en`` / ``logit_en``, A3: ``lgb_reg`` / ``lgb_clf``).
+* Every book of ``dev_selection`` comes from ``run_book`` and is therefore a research run: its DT4 record is
+  always a research record (``runrecord.run_record``), refused from a dirty working tree (DK-114 / m10).
 """
 
 from __future__ import annotations
@@ -157,12 +161,18 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
     for r, a, e in ((ml_T, arm, "E_T"), (a0_T, "A0", "E_T"), (ml_M, arm, "E_M"), (a0_M, "A0", "E_M")):
         if r.arm != a or r.execution != e or r.h_star != h:
             raise ValueError(f"run {r.arm}/{r.execution}/{r.h_star}h is not {a}/{e} at h* = {h}h")
+    for name, r in (("ml_T", ml_T), ("a0_T", a0_T), ("ml_M", ml_M), ("a0_M", a0_M), ("W_DEV ML*", dev_run)):
+        if not r.research:  # DK-114 / m10: only runs of the research entry point (runner.run_book)
+            raise ValueError(f"{name}: not a research run (runner.run_book); its DT4 record would not be one")
     reg, clf = families(arm)
     if int(getattr(final_model, "horizon", -1)) != int(h):
         raise ValueError(f"the final model is not for h* = {h}h")
     fams = getattr(final_model, "reg", None)
     if fams is not None and reg not in fams:
         raise ValueError(f"the final model has no {reg} regressor (ML* = {arm})")
+    cfams = getattr(final_model, "clf", None)  # deferred 19b minor: the A1 / P8 classifier of ML*'s family
+    if (fams is None) != (cfams is None) or (cfams is not None and clf not in cfams):
+        raise ValueError(f"the final model has no {clf} classifier (ML* = {arm}: {reg} / {clf})")
     s = cv.canonical(panel.samples, h)
     if len(s) == 0:
         raise ValueError("no valid holdout labels for P7 / P8")

@@ -15,7 +15,7 @@ import pandas as pd
 import pytest
 
 from luna.v7 import cv, features, guard, models, runner, runrecord, selection, verdict, windows
-from luna.v7.arms import arm_scores
+from luna.v7.arms import arm_scores, families
 from luna.v7.constants import FROZEN
 from luna.v7.data.instances import Instance
 from luna.v7.data.notices import NoticeVersion
@@ -87,6 +87,16 @@ class FakeFold:
             out[f"p_{fam}"] = 0.6
             out[f"p_{fam}_cal"] = 0.6
         return out
+
+
+class _FamilyFold:
+    """A FakeFold with the ``cv.FoldModel`` family maps (``reg`` / ``clf`` keyed by family)."""
+
+    def __init__(self, inner: FakeFold, reg: dict, clf: dict) -> None:
+        self.inner, self.horizon, self.reg, self.clf = inner, inner.horizon, reg, clf
+
+    def predict(self, df: pd.DataFrame) -> pd.DataFrame:
+        return self.inner.predict(df)
 
 
 class NoP1Cal:
@@ -583,9 +593,15 @@ def test_dt4_run_record(tmp_path, dev_valid):
     other = replace(runs[0], integrity=(*runs[0].integrity, "x"))
     assert runrecord.run_output_sha256(other) != ids[0]["output_sha256"]
     assert _record([other, runs[1]], conv)["run_id"] != rec["run_id"]
-    assert _record(runs, conv, dirty=True)["run_id"] != rec["run_id"]
-    with pytest.raises(ValueError, match="clean working tree"):
-        _record(runs, conv, dirty=True, research=True)
+    # DK-114 / m10: run_book output is a research run, so its record is a research record whatever the
+    # caller passes, and a dirty working tree is refused
+    assert all(r.research for r in runs) and rec["research"] is True
+    assert _record(runs, conv, research=False)["research"] is True
+    for kw in (dict(dirty=True), dict(dirty=True, research=True), dict(dirty=True, research=False)):
+        with pytest.raises(ValueError, match="clean working tree"):
+            _record(runs, conv, **kw)
+    plain = [replace(r, research=False) for r in runs]  # e.g. a direct engine.run (not a research entry)
+    assert _record(plain, conv, dirty=True)["run_id"] != _record(plain, conv)["run_id"]
     for bad in (dict(runs=[]), dict(commit="xyz"), dict(data_manifests={}), dict(uv_lock_sha256="no"),
                 dict(dirty="no")):
         with pytest.raises(ValueError):
@@ -691,6 +707,20 @@ def test_holdout_inputs_require_authorization(dev_valid):
         holdout_inputs(auth=auth(), **{**kw, "ml_T": kw["a0_T"]})
     with pytest.raises(ValueError, match="undefined"):
         holdout_inputs(auth=auth(), **{**kw, "panel": _panel(h, rate=float("nan"))})
+    # DK-114 / m10: only runs of the research entry point (run_book) are accepted
+    for name in ("ml_T", "a0_T", "ml_M", "a0_M", "dev_ml_run"):
+        with pytest.raises(ValueError, match="research"):
+            holdout_inputs(auth=auth(), **{**kw, name: replace(kw[name], research=False)})
+    # deferred 19b minor: the classifier mapping must belong to ML*'s family (A2 -> logit_en, A3 -> lgb_clf)
+    reg, clf = families(arm)
+    other = "lgb_clf" if clf == "logit_en" else "logit_en"
+    fm = FakeFold(fold(9, 0, 1), h, 1.0)
+    for bad_clf in ({other: object()}, {}):
+        bad = _FamilyFold(fm, reg={reg: object()}, clf=bad_clf)
+        with pytest.raises(ValueError, match="classifier"):
+            holdout_inputs(auth=auth(), **{**kw, "final_model": bad})
+    good = _FamilyFold(fm, reg={reg: object()}, clf={clf: object(), other: object()})
+    assert isinstance(holdout_inputs(auth=auth(), **{**kw, "final_model": good}), verdict.HoldoutInputs)
     if dev.kill:  # the real W_DEV result: a kill never opens the holdout (DEC-19)
         with pytest.raises(ValueError, match="kill"):
             rest = {k: v for k, v in kw.items() if k not in ("dev_ml_run", "dev_kill")}

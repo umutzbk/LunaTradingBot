@@ -352,3 +352,28 @@ def test_validate_rejects_bad_samples():
     with pytest.raises(ValueError, match="horizon"):
         run_fold(FOLD, df, 72)
     assert FROZEN.cv.purge_ns == 24 * H and to_ns("2021-01-01") == D0
+
+
+def test_t_fit_excludes_tr_rows_purged_at_the_sel_start(monkeypatch):
+    """DK-39 (user round 2, ruling R38; AMB-30): T_fit = purged T_tr ∪ purged T_sel (S-10.4 step 6 "each with
+    the purge"): a T_tr row whose label resolves within 24 h of the T_sel start is not refitted, although the
+    refit's next block is T_cal."""
+    df = _full()
+    ts = df["decision_ts"].to_numpy()
+    last_tr = np.flatnonzero(ts < FOLD.tr[1])[-4:]  # the last T_tr decision (4 rows)
+    df.loc[last_tr, "label_known_at"] = FOLD.sel[0] - 24 * H + 1  # purged at the T_sel start only
+    assert (df.loc[last_tr, "label_known_at"] <= FOLD.cal[0] - 24 * H).all()  # admissible for T_cal
+    idx = split(df, FOLD)
+    assert not set(last_tr) & set(idx["tr"])
+    seen = []
+    real_refit = models.refit
+
+    def spy_refit(cfg, best_iter, X_fit, y_fit):  # noqa: N803
+        seen.append(set(X_fit.index))
+        return real_refit(cfg, best_iter, X_fit, y_fit)
+
+    monkeypatch.setattr(models, "refit", spy_refit)
+    run_fold(FOLD, df, 24)
+    fit = set(df.index[idx["tr"]]) | set(df.index[idx["sel"]])
+    assert seen and all(s == fit for s in seen)
+    assert all(not (s & set(last_tr)) for s in seen)

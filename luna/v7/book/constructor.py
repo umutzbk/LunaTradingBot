@@ -36,6 +36,10 @@ One constructor for every arm; only the scores change. At decision t, in this or
    risk order, reason ``risk_gross``) back to 1.0 E; halted / pending legs get no order but count in the
    gross (``risk_gross_halted`` when they alone exceed it). The per-leg and liquidity caps stay target /
    entry caps, so the 25 % drift rule stays reachable.
+7. **Neutrality report** (DK-53, user round 2): a post-decision book (``post``) with
+   ``|L - S| > 0.05 (L + S)`` gets the note ``non_neutral_post``; it is never re-balanced
+   (``BookRun.non_neutral_decisions`` counts them). The BTC hedge is outside the S-7.3 gross limit
+   (|H_B| <= 0.5 E is capped by S-7.4; DK-109).
 
 Halted instruments (``halted`` evaluated by the engine AT the decision time t, point-in-time: 1m bars opening
 in [t - 60 min, t), AMB-16 (j); required for every held leg): no open and no reduce is emitted; an exit is
@@ -62,6 +66,7 @@ from luna.v7.universe import GateRow, eligible
 
 BK = FROZEN.book
 LIQ = FROZEN.costs.liquidity_cap
+NON_NEUTRAL = "non_neutral_post"  # decision note: the post-decision book is outside the S-7.1 band (DK-53)
 
 
 @dataclass(frozen=True)
@@ -363,4 +368,11 @@ def targets(
         return sorted(xs, key=lambda o: (o.symbol, o.side))
 
     orders = tuple(srt(forced_orders) + srt(exit_orders) + srt(neutral_close) + srt(reduces) + srt(opens))
+    # DK-53 (user round 2): report a post-decision book outside the neutrality band (halted / pending legs,
+    # the drift band, or a proportional risk_gross / cap_gross_entry cut keeping an existing L/S imbalance,
+    # AMB-16 (e)); reporting only, nothing is re-balanced
+    pl = sum(v for v in post.values() if v > 0)
+    ps = -sum(v for v in post.values() if v < 0)
+    if abs(pl - ps) > BK.neutral_tol * (pl + ps) * (1 + EPS) + EPS * e:
+        notes.append(NON_NEUTRAL)
     return Targets(t, orders, dict(sorted(post.items())), tuple(notes))

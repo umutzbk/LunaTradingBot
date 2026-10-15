@@ -41,7 +41,7 @@ import hashlib
 import pickle
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 import pandas as pd
@@ -529,7 +529,9 @@ def run_book(arm: str, u: ResearchUniverse, provider: DecisionProvider, window: 
              now_ns: int, model: FoldScoreModel | None = None, execution: str = "E_T",
              auth: guard.HoldoutAuthorization | None = None) -> BookRun:
     """One ``engine.run`` (L-norm) through the provider; E_M needs every instrument's aggTrades; the ML arms
-    need the §9 features in the candidate rows (``DecisionProvider(with_features=True)``)."""
+    need the §9 features in the candidate rows (``DecisionProvider(with_features=True)``). A research entry
+    point: the run is marked ``research=True``, so its DT4 record is a research record (refused from a dirty
+    working tree; DK-114 / red-team m10)."""
     if arm != "A0" and not provider.with_features:
         raise ValueError(f"{arm} scores the §9 features: the provider must be built with_features=True")
     if arm != "A0" and model is not None and model.ml_star != arm and arm in ("A2", "A3"):
@@ -541,7 +543,7 @@ def run_book(arm: str, u: ResearchUniverse, provider: DecisionProvider, window: 
         if miss:
             raise ValueError(f"E_M needs aggTrades for {miss}")
     inputs = u.engine_inputs(provider, now_ns, auth)
-    return engine.run(arm, inputs, window, h, model=model, execution=execution)
+    return replace(engine.run(arm, inputs, window, h, model=model, execution=execution), research=True)
 
 
 def decision_log(run: BookRun, provider: DecisionProvider,

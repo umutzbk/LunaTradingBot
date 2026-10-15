@@ -8,8 +8,12 @@ leakage / integrity findings). No I/O, no data access, no training.
   model, S-13.2 / S-6.1). Either ``invalid`` → ``INVALID RUN`` with the run's S-5.4 text (B / C: ``INVALID RUN
   — terminal settlement not reconstructible``); the forward relaxation of EC-11 never applies here. A required
   ledger failing ``accounting.k10_ok`` (K10, incl. the summation-by-parts ``q_breaks``) or
-  ``accounting.daily_ok`` (S-8.1 daily identity) is an integrity failure → ``INVALID RUN``; so is any
-  caller-supplied integrity / guard finding and a K8 rate (invalid labels, missing funding) > 0.5 %.
+  ``accounting.daily_ok`` (S-8.1 daily identity) is an integrity failure → ``INVALID RUN``, and so is a
+  required run that cannot be accounted (``account()`` raises ``ValueError``: missing tick, not flat, missing
+  B, ...; reason ``"<run>: INVALID RUN — K10 / accounting integrity failure (<error>)"``, DK-112 / red-team
+  m8) or whose decision log lacks ``killed`` (the P3 input; the engine always writes it, DK-113): never an
+  exception; so is any caller-supplied integrity / guard finding and a K8 rate (invalid labels, missing
+  funding) > 0.5 %.
   Leakage, integrity, K8 and the S-10.7 result are REQUIRED inputs (an empty tuple means "checked, nothing
   found"); a non-empty S-10.7 kill refuses the call (the holdout is never opened, DEC-19).
 * **E_M runs are secondary (S-6.2; AMB-22 (g), normative amendment required):** an invalid or non-accountable
@@ -413,8 +417,16 @@ def holdout(x: HoldoutInputs) -> Verdict:
         bad.append(f"K8: missing funding {x.k8.missing_funding_rate:.4%} > {lim:.1%}")
     leds: dict[str, Ledger] = {}
     if all(r.valid for r in req.values()):
-        leds = {k: account(r) for k, r in req.items()}
-        bad += [f"{k}: {INTEGRITY_K10}" for k, led in leds.items() if not (k10_ok(led) and daily_ok(led))]
+        for k, r in req.items():
+            try:
+                leds[k] = account(r)
+            except ValueError as e:  # missing tick / not flat / missing B ...: K10 integrity (DK-112 / m8)
+                bad.append(f"{k}: {INTEGRITY_K10} ({e})")
+                continue
+            if not (k10_ok(leds[k]) and daily_ok(leds[k])):
+                bad.append(f"{k}: {INTEGRITY_K10}")
+            if r.decisions is None or "killed" not in r.decisions.columns:  # P3 input (DK-113 / m9)
+                bad.append(f"{k}: integrity: decisions table without the 'killed' column")
     if bad:
         app = applicable(invalid=True, leakage=leak, dev_kill=False, criteria={}, p1_em=None)
         return Verdict(INVALID, tuple(bad + reasons), tuple(app), details=det)
@@ -444,7 +456,8 @@ def holdout(x: HoldoutInputs) -> Verdict:
     crit["P11"] = p11_ok(ml)
     det.update(F_net=ml.F_net, C_exec_over_F_net=ratio, mdd=mdd, killed=killed,
                stressed_mean_daily_net=mean_daily_net(st), p8_slope=slope, sharpe=sh,
-               mean_daily_net=mean_daily_net(ml), dev_mean_daily_net=x.dev_mean_daily_net)
+               mean_daily_net=mean_daily_net(ml), dev_mean_daily_net=x.dev_mean_daily_net,
+               non_neutral_decisions=x.ml_T.non_neutral_decisions)  # DK-53 diagnostic (reporting only)
     sec, a1 = ({}, None)
     if x.secondary is not None:
         sec, a1 = secondary_family(x.secondary, x.a1_calib, x.B, x.seed)

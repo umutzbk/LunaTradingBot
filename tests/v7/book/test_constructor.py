@@ -392,3 +392,22 @@ def test_marked_gross_hard_limit():
     assert "risk_gross_halted" in tg.notes
     got = [(o.symbol, o.kind, o.target, o.reason) for o in tg.orders]
     assert got == [("L2", "reduce", 0.0, "risk_gross")]
+
+
+def test_non_neutral_post_book_is_reported():
+    """DK-53 / DK-109 (user round 2; AMB-16 (e)): the gross cuts keep an L/S imbalance; a post-decision book
+    outside the S-7.1 neutrality band (|L - S| > 0.05 (L + S)) is reported (note ``non_neutral_post``), never
+    corrected (reporting only)."""
+    shorts = tuple(leg(f"S{i}", SHORT) for i in range(1, 6))
+    rows = side_rows("L", LONG, 5) + side_rows("S", SHORT, 5)
+    # inside the band (L 0.49, S 0.5): no note
+    longs = tuple(leg(f"L{i}", LONG) for i in range(2, 6)) + (leg("L1", LONG, 0.09),)
+    tg = run(longs + shorts, rows, qv={"L1": 160_000.0})
+    assert "non_neutral_post" not in tg.notes
+    # a halted long at 0.3 with the risk_gross cut of every other leg: L 0.61, S 0.39 after the cut
+    longs = tuple(leg(f"L{i}", LONG) for i in range(2, 6)) + (leg("L1", LONG, 0.3),)
+    tg = run(longs + shorts, rows, halted={"L1": True})
+    lg_ = sum(v for v in tg.post.values() if v > 0)
+    sh_ = -sum(v for v in tg.post.values() if v < 0)
+    assert abs(lg_ - sh_) > 0.05 * (lg_ + sh_) and "risk_gross" in tg.notes
+    assert tg.notes[-1] == "non_neutral_post"

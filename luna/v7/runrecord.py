@@ -98,10 +98,11 @@ def run_output_sha256(run: BookRun) -> str:
 
 
 def run_identity(run: BookRun) -> dict:
-    """The identity of one executed book: arm, h*, window, execution model, equity layer, output sha256."""
+    """The identity of one executed book: arm, h*, window, execution model, equity layer, validity, whether
+    a research entry point produced it, output sha256."""
     return {"arm": run.arm, "h": int(run.h_star), "window": [int(run.window[0]), int(run.window[1])],
             "execution": run.execution, "layer": run.layer, "valid": bool(run.valid),
-            "output_sha256": run_output_sha256(run)}
+            "research": bool(run.research), "output_sha256": run_output_sha256(run)}
 
 
 def library_versions() -> dict[str, str]:
@@ -126,12 +127,18 @@ def run_record(*, commit: str, dirty: bool, config: Mapping, data_manifests: Map
     state, the ``uv.lock`` sha256, the identity and output sha256 of every executed book, the per-fit
     convergence rows (with a not-converged count) and ``extra``. ``run_id`` is the sha256 of the canonical
     JSON of everything else (deterministic). Validated (malformed commit / sha256, missing manifest or runs:
-    refused) and checked with ``schema.validate("DT4", ...)``. A record that claims a research run
-    (``research=True``) is refused from a dirty working tree; otherwise ``code_dirty`` records it."""
+    refused) and checked with ``schema.validate("DT4", ...)``. A research record is refused from a dirty
+    working tree; otherwise ``code_dirty`` records it. The record is a research record when any covered run
+    comes from a research entry point (``BookRun.research``, set by ``runner.run_book``, so also every
+    ``dev_selection`` book and every ``holdout_inputs`` run) or the caller passes ``research=True``; the
+    caller's flag can never unset it (DK-114 / red-team m10: no longer a caller convention)."""
     if not _COMMIT.match(str(commit)):
         raise ValueError("commit must be a 40-hex git commit")
     if not isinstance(dirty, bool):
         raise ValueError("dirty must be a bool (code_state)")
+    if not runs or not all(isinstance(r, BookRun) for r in runs):
+        raise ValueError("runs: the executed books this record covers are required")
+    research = bool(research) or any(r.research for r in runs)
     if research and dirty:
         raise ValueError("a research run record needs a clean working tree (code_dirty)")
     if not data_manifests:
@@ -141,8 +148,6 @@ def run_record(*, commit: str, dirty: bool, config: Mapping, data_manifests: Map
             raise ValueError(f"{name}: not a sha256")
     if not seeds or not all(isinstance(v, int) and not isinstance(v, bool) for v in seeds.values()):
         raise ValueError("seeds must be a non-empty mapping of ints")
-    if not runs or not all(isinstance(r, BookRun) for r in runs):
-        raise ValueError("runs: the executed books this record covers are required")
     conv = [dict(r) for r in convergence]
     bad = [r for r in conv if r.get("converged") is False]
     body = {

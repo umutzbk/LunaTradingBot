@@ -39,7 +39,8 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "S-1.7": _m("netguard", "guard", "forward_store"),
     "S-1.8": _m("universe", "windows"),
     "S-2.1": _m("universe"),
-    "S-2.2": _m("data.instances", "data.klines", "universe"),
+    "S-2.2": (*_m("data.instances", "data.klines", "universe"),
+              "doc: the current instance switches at its first bar's known_at (round 2 DK-108, AMB-31)"),
     "S-2.3": _m("universe"),
     "S-2.4": (KRAKEN,),
     "S-2.5": _m("data.notices", "universe"),
@@ -64,11 +65,13 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "S-6.3": _m("verdict"),
     "S-7.1": (*_m("book.constructor"),
               "doc: AMB-16 (d) / (e) resolved by user decision 2026-10-15 (clarifications round 1); the (e) "
-              "marked-gross reading R35 awaits docket confirmation"),
+              "marked-gross reading R35 confirmed in round 2 (DK-51); cuts keep an existing L/S imbalance, "
+              "reported as non_neutral_post (DK-53, AMB-16 (e))"),
     "S-7.2": (*_m("arms", "book.constructor"), "doc: the A1 veto is entry-only (DK-42, AMB-13 (c))"),
     "S-7.3": (*_m("book.risk", "runner"),
               "doc: staleness inputs AMB-25 (b) pending user decision; one-sided flattening timing AMB-28 "
-              "resolved by user decision 2026-10-15"),
+              "resolved by user decision 2026-10-15; the BTC hedge is outside the gross limit (DK-109, "
+              "AMB-16 (e))"),
     "S-7.4": _m("book.hedge"),
     "S-8.1": (*_m("book.engine", "book.ledger", "accounting"),
               "doc: AMB-20 and AMB-21 (b) resolved by user decision 2026-10-15 (clarifications round 1); no "
@@ -80,7 +83,7 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "S-10.1": _m("cv"),
     "S-10.2": _m("windows"),
     "S-10.3": _m("cv"),
-    "S-10.4": _m("cv", "windows"),
+    "S-10.4": (*_m("cv", "windows"), "doc: T_fit = purged T_tr ∪ purged T_sel (round 2 DK-39, AMB-30)"),
     "S-10.5": _m("models", "cv"),
     "S-10.6": _m("selection", "stats", "runner", "runner_select"),
     "S-10.7": _m("selection", "runner_select"),
@@ -163,13 +166,15 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "L10": _m("guard", "netguard", "forward_store", "spec"),
     "L11": (*_m("arms"),
             "doc: audit item (no V5 / V6 outcome input; the Kraken outcome guard is not implemented)"),
-    "L12": _m("timeutil", "data.klines"),
+    "L12": (*_m("timeutil", "data.klines"),
+            "doc: integer ns window-checked, floats refused by to_ns (DK-106 / DK-110, AMB-32 (a))"),
     "L13": _m("stats", "cv"),
     "L14": _m("guard"),
     # --- acceptance -----------------------------------------------------------------------------------------
     "P1": _m("verdict", "stats"),
     "P2": _m("verdict", "accounting"),
-    "P3": _m("verdict"),
+    "P3": (*_m("verdict", "book.engine"),
+           "doc: an empty decision log keeps the killed column (DK-113, AMB-32 (d))"),
     "P4": _m("verdict"),
     "P5": _m("verdict", "accounting"),
     "P6": _m("verdict", "accounting"),
@@ -190,7 +195,8 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "K8": (*_m("verdict", "runner", "runner_select"),
            "doc: missing-funding share AMB-27 (b) pending user decision"),
     "K9": _m("guard", "netguard"),
-    "K10": _m("accounting"),
+    "K10": (*_m("accounting", "selection", "verdict"),
+            "doc: an accounting error on a required run -> INVALID RUN, never raised (DK-112, AMB-32 (c))"),
     "K11": _m("selection", "book.engine", "forward"),
     # --- deployment gates -----------------------------------------------------------------------------------
     "D1": _m("deploy"),
@@ -212,7 +218,8 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "DT1": _m("data.schema", "universe", "features", "runner"),
     "DT2": _m("data.schema", "labels"),
     "DT3": _m("data.schema", "windows"),
-    "DT4": (*_m("data.schema", "runrecord"), "doc: run-record contents AMB-27"),
+    "DT4": (*_m("data.schema", "runrecord", "runner"),
+            "doc: run-record contents AMB-27; research runs always record as research (DK-114, AMB-32 (e))"),
     # --- gates ----------------------------------------------------------------------------------------------
     **{f"U{i}": _m("universe") for i in range(1, 9)},
     # --- Stage 0 items --------------------------------------------------------------------------------------

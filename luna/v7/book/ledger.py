@@ -18,6 +18,16 @@ from typing import Literal
 from luna.v7.book.execution import ExecView, Fill
 from luna.v7.timeutil import D
 
+# Column schemas of the ledger tables (the rows built below), so an empty table still carries its columns
+# (DK-113 / red-team m9)
+FILL_COLS: tuple[str, ...] = (*Fill.__dataclass_fields__, "role", "side", "q_after", "entry_decision_ts")
+FUNDING_COLS = ("ts", "symbol", "instance", "position_id", "role", "qty", "rate", "mark", "cash")
+POSITION_COLS = ("ts", "symbol", "instance", "position_id", "role", "qty", "mark", "mark_source", "notional",
+                 "pending_exit")
+MARK_COLS = ("ts", "equity", "cash", "gross_legs", "hedge_notional", "btc_mark")
+DAILY_COLS = ("day", "start_ts", "end_ts", "equity_start", "equity_end", "net", "funding", "fees",
+              "spread_slip", "price")
+
 Role = Literal["leg", "hedge"]
 
 

@@ -69,7 +69,7 @@ import pandas as pd
 from luna.v7 import guard, windows
 from luna.v7.arms import arm_scores
 from luna.v7.book import EPS, Leg, Order, hedge
-from luna.v7.book.constructor import Targets, targets
+from luna.v7.book.constructor import NON_NEUTRAL, Targets, targets
 from luna.v7.book.execution import (
     INVALID_BTC,
     INVALID_MARK,
@@ -89,7 +89,15 @@ from luna.v7.book.execution import (
     settle,
     taker_at,
 )
-from luna.v7.book.ledger import Ledger, Position
+from luna.v7.book.ledger import (
+    DAILY_COLS,
+    FILL_COLS,
+    FUNDING_COLS,
+    MARK_COLS,
+    POSITION_COLS,
+    Ledger,
+    Position,
+)
 from luna.v7.book.risk import RiskActions, RiskLayer
 from luna.v7.constants import FROZEN
 from luna.v7.data.instances import Instance, current_instance
@@ -192,10 +200,22 @@ class BookRun:
     equity0: float = E0  # starting equity (book units; USD in L-265 / L-10k)
     filter_provenance: tuple[str, ...] = ()  # USD layers: provenance of every supplied filter (S-14.1)
     filters_missing: tuple[str, ...] = ()  # USD layers: symbols excluded (never traded) for lack of filters
+    # produced by a research entry point (``runner.run_book``): its DT4 record is always a research record,
+    # refused from a dirty working tree (DK-114 / red-team m10; ``runrecord.run_record``)
+    research: bool = False
 
     @property
     def valid(self) -> bool:
         return self.invalid is None
+
+    @property
+    def non_neutral_decisions(self) -> int:
+        """DK-53 diagnostic (reporting only): decisions whose post-decision book ends outside the S-7.1
+        neutrality band after the gross cuts (constructor note ``non_neutral_post``)."""
+        d = self.decisions
+        if d is None or len(d) == 0 or "notes" not in d.columns:
+            return 0
+        return int(sum(NON_NEUTRAL in tuple(n) for n in d["notes"]))
 
 
 @dataclass
@@ -886,8 +906,22 @@ def _scaled(f: Fill, qty: float) -> Fill:
     return replace(f, qty=float(qty), fee=f.fee * r, spread_cost=f.spread_cost * r, slip_cost=f.slip_cost * r)
 
 
-def _frame(rows: list[dict], cols: list[str] | None = None) -> pd.DataFrame:
-    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=cols or [])
+# the decision-log schema (``_Sim.on_decision``); the USD layers add ``constructible`` / ``infeasible``
+DECISION_COLS = ("t", "equity", "stale", "killed", "paused", "n_orders", "orders", "notes", "hedge_reason",
+                 "hedge_target", "beta_book", "n_post", "post", "prices")
+LOT_DECISION_COLS = (*DECISION_COLS, "constructible", "infeasible")
+
+
+def _frame(rows: list[dict], cols: tuple[str, ...]) -> pd.DataFrame:
+    """A run table with its schema columns, also when empty (DK-113 / red-team m9: an empty decision log keeps
+    ``killed``, so the P3 kill check returns instead of raising)."""
+    if not rows:
+        return pd.DataFrame(columns=list(cols))
+    df = pd.DataFrame(rows)
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        raise RuntimeError(f"internal: run table rows lack schema columns {missing}")
+    return df
 
 
 USD_LAYERS = ("L-265", "L-10k")
@@ -937,8 +971,10 @@ def _run(arm: str, inputs: EngineInputs, window: tuple[int, int], h_star: int, m
     led = sim.led
     return BookRun(
         arm=arm, h_star=h_star, execution=execution, layer=layer, window=(lo, end),
-        fills=_frame(led.fills), marks=_frame(led.marks), positions=_frame(led.positions),
-        funding_flows=_frame(led.funding), daily=_frame(led.daily), decisions=_frame(sim.decisions),
+        fills=_frame(led.fills, FILL_COLS), marks=_frame(led.marks, MARK_COLS),
+        positions=_frame(led.positions, POSITION_COLS), funding_flows=_frame(led.funding, FUNDING_COLS),
+        daily=_frame(led.daily, DAILY_COLS),
+        decisions=_frame(sim.decisions, DECISION_COLS if lots is None else LOT_DECISION_COLS),
         integrity=tuple(dict.fromkeys(sim.integrity)), invalid=sim.invalid, invalid_detail=sim.invalid_detail,
         invalid_ts=sim.invalid_ts, equity0=float(equity0),
     )

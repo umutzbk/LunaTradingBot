@@ -53,8 +53,31 @@ def build_instances(bars15: pd.DataFrame, data_end_ns: int) -> list[Instance]:
     ]
 
 
+def start_known_at(inst: Instance) -> int:
+    """When an instance's start is known: its first volume > 0 bar is known at the bar close (R3 ``known_at``
+    = open + 15 min)."""
+    return int(inst.first_bar_ts) + BAR_15M
+
+
 def current_instance(insts: list[Instance], t_ns: int) -> Instance | None:
-    """PIT (DEC-44): latest instance with ``first_bar_ts <= t``; None once ``end_known_at <= t``."""
+    """PIT (DEC-44, L1): the latest instance whose first bar is known by t - 1 min (``first_bar_ts + 15 min
+    <= t - 1 min``, DK-108 / red-team m5, user round 2 ruling R38: the volume > 0 that defines the first bar
+    is known only at its close); None once ``end_known_at <= t``. Before that, the earlier instance (if not
+    yet ended) stays current; in practice it has ended >= 7 d earlier, so the result is None."""
+    cur = None
+    for i in insts:
+        if start_known_at(i) <= t_ns - MIN:
+            cur = i
+    if cur is None or (cur.end_known_at is not None and cur.end_known_at <= t_ns):
+        return None
+    return cur
+
+
+def started_instance(insts: list[Instance], t_ns: int) -> Instance | None:
+    """Attribution only, NOT a point-in-time membership: the latest instance with ``first_bar_ts <= t`` that
+    has not ended by ``end_known_at``. Used to attribute a notice version to the instance live at its
+    ``known_at`` (``notices.U6State``); the version is used only at decisions where that instance is
+    ``current_instance`` (>= 16 min after its first bar), so no information is used before it is known."""
     cur = None
     for i in insts:
         if i.first_bar_ts <= t_ns:

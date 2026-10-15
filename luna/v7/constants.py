@@ -2,13 +2,24 @@
 
 Spec: docs/superpowers/specs/2026-10-14-luna-v7-ml-research-design.md (tag v7-ml-spec-frozen).
 Nothing here may be changed after the freeze; a change is a normative amendment.
+
+Immutable at runtime (DK-111 / red-team m3): every class is a frozen dataclass, sequences are tuples and the
+keyed groups are read-only ``MappingProxyType`` views (``_ro``), so ``FROZEN.accept.p6["spread"] = 1.0``
+raises ``TypeError``. Copying (``dict(...)``, ``**``), indexing and iteration work as with a dict.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 
 from luna.v7.timeutil import MIN, NS, H
+
+
+def _ro(**kw: object) -> Mapping:
+    """A read-only mapping of frozen scalars (a fresh ``MappingProxyType`` per dataclass instance)."""
+    return MappingProxyType(dict(kw))
 
 
 @dataclass(frozen=True)
@@ -154,8 +165,8 @@ class Search:  # S-10.5 (DEC-9): 14 configurations per horizon
     logit: tuple[float, float] = (1e-2, 0.5)  # (alpha, l1_ratio), fixed
     lgb_clf: tuple[int, int] = (15, 2000)  # (num_leaves, min_data_in_leaf), fixed
     seed: int = 20261014  # S-10.5 "Seeds are fixed": one seed for all model / bagging seeds
-    lgb_fixed: dict = field(
-        default_factory=lambda: dict(
+    lgb_fixed: Mapping = field(
+        default_factory=lambda: _ro(
             learning_rate=0.03, lambda_l2=5, feature_fraction=0.8, bagging_fraction=0.8, bagging_freq=1,
             max_trees=1500, early_stopping=100,
         )
@@ -186,13 +197,13 @@ class Kill:  # S-10.7
 class Accept:  # S-13.2 acceptance P1..P11
     p2_ratio: float = 0.60
     p3_mdd: float = 0.15
-    p4: dict = field(
-        default_factory=lambda: dict(
+    p4: Mapping = field(
+        default_factory=lambda: _ro(
             active_days=60, gross_frac=0.10, quarters=48, closed_legs=100, clusters=20
         )
     )
-    p5: dict = field(default_factory=lambda: dict(min_pos_q=2, max_q_share=0.60, top1=0.30, top3=0.60))
-    p6: dict = field(default_factory=lambda: dict(fee=1.5, slip=1.5, spread=3.0))
+    p5: Mapping = field(default_factory=lambda: _ro(min_pos_q=2, max_q_share=0.60, top1=0.30, top3=0.60))
+    p6: Mapping = field(default_factory=lambda: _ro(fee=1.5, slip=1.5, spread=3.0))
     p8: tuple[float, float] = (0.5, 1.5)
     p6_min_net: float = 0.0  # P6: stressed mean daily net >= 0
     p9_sharpe: float = 1.0
@@ -207,7 +218,7 @@ class Forward:  # S-15 (DEC-10), scaled to 180 days
     days: int = 180
     eval_quarter_share: float = 0.90
     min_eval_days: int = 144
-    p4: dict = field(default_factory=lambda: dict(active_days=30, closed_legs=50, clusters=10))
+    p4: Mapping = field(default_factory=lambda: _ro(active_days=30, closed_legs=50, clusters=10))
     shift_max_h: int = 2
     gap_h: int = 24
     extension_days: int = 90

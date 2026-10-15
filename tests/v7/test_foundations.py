@@ -188,8 +188,10 @@ def test_ns_array_accepts_valid():
     t = to_ns("2024-06-01T00:00:00Z")
     out = ns_array(pd.Series([float(t), float(t + MIN)]), "known_at")
     assert out.dtype == np.int64 and list(out) == [t, t + MIN]
-    ints = np.array([0, 5, t], dtype=np.int64)  # integer dtypes are accepted as-is
+    ints = np.array([t - 5, t, t + 5], dtype=np.int64)  # in-window integers are accepted as-is
     assert ns_array(ints, "open_ts").tolist() == ints.tolist()
+    with pytest.raises(ValueError, match="window"):  # integers are window-checked too (DK-106 / m1)
+        ns_array(np.array([0, 5, t], dtype=np.int64), "open_ts")
     assert ns_array(np.array([], dtype=np.float64), "x").dtype == np.int64
     with pytest.raises(ValueError):
         ns_array(np.array([2**63], dtype=np.uint64), "x")

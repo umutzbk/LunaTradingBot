@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from luna.v7.constants import FROZEN
-from luna.v7.data.instances import Instance, current_instance
+from luna.v7.data.instances import Instance, start_known_at, started_instance
 from luna.v7.timeutil import MIN, H, to_ns
 
 Kind = Literal["delisting", "postponement", "cancellation"]
@@ -145,7 +145,9 @@ class U6State:
             ka = known_at(v)
             if ka is None or not confident_match(v, symbol):
                 continue
-            inst = current_instance(insts, ka)  # the instance live at the version's known_at
+            # the instance live at the version's known_at (attribution; used only once that instance is
+            # current, DK-108: a version published in its first 16 min is not dropped)
+            inst = started_instance(insts, ka)
             if inst is None:
                 continue
             sched = scheduled_ts(v, symbol) if v.kind == "delisting" else None
@@ -167,7 +169,7 @@ class U6State:
         return sched is not None and sched + CLEAR_AFTER_NS <= at and self._no_halt(sched, halted_fn)
 
     def active(self, instance: Instance, t_ns: int, halted_fn: Callable[[int], bool]) -> bool:
-        if t_ns < instance.first_bar_ts or (
+        if t_ns - MIN < start_known_at(instance) or (  # not yet current (DK-108)
             instance.end_known_at is not None and t_ns >= instance.end_known_at
         ):
             return False  # U6 ends with its instance

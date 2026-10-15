@@ -160,3 +160,14 @@ def test_seconds_exact_and_token_continuation():
     assert not confident_match(_v(_txt("XXXUSDT_240628")), "XXXUSDT")
     assert not confident_match(_v(_txt("XXXUSDT-240628")), "XXXUSDT")
     assert confident_match(_v(_txt("XXXUSDT") + " Also XXXUSDT."), "XXXUSDT")
+
+
+def test_version_in_first_16_min_binds_to_new_instance_used_once_current():
+    """DK-108: a version known inside the new instance's first 16 min is attributed to it (not dropped), and
+    U6 counts only once that instance is current (first_bar_ts + 15 min <= t - 1 min)."""
+    first = T0 + 20 * D
+    insts = [Instance(0, T0, T0 + 2 * D, T0 + 9 * D), Instance(1, first, None, None)]
+    v = _v(_txt(t="2024-07-01 09:00 (UTC)"), release=first + 5 * 60 * 10**9, capture=first + 5 * 60 * 10**9)
+    st = U6State([v], "XXXUSDT", insts)
+    assert st.active(insts[1], first + 16 * 60 * 10**9, never)
+    assert not st.active(insts[1], first + 16 * 60 * 10**9 - 1, never)

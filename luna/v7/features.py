@@ -203,6 +203,12 @@ def _funding_feats(fund: pd.DataFrame, t_ns: int) -> dict[str, float]:
     ts = ns_array(fund["funding_ts"], "funding_ts") if len(fund) else np.empty(0, np.int64)
     r8 = fund["r8"].to_numpy(np.float64) if len(fund) else np.empty(0)
     ok = np.isfinite(r8)  # invalid records (and NaN rates) are missing (S-2.6)
+    # F2 lag-1 and F4 reversal pairs: two ADJACENT records of the PIT sequence, both valid, in the 30 d
+    # window; a dropped (invalid) record breaks the pair, as in the TS AR(1) reference (DK-17, AMB-08;
+    # ruling R38)
+    seq = r8[ts > t_ns - 720 * H]
+    adj = np.isfinite(seq[:-1]) & np.isfinite(seq[1:])
+    pa, pb = seq[:-1][adj], seq[1:][adj]
     ts, r8 = ts[ok], r8[ok]
 
     def win(hours: int) -> np.ndarray:
@@ -215,10 +221,8 @@ def _funding_feats(fund: pd.DataFrame, t_ns: int) -> dict[str, float]:
         float(np.mean(np.sign(x30) == np.sign(fl1))) if len(x30) and math.isfinite(fl1) else NAN
     )
     ac = NAN
-    if len(x30) >= 2:
-        a, b = x30[:-1], x30[1:]
-        if np.ptp(a) > 0 and np.ptp(b) > 0:
-            ac = float(np.corrcoef(a, b)[0, 1])
+    if len(pa) >= 2 and np.ptp(pa) > 0 and np.ptp(pb) > 0:
+        ac = float(np.corrcoef(pa, pb)[0, 1])
     out["f2_autocorr1_30d"] = ac
     w7 = win(168)
     x = (ts[w7] - t_ns) / D
@@ -229,7 +233,7 @@ def _funding_feats(fund: pd.DataFrame, t_ns: int) -> dict[str, float]:
     out["f3_slope_7d"] = slope
     out["f3_fl1_minus_fl7"] = fl1 - fl7
     out["f3_accel"] = (fl1 - fl3) - (fl3 - fl7)
-    out["f4_sign_reversals_30d"] = float(np.sum(x30[1:] * x30[:-1] < 0) / len(x30)) if len(x30) else NAN
+    out["f4_sign_reversals_30d"] = float(np.sum(pa * pb < 0) / len(x30)) if len(x30) else NAN
     out["r8_std_30d"] = float(np.std(x30, ddof=1)) if len(x30) >= 2 else NAN
     return out
 

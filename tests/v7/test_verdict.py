@@ -304,8 +304,10 @@ def test_holdout_negative_wiring_p2_p3_p5_p9_p11():
     killed = pd.DataFrame(dict(t=[LO, LO + D], killed=[False, True]))
     v = V.holdout(replace(base, ml_T=replace(base.ml_T, decisions=killed)))
     assert _fails(v) == {"P3", "P4"} and v.details["killed"]
-    with pytest.raises(ValueError, match="killed"):
-        V.holdout(replace(base, ml_T=replace(base.ml_T, decisions=pd.DataFrame(dict(t=[LO])))))
+    # DK-113 / m9: a decision log without `killed` is an integrity failure (a class), never an exception
+    v = V.holdout(replace(base, ml_T=replace(base.ml_T, decisions=pd.DataFrame(dict(t=[LO])))))
+    assert v.cls == V.INVALID
+    assert v.reasons == ("ML* E_T: integrity: decisions table without the 'killed' column",)
     assert _flip("P3") == V.NOGO
     # P5: all net in the first quarter
     v = V.holdout(_inputs(ml_T=_ml(_alt(0.004, 0.0005, 30) + _alt(0.0007, 0.0005, 90))))
