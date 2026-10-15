@@ -164,6 +164,7 @@ def check_listing_only(path: str, *, access: str) -> None:
         return
     if access != "content":
         raise ValueError(f"access must be 'listing' or 'content', got {access!r}")
+    k9.require()  # fail closed: no guarded content decision without a K9 log
     try:
         per = file_period(path)
         if per is None:
@@ -398,6 +399,7 @@ def check_outcome_window(lo: int, hi: int, *, auth: HoldoutAuthorization | None 
     K9-logged."""
     if hi <= lo:
         raise ValueError(f"empty outcome window [{lo}, {hi})")
+    k9.require()  # fail closed: no guarded outcome window without a K9 log
     try:
         _outcome_window(lo, hi, auth, now_ns, m6_span, fresh)
     except (EmbargoBlocked, SealedBeforeL7, HoldoutBlocked) as e:
@@ -415,6 +417,7 @@ def check_data_span(lo_ns: int, hi_ns: int, *, auth: HoldoutAuthorization | None
     lo, hi = int(lo_ns), int(hi_ns)
     if hi <= lo:
         raise ValueError(f"empty data span [{lo}, {hi}) ({what})")
+    k9.require()  # fail closed: no guarded data use without a K9 log
     try:
         _outcome_window(lo, hi, auth, release.trusted_now_ns(), None, False)
     except (EmbargoBlocked, SealedBeforeL7, HoldoutBlocked) as e:
@@ -437,16 +440,24 @@ def _outcome_window(lo: int, hi: int, auth: object, now_ns: int, m6_span: tuple[
 
 
 def e6_captures() -> list[dict]:
-    """Every pinned E6 capture of the canonical opening (both canonical directories, de-duplicated)."""
+    """Every pinned E6 capture of the canonical opening (both canonical directories, de-duplicated); a corrupt
+    line is a GuardFailure (the fetch layer K9-logs it and discards the capture)."""
     out: list[dict] = []
     seen: set[str] = set()
     for d in _dirs():
         p = d / E6_CAPTURES
         if not p.exists():
             continue
-        for line in p.read_text(encoding="utf-8").splitlines():
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
             if line.strip():
-                rec = json.loads(line)
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    rec = None
+                if not isinstance(rec, dict) or not all(isinstance(rec.get(k), str)
+                                                        for k in ("ts", "original", "sha256")):
+                    raise GuardFailure(f"{p} line {n} is corrupt: the E6 capture pins cannot be trusted "
+                                       "(left to governance)")
                 if (key := _sha(rec)) not in seen:
                     seen.add(key)
                     out.append(rec)

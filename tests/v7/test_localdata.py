@@ -27,12 +27,14 @@ def log(tmp_path):
 
 
 @pytest.fixture(scope="module")
-def opened(tmp_path_factory):
-    mp = pytest.MonkeyPatch()
-    try:
-        yield af.authorize(tmp_path_factory.mktemp("opening"), mp)
-    finally:
-        mp.undo()
+def _opening(tmp_path_factory):
+    return af.opening_once(tmp_path_factory.mktemp("opening"))
+
+
+@pytest.fixture
+def opened(_opening, monkeypatch):
+    """The module's opening, ``guard._roots`` pointed at it for this test only (review m-7)."""
+    return af.use_opening(monkeypatch, _opening)
 
 
 def test_k9_log_record_shape_and_incident(log):
@@ -45,14 +47,26 @@ def test_k9_log_record_shape_and_incident(log):
     assert r["sha256"] in inc.read_text(encoding="utf-8")
 
 
-def test_unconfigured_k9_log_is_noted_on_the_refusal():
-    prev = k9.configure(None)
-    try:
-        with pytest.raises(guard.HoldoutBlocked) as ei:
-            guard.check_data_span(HOLD_LO, HOLD_LO + D)
-        assert any("K9" in n and "not configured" in n for n in getattr(ei.value, "__notes__", []))
-    finally:
-        k9.configure(prev)
+def test_guards_refuse_to_run_without_a_k9_log(tmp_path):
+    """Review I-3: fail closed. Every guard / local-data entry refuses (K9NotConfigured) without a log, for
+    an allowed span too; a refusal reaching ``log_refusal`` without a log is still refused."""
+    f = tmp_path / "BTCUSDT-15m-2025-06.zip"
+    f.write_bytes(b"x")
+    df = pd.DataFrame(dict(open_ts=[DEV_T]))
+    with k9.using(None):
+        with pytest.raises(k9.K9NotConfigured):
+            k9.require()
+        for call in (lambda: guard.check_data_span(DEV_T, DEV_T + D),
+                     lambda: guard.check_outcome_window(DEV_T, DEV_T + D, now_ns=to_ns("2026-10-15")),
+                     lambda: guard.check_listing_only(str(f), access="content"),
+                     lambda: localdata.check_file(f), lambda: localdata.read_bytes(f),
+                     lambda: localdata.check_frame(df, ("open_ts",))):
+            with pytest.raises(k9.K9NotConfigured):
+                call()
+        with pytest.raises(k9.K9NotConfigured) as ei:
+            k9.log_refusal(guard.HoldoutBlocked("x"), request={}, rule="r")
+        assert isinstance(ei.value.__cause__, guard.HoldoutBlocked)
+    guard.check_listing_only(str(f), access="listing")  # listings need no log decision
 
 
 def test_unwritable_k9_log_is_noted_and_the_refusal_still_raised(tmp_path):

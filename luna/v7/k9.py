@@ -8,8 +8,10 @@ in its incident directory, to be completed by the operator.
 
 Location: a run configures its log under its own output directory (``configure(K9Log.under(out_dir))`` or
 ``using(...)``); the fetch layer (``luna.v7.fetch.Fetcher``) always has one (its run output directory, or an
-injected ``K9Log``). Logging never replaces the refusal: the refusal is raised in every case; a log that is
-not configured or cannot be written is reported as a note on the raised exception (never swallowed).
+injected ``K9Log``). Fail closed (Task 25 review I-3): every guarded research entry point (the guards
+themselves, ``localdata``, ``DecisionProvider``, ``label_panel``, ``run_book``, ``engine.run``) calls
+``require()`` first and refuses to run without a configured log (``K9NotConfigured``). A configured log that
+cannot be written never replaces the refusal: the failure is a note on the raised exception.
 """
 
 from __future__ import annotations
@@ -27,7 +29,12 @@ import pandas as pd
 REFUSALS = "K9_REFUSALS.jsonl"
 INCIDENTS = "incidents"
 
-__all__ = ["INCIDENTS", "REFUSALS", "K9Log", "configure", "current", "log_refusal", "using"]
+__all__ = ["INCIDENTS", "REFUSALS", "K9Log", "K9NotConfigured", "configure", "current", "log_refusal",
+           "require", "using"]
+
+
+class K9NotConfigured(RuntimeError):
+    """No K9 refusal log is configured: guarded research code refuses to run (fail closed)."""
 
 
 def _json(obj: object) -> str:
@@ -109,6 +116,14 @@ def current() -> K9Log | None:
     return _CURRENT
 
 
+def require() -> K9Log:
+    """The configured K9 log; ``K9NotConfigured`` without one (every guarded entry point calls this first)."""
+    if _CURRENT is None:
+        raise K9NotConfigured("no K9 refusal log is configured: guarded V7 research code refuses to run "
+                              "(configure luna.v7.k9 with the run's output directory, K9Log.under(out_dir))")
+    return _CURRENT
+
+
 @contextlib.contextmanager
 def using(log: K9Log | None) -> Iterator[K9Log | None]:
     """``configure(log)`` for the duration of the block (the previous log is restored)."""
@@ -121,13 +136,13 @@ def using(log: K9Log | None) -> Iterator[K9Log | None]:
 
 def log_refusal(exc: BaseException, *, request: Mapping, rule: str, log: K9Log | None = None,
                 extra: Mapping | None = None) -> dict | None:
-    """Record a guard refusal in ``log`` (default: the configured one). Never raises and never replaces the
-    refusal: an absent or failing log is noted on ``exc`` (the caller re-raises it)."""
+    """Record a guard refusal in ``log`` (default: the configured one). A configured log that cannot be
+    written is noted on ``exc`` (the caller re-raises it). Without any log (unreachable through the guarded
+    entry points, which call ``require`` first) ``K9NotConfigured`` is raised from ``exc``: still refused."""
     lg = log if log is not None else _CURRENT
     if lg is None:
-        exc.add_note("K9 refusal log not configured: this refusal was NOT logged (configure luna.v7.k9 with "
-                     "the run's output directory)")
-        return None
+        raise K9NotConfigured(f"refusal not logged, no K9 log configured: {type(exc).__name__}: "
+                              f"{exc}") from exc
     try:
         return lg.record(request=request, rule=rule, reason=str(exc), exception=type(exc).__name__,
                          extra=extra)

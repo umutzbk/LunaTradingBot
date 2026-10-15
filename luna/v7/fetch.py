@@ -6,11 +6,13 @@
 1. ``netguard.check(req, auth=auth)`` runs BEFORE the transport is touched. A refusal (and a forged / stale
    authorization) is K9-logged (``luna.v7.k9``: UTC time, request, rule, reason, plus an incident stub) and
    raised; the transport is never called.
-2. The transport (``Transport`` protocol; default ``HttpxTransport``) never follows redirects and has a
-   timeout. Any redirect (3xx, or a transport reporting one) is a guard failure everywhere (the allowlist
-   permits none): the content is discarded unparsed (only its sha256 goes into the K9 record) and raised.
+2. The transport (``Transport`` protocol; default ``HttpxTransport``) never follows redirects, has a timeout
+   and a response-size cap (``max_bytes``, default ``MAX_RESPONSE_BYTES`` = 1 GiB, an implementation
+   parameter, AMB-35 (k); a larger response is refused, ``ResponseTooLarge``). Any redirect (3xx, or a
+   transport reporting one) is a guard failure everywhere (the allowlist permits none): refused BEFORE the
+   body is read (the default transport never reads it; the fetcher never touches it) and K9-logged.
 3. Every accepted response gets ``recv_ts`` (the fetcher's clock), the URL and the sha256 of its bytes, in
-   the returned ``Fetched`` and in the run's append-only ``FETCHES.jsonl``.
+   the returned ``Fetched`` and in the run's append-only, fsynced ``FETCHES.jsonl``.
 4. Per class:
    - N1: a ``.zip`` is verified against its published ``.CHECKSUM`` (fetched through the same path; sha256 and
      file name must match) else ``IntegrityError``.
@@ -19,13 +21,13 @@
      be the requested one. M6 (and unparseable) keys are dropped in memory with the canonical span
      (``netguard.partition_m6_keys``, no caller span) before anything is returned or logged; every kept key
      keeps only name, size and checksum (S3 ETag). The raw listing bytes are not returned.
-   - N5: the rows (``fl`` field order, else the default CDX order) are registered in
-     ``netguard.cdx_pair_registry`` under the mode's bound; a row beyond it is a K9-logged guard failure and
-     nothing of the batch is kept.
+   - N5: the rows (``fl`` field order, else the default CDX order) are registered in THIS fetcher's private
+     ``netguard.CdxPairs`` (one run; nothing shared or persisted) under the mode's bound; a row beyond it is
+     a K9-logged guard failure and nothing of the batch is kept. N6 is checked against these pairs only.
    - N6: HTTP 200, no redirect and ``Memento-Datetime`` == ts (``netguard.check_wayback_response``), else a
      K9-logged guard failure with the content discarded. A capture at or after the pre-opening bound (an E6
      capture) is pinned by sha256 next to the opening markers (``guard.pin_e6_capture``): a re-fetch must be
-     byte-identical.
+     byte-identical (a corrupt pin file is a K9-logged guard failure too).
    - Any other non-200 status: ``FetchError`` (no content returned).
 
 Post-opening (E6) mode: ``auth`` = the hardened ``guard.HoldoutAuthorization`` (``netguard`` docstring); never
@@ -37,6 +39,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 import time
 import xml.etree.ElementTree as ET
@@ -51,10 +54,12 @@ from luna.v7 import guard, k9, netguard
 from luna.v7.guard import EmbargoBlocked, GuardFailure, HoldoutBlocked
 from luna.v7.netguard import EndpointRefused, Request
 
-__all__ = ["DEFAULT_TIMEOUT_S", "FETCH_LOG", "FetchError", "Fetched", "Fetcher", "HttpxTransport",
-           "IntegrityError", "Listing", "ListingEntry", "ListingTruncated", "Response", "Transport", "fetch"]
+__all__ = ["DEFAULT_TIMEOUT_S", "FETCH_LOG", "MAX_RESPONSE_BYTES", "FetchError", "Fetched", "Fetcher",
+           "HttpxTransport", "IntegrityError", "Listing", "ListingEntry", "ListingTruncated", "Response",
+           "ResponseTooLarge", "Transport", "fetch"]
 
 DEFAULT_TIMEOUT_S = 30.0
+MAX_RESPONSE_BYTES = 1 << 30  # implementation parameter (AMB-35 (k)); larger archives: daily N1 files
 FETCH_LOG = "FETCHES.jsonl"
 RULE_ALLOWLIST = "S-1.7 endpoint allowlist N1-N6 (refused before network I/O)"
 RULE_REDIRECT = "S-1.7 redirects disabled (N6; every endpoint)"
@@ -73,6 +78,10 @@ class IntegrityError(FetchError):
     """An N1 file does not match its published .CHECKSUM."""
 
 
+class ResponseTooLarge(FetchError):
+    """The response exceeds the fetcher's size cap; refused, nothing returned."""
+
+
 class ListingTruncated(GuardFailure):
     """DK-01: an N2 listing that is truncated (or does not say it is complete) fails closed."""
 
@@ -87,23 +96,34 @@ class Response:
 
 
 class Transport(Protocol):
-    """One GET of exactly ``url`` + ``params``; must never follow redirects; ``timeout`` in seconds."""
+    """One GET of exactly ``url`` + ``params``; must never follow redirects; ``timeout`` in seconds; must not
+    read the body of a 3xx response; must refuse (``ResponseTooLarge``) a body over ``max_bytes``."""
 
-    def get(self, url: str, params: Mapping[str, str], *, timeout: float) -> Response: ...
+    def get(self, url: str, params: Mapping[str, str], *, timeout: float, max_bytes: int) -> Response: ...
 
 
 class HttpxTransport:
     """The default transport: ``httpx`` (a project dependency), ``follow_redirects=False``, a timeout per
-    request. ``_mock`` (an ``httpx`` transport) is for tests only (no network)."""
+    request, a streamed body capped at ``max_bytes`` (a declared or actual larger body is refused), a 3xx
+    body never read. ``_mock`` (an ``httpx`` transport) is for tests only (no network)."""
 
     def __init__(self, *, _mock: httpx.BaseTransport | None = None) -> None:
         self._mock = _mock
 
-    def get(self, url: str, params: Mapping[str, str], *, timeout: float) -> Response:
-        with httpx.Client(follow_redirects=False, timeout=timeout, transport=self._mock) as c:
-            r = c.get(url, params=dict(params) or None)
-            body = b"" if r.is_redirect else r.content  # a redirect body is never read
-            return Response(r.status_code, dict(r.headers), body, str(r.url))
+    def get(self, url: str, params: Mapping[str, str], *, timeout: float, max_bytes: int) -> Response:
+        with httpx.Client(follow_redirects=False, timeout=timeout, transport=self._mock) as c, \
+                c.stream("GET", url, params=dict(params) or None) as r:
+            if 300 <= r.status_code < 400:  # refused by the fetcher; the body is never read
+                return Response(r.status_code, dict(r.headers), b"", str(r.url))
+            declared = r.headers.get("content-length")
+            if declared is not None and declared.isdigit() and int(declared) > max_bytes:
+                raise ResponseTooLarge(f"{url}: declared {declared} bytes > cap {max_bytes}")
+            buf = bytearray()
+            for chunk in r.iter_bytes():
+                buf += chunk
+                if len(buf) > max_bytes:
+                    raise ResponseTooLarge(f"{url}: body exceeds the cap {max_bytes} bytes")
+            return Response(r.status_code, dict(r.headers), bytes(buf), str(r.url))
 
 
 @dataclass(frozen=True)
@@ -151,16 +171,25 @@ def _local(tag: str) -> str:
 
 class Fetcher:
     """The fetch layer of one run. ``out_dir``: the run's output directory (K9 log under ``out_dir/k9`` unless
-    ``k9_log`` is injected; ``FETCHES.jsonl`` in ``out_dir``). ``clock``: ns UTC for ``recv_ts``."""
+    ``k9_log`` is injected; ``FETCHES.jsonl`` in ``out_dir``). ``clock``: ns UTC for ``recv_ts``. The N5 pairs
+    an N6 request may use are this fetcher's own (``cdx_pairs``, read-only use outside the fetch layer)."""
 
     def __init__(self, transport: Transport, out_dir: str | Path, *, k9_log: k9.K9Log | None = None,
-                 timeout: float = DEFAULT_TIMEOUT_S, clock: Callable[[], int] = time.time_ns) -> None:
+                 timeout: float = DEFAULT_TIMEOUT_S, max_bytes: int = MAX_RESPONSE_BYTES,
+                 clock: Callable[[], int] = time.time_ns) -> None:
         t = float(timeout)
         if not math.isfinite(t) or t <= 0:
             raise ValueError(f"timeout must be a finite number of seconds > 0, got {timeout!r}")
-        self.transport, self.timeout, self._clock = transport, t, clock
+        if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes <= 0:
+            raise ValueError(f"max_bytes must be a positive int, got {max_bytes!r}")
+        self.transport, self.timeout, self.max_bytes, self._clock = transport, t, max_bytes, clock
         self.out_dir = Path(out_dir)
         self.k9 = k9_log if k9_log is not None else k9.K9Log.under(self.out_dir)
+        self._cdx = netguard.CdxPairs()
+
+    @property
+    def cdx_pairs(self) -> netguard.CdxPairs:
+        return self._cdx
 
     # -- K9 -------------------------------------------------------------------------------------------------
 
@@ -174,29 +203,30 @@ class Fetcher:
     def fetch(self, req: Request, *, auth: guard.HoldoutAuthorization | None = None) -> Fetched:
         """Check (before any I/O), fetch, verify per class, record (module docstring)."""
         try:
-            kind = netguard.check(req, auth=auth).kind
+            kind = netguard.check(req, auth=auth, cdx_pairs=self._cdx).kind
         except (EndpointRefused, HoldoutBlocked, EmbargoBlocked, GuardFailure) as e:
             self._refused(e, req, RULE_ALLOWLIST if isinstance(e, EndpointRefused) else guard.k9_rule(e))
             raise
         params = {str(k): str(v) for k, v in req.params.items()}
-        resp = self.transport.get(req.url, params, timeout=self.timeout)
+        resp = self.transport.get(req.url, params, timeout=self.timeout, max_bytes=self.max_bytes)
         recv_ts = int(self._clock())
-        body = bytes(resp.body)
         status = int(resp.status)
+        if resp.redirected or 300 <= status < 400:  # refused before the body is touched
+            e = GuardFailure(f"redirect from {req.url} (status {status}): redirects are disabled; discarded "
+                             "unread")
+            self._refused(e, req, RULE_REDIRECT)
+            raise e
+        body = bytes(resp.body)
+        if len(body) > self.max_bytes:
+            raise ResponseTooLarge(f"{req.url}: {len(body)} bytes > cap {self.max_bytes} (nothing returned)")
         if kind == "N6":
             pair = netguard.wayback_pair(req.url)
             assert pair is not None  # check() matched N6
             try:
-                netguard.check_wayback_response(pair[0], status, dict(resp.headers),
-                                                bool(resp.redirected) or 300 <= status < 400)
+                netguard.check_wayback_response(pair[0], status, dict(resp.headers), False)
             except GuardFailure as e:
-                redirect = bool(resp.redirected) or 300 <= status < 400
-                self._refused(e, req, RULE_REDIRECT if redirect else RULE_N6, body)
+                self._refused(e, req, RULE_N6, body)
                 raise
-        elif resp.redirected or 300 <= status < 400:
-            e = GuardFailure(f"redirect from {req.url} (status {status}): redirects are disabled; discarded")
-            self._refused(e, req, RULE_REDIRECT, body)
-            raise e
         elif status != 200:
             raise FetchError(f"{req.url}: HTTP {status} (no content returned)")
         sha = _sha(body)
@@ -210,7 +240,7 @@ class Fetcher:
             out["cdx_pairs"] = self._register_cdx(req, body, auth)
         elif kind == "N6":
             ts, original = netguard.wayback_pair(req.url)  # type: ignore[misc]
-            if ts >= netguard.bounds(None)[1]:  # an E6 capture (only reachable in the E6 mode)
+            if ts >= netguard.bounds(None).n6_first_refused:  # an E6 capture (only reachable in the E6 mode)
                 try:
                     guard.pin_e6_capture(auth, ts=ts, original=original, sha256=sha, recv_ts=recv_ts)
                 except (GuardFailure, HoldoutBlocked) as e:
@@ -285,7 +315,7 @@ class Fetcher:
                                  "registered")
             rows.append((parts[i_ts], parts[i_or]))
         try:
-            netguard.cdx_pair_registry.register_cdx_result(rows, auth=auth)
+            self._cdx._register(rows, auth=auth)
         except GuardFailure as e:
             self._refused(e, req, RULE_N5_BOUND, body)
             raise
@@ -298,6 +328,8 @@ class Fetcher:
                "sha256": sha}
         with open(self.out_dir / FETCH_LOG, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, sort_keys=True) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
 
 
 def fetch(req: Request, *, transport: Transport, out_dir: str | Path,

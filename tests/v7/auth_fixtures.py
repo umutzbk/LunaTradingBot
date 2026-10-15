@@ -130,6 +130,25 @@ def authorize(base: Path, monkeypatch, *, dev=None, report=None, manifest: str =
     return SimpleNamespace(auth=auth, repo=repo, home=home, record=rec, dev=dev, report=report)
 
 
+def opening_once(base: Path, **kw) -> SimpleNamespace:
+    """A synthetic opening whose ``guard._roots`` patch is undone right after it is created: share it from
+    a module-scoped fixture and point the seam at it per test with ``use_opening`` (no ``_roots`` leak into
+    the module's other tests; Task 25 review m-7)."""
+    import pytest
+
+    mp = pytest.MonkeyPatch()
+    try:
+        return authorize(base, mp, **kw)
+    finally:
+        mp.undo()
+
+
+def use_opening(monkeypatch, o: SimpleNamespace) -> SimpleNamespace:
+    """Point ``guard._roots`` at the opening ``o`` for the current test only."""
+    roots(monkeypatch, o.repo, o.home)
+    return o
+
+
 # -------------------------------------------------------------------------------- R_V6 / T_F7 records
 
 

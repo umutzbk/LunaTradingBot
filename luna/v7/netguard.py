@@ -7,17 +7,20 @@ called by the one fetch layer ``luna.v7.fetch`` (which K9-logs every refusal).
 
     N1  data.binance.vision futures/um zip (+ .CHECKSUM), whole file period < 2025-07-01
     N2  S3 bucket listing (delimiter=/, prefix=data/futures/um/...), names / sizes / checksums only
-    N3  fapi/v1/fundingRate with symbol, startTime, endTime < 2025-07-01 (+ limit)
+    N3  fapi/v1/fundingRate with symbol, startTime, endTime < 2025-07-01 (+ limit); after the opening
+        endTime < 2026-07-01 (controller ruling R46)
     N4  fapi/v1/exchangeInfo, no parameters (E8-limited use)
     N5  Wayback CDX with ``to`` <= 20250630235959
-    N6  Wayback /web/<ts>id_/<original>, only an exact pair returned by an N5 query
+    N6  Wayback /web/<ts>id_/<original>, only an exact pair returned by an N5 query of THIS run's fetcher
+        (``cdx_pairs``: the fetcher's private ``CdxPairs``; there is no module-level registry)
 
-Post-opening mode (E6; SC-03, AMB-35): with ``auth`` = the hardened ``guard.HoldoutAuthorization``,
-re-verified against the canonical opening by ``guard.verified_opening`` (never a boolean; refused once the
-verdict marker exists), N1 also allows file content whose whole period is < the W_HOLD end and does not
-overlap the canonical M6, and the N5 / N6 bound is raised to 20260630235959 / < 20260701000000
-(``post_opening_bounds``). Everything else is unchanged: the research CMS stays blocked, N2 / N3 / N4 keep
-their pre-opening rules, M6 file content stays refused. Without ``auth`` the pre-opening bounds apply.
+Post-opening mode (E6; SC-03, controller ruling R46, AMB-35): with ``auth`` = the hardened
+``guard.HoldoutAuthorization``, re-verified against the canonical opening by ``guard.verified_opening``
+(never a boolean; refused once the verdict marker exists): N1 also allows file content whose whole period is
+< the W_HOLD end and does not overlap the canonical M6; N3 ``endTime`` may reach < 2026-07-01 (R46, symmetric
+with N1 W_HOLD content); the N5 / N6 bound is raised to 20260630235959 / < 20260701000000 (E6). All from
+``post_opening_bounds``. Everything else is unchanged: the research CMS stays blocked, N2 / N4 keep their
+rules, M6 stays refused. Without ``auth`` the pre-opening bounds apply.
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ from luna.v7 import guard, windows
 from luna.v7.guard import GuardFailure
 from luna.v7.timeutil import D
 
-__all__ = ["Allowed", "EndpointRefused", "GuardFailure", "Request", "bounds", "cdx_pair_registry", "check",
+__all__ = ["Allowed", "Bounds", "CdxPairs", "EndpointRefused", "GuardFailure", "Request", "bounds", "check",
            "check_wayback_response", "drop_m6_keys", "params_of", "partition_m6_keys", "post_opening_bounds",
            "wayback_pair"]
 
@@ -56,6 +59,7 @@ class Allowed:
 
 
 _BOUND_MS = windows.W_HOLD[0] // 10**6  # 2025-07-01T00:00:00Z in ms
+_E6_BOUND_MS = windows.W_HOLD[1] // 10**6  # R46: 2026-07-01T00:00:00Z in ms (N3 after the opening)
 
 
 def _ts14(ns: int) -> str:
@@ -90,38 +94,50 @@ def _int_param(v: object) -> int | None:
     return int(s) if _DIGITS.fullmatch(s) else None
 
 
-def post_opening_bounds() -> tuple[str, str, int]:
-    """E6 bounds: (N5 ``to`` max, first refused N6 ts, N1 period end bound in ns) after the opening."""
-    return _E6_TO_MAX, _E6_BOUND_TS, windows.W_HOLD[1]
+@dataclass(frozen=True)
+class Bounds:
+    cdx_to_max: str  # N5 ``to`` maximum (14 digits)
+    n6_first_refused: str  # first refused N6 / CDX row timestamp
+    n1_end_ns: int  # an N1 file's period end must be <= this
+    n3_end_ms: int  # N3 ``endTime`` must be < this
 
 
-def bounds(auth: object = None) -> tuple[str, str, int]:
-    """(N5 ``to`` max, first refused N6 ts, N1 period end bound in ns): the pre-opening bounds without an
-    authorization; with one, the E6 bounds once ``guard.verified_opening(auth)`` verifies it (HoldoutBlocked
-    otherwise: a forged authorization is refused, never treated as "no authorization")."""
+_PRE = Bounds(_TO_MAX, _BOUND_TS, windows.W_HOLD[0], _BOUND_MS)
+_POST = Bounds(_E6_TO_MAX, _E6_BOUND_TS, windows.W_HOLD[1], _E6_BOUND_MS)
+
+
+def post_opening_bounds() -> Bounds:
+    """The post-opening bounds (E6 N5 / N6, W_HOLD N1 content, R46 N3)."""
+    return _POST
+
+
+def bounds(auth: object = None) -> Bounds:
+    """The pre-opening bounds without an authorization; with one, the post-opening bounds once
+    ``guard.verified_opening(auth)`` verifies it (HoldoutBlocked otherwise: a forged or stale authorization is
+    refused, never treated as "no authorization")."""
     if auth is None:
-        return _TO_MAX, _BOUND_TS, windows.W_HOLD[0]
+        return _PRE
     guard.verified_opening(auth)
-    return post_opening_bounds()
+    return _POST
 
 
-class CdxPairRegistry:
-    """The exact (ts, original) pairs returned by bounded N5 queries (this process); N6 may fetch only these.
-    A pair at or beyond the pre-opening bound can only come from an E6 query and is fetchable only in the E6
-    mode (``check`` applies the mode's bound to the N6 ts as well)."""
+class CdxPairs:
+    """The exact (ts, original) pairs returned by the bounded N5 queries of ONE fetcher (one run); N6 may
+    fetch only these. Registration is private to the fetch layer (``luna.v7.fetch.Fetcher``, which registers
+    the rows of the N5 responses it received); nothing is persisted or shared between fetchers. A pair at or
+    beyond the pre-opening bound can only come from an E6 query and is fetchable only in the E6 mode
+    (``check`` applies the mode's bound to the N6 ts as well)."""
 
     def __init__(self) -> None:
         self._pairs: set[tuple[str, str]] = set()
 
-    def register_cdx_result(self, rows, *, auth: object = None) -> None:
-        """``rows``: dicts with ``timestamp`` / ``original`` or (timestamp, original) sequences. A row at or
-        beyond the mode's bound (``bounds(auth)``) means the server-side bound failed: guard failure, nothing
-        from the batch kept."""
-        bound = bounds(auth)[1]
+    def _register(self, rows, *, auth: object = None) -> None:
+        """Fetch layer only. ``rows``: (timestamp, original) pairs. A row at or beyond the mode's bound means
+        the server-side bound failed: guard failure, nothing from the batch kept."""
+        bound = bounds(auth).n6_first_refused
         batch: list[tuple[str, str]] = []
         for r in rows:
-            ts, orig = (r["timestamp"], r["original"]) if isinstance(r, dict) else (r[0], r[1])
-            ts = str(ts)
+            ts, orig = str(r[0]), r[1]
             if not _TS14.fullmatch(ts) or ts >= bound:
                 raise GuardFailure(f"CDX row timestamp {ts!r} is outside the bound < {bound}")
             batch.append((ts, str(orig)))
@@ -130,11 +146,8 @@ class CdxPairRegistry:
     def contains(self, ts: str, original: str) -> bool:
         return (ts, original) in self._pairs
 
-    def clear(self) -> None:
-        self._pairs.clear()
-
-
-cdx_pair_registry = CdxPairRegistry()
+    def __len__(self) -> int:
+        return len(self._pairs)
 
 
 def check_wayback_response(ts: str, status: int, headers: dict, redirected: bool) -> None:
@@ -180,10 +193,12 @@ def wayback_pair(url: str) -> tuple[str, str] | None:
     return None if m is None else (m.group(1), m.group(2))
 
 
-def check(req: Request, *, auth: object = None) -> Allowed:
+def check(req: Request, *, auth: object = None, cdx_pairs: CdxPairs | None = None) -> Allowed:
     """Allowlist decision; raises EndpointRefused for everything not listed (before any I/O). ``auth``: the
-    hardened holdout authorization for the post-opening E6 mode (module docstring), verified first."""
-    to_max, n6_bound, n1_hi = bounds(auth)
+    hardened holdout authorization for the post-opening mode (module docstring), verified first.
+    ``cdx_pairs``: the calling fetcher's N5 pairs (None: no N6 request is allowed)."""
+    b = bounds(auth)
+    to_max, n6_bound, n1_hi = b.cdx_to_max, b.n6_first_refused, b.n1_end_ns
     url = req.url
     if not isinstance(url, str) or not url:
         raise _refuse("empty URL", req)
@@ -194,7 +209,7 @@ def check(req: Request, *, auth: object = None) -> Allowed:
         if req.params:
             raise _refuse("N6 takes no parameters", req)
         ts, original = m.groups()
-        if ts >= n6_bound or not cdx_pair_registry.contains(ts, original):
+        if ts >= n6_bound or cdx_pairs is None or not cdx_pairs.contains(ts, original):
             raise _refuse("N6 only for an exact (ts, original) pair returned by a bounded N5 query", req)
         return Allowed("N6")
     try:
@@ -236,8 +251,8 @@ def check(req: Request, *, auth: object = None) -> Allowed:
             if not required <= set(p) or not set(p) <= required | {"limit"}:
                 raise _refuse("N3 requires symbol, startTime, endTime (+ optional limit) only", req)
             start, end = _int_param(p["startTime"]), _int_param(p["endTime"])
-            if start is None or end is None or end >= _BOUND_MS or start > end:
-                raise _refuse(f"N3 needs numeric startTime <= endTime < {_BOUND_MS} ms", req)
+            if start is None or end is None or end >= b.n3_end_ms or start > end:
+                raise _refuse(f"N3 needs numeric startTime <= endTime < {b.n3_end_ms} ms", req)
             if "limit" in p and _int_param(p["limit"]) is None:
                 raise _refuse("N3 limit must be an integer", req)
             if not p["symbol"].isalnum():

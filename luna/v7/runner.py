@@ -21,11 +21,14 @@ wall-clock; the DT4 run record is written by ``luna.v7.runrecord`` to a caller-s
   Cached per t (and per (symbol, t)); ``record(t)`` is the provenance of the decision (gate rows, max
   known_at, staleness reasons, ...).
 * The W_HOLD / M6 guard (S-1.3, S-1.7 "no W_HOLD features or labels" before the opening, K9; SC-03,
-  AMB-35): ``ResearchUniverse.data_span`` is the event-time span of every input frame; ``DecisionProvider``
-  (at construction and on EVERY call, cached view or not), ``label_panel`` and ``run_book`` pass it, and the
-  decision time t, through ``guard.check_data_span`` with the provider's / caller's hardened authorization
-  (``auth``; None before the opening). A W_HOLD t or a frame row in W_HOLD is refused before the opening,
-  M6 until the canonical R_V6; a refusal is raised and K9-logged.
+  AMB-35): ``ResearchUniverse.data_span()`` is the span of every input timestamp (frame event times, notice
+  release / capture / receive times, terminal cessation / settlement times, instance start / last-trade /
+  end-known times), recomputed by every ``check_data``. ``DecisionProvider`` (at construction; and on EVERY
+  call and every public per-t method, cached or not, with the decision time t), ``label_panel``,
+  ``run_book`` and ``engine_inputs`` pass it through ``guard.check_data_span`` with the provider's / caller's
+  hardened authorization (``auth``; None before the opening). A W_HOLD t or input in W_HOLD is refused
+  before the opening, M6 until the canonical R_V6; a refusal is raised and K9-logged. Every research entry
+  point refuses to run without a configured K9 log (``k9.require``).
 * ``FoldScoreModel``: ``engine.ScoreModel`` over the outer-fold models: a decision t uses the model whose test
   quarter contains t (S-10.6 "each quarter uses its own fold model") and t outside every test quarter is
   refused. Logs (fold id, model sha256) and the predictions per decision.
@@ -52,7 +55,7 @@ from dataclasses import dataclass, replace
 import numpy as np
 import pandas as pd
 
-from luna.v7 import cv, features, guard, labels, localdata
+from luna.v7 import cv, features, guard, k9, labels, localdata
 from luna.v7.arms import arm_scores, cost_side, families
 from luna.v7.beta import beta_hat, hourly_close_from_15m, hourly_known_at_from_15m
 from luna.v7.book import engine
@@ -167,10 +170,12 @@ class ResearchUniverse:
             self.instruments[sym] = Instrument(sym, x.bars1m, x.bars15, mark15, x.funding, list(x.insts),
                                                dict(x.terminals), x.aggtrades)
         self.candidates: tuple[str, ...] = tuple(s for s in sorted(self.inputs) if s != hedge)
-        self.data_span: tuple[int, int] | None = self._data_span()
 
-    def _data_span(self) -> tuple[int, int] | None:
-        """(min, max + 1) of the event timestamps of every input frame (``EVENT_COLS``)."""
+    def data_span(self) -> tuple[int, int] | None:
+        """(min, max + 1) of every input timestamp, recomputed from the current inputs: the event times of
+        every frame (``EVENT_COLS``), the notices' ``release_ts`` / ``capture_ts`` / ``recv_ts``, the terminal
+        events' ``cessation_ts`` / ``settle_ts`` and the instances' ``first_bar_ts`` / ``last_trade_ts`` /
+        ``end_known_at`` (missing values skipped; anything unparseable refused by ``ns_array``)."""
         spans: list[tuple[int, int]] = []
         for sym, x in self.inputs.items():
             frames = [("bars15", x.bars15), ("bars1m", x.bars1m), ("funding", x.funding),
@@ -181,13 +186,23 @@ class ResearchUniverse:
                 sp = localdata.frame_span(df, EVENT_COLS[name.split(".")[0]], f"{sym}.{name}")
                 if sp is not None:
                     spans.append(sp)
+            notices = [v for n in x.notices for v in (n.release_ts, n.capture_ts, n.recv_ts)]
+            terminals = [v for e in x.terminals.values() for v in (e.cessation_ts, e.settle_ts)]
+            insts = [v for i in x.insts for v in (i.first_bar_ts, i.last_trade_ts, i.end_known_at)]
+            for name, vals in (("notices", notices), ("terminals", terminals), ("insts", insts)):
+                vals = [v for v in vals if v is not None]
+                if vals:
+                    a = ns_array(np.asarray(vals, dtype=object), f"{sym}.{name}")
+                    spans.append((int(a.min()), int(a.max()) + 1))
         return (min(a for a, _ in spans), max(b for _, b in spans)) if spans else None
 
-    def check_data(self, auth: guard.HoldoutAuthorization | None) -> None:
-        """``guard.check_data_span`` over ``data_span`` (refused and K9-logged when it reaches W_HOLD before
-        the opening, or M6 before R_V6)."""
-        if self.data_span is not None:
-            guard.check_data_span(*self.data_span, auth=auth, what=UNIVERSE)
+    def check_data(self, auth: guard.HoldoutAuthorization | None) -> tuple[int, int] | None:
+        """``guard.check_data_span`` over a freshly computed ``data_span()`` (refused and K9-logged when it
+        reaches W_HOLD before the opening, or M6 before R_V6); returns the span."""
+        span = self.data_span()
+        if span is not None:
+            guard.check_data_span(*span, auth=auth, what=UNIVERSE)
+        return span
 
     def r4(self, sym: str) -> R4Bars:
         return self.inputs[sym].r4
@@ -206,6 +221,8 @@ class ResearchUniverse:
 
     def engine_inputs(self, view: Callable[[int], DecisionView], now_ns: int,
                       auth: guard.HoldoutAuthorization | None = None) -> EngineInputs:
+        k9.require()
+        self.check_data(auth)
         return EngineInputs({s: self.instruments[s] for s in self.candidates}, self.instruments[self.hedge],
                             view, int(now_ns), auth)
 
@@ -241,16 +258,20 @@ class DecisionProvider:
     (deterministic), so the bound trades memory for recomputation (the S-10.6 driver replays the same
     decisions for each of its books).
 
-    Guard (SC-03): ``auth`` is the hardened ``HoldoutAuthorization`` (None before the opening). The universe's
-    data span is checked at construction and, with the decision time t, on every call (cached or not), so a
-    W_HOLD t / W_HOLD frame row is refused before the opening and M6 until R_V6 (K9-logged)."""
+    Guard (SC-03): ``auth`` is the hardened ``HoldoutAuthorization`` (None before the opening); a K9 log must
+    be configured. The universe's data span is computed and checked at construction; that span (the inputs
+    are not copied: callers must not mutate them afterwards) and the decision time t are checked again on
+    every call and every public per-t method (``instance_bars``, ``h_hat``, ``beta``, ``qv24``,
+    ``stale_reasons``, ``xs``), cached or not, so a W_HOLD t / W_HOLD input is refused before the opening and
+    M6 until R_V6 (K9-logged), and an authorization invalidated later (verdict) stops serving."""
 
     def __init__(self, u: ResearchUniverse, with_features: bool = True,
                  max_cached_decisions: int | None = 2048, *,
                  auth: guard.HoldoutAuthorization | None = None) -> None:
         if max_cached_decisions is not None and int(max_cached_decisions) < 1:
             raise ValueError("max_cached_decisions must be >= 1 or None")
-        u.check_data(auth)
+        k9.require()
+        self._span = u.check_data(auth)
         self.auth = auth
         self.u = u
         self.with_features = bool(with_features)
@@ -272,7 +293,7 @@ class DecisionProvider:
         return self._pos[sym]
 
     # per (symbol, t) inputs
-    def instance_bars(self, sym: str, t: int) -> pd.DataFrame | None:
+    def _instance_bars(self, sym: str, t: int) -> pd.DataFrame | None:
         """PIT 15m bars (known_at <= t - 1 min) of the current instance at t; None without one."""
         t = int(t)
         if self._bars_t != t:
@@ -293,25 +314,25 @@ class DecisionProvider:
             return sd.bars15.iloc[lo:max(lo, hi)]
         return _instance_bars_reference(sd, cur, t)
 
-    def h_hat(self, sym: str, t: int) -> float | None:
+    def _h_hat(self, sym: str, t: int) -> float | None:
         """S-4.4 decision-time h-hat(t): the S-4.5 proxy at t on the current instance (None = missing)."""
-        b = self.instance_bars(sym, t)
+        b = self._instance_bars(sym, t)
         return None if b is None or len(b) == 0 else half_spread(b, int(t))
 
-    def beta(self, sym: str, t: int) -> float | None:
+    def _beta(self, sym: str, t: int) -> float | None:
         """S-5.2 beta-hat(t) against the hedge instrument (current instances, hourly known_at series)."""
-        a, b = self.instance_bars(sym, t), self.instance_bars(self.u.hedge, t)
+        a, b = self._instance_bars(sym, t), self._instance_bars(self.u.hedge, t)
         if a is None or b is None or len(a) == 0 or len(b) == 0:
             return None
         return beta_hat(hourly_close_from_15m(a), hourly_close_from_15m(b), int(t),
                         hourly_known_at_from_15m(a), hourly_known_at_from_15m(b))
 
-    def qv24(self, sym: str, t: int) -> tuple[float | None, int | None]:
+    def _qv24(self, sym: str, t: int) -> tuple[float | None, int | None]:
         """S-4.4 trailing 24 h quote volume known at t - 1 min (AMB-25 (a)): the sum of ``vol_quote`` over the
         current instance's 15m bars whose close lies in (t - 24 h - 1 min, t - 1 min]; a non-finite value
         counts 0 (as ``universe.daily_sums``, AMB-07); no such bar -> None (missing). Returns (value, max
         known_at of the bars used)."""
-        b = self.instance_bars(sym, t)
+        b = self._instance_bars(sym, t)
         if b is None or len(b) == 0:
             return None, None
         close = ns_array(b["open_ts"], "open_ts") + BAR_15M
@@ -322,14 +343,14 @@ class DecisionProvider:
         q = pd.to_numeric(b["vol_quote"], errors="coerce").to_numpy(np.float64)[m]
         return float(np.where(np.isfinite(q), q, 0.0).sum()), _max_ka(b[m])
 
-    def stale_reasons(self, t: int) -> tuple[str, ...]:
+    def _stale_reasons(self, t: int) -> tuple[str, ...]:
         """S-7.3 staleness (AMB-25 (b)): the decision-wide inputs every entry needs are those of the hedge
         instrument (S-7.4: beta_book is hedged at every decision). Stale when the hedge has no current
         instance, its last 15m bar (closing at the last 15-minute boundary <= t - 1 min) is missing /
         unpriced, or its h-hat(t) is missing (S-4.5: a missing proxy is a staleness failure at decisions).
         Per-symbol freshness (U4, U5, U7, U8) is already a gate of that symbol."""
         t = int(t)
-        hb = self.instance_bars(self.u.hedge, t)
+        hb = self._instance_bars(self.u.hedge, t)
         if hb is None:
             return ("hedge_no_instance",)
         out: list[str] = []
@@ -338,11 +359,11 @@ class DecisionProvider:
         c = pd.to_numeric(hb["c"], errors="coerce").to_numpy(np.float64) if len(hb) else np.empty(0)
         if not ((ot == last_close - BAR_15M) & np.isfinite(c) & (c > 0)).any():
             out.append("hedge_last_bar_missing")
-        if self.h_hat(self.u.hedge, t) is None:
+        if self._h_hat(self.u.hedge, t) is None:
             out.append("hedge_h_hat_missing")
         return tuple(out)
 
-    def xs(self, t: int) -> list[XSInput]:
+    def _xs(self, t: int) -> list[XSInput]:
         u = self.u
         return [features.xs_input(u.sd[s], u.r4(s), int(t)) for s in u.candidates]
 
@@ -371,24 +392,49 @@ class DecisionProvider:
                 rows.append(r)
         return (pd.DataFrame(rows) if rows else pd.DataFrame(columns=CAND_COLS)), ka
 
-    def __call__(self, t: int) -> DecisionView:
+    def _guard(self, t: int) -> int:
+        """The decision time t and the universe span through ``guard.check_data_span`` (every call)."""
         t = int(t)
         guard.check_data_span(t, t + 1, auth=self.auth, what="decision t")
-        self.u.check_data(self.auth)
+        if self._span is not None:
+            guard.check_data_span(*self._span, auth=self.auth, what=UNIVERSE)
+        return t
+
+    # public per-t inputs: guarded, then the private implementation
+    def instance_bars(self, sym: str, t: int) -> pd.DataFrame | None:
+        return self._instance_bars(sym, self._guard(t))
+
+    def h_hat(self, sym: str, t: int) -> float | None:
+        return self._h_hat(sym, self._guard(t))
+
+    def beta(self, sym: str, t: int) -> float | None:
+        return self._beta(sym, self._guard(t))
+
+    def qv24(self, sym: str, t: int) -> tuple[float | None, int | None]:
+        return self._qv24(sym, self._guard(t))
+
+    def stale_reasons(self, t: int) -> tuple[str, ...]:
+        return self._stale_reasons(self._guard(t))
+
+    def xs(self, t: int) -> list[XSInput]:
+        return self._xs(self._guard(t))
+
+    def __call__(self, t: int) -> DecisionView:
+        t = self._guard(t)
         if t in self._views:
             self._views.move_to_end(t)
             self._records.move_to_end(t)
         else:
             u = self.u
-            xs = self.xs(t)
+            xs = self._xs(t)
             syms = u.candidates
-            hh = {s: self.h_hat(s, t) for s in syms}
-            betas = {s: self.beta(s, t) for s in syms}
-            qv = {s: self.qv24(s, t) for s in syms}
-            stale = self.stale_reasons(t)
+            hh = {s: self._h_hat(s, t) for s in syms}
+            betas = {s: self._beta(s, t) for s in syms}
+            qv = {s: self._qv24(s, t) for s in syms}
+            stale = self._stale_reasons(t)
             gates = {x.symbol: x.gate for x in xs}
             cands, ka = self._cands(t, xs, hh)
-            bars_ka = [_max_ka(b) for s in (*syms, u.hedge) if (b := self.instance_bars(s, t)) is not None]
+            bars_ka = [_max_ka(b) for s in (*syms, u.hedge) if (b := self._instance_bars(s, t)) is not None]
             mk = _mx(ka, *(x.max_known_at for x in xs), *(v[1] for v in qv.values()), *bars_ka)
             if mk is not None and mk > t - MIN:
                 raise LeakageError(f"decision {t}: an input known at {mk} > t - 1 min")
@@ -525,6 +571,7 @@ def label_panel(u: ResearchUniverse, provider: DecisionProvider, decision_ts: Se
     """Leg labels (``labels.leg_label``) of every gated candidate (both sides) at the given decisions."""
     if h not in HORIZONS:
         raise ValueError(f"unknown horizon {h}")
+    k9.require()
     if not provider.with_features:
         raise ValueError("label_panel needs the §9 features (DecisionProvider(with_features=True))")
     ts = sorted({int(t) for t in decision_ts})
@@ -574,6 +621,7 @@ def run_book(arm: str, u: ResearchUniverse, provider: DecisionProvider, window: 
     need the §9 features in the candidate rows (``DecisionProvider(with_features=True)``). A research entry
     point: the run is marked ``research=True``, so its DT4 record is a research record (refused from a dirty
     working tree; DK-114 / red-team m10)."""
+    k9.require()
     if arm != "A0" and not provider.with_features:
         raise ValueError(f"{arm} scores the §9 features: the provider must be built with_features=True")
     if arm != "A0" and model is not None and model.ml_star != arm and arm in ("A2", "A3"):
@@ -584,8 +632,7 @@ def run_book(arm: str, u: ResearchUniverse, provider: DecisionProvider, window: 
         miss = [s for s in u.candidates if u.instruments[s].aggtrades is None]
         if miss:
             raise ValueError(f"E_M needs aggTrades for {miss}")
-    u.check_data(auth)
-    inputs = u.engine_inputs(provider, now_ns, auth)
+    inputs = u.engine_inputs(provider, now_ns, auth)  # checks the universe span (``check_data``)
     return replace(engine.run(arm, inputs, window, h, model=model, execution=execution), research=True)
 
 

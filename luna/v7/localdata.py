@@ -12,7 +12,7 @@ W_HOLD without the verified hardened ``HoldoutAuthorization``. A refusal is rais
 * ``frame_span`` / ``check_frame``: the event-time span of a frame (min, max + 1 over the named columns;
   missing values skipped, any other unparseable value refused through ``timeutil.ns_array``) and its guard.
   Event times (bar ``open_ts``, ``funding_ts``, trade ``ts``), not ``known_at``: a W_DEV bar closing at the
-  W_HOLD start is W_DEV content (AMB-35 (f)).
+  W_HOLD start is W_DEV content (AMB-35 (i)).
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from typing import BinaryIO
 
 import pandas as pd
 
-from luna.v7 import guard
+from luna.v7 import guard, k9
 from luna.v7.guard import HoldoutAuthorization, HoldoutBlocked
 from luna.v7.timeutil import ns_array
 
@@ -32,7 +32,8 @@ __all__ = ["check_file", "check_frame", "frame_span", "open_readonly", "read_byt
 
 def check_file(path: str | Path, *, auth: HoldoutAuthorization | None = None) -> tuple[int, int]:
     """The guarded period [lo, hi) of a local data file (from its name); refused (K9-logged) when the name
-    has no parseable period or the period is sealed."""
+    has no parseable period or the period is sealed. Refuses to run without a configured K9 log."""
+    k9.require()
     per = guard.file_period(Path(path).name)
     if per is None:
         e = HoldoutBlocked(f"local file {path}: period not parseable from the name, content refused")
@@ -72,7 +73,9 @@ def frame_span(df: pd.DataFrame, cols: Sequence[str], name: str) -> tuple[int, i
 
 def check_frame(df: pd.DataFrame, cols: Sequence[str], *, auth: HoldoutAuthorization | None = None,
                 what: str = "frame") -> tuple[int, int] | None:
-    """``guard.check_data_span`` over ``frame_span``; an empty frame has nothing to guard."""
+    """``guard.check_data_span`` over ``frame_span``; an empty frame has nothing to guard. Refuses to run
+    without a configured K9 log."""
+    k9.require()
     span = frame_span(df, cols, what)
     if span is not None:
         guard.check_data_span(span[0], span[1], auth=auth, what=what)

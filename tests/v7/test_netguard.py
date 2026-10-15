@@ -7,6 +7,7 @@ import pytest
 from luna.v7 import guard, netguard, windows
 from luna.v7.netguard import EndpointRefused, Request, check
 from luna.v7.timeutil import to_ns
+from tests.v7 import net_fixtures as nf
 
 FAPI = "https://fapi.binance.com/fapi/v1/"
 BVIS = "https://data.binance.vision/data/futures/um"
@@ -65,24 +66,47 @@ def test_cdx_requires_to_bound():
     assert check(Request(u, {**p, "to": "20250630235959"})).kind == "N5"
 
 
-def test_wayback_only_registered_pairs():
+def test_wayback_only_registered_pairs(tmp_path):
     orig = "https://www.binance.com/en/support/announcement/x"
     url = f"https://web.archive.org/web/20250101000000id_/{orig}"
-    reg = netguard.cdx_pair_registry
-    reg.clear()
     with pytest.raises(EndpointRefused):
-        check(Request(url, {}))
-    reg.register_cdx_result([{"timestamp": "20250101000000", "original": orig}])
-    assert check(Request(url, {})).kind == "N6"
+        check(Request(url, {}))  # no pairs at all
+    reg = nf.pairs(tmp_path / "a", [("20250101000000", orig)])
+    with pytest.raises(EndpointRefused):
+        check(Request(url, {}))  # another fetcher's pairs are not given: refused
+    assert check(Request(url, {}), cdx_pairs=reg).kind == "N6"
+    with pytest.raises(EndpointRefused):  # a fresh fetcher (another run) has none of them
+        check(Request(url, {}), cdx_pairs=nf.pairs(tmp_path / "c", []))
     with pytest.raises(EndpointRefused):  # not id_
-        check(Request(f"https://web.archive.org/web/20250101000000/{orig}", {}))
+        check(Request(f"https://web.archive.org/web/20250101000000/{orig}", {}), cdx_pairs=reg)
     with pytest.raises(EndpointRefused):  # other ts
-        check(Request(f"https://web.archive.org/web/20250101000001id_/{orig}", {}))
+        check(Request(f"https://web.archive.org/web/20250101000001id_/{orig}", {}), cdx_pairs=reg)
     with pytest.raises(EndpointRefused):  # other original
-        check(Request(f"https://web.archive.org/web/20250101000000id_/{orig}2", {}))
+        check(Request(f"https://web.archive.org/web/20250101000000id_/{orig}2", {}), cdx_pairs=reg)
     with pytest.raises(guard.GuardFailure):  # a CDX row beyond the bound is itself a failure
-        reg.register_cdx_result([("20250701000000", orig)])
-    reg.clear()
+        nf.pairs(tmp_path / "d", [("20250701000000", orig)])
+    assert not hasattr(netguard, "cdx_pair_registry")  # no module-level registry (review m-1)
+    assert not hasattr(netguard.CdxPairs, "register_cdx_result")
+
+
+def test_n3_post_opening_bound_needs_the_verified_authorization(monkeypatch):
+    """Controller ruling R46: after the opening (verified hardened authorization) N3 endTime < 2026-07-01;
+    without it the pre-opening bound; a forged authorization is refused."""
+    p = {"symbol": "BTCUSDT", "startTime": "1"}
+    hold = str(to_ns("2026-06-30T23:59:59") // 10**6)
+    m6 = str(to_ns("2026-07-01") // 10**6)
+    with pytest.raises(EndpointRefused):
+        check(Request(FAPI + "fundingRate", {**p, "endTime": MS_BAD}))
+    calls = []
+    monkeypatch.setattr(guard, "verified_opening", lambda a: calls.append(a) or {"opening_id": "x"})
+    auth = object()
+    assert check(Request(FAPI + "fundingRate", {**p, "endTime": MS_BAD}), auth=auth).kind == "N3"
+    assert check(Request(FAPI + "fundingRate", {**p, "endTime": hold}), auth=auth).kind == "N3"
+    with pytest.raises(EndpointRefused):
+        check(Request(FAPI + "fundingRate", {**p, "endTime": m6}), auth=auth)
+    assert calls and all(c is auth for c in calls)
+    assert netguard.bounds(None).n3_end_ms == windows.W_HOLD[0] // 10**6
+    assert netguard.post_opening_bounds().n3_end_ms == windows.W_HOLD[1] // 10**6
 
 
 def test_wayback_redirect_or_memento_mismatch_is_guard_failure():
@@ -176,7 +200,7 @@ def test_n2_unparseable_keys_fail_closed():
         netguard.drop_m6_keys(keys, SPAN)  # type: ignore[call-arg]
 
 
-def test_trailing_newline_and_non_ascii_digits_refused():
+def test_trailing_newline_and_non_ascii_digits_refused(tmp_path):
     base = {"symbol": "BTCUSDT", "startTime": "1"}
     with pytest.raises(EndpointRefused):
         check(Request(FAPI + "fundingRate", {**base, "endTime": "5\n"}))
@@ -188,11 +212,9 @@ def test_trailing_newline_and_non_ascii_digits_refused():
     with pytest.raises(EndpointRefused):
         check(Request(u, {"to": "\u0662" * 14}))
     orig = "https://www.binance.com/x"
-    netguard.cdx_pair_registry.clear()
-    netguard.cdx_pair_registry.register_cdx_result([("20250101000000", orig)])
+    reg = nf.pairs(tmp_path, [("20250101000000", orig)])
     with pytest.raises(EndpointRefused):
-        check(Request(f"https://web.archive.org/web/20250101000000id_/{orig}\n", {}))
-    netguard.cdx_pair_registry.clear()
+        check(Request(f"https://web.archive.org/web/20250101000000id_/{orig}\n", {}), cdx_pairs=reg)
     ok = f"{BVIS}/monthly/klines/BTCUSDT/15m/BTCUSDT-15m-2025-06.zip"
     with pytest.raises(EndpointRefused):
         check(Request(ok + "\n", {}))

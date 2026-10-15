@@ -66,7 +66,7 @@ from typing import Protocol
 import numpy as np
 import pandas as pd
 
-from luna.v7 import guard, windows
+from luna.v7 import guard, k9, windows
 from luna.v7.arms import arm_scores
 from luna.v7.book import EPS, Leg, Order, hedge
 from luna.v7.book.constructor import NON_NEUTRAL, Targets, targets
@@ -940,6 +940,7 @@ def _run(arm: str, inputs: EngineInputs, window: tuple[int, int], h_star: int, m
          execution: str, layer: str, *, equity0: float = E0, lots: Lots | None = None) -> BookRun:
     """The shared event loop. ``layer`` "L-norm" (E = 1, no sizer, liquidity cap at E_ref) or a USD layer
     (``equity0`` USD, a ``Lots`` sizer, liquidity cap in USD, E_T only; called by ``luna.v7.deploy``)."""
+    k9.require()  # fail closed: no engine run without a K9 refusal log (SC-03, AMB-35 (h))
     if arm not in ARMS:
         raise ValueError(f"unknown arm {arm!r}")
     if (arm == "A0") != (model is None):
