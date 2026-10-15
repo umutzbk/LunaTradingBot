@@ -17,8 +17,9 @@ at a time:
   The decimals of the CSV strings give the stored scales (``RawStore.put_chunk(decimals=)``). The zip bytes
   never touch the disk; the manifest keeps each source's URL, name, size, sha256, published checksum and
   ``recv_ts``.
-* ``ingest_funding_archive(fetcher, store, symbol, months)``: the monthly ``fundingRate`` files of a run of
-  months, re-partitioned by event time (ruling R48, AMB-37): a row is stored in the chunk of its own month;
+* ``ingest_funding_archive(fetcher, store, symbol, months=None)``: the monthly ``fundingRate`` files of the
+  symbol's whole month run (from the N2 listing unless given), re-partitioned by event time (ruling R48,
+  AMB-37): a row is stored in the chunk of its own month;
   rows of one month coming from several files are compared under the S-2.6 key rule (+-60 s): agreeing ->
   one row kept (the one from the month's own file, else from the earliest file), conflicting ->
   ``IntegrityBlocker`` for that month; a row at or after the store bound is dropped in memory and K9-logged
@@ -62,7 +63,8 @@ from luna.v7.netguard import Request
 from luna.v7.rawstore import TABLES, RawStore, StoreTable, _symbol, month_period, store_bound
 
 __all__ = ["BVIS", "FAPI_FUNDING", "LEDGER", "N3_LIMIT", "RULE_DROPPED", "S3", "daily_days", "ingest_bars",
-           "ingest_funding_archive", "ingest_funding_rest", "ingest_months", "list_archive", "n1_url"]
+           "ingest_funding_archive", "ingest_funding_rest", "ingest_months", "list_archive", "listed_months",
+           "n1_url"]
 
 BVIS = "https://data.binance.vision/data/futures/um"
 S3 = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision"
@@ -337,14 +339,26 @@ def _gap(table: str, symbol: str, month: str, reason: str) -> dict:
             "reason": reason}
 
 
-def ingest_funding_archive(fetcher: Fetcher, store: RawStore, symbol: str, months: Sequence[str], *,
+def listed_months(fetcher: Fetcher, table: str, symbol: str, *,
+                  auth: guard.HoldoutAuthorization | None = None) -> list[str]:
+    """The months with a monthly N1 file of ``table`` / ``symbol`` that the store may hold (one N2 listing;
+    period end <= the store bound)."""
+    bound = store_bound(auth)
+    return [m for m, _ in list_archive(fetcher, table, symbol, auth=auth) if month_period(m)[1] <= bound]
+
+
+def ingest_funding_archive(fetcher: Fetcher, store: RawStore, symbol: str,
+                           months: Sequence[str] | None = None, *,
                            auth: guard.HoldoutAuthorization | None = None) -> list[dict]:
-    """The archive ``fundingRate`` files of ``months`` (pass the symbol's whole contiguous run: spill from a
-    file outside it is not seen), re-partitioned by event month (ruling R48; module docstring). Returns the
-    ledger records (one per month, plus one per spill month outside ``months``), also appended to the
-    ledger."""
+    """The archive ``fundingRate`` files of the symbol's whole month run, re-partitioned by event month
+    (ruling R48; module docstring). ``months`` None (the driver's default): the run comes from the N2 listing
+    (``listed_months``), so no spill-in from a neighbouring file is missed; an explicit ``months`` must be
+    that whole contiguous run (spill from a file outside it is not seen, only ledgered). Returns the ledger
+    records (one per month, plus one per spill month outside ``months``), also appended to the ledger."""
     with k9.using(fetcher.k9):
         _symbol(symbol)
+        if months is None:
+            months = listed_months(fetcher, "R2_archive", symbol, auth=auth)
         months = sorted(set(months))
         for m in months:
             month_period(m)
@@ -441,13 +455,19 @@ def ingest_funding_rest(fetcher: Fetcher, store: RawStore, symbol: str, month: s
         return store.put_chunk("R2_rest", symbol, month, df, sources=[src], auth=auth)
 
 
-def ingest_months(fetcher: Fetcher, store: RawStore, table: str, symbol: str, months: Sequence[str], *,
+def ingest_months(fetcher: Fetcher, store: RawStore, table: str, symbol: str,
+                  months: Sequence[str] | None = None, *,
                   auth: guard.HoldoutAuthorization | None = None) -> list[dict]:
-    """The ingest driver of one (table, symbol) over ``months``: per-chunk integrity / fetch failures are
+    """The ingest driver of one (table, symbol) over ``months`` (None: the months of the N2 monthly listing,
+    ``listed_months``; required for R2_rest, which has no listing): per-chunk integrity / fetch failures are
     ledgered gaps and the other chunks continue; guard refusals raise. Returns the ledger records."""
     with k9.using(fetcher.k9):
         if table == "R2_archive":
             return ingest_funding_archive(fetcher, store, symbol, months, auth=auth)
+        if months is None:
+            if table == "R2_rest":
+                raise ValueError("R2_rest has no listing: pass the months")
+            months = listed_months(fetcher, table, symbol, auth=auth)
         out: list[dict] = []
         for m in sorted(set(months)):
             try:

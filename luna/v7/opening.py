@@ -13,8 +13,8 @@ and the opening normally runs in a later process, so the producing run persists 
   (below, except HEAD) and written by exclusive create as canonical JSON:
   ``{kind, run_id, spec_sha256, code_commit, dev_selection, dev_selection_sha256, dev_label_panels,
   leakage_report, leakage_report_sha256, dev_ml_run_file_sha256, record_sha256}``
-  (``dev_ml_run_file_sha256``: ``runrecord.run_pickle_sha256`` of the W_DEV ML* run, the file the producing
-  run persists with ``rawstore.RunStore.put``; pinned at the opening, Task 26a round 1).
+  (``dev_ml_run_file_sha256``: ``runstore.run_file_sha256`` of the W_DEV ML* run, the canonical run.json the
+  producing run persists with ``runstore.RunStore.put``; pinned at the opening, Task 26a).
   ``dev_label_panels`` are the sha256 of the W_DEV label panels (``leakage.panel_sha256``) the fold
   models / canaries used.
 * ``load_pre_opening(path, head=...)`` (called by ``guard.preflight`` / ``guard.authorize_holdout``):
@@ -44,7 +44,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from luna.v7 import leakage, runner_select, runrecord
+from luna.v7 import leakage, runner_select, runstore
 from luna.v7.guard import RUN_ID, HoldoutBlocked
 from luna.v7.runrecord import canonical_json
 from luna.v7.spec import SPEC_BLOB_SHA256
@@ -65,7 +65,7 @@ class PreOpening:
     dev_selection: dict  # the persisted DevSelection record (``runner_select.dev_selection_record``)
     dev_selection_sha256: str
     leakage_report: leakage.LeakageReport  # rebuilt and registered in this process (verifies, passed)
-    dev_ml_run_file_sha256: str  # sha256 of the W_DEV ML* run's RunStore file (``runrecord.run_pickle``)
+    dev_ml_run_file_sha256: str  # sha256 of the W_DEV ML* run's canonical run.json (``runstore``)
 
     @property
     def ml_star(self) -> tuple[str, int]:
@@ -133,7 +133,7 @@ def build_pre_opening_record(dev: runner_select.DevSelection, report: leakage.Le
         "leakage_report": leakage.report_content(report), "leakage_report_sha256": report.sha256,
     }
     _semantics(body, report)
-    body["dev_ml_run_file_sha256"] = runrecord.run_pickle_sha256(dev.runs[dev.ml_star])  # type: ignore[index]
+    body["dev_ml_run_file_sha256"] = runstore.run_file_sha256(dev.runs[dev.ml_star])  # type: ignore[index]
     body["record_sha256"] = content_sha256(body)
     return body
 

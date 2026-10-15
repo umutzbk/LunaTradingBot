@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from luna.v7 import guard, leakage, opening, runner_select, selection, windows
+from luna.v7 import guard, leakage, opening, runner_select, runstore, selection, windows
 from luna.v7.spec import code_repo
 from luna.v7.timeutil import D
 from tests.v7 import auth_fixtures as af
@@ -136,7 +136,7 @@ def test_opening_happy_path_pins_the_dev_selection_and_the_report(tmp_path):
     assert pin["leakage_report_sha256"] == o.report.sha256
     assert pin["final_model_hash"] == o.report.final_model_hash and pin["ml_star"] == ["A2", 72]
     assert pin["dev_ml_run_sha256"] == runner_select.runrecord.run_output_sha256(o.dev.runs[("A2", 72)])
-    assert pin["dev_ml_run_file_sha256"] == runner_select.runrecord.run_pickle_sha256(o.dev.runs[("A2", 72)])
+    assert pin["dev_ml_run_file_sha256"] == runstore.run_file_sha256(o.dev.runs[("A2", 72)])
     assert pin["pre_opening_sha256"] == json.loads(o.record.read_text(encoding="utf-8"))["record_sha256"]
     # the reloaded report is the pinned one and verifies in this process
     assert o.auth.leakage_report.sha256 == o.report.sha256 and leakage.verify_report(o.auth.leakage_report)

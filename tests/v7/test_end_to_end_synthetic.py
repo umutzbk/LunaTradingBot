@@ -32,6 +32,8 @@ import pytest
 from luna.v7 import accounting, guard, models, runner, selection, stats, universe, verdict, windows
 from luna.v7.constants import FROZEN
 from luna.v7.runner_select import holdout_inputs, holdout_verdict
+from luna.v7.runrecord import run_output_sha256
+from luna.v7.runstore import RunStore, encode_run, run_file_sha256
 from luna.v7.timeutil import D
 from tests.v7 import auth_fixtures as af
 from tests.v7 import fixtures_v7 as fx
@@ -79,10 +81,17 @@ def run_pipeline(seed: int, base, monkeypatch) -> tuple[dict[str, str], dict]:
     dev = af.dev_selection("A2", fx.H_STAR, window=fx.BOOK, em_runs={"ML*": em["A2"], "A0": em["A0"]},
                            runs={("A2", fx.H_STAR): runs["A2"], ("A0", fx.H_STAR): runs["A0"]})
     opened = af.authorize(base, monkeypatch, dev=dev)
+    # Task 26a: the four books persist canonically (parquet + JSON, no pickle) and round-trip exactly; the
+    # opening reads the W_DEV ML* run back through the verified pin (RunStore.load_pinned)
+    store = RunStore(base / "runs")
+    for r in (*runs.values(), *em.values()):
+        sha = store.put(r)
+        back = store.load(sha, file_sha256=run_file_sha256(r))
+        assert run_output_sha256(back) == sha and encode_run(back) == encode_run(r)
     x = holdout_inputs(auth=opened.auth, ml_T=runs["A2"], a0_T=runs["A0"],
                        ml_M=em["A2"], a0_M=em["A0"],
                        quarter_edges=edges, panel=hold, final_model=lf.final(fx.H_STAR, "en"),
-                       dev_ml_run=runs["A2"], dev_kill=(), leakage_report=opened.auth.leakage_report,
+                       dev_run_store=store, dev_kill=(), leakage_report=opened.auth.leakage_report,
                        records=prov.record, integrity=(), B=B_SMALL)
     v = holdout_verdict(x, auth=opened.auth)  # writes the verdict marker
     v_kill = None

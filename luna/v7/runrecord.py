@@ -16,7 +16,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import pickle
 import platform
 import re
 from collections.abc import Mapping, Sequence
@@ -98,16 +97,6 @@ def run_output_sha256(run: BookRun) -> str:
         _frame_sha(h, getattr(run, part))
     h.update(repr((run.integrity, run.invalid, run.invalid_detail, run.invalid_ts)).encode())
     return h.hexdigest()
-
-
-def run_pickle(run: BookRun) -> bytes:
-    """The persisted file of an executed book (``rawstore.RunStore``): its pickle, protocol 5."""
-    return pickle.dumps(run, protocol=5)
-
-
-def run_pickle_sha256(run: BookRun) -> str:
-    """sha256 of ``run_pickle(run)``: the file identity pinned at the opening (``dev_ml_run_file_sha256``)."""
-    return hashlib.sha256(run_pickle(run)).hexdigest()
 
 
 def run_identity(run: BookRun) -> dict:
@@ -216,5 +205,5 @@ def write_run_record(path: str | Path, record: Mapping) -> Path:
 
 
 __all__ = ["canonical_json", "code_commit", "code_state", "config_sha256", "default_seeds", "file_sha256",
-           "library_versions", "run_identity", "run_output_sha256", "run_pickle", "run_pickle_sha256",
-           "run_record", "write_run_record"]
+           "library_versions", "run_identity", "run_output_sha256", "run_record",
+           "write_run_record"]

@@ -466,3 +466,22 @@ def test_driver_ledgers_gaps_and_continues_but_raises_guard_refusals(tmp_path, n
     assert len((out / ingest.LEDGER).read_text(encoding="utf-8").splitlines()) == 2
     with pytest.raises(EndpointRefused):
         ingest.ingest_months(fetcher(t, out), st, "R3", "BTCUSDT", ["2025-07"])
+
+
+def test_funding_month_run_comes_from_the_listing(tmp_path, no_k9):
+    """Review round 2, minor C: without explicit months the whole run comes from the N2 listing (months the
+    store may hold only), so a spill into a neighbouring month is always seen."""
+    t = FakeTransport()
+    jan, feb = _settlements(JAN, FEB), _settlements(FEB, to_ns("2024-03-01"))
+    u_jan, u_feb = (ingest.n1_url("R2_archive", "BTCUSDT", m) for m in ("2024-01", "2024-02"))
+    serve(t, u_jan, _funding_zip([(ts, 1e-4) for ts in jan] + [(feb[0], 1e-4)]))
+    serve(t, u_feb, _funding_zip([(ts, 1e-4) for ts in feb[1:]]))
+    prefix = "data/futures/um/monthly/fundingRate/BTCUSDT/"
+    keys = [prefix + f"BTCUSDT-fundingRate-{m}.zip" for m in ("2024-01", "2024-02", "2025-07")]
+    t.routes[ingest.S3] = lambda u, p: ok(listing_xml(p["prefix"], keys if p["prefix"] == prefix else []))
+    st = RawStore(tmp_path / "raw")
+    recs = ingest.ingest_months(fetcher(t, tmp_path / "run"), st, "R2_archive", "BTCUSDT")
+    assert [(r["month"], r["status"], r["rows"]) for r in recs] == [("2024-01", "stored", len(jan)),
+                                                                     ("2024-02", "stored", len(feb))]
+    with pytest.raises(ValueError, match="R2_rest"):
+        ingest.ingest_months(fetcher(t, tmp_path / "run"), st, "R2_rest", "BTCUSDT")

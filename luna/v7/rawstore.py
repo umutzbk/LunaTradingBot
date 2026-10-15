@@ -43,11 +43,8 @@ an ``IntegrityBlocker`` (never "no rows"). Only the requested columns are decode
 its rows. Decoded columns sit in a ``ChunkCache``: LRU with a fixed byte budget (an implementation parameter,
 ``DEFAULT_CACHE_BYTES``), deterministic eviction.
 
-``RunStore``: executed ``BookRun`` objects persisted immutably under their output sha256 (file =
-``runrecord.run_pickle``), so a later (opening) process can pass the pinned W_DEV ML* run to
-``runner_select.holdout_inputs`` without a re-run: the file sha256 (pinned at the opening as
-``dev_ml_run_file_sha256``) is checked before unpickling with a restricted unpickler, the output sha256 and
-the window after. ``StoreSource``: the loader-backed ``runner.UniverseSource``.
+``StoreSource``: the loader-backed ``runner.UniverseSource``. Executed ``BookRun`` objects are persisted by
+``luna.v7.runstore`` (canonical parquet + JSON, no pickle), which reuses this module's write-once helpers.
 """
 
 from __future__ import annotations
@@ -57,7 +54,6 @@ import hashlib
 import io
 import json
 import os
-import pickle
 import re
 from collections import OrderedDict
 from collections.abc import Iterator, Mapping, Sequence
@@ -70,7 +66,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from luna.v7 import guard, k9, netguard, windows
-from luna.v7.book.engine import BookRun
 from luna.v7.constants import FROZEN
 from luna.v7.data import funding as fund_mod
 from luna.v7.data.instances import Instance
@@ -79,12 +74,11 @@ from luna.v7.data.schema import KNOWN_AT_OFFSET_NS, IntegrityBlocker
 from luna.v7.data.terminal import TerminalEvent
 from luna.v7.features import R4Bars
 from luna.v7.runner import SymbolInputs
-from luna.v7.runrecord import run_output_sha256, run_pickle
 from luna.v7.timeutil import ns_array
 from luna.v7.universe import Identity
 
 __all__ = ["DEFAULT_CACHE_BYTES", "FORMAT", "MAX_SCALE", "TABLES", "ChunkCache", "FundingLoader",
-           "ImmutabilityViolation", "RawStore", "RunStore", "StoreBusy", "StoreSource", "StoreTable",
+           "ImmutabilityViolation", "RawStore", "StoreBusy", "StoreSource", "StoreTable",
            "SymbolMeta", "TableLoader", "content_sha256", "month_period", "months_between", "store_bound"]
 
 DEFAULT_CACHE_BYTES = 512 * 2**20  # implementation parameter (AMB-36 (i)): decoded-column LRU budget
@@ -253,7 +247,8 @@ def content_sha256(t: StoreTable, cols: Mapping[str, object]) -> str:
 
 
 def _scaled_ints(v: np.ndarray, k: int) -> np.ndarray | None:
-    """int64 = v x 10^k when ``ints / 10**k`` reproduces every value exactly (lossless), else None."""
+    """int64 = v x 10^k when ``ints / 10**k`` reproduces every value bit for bit (lossless; -0.0 is not
+    reproducible from an int and keeps the column float64), else None."""
     if not 0 <= k <= MAX_SCALE or not np.isfinite(v).all():
         return None
     p = float(10**k)
@@ -261,7 +256,9 @@ def _scaled_ints(v: np.ndarray, k: int) -> np.ndarray | None:
     if len(s) and np.abs(s).max() >= _EXACT:
         return None
     ints = s.astype(np.int64)
-    return ints if (ints / p == v).all() else None
+    back = (ints / p).astype(np.float64)
+    same = back.view(np.int64) == np.ascontiguousarray(v, dtype=np.float64).view(np.int64)
+    return ints if same.all() else None
 
 
 def _scales(t: StoreTable, cols: Mapping[str, object], decimals: Mapping[str, int | None] | None
@@ -858,100 +855,3 @@ class StoreSource:
         return SymbolInputs(symbol, self.bars["R3"].frame(symbol, lo, hi),
                             self.bars["R5"].frame(symbol, lo, hi), self.funding.frame(symbol, lo, hi),
                             list(m.insts), r4, m.identity, tuple(m.notices), dict(m.terminals), agg)
-
-
-# ------------------------------------------------------------------------------------------- book runs
-
-_PICKLE_MODULES = ("pandas._libs.", "pandas.core.", "numpy._core.", "numpy.core.")
-_PICKLE_NAMES = {
-    "builtins": {"slice", "tuple", "list", "dict", "set", "frozenset", "complex", "bytearray", "range"},
-    "datetime": {"datetime", "date", "time", "timedelta", "timezone"},
-    "numpy": {"dtype", "ndarray"},
-    "numpy.dtypes": None,
-    "pandas": None,
-    "pandas.arrays": None,
-    "pyarrow.lib": {"_restore_array", "py_buffer", "type_for_alias"},
-    "luna.v7.book.engine": {"BookRun"},
-}
-
-
-class _RunUnpickler(pickle.Unpickler):
-    """Restricted unpickler: only the globals a ``BookRun`` of frames needs (``_PICKLE_NAMES`` /
-    ``_PICKLE_MODULES``); anything else (os, subprocess, eval, ...) is refused."""
-
-    def find_class(self, module: str, name: str):  # noqa: ANN201
-        allowed = _PICKLE_NAMES.get(module, set())
-        if (module in _PICKLE_NAMES and (allowed is None or name in allowed)) or \
-                module.startswith(_PICKLE_MODULES):
-            return super().find_class(module, name)
-        raise pickle.UnpicklingError(f"global {module}.{name} is not allowed in a persisted BookRun")
-
-
-class RunStore:
-    """Executed ``BookRun`` objects, written once under ``root`` as ``<output sha256>.pkl``
-    (``runrecord.run_pickle``) with a manifest (``MANIFEST.json``: file sha256, bytes, arm, h, execution,
-    layer, window, research). ``load(sha, *, file_sha256=None)``: the run's window is guarded
-    (``guard.check_data_span``), the file sha256 must equal the manifest's (and ``file_sha256``, the value
-    pinned at the opening, when given) BEFORE unpickling with the restricted ``_RunUnpickler``; after it, the
-    object must be a ``BookRun`` with the manifest's window and the output sha256 ``sha``. Pickle round-trips
-    the frames exactly (object / tuple columns), so the output hash is reproducible; the producing run must
-    ``put`` the same in-memory run whose pickle sha256 the pre-opening record carries. One writer per root."""
-
-    def __init__(self, root: str | Path) -> None:
-        self.root = Path(root)
-
-    def manifest(self) -> dict:
-        p = self.root / MANIFEST
-        return json.loads(p.read_bytes()) if p.exists() else {"kind": "V7_BOOK_RUNS", "runs": {}}
-
-    def manifest_sha256(self) -> str | None:
-        p = self.root / MANIFEST
-        return _sha_bytes(p.read_bytes()) if p.exists() else None
-
-    def put(self, run: BookRun) -> str:
-        if not isinstance(run, BookRun):
-            raise TypeError("RunStore.put takes an executed BookRun")
-        sha = run_output_sha256(run)
-        with _writer_lock(self.root):
-            man = self.manifest()
-            if sha in man["runs"]:
-                return sha
-            data = run_pickle(run)
-            p = self.root / f"{sha}.pkl"
-            _create_once(p, data)
-            man["runs"][sha] = {"file": p.name, "sha256": _sha_bytes(data), "bytes": len(data),
-                                "arm": run.arm, "h": int(run.h_star), "execution": run.execution,
-                                "layer": run.layer, "window": [int(run.window[0]), int(run.window[1])],
-                                "research": bool(run.research)}
-            man["runs"] = dict(sorted(man["runs"].items()))
-            _replace_atomic(self.root / MANIFEST, _canonical(man))
-        return sha
-
-    def file_sha256(self, output_sha256: str) -> str:
-        return str(self.manifest()["runs"][output_sha256]["sha256"])
-
-    def load(self, output_sha256: str, *, auth: guard.HoldoutAuthorization | None = None,
-             file_sha256: str | None = None) -> BookRun:
-        k9.require()
-        if not isinstance(output_sha256, str) or not _SHA.match(output_sha256):
-            raise ValueError(f"not a sha256: {output_sha256!r}")
-        e = self.manifest()["runs"].get(output_sha256)
-        if e is None:
-            raise KeyError(f"no persisted run {output_sha256}")
-        window = (int(e["window"][0]), int(e["window"][1]))
-        guard.check_data_span(*window, auth=auth, what=f"persisted run {output_sha256[:12]}")
-        p = self.root / e["file"]
-        if file_sha256 is not None and file_sha256 != e["sha256"]:
-            _integrity(f"{p}: manifest file sha256 {e['sha256']} is not the pinned {file_sha256}", p)
-        with open(p, "rb") as f:
-            data = f.read()
-        if _sha_bytes(data) != e["sha256"]:
-            _integrity(f"{p}: sha256 differs from the run manifest (not unpickled)", p)
-        try:
-            run = _RunUnpickler(io.BytesIO(data)).load()
-        except pickle.UnpicklingError as err:
-            _integrity(f"{p}: {err}", p)
-        if not isinstance(run, BookRun) or tuple(int(x) for x in run.window) != window \
-                or run_output_sha256(run) != output_sha256:
-            _integrity(f"{p}: the unpickled object is not the BookRun {output_sha256} of window {window}", p)
-        return run

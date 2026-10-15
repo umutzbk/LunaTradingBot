@@ -17,12 +17,10 @@ import pytest
 from luna.v7 import guard, k9, rawstore, runner, windows
 from luna.v7.data import funding as fund_mod
 from luna.v7.data.schema import IntegrityBlocker
-from luna.v7.rawstore import ChunkCache, FundingLoader, RawStore, RunStore, TableLoader
+from luna.v7.rawstore import ChunkCache, FundingLoader, RawStore, TableLoader
 from luna.v7.runner import InMemorySource, ResearchUniverse
-from luna.v7.runrecord import run_output_sha256, run_pickle_sha256
 from luna.v7.timeutil import MIN, D, to_ns
 from tests.v7 import fixtures_v7 as fx
-from tests.v7 import run_fixtures as rf
 
 JAN = to_ns("2024-01-01")
 FEB = to_ns("2024-02-01")
@@ -304,35 +302,6 @@ def test_funding_loader_merges_archive_and_rest(tmp_path, log):
     assert len(empty) == 0 and list(empty.columns) == list(fund_mod.OUT_COLUMNS)
 
 
-# ------------------------------------------------------------------------------------------- BookRuns
-
-
-def test_book_run_persisted_immutably_and_hash_checked(tmp_path, log):
-    rs = RunStore(tmp_path / "runs")
-    run = rf.funding_run([0.01, -0.02, 0.03], arm="A2", h=72)
-    sha = rs.put(run)
-    assert sha == run_output_sha256(run)
-    back = rs.load(sha)
-    assert run_output_sha256(back) == sha and back.arm == "A2" and back.window == run.window
-    assert rs.put(run) == sha  # idempotent
-    man = json.loads((tmp_path / "runs" / "MANIFEST.json").read_text(encoding="utf-8"))
-    p = tmp_path / "runs" / man["runs"][sha]["file"]
-    assert man["runs"][sha]["sha256"] == hashlib.sha256(p.read_bytes()).hexdigest()
-    with pytest.raises(KeyError):
-        rs.load("0" * 64)
-    p.write_bytes(p.read_bytes() + b"\0")
-    with pytest.raises(IntegrityBlocker):
-        rs.load(sha)
-    assert log.records()[-1]["rule"].startswith("§3")
-
-
-def test_book_run_window_is_guarded(tmp_path, log):
-    rs = RunStore(tmp_path / "runs")
-    sha = rs.put(rf.funding_run([0.01, 0.02], lo=windows.W_HOLD[0]))
-    with pytest.raises(guard.HoldoutBlocked):
-        rs.load(sha)
-
-
 # --------------------------------------------------------------------------------- universe sources
 
 
@@ -573,31 +542,25 @@ def test_one_writer_per_store(tmp_path, log):
     put_months(st, "R3", "BTCUSDT", bars(JAN, 31 * 96), ["2024-01"])  # released
 
 
-def test_run_store_pin_unpickler_and_window(tmp_path, log):
-    rs = RunStore(tmp_path / "runs")
-    run = rf.funding_run([0.01, -0.02], arm="A2", h=72)
-    sha = rs.put(run)
-    assert rs.file_sha256(sha) == run_pickle_sha256(run)  # the value the pre-opening record / pin carries
-    assert run_output_sha256(rs.load(sha, file_sha256=run_pickle_sha256(run))) == sha
-    with pytest.raises(IntegrityBlocker, match="pinned"):
-        rs.load(sha, file_sha256="0" * 64)
-    # a hostile pickle bound to a rewritten manifest is refused by the restricted unpickler
-    evil = b"cos\nsystem\n(S'echo pwned'\ntR."
-    man_p = tmp_path / "runs" / "MANIFEST.json"
-    man = json.loads(man_p.read_text(encoding="utf-8"))
-    f = tmp_path / "runs" / man["runs"][sha]["file"]
-    f.unlink()
-    f.write_bytes(evil)
-    man["runs"][sha]["sha256"] = hashlib.sha256(evil).hexdigest()
-    man_p.write_text(json.dumps(man), encoding="utf-8")
-    with pytest.raises(IntegrityBlocker, match="not allowed"):
-        rs.load(sha)
-    # a manifest window that is not the run's is refused after loading
-    rs2 = RunStore(tmp_path / "runs2")
-    sha2 = rs2.put(run)
-    m2p = tmp_path / "runs2" / "MANIFEST.json"
-    m2 = json.loads(m2p.read_text(encoding="utf-8"))
-    m2["runs"][sha2]["window"] = [run.window[0] - D, run.window[1]]
-    m2p.write_text(json.dumps(m2), encoding="utf-8")
-    with pytest.raises(IntegrityBlocker, match="window"):
-        rs2.load(sha2)
+def test_negative_zero_is_exact(tmp_path, log):
+    """Review round 2, minor A: -0.0 cannot come back from a scaled int; that column stays float64, the
+    content sha256 survives the round trip and an orphan of the same content is adopted."""
+    st = RawStore(tmp_path / "raw")
+    ts = JAN + np.arange(6, dtype=np.int64) * 15 * MIN
+    c = np.array([-0.0, -0.00012345, 0.5, 1.25, -3.0, 2.0])
+    df = pd.DataFrame(dict(open_ts=ts, o=c, h=c, l=c, c=c))
+    e = st.put_chunk("R4_mark", "BTCUSDT", "2024-01", df, sources=[])
+    assert e["scales"] == {"o": None, "h": None, "l": None, "c": None}
+    t = rawstore.TABLES["R4_mark"]
+    got = TableLoader(st, "R4_mark").arrays("BTCUSDT", JAN, FEB)
+    assert bool(np.signbit(got["c"][0]))
+    assert rawstore.content_sha256(t, {k: got[k] for k in t.names}) == e["content_sha256"]
+    plus = df.assign(c=np.abs(c) * np.sign(c) + 0.0)  # +0.0 instead of -0.0: different content
+    assert rawstore.content_sha256(t, {k: plus[k].to_numpy() for k in t.names}) != e["content_sha256"]
+    st2 = RawStore(tmp_path / "raw2")
+    q = st2.chunk_path("R4_mark", "BTCUSDT", "2024-01")
+    q.parent.mkdir(parents=True)
+    q.write_bytes(st.chunk_path("R4_mark", "BTCUSDT", "2024-01").read_bytes())
+    assert st2.put_chunk("R4_mark", "BTCUSDT", "2024-01", df, sources=[])["sha256"] == e["sha256"]
+    with pytest.raises(rawstore.ImmutabilityViolation):
+        RawStore(tmp_path / "raw2").put_chunk("R4_mark", "BTCUSDT", "2024-01", plus, sources=[])

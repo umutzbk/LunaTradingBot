@@ -261,15 +261,18 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
                    panel: LabelPanel, final_model: object, leakage_report: leakage.LeakageReport,
                    records: Callable[[int], object], integrity: Sequence[str],
                    dev: DevSelection | None = None, dev_ml_run: BookRun | None = None,
-                   dev_kill: Sequence[str] | None = None, secondary: Mapping | None = None,
+                   dev_kill: Sequence[str] | None = None, dev_run_store: object = None,
+                   secondary: Mapping | None = None,
                    B: int = stats.B_DEFAULT, seed: int = stats.SEED) -> HoldoutInputs:
-    """``verdict.HoldoutInputs`` (see module docstring). W_DEV facts come from ``dev`` or, for plumbing on
-    synthetic windows, from ``dev_ml_run`` + ``dev_kill``. ``final_model`` (``cv.final_model``, or any model
-    with ``predict(df)``) predicts the canonical panel: P7 ``ic`` = (ŷ, y_reg, dates), P8 ``calib`` = (ŷ_cal,
-    y_reg, dates), the A1 calibration = (P̂_cal, y_pos, dates); K8 = (the panel's invalid-label rate,
-    ``missing_funding_rate`` of the required E_T runs). ``leakage_report``: the passed pre-opening
-    ``leakage.LeakageReport`` of ML*; ``records``: the decision records of the holdout runs (L1 re-check,
-    ``leakage.run_holdout_checks``). Everything is bound to the opening's pin (module docstring)."""
+    """``verdict.HoldoutInputs`` (see module docstring). W_DEV facts come from ``dev`` or from ``dev_ml_run``
+    + ``dev_kill``; in a later (opening) process ``dev_run_store`` (a ``runstore.RunStore``) supplies the
+    W_DEV ML* run, loaded with both hashes of the verified pin (``RunStore.load_pinned``). ``final_model``
+    (``cv.final_model``, or any model with ``predict(df)``) predicts the canonical panel: P7 ``ic`` = (ŷ,
+    y_reg, dates), P8 ``calib`` = (ŷ_cal, y_reg, dates), the A1 calibration = (P̂_cal, y_pos, dates); K8 =
+    (the panel's invalid-label rate, ``missing_funding_rate`` of the required E_T runs). ``leakage_report``:
+    the passed pre-opening ``leakage.LeakageReport`` of ML*; ``records``: the decision records of the holdout
+    runs (L1 re-check, ``leakage.run_holdout_checks``). Everything is bound to the opening's pin (module
+    docstring)."""
     # HoldoutBlocked: forged, the canonical opening missing / not this one, or the verdict already produced
     pin = guard.verify_authorization(auth)
     if dev is not None:
@@ -280,6 +283,8 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
         arm, h = dev.ml_star
         dev_run, kill = dev.runs[dev.ml_star], dev.kill
     else:
+        if dev_ml_run is None and dev_run_store is not None:
+            dev_ml_run = dev_run_store.load_pinned(auth)  # type: ignore[attr-defined]
         if dev_ml_run is None or dev_kill is None:
             raise ValueError("W_DEV facts missing: pass dev or (dev_ml_run, dev_kill)")
         arm, h, dev_run, kill = dev_ml_run.arm, dev_ml_run.h_star, dev_ml_run, tuple(dev_kill)
