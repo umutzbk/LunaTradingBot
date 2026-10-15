@@ -4310,12 +4310,14 @@
   }
  ],
  "code_sha256": {
-  "luna/v7/data/captures.py": "ca87fc0c9c9dac29302c835e503b83939932faf73ad12d2401504bcb8802b8f1",
-  "luna/v7/data/instances.py": "05083c75bb5546e0c4474d9624091619d78eed07645f13fe782c0f0b60307bf8",
+  "luna/v7/data/captures.py": "21a8a0c9638559c1d843e981ad7cd5b30ce64caa564b1569ca099526ea94a38c",
+  "luna/v7/data/instances.py": "a897a269f3723cf78c07ae4edca5b9064dc8f127f32354a626a968c1188632a9",
   "luna/v7/data/notices.py": "3886e18b6d8b064854412773a8c872284b38b1437a3a0857689df3a460901ae6",
   "luna/v7/metaingest.py": "ff5208ad1076261d073cc563e5b21149dfac27916787d5ccdf04c7bfa1a03b02",
-  "luna/v7/metastore.py": "700a1de895bdc8ad88851dcb88bd4377334c0dd122862973259ccd2f225aa8f1"
+  "luna/v7/metastore.py": "700a1de895bdc8ad88851dcb88bd4377334c0dd122862973259ccd2f225aa8f1",
+  "scripts/v7/validate_notices_stage0.py": "c3377149d582fd233b0cc8ef3bb8135917f8fb0767dd7468c1dec6c419166093"
  },
+ "code_sha256_source": "git show HEAD:<path>",
  "counts": {
   "frozen": {
    "captures": 54,
@@ -4996,7 +4998,7 @@
    "veto_titles": {}
   }
  },
- "git_head": "7e1e40e1ef421ed5d3070aec09ba25a400721eef",
+ "git_head": "e506e9c6b67660abc77a246915fc52775a940e83",
  "headline": {
   "frozen_can_process_real_captures": true,
   "real_article_structure": "The notice's own article object (same 32-hex code, string `body`) carries `publishDate` but NO `releaseDate`; `releaseDate` (ms) occurs only on body-less same-code catalog entries (on 39 of 54 captures; publishDate equals it on 38). R50: the release time is the same-code catalog `releaseDate`, else the article `publishDate`, the later of the two when both exist and differ (`release_src`). R51: the node-tree bodies are converted to text (block elements break lines, table cells joined by ` | `).",
@@ -5584,6 +5586,65 @@
  },
  "k9_refusal_logged": false,
  "kind": "V7_C4_NOTICE_VALIDATION",
+ "loaded_luna_modules_sha256": {
+  "luna/__init__.py": "bf7559f94c42be238b9236e527a77fb6b01ca098c02d23d5a182ec475574f31c",
+  "luna/carry/__init__.py": "e3674d45503beb467e8ef27387a71a0202f0f1b9fda52cb3bccf419de5c57d4d",
+  "luna/carry/config.py": "556ac8ab27c0d828f0b2e10bee1385b4041af85f7cf805bcede27384cc5f3f72",
+  "luna/carry/funding.py": "c9d6154faf583730a291eeb2c4bc9465dc5cebbaec49af0d8c9bad0481e35f78",
+  "luna/carry/market.py": "6b3d0c17b9243b2d546938b3841b13111d3dcf664b1e616cc14b9cfaaf00193b",
+  "luna/carry/signals.py": "2ace57d4a6f3b019d7bbdc72a5c4d79bcc617c3cfeb531c62f437f30b87ba693",
+  "luna/carry/strategy.py": "9df0a6f45d6982cde6434f2c7c1a07077ba73faef187d0c973569c19f54236b1",
+  "luna/config.py": "acc2442e0e9ec2725564d5c3fb30cfd55727a17a1de26a57e0901e921565ca67",
+  "luna/instruments.py": "8b0aaeada14593350574b8f558735b011e916a2fdc858e576302d4ad1adb0496",
+  "luna/types.py": "8ce1c586952c7baefa3342e488790f4b18983d6922e406a46aba98efae04cada",
+  "luna/v7/__init__.py": "e92629ae17f786ff7e0f50bb409d701866d80859be90bbf6d1a3e219dfdc3c59",
+  "luna/v7/accounting.py": "7632b7533fab5193bf1f169ee41619a19b35ebc8f059d38073872600fdfb3104",
+  "luna/v7/arms.py": "8361154b6db5040e95d0a38a1db68f9cffbb25d47a73750ef69d96025ad068fa",
+  "luna/v7/beta.py": "dde7b5248c6deec8c4d5c6eeefe627acd167fcb9bc87dcc91e390c6fbabf8389",
+  "luna/v7/book/__init__.py": "63b6e827a18b5279366935134ff6dc625809ca566e2759fba09f48167fd3c315",
+  "luna/v7/book/constructor.py": "8a6051c6a11ceba29484a6f30a674f9a84b382500e3772c931726893139cbc08",
+  "luna/v7/book/engine.py": "fc480000382fa03e2fe8848422c97777f46d2557da0bee014d363c16170ab9c4",
+  "luna/v7/book/execution.py": "7c423435dcd1d93e332a5ad78ca18c2a609c89ad54f94c5f82d4dbb56eb60a12",
+  "luna/v7/book/hedge.py": "754d9a57bea05a0c94d4ca1720a227cb226c4353c8ec08f55fa0aac247c68045",
+  "luna/v7/book/ledger.py": "1dd9acf82344a79efa24a9a5da25af012c42cbae5ddd1529f9e1ac21aa395483",
+  "luna/v7/book/risk.py": "96a2866d58ff71205fbade4930ab249cfbd9dcd1a36059f9aab73f100f6bdc0f",
+  "luna/v7/constants.py": "496101d46129053f73c93ede47a0f82c4550d3f3d9fdfbf7cabdf098e30477b6",
+  "luna/v7/cv.py": "6106a1cf8eb58b6830a90e55f9a5bd531efd7b6e0972255fb4d080101c1c2c7e",
+  "luna/v7/data/__init__.py": "1ba687a0d9f505bef7b4efb4cf9c14068800d3661feba5973dfb83ea3d06aad1",
+  "luna/v7/data/captures.py": "21a8a0c9638559c1d843e981ad7cd5b30ce64caa564b1569ca099526ea94a38c",
+  "luna/v7/data/funding.py": "b812485dfb06706b8d30925f8244637d7067c5be91639b90980ffad487c172a7",
+  "luna/v7/data/instances.py": "a897a269f3723cf78c07ae4edca5b9064dc8f127f32354a626a968c1188632a9",
+  "luna/v7/data/instruments.py": "b9575f35340b821ca032a10686af785c857ddc32366a0633b38bdbdc539e10f8",
+  "luna/v7/data/intervals.py": "de2429fa7c9d055910f0f16f7339284878ac588117d61a64e823693dba219c5e",
+  "luna/v7/data/klines.py": "8dc5e235b0ffeee044f0ce8de993239e4ecf54e7d5f478c8b4f507a1680759b9",
+  "luna/v7/data/notices.py": "3886e18b6d8b064854412773a8c872284b38b1437a3a0857689df3a460901ae6",
+  "luna/v7/data/schema.py": "550664006de81ffc541b6f835840948ce31377d5075917c3e4fb15e93b250f4c",
+  "luna/v7/data/terminal.py": "124de2d2d864d7f4e1f564cfbfd17297bd862209cbb230212142c25b54183099",
+  "luna/v7/deploy.py": "119c390a91ffd83398c1af7f121001ff5c48ce92da9f12039e7bd1725521ec8f",
+  "luna/v7/features.py": "7fb08398cc10bb21bfb39bcd512855bed1b9c831437b8d21e6da8bed0193c4d4",
+  "luna/v7/fetch.py": "2d1ac1fe0d47e599c341ed81097c273d1642d0e9e11e67fd8c30ac05683aedb2",
+  "luna/v7/forward_store.py": "aa9bba75527ac81bf6e8cfdfb9980ea29362f7e6ec135671d4c96e7f78ea1eec",
+  "luna/v7/guard.py": "8f83ed1d26b8bee1fcc62b63fb7b33f7f1b288caf994d46fec4a03ce4f152718",
+  "luna/v7/ingest.py": "7782daa63994b100ba2eef91e03ce87bc41c4a5cfa884dd11755bcb47fbe83e8",
+  "luna/v7/k9.py": "fe7d8b1751828defc7301c65bffc24dc9a0f10f24491659afedfd9e820377cb0",
+  "luna/v7/labels.py": "7678b66d03e47bf29bb4610906f346ff164e8ee373c93b4b40e001e797806d76",
+  "luna/v7/localdata.py": "4ddfadf2c12ea50df3e46d494032b4c080063e4089a1d92fbb85e1198e158226",
+  "luna/v7/market.py": "02c12a56c3f28049a60b52a9a0e2e3a74890662bbc683a1984c0f812142f8fba",
+  "luna/v7/metaingest.py": "ff5208ad1076261d073cc563e5b21149dfac27916787d5ccdf04c7bfa1a03b02",
+  "luna/v7/metastore.py": "700a1de895bdc8ad88851dcb88bd4377334c0dd122862973259ccd2f225aa8f1",
+  "luna/v7/models.py": "2cd65f8dbb163338a4e7b63888789c58a48c2269ddc2b4500d57e7ad90de0be0",
+  "luna/v7/netguard.py": "dc8ac1a984827f8a9e63c4109dcbbb219ccebc7966a13ec6406f3d52a48f2f44",
+  "luna/v7/pitindex.py": "3704e70a32088c7a34f5208dc16e023c044e5f5394ddd99ae63ac202eea8aa2d",
+  "luna/v7/rawstore.py": "4ef5babba42e5b051893f17bee3738596cc0490db93a13a1139ebbc8e01b44fa",
+  "luna/v7/refs.py": "df81110c4091a0d446472a1527bc01cf9cef6ffd8d84de2ec475517473ff0515",
+  "luna/v7/release.py": "f724b78cfd713f4cd7925b4cd9c24839f6ccd245e0ea4474c037279ce499d35c",
+  "luna/v7/runner.py": "e5d4ec4b79dbcbb96f096e037000dee000903f4626f33d7fccb809455245beb8",
+  "luna/v7/spec.py": "9c8bb71bb808c63bd66fbe140c513d195764c9cc6bdec5ec6762249258f030bf",
+  "luna/v7/spread.py": "0e2a3ced4cd7d470c27f52d628d1c23856017012637186cbde114cce1a5f9e47",
+  "luna/v7/timeutil.py": "9e67a0e09b9c8282ac9a100a714bf04569bed24e669ecf44c90f9e33251bc4f9",
+  "luna/v7/universe.py": "5ecbbf0097c5bdc001d9e952355be6c9b0fb63f71eae021f58518ee6b4e51b14",
+  "luna/v7/windows.py": "ef78b57cd4db36e1c27c9792c1dfc8c3d5577b33bc71a7d6120ef3901a8009f5"
+ },
  "match_counts": {
   "frozen": {
    "coin_m_veto": 1,
@@ -9148,5 +9209,10 @@
     "version": 1
    }
   ]
- }
+ },
+ "worktree_clean_for_code": true,
+ "worktree_status_porcelain_executed_code": [],
+ "worktree_status_porcelain_luna_v7": [
+  "?? luna/v7/forward_model.py"
+ ]
 }
