@@ -11,7 +11,13 @@ wall-clock; the DT4 run record is written by ``luna.v7.runrecord`` to a caller-s
 
 * ``ResearchUniverse``: per-symbol inputs (``SymbolInputs``) -> ``SymbolData`` (gates / features, with the
   ``intervals.annotate`` output), ``engine.Instrument`` and ``labels.LegData`` per instance. Required columns
-  are checked up front (fail closed; nothing is defaulted).
+  are checked up front (fail closed; nothing is defaulted). ``ResearchUniverse.from_source(source, lo, hi)``
+  builds it from a ``UniverseSource`` (SC-01 part 1, AMB-36): every symbol's inputs restricted to the event
+  times [lo, hi) of the window being evaluated, so the full history is never resident
+  (``rawstore.StoreSource``: lazy, guarded loaders over the raw store; ``InMemorySource``: the same protocol
+  over in-memory ``SymbolInputs``, e.g. the synthetic fixtures). The window must cover every lookback /
+  label horizon of what is evaluated in it (the caller's responsibility; rows outside it do not exist for the
+  universe).
 * ``DecisionProvider``: ``provider(t)`` -> ``engine.DecisionView``, point in time (every element uses rows
   with ``known_at <= t - 1 min``; the overall max known_at is asserted): U1-U8 ``GateRow`` per candidate
   symbol (``features.xs_input`` -> ``universe.gates``), h-hat(t) (``spread.half_spread`` on the current
@@ -51,6 +57,7 @@ import pickle
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from typing import Protocol
 
 import numpy as np
 import pandas as pd
@@ -130,6 +137,53 @@ class SymbolInputs:
     aggtrades: pd.DataFrame | None = None
 
 
+class UniverseSource(Protocol):
+    """Where a ``ResearchUniverse`` gets its per-symbol inputs (SC-01 part 1): ``symbols()`` and
+    ``load(symbol, lo, hi)`` = the symbol's ``SymbolInputs`` with every time-series row of event time in
+    [lo, hi) (sorted, as stored), and its non-series inputs (instances, identity, notices, terminal
+    events)."""
+
+    def symbols(self) -> Sequence[str]: ...
+
+    def load(self, symbol: str, lo: int, hi: int) -> SymbolInputs: ...
+
+
+def _window(df: pd.DataFrame, col: str, lo: int, hi: int, what: str) -> pd.DataFrame:
+    """The rows of ``df`` with lo <= ``col`` < hi via ``searchsorted`` (``df`` must be sorted by ``col``)."""
+    if not len(df):
+        return df
+    ts = ns_array(df[col].to_numpy(), f"{what}.{col}")
+    if (np.diff(ts) < 0).any():
+        raise ValueError(f"{what}: not sorted by {col} (a window is a searchsorted slice)")
+    return df.iloc[int(np.searchsorted(ts, lo, "left")):int(np.searchsorted(ts, hi, "left"))]
+
+
+class InMemorySource:
+    """``UniverseSource`` over in-memory ``SymbolInputs`` (synthetic fixtures, small runs): ``load`` returns
+    the frames' rows with event time in [lo, hi) (``EVENT_COLS``; positional slices), other inputs as
+    given."""
+
+    def __init__(self, inputs: Mapping[str, SymbolInputs]) -> None:
+        self.inputs = dict(inputs)
+
+    def symbols(self) -> tuple[str, ...]:
+        return tuple(sorted(self.inputs))
+
+    def load(self, symbol: str, lo: int, hi: int) -> SymbolInputs:
+        lo, hi = int(lo), int(hi)
+        if hi <= lo:
+            raise ValueError(f"empty window [{lo}, {hi})")
+        x = self.inputs[symbol]
+
+        def w(df: pd.DataFrame, name: str) -> pd.DataFrame:
+            return _window(df, EVENT_COLS[name.split(".")[0]][0], lo, hi, f"{symbol}.{name}")
+
+        r4 = R4Bars(*(w(getattr(x.r4, k), f"r4.{k}") for k in ("premium", "mark", "index")))
+        agg = None if x.aggtrades is None else w(x.aggtrades, "aggtrades")
+        return replace(x, bars15=w(x.bars15, "bars15"), bars1m=w(x.bars1m, "bars1m"),
+                       funding=w(x.funding, "funding"), r4=r4, aggtrades=agg)
+
+
 class ResearchUniverse:
     """The per-symbol objects every stage consumes, built once from ``SymbolInputs`` (``hedge`` = BTCUSDT)."""
 
@@ -170,6 +224,15 @@ class ResearchUniverse:
             self.instruments[sym] = Instrument(sym, x.bars1m, x.bars15, mark15, x.funding, list(x.insts),
                                                dict(x.terminals), x.aggtrades)
         self.candidates: tuple[str, ...] = tuple(s for s in sorted(self.inputs) if s != hedge)
+
+    @classmethod
+    def from_source(cls, source: UniverseSource, lo: int, hi: int, hedge: str = HEDGE) -> ResearchUniverse:
+        """The universe of ``source.symbols()`` with every input restricted to the window [lo, hi) (loaded
+        symbol by symbol; module docstring)."""
+        lo, hi = int(lo), int(hi)
+        if hi <= lo:
+            raise ValueError(f"empty window [{lo}, {hi})")
+        return cls({s: source.load(s, lo, hi) for s in sorted(source.symbols())}, hedge)
 
     def data_span(self) -> tuple[int, int] | None:
         """(min, max + 1) of every input timestamp, recomputed from the current inputs: the event times of
@@ -666,6 +729,6 @@ def decision_log(run: BookRun, provider: DecisionProvider,
     return pd.DataFrame(rows)
 
 
-__all__ = ["DecisionProvider", "DecisionRecord", "FoldScoreModel", "LabelPanel", "ResearchUniverse",
-           "SymbolInputs", "decision_log", "fit_fold_models", "fold_convergence", "label_panel", "model_hash",
-           "run_book"]
+__all__ = ["DecisionProvider", "DecisionRecord", "FoldScoreModel", "InMemorySource", "LabelPanel",
+           "ResearchUniverse", "SymbolInputs", "UniverseSource", "decision_log", "fit_fold_models",
+           "fold_convergence", "label_panel", "model_hash", "run_book"]

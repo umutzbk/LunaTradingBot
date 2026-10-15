@@ -10,6 +10,11 @@ import pytest
 from luna.v7 import k9
 
 
+def pytest_configure(config):
+    config.addinivalue_line("markers", "v7_scale: representative-scale budget test (Task 26a); runs in the "
+                            "per-task gate (a few seconds)")
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _k9_session_log(tmp_path_factory):
     with k9.using(k9.K9Log(tmp_path_factory.mktemp("k9_session"))) as log:

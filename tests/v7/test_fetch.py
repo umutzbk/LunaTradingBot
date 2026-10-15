@@ -514,3 +514,45 @@ def test_no_other_v7_module_imports_a_network_library():
                     offenders.append(f"{path.relative_to(root)}: {n}")
     assert offenders == []
     assert "httpx" in Path(fetch.__file__).read_text(encoding="utf-8")
+
+
+_TRANSPORT_NAMES = ("HttpxTransport", "Transport")
+
+
+def _transport_uses(tree) -> list[str]:
+    """Static uses of a transport outside the fetch layer: importing / naming ``HttpxTransport`` or
+    ``Transport``, reading a ``.transport`` attribute, or passing ``transport=`` to a call."""
+    import ast
+
+    out: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            out += [f"import {a.name}" for a in node.names if a.name in _TRANSPORT_NAMES]
+        elif isinstance(node, ast.Name) and node.id in _TRANSPORT_NAMES:
+            out.append(f"name {node.id}")
+        elif isinstance(node, ast.Attribute) and (node.attr in _TRANSPORT_NAMES or node.attr == "transport"):
+            out.append(f"attribute .{node.attr}")
+        elif isinstance(node, ast.Call):
+            out += [f"{k.arg}= in a call" for k in node.keywords if k.arg == "transport"]
+    return out
+
+
+def test_no_other_v7_module_constructs_or_uses_a_transport():
+    """Task 24 / 25 carry-over n-3: only ``luna.v7.fetch`` constructs or uses ``HttpxTransport`` / a
+    ``Transport``; every other module (ingestion included) goes through ``fetch.Fetcher`` (static check)."""
+    import ast
+
+    root = Path(fetch.__file__).parent
+    offenders = []
+    for path in sorted(root.rglob("*.py")):
+        if path == Path(fetch.__file__):
+            continue
+        for use in _transport_uses(ast.parse(path.read_text(encoding="utf-8"))):
+            offenders.append(f"{path.relative_to(root)}: {use}")
+    assert offenders == []
+    # the scan detects each form (mutation check on a synthetic module)
+    probe = ast.parse("from luna.v7.fetch import HttpxTransport\nt = fetch.Transport\nf.transport.get('u')\n"
+                      "fetch.fetch(r, transport=x, out_dir='o')\nHttpxTransport()\n")
+    assert len(_transport_uses(probe)) == 5
+    assert (root / "ingest.py").exists() and _transport_uses(ast.parse((root / "ingest.py").read_text(
+        encoding="utf-8"))) == []
