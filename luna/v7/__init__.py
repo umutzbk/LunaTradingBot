@@ -116,7 +116,7 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "DEC-7": _m("deploy", "book.engine"),
     "DEC-8": _m("arms"),
     "DEC-9": _m("models"),
-    "DEC-10": (*_m("forward", "forward_model", "forward_replay", "book.engine"),
+    "DEC-10": (*_m("forward", "forward_model", "forward_replay", "modelcodec", "book.engine"),
                "doc: forward refit inside the opening before the verdict marker; decision shift and "
                "skipped-decision exits wired; the tick-level stale-quarter risk no-op is STOPPED, normative "
                "amendment required (AMB-43)"),

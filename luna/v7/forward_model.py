@@ -31,14 +31,13 @@
 from __future__ import annotations
 
 import hashlib
-import pickle
 import weakref
 from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
 
-from luna.v7 import guard, k9, leakage, models
+from luna.v7 import guard, k9, leakage, modelcodec, models
 from luna.v7.arms import families
 from luna.v7.cv import (
     PURGE_NS,
@@ -176,7 +175,7 @@ def forward_model(dev_panel: pd.DataFrame, holdout_panels: Sequence[LabelPanel],
         iso = IsotonicCalibrator().fit(rc.predict(_design(c.cfg, cal, cols, pre)), cal["y_pos"], cal_dates)
         clfs[fam] = _Clf(rc, iso)
     fm = FoldModel(FORWARD_FOLD, horizon, {reg: sel}, {reg: r}, {reg: lin}, clfs, pre, cols)
-    blob = pickle.dumps(fm, protocol=4)  # the serialisation of leakage.model_hash
+    blob = modelcodec.encode(fm)  # canonical, non-executable (no pickle; Task 26a)
     body = {"kind": guard.FORWARD_KIND, "run_id": guard.RUN_ID, "opening_id": pin["opening_id"],
             "code_commit": pin["code_commit"], "ml_star": pin["ml_star"], "horizon": horizon,
             "forward_model_hash": hashlib.sha256(blob).hexdigest(),
@@ -191,8 +190,9 @@ def forward_model(dev_panel: pd.DataFrame, holdout_panels: Sequence[LabelPanel],
 
 
 def forward_model_hash(fm: FoldModel) -> str:
-    """The forward model's identity (``leakage.model_hash``), recorded in the write-once record (§15)."""
-    return leakage.model_hash(fm)
+    """The forward model's identity: sha256 of its canonical ``modelcodec`` bytes, recorded in the write-once
+    record (§15)."""
+    return modelcodec.model_sha256(fm)
 
 
 _LOADED: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
@@ -202,12 +202,15 @@ _LOADED_SHA: dict[int, str] = {}  # id of a loaded model -> the record's forward
 def load_forward_model() -> FoldModel:
     """The frozen forward model of the canonical opening (ruling R54): the write-once record verified
     (``guard.forward_model_record``: bound to the opening, untampered), the blob hashing to its
-    ``forward_model_hash``, the unpickled model on ``FORWARD_FOLD`` at the record's h*. Works after the W_HOLD
-    verdict (it reads no W_HOLD data). HoldoutBlocked otherwise."""
+    ``forward_model_hash``, the decoded model (``modelcodec``, no unpickling) on ``FORWARD_FOLD`` at the
+    record's h*. Works after the W_HOLD verdict (it reads no W_HOLD data). HoldoutBlocked otherwise."""
     rec = guard.forward_model_record()
     if rec is None:
         raise guard.HoldoutBlocked("no frozen forward model for the canonical opening")
-    fm = pickle.loads(guard.forward_model_blob(rec))  # own pinned, hash-checked blob
+    try:
+        fm = modelcodec.decode(guard.forward_model_blob(rec))
+    except modelcodec.CodecError as e:
+        raise guard.HoldoutBlocked(f"the pinned forward-model document does not decode: {e}") from None
     if not isinstance(fm, FoldModel) or fm.fold != FORWARD_FOLD or fm.horizon != int(rec["horizon"]):
         raise guard.HoldoutBlocked("the pinned blob is not a forward model of the record")
     _LOADED[id(fm)] = fm
@@ -221,8 +224,8 @@ def loaded(fm: object) -> bool:
 
 
 def loaded_hash(fm: object) -> str | None:
-    """The record's ``forward_model_hash`` a loaded model was verified against (its blob's sha256; a
-    re-pickle of an unpickled model need not be byte-identical), else None."""
+    """The record's ``forward_model_hash`` a loaded model was verified against (== ``forward_model_hash`` of
+    it: the format is canonical), else None."""
     return _LOADED_SHA.get(id(fm)) if loaded(fm) else None
 
 

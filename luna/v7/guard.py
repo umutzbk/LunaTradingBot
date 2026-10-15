@@ -90,7 +90,7 @@ RESUME_LOG = "RESUME_ATTEMPTS.jsonl"  # append-only log of every resume attempt 
 OPENING_LOG = "OPENING_ATTEMPTS.jsonl"  # append-only log of every opening attempt (never an authorization)
 E6_CAPTURES = "E6_CAPTURES.jsonl"  # append-only pins of the E6 captures fetched after the opening (S-1.7 E6)
 FORWARD_MODEL = "FORWARD_MODEL.json"  # write-once record of the §15 forward refit (ruling R54)
-FORWARD_BLOB = "FORWARD_MODEL.pkl"  # its pickled model (sha256 == the record's forward_model_hash)
+FORWARD_BLOB = "FORWARD_MODEL.model.json"  # its canonical modelcodec document (sha256 == forward_model_hash)
 FORWARD_LOG = "FORWARD_MODEL_ATTEMPTS.jsonl"  # append-only log of every forward-model pin attempt
 FORWARD_KIND = "V7_FORWARD_MODEL"
 FORWARD_FIELDS = frozenset({"kind", "run_id", "opening_id", "code_commit", "ml_star", "horizon",
