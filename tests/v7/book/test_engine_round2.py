@@ -1,8 +1,8 @@
 """User decision round 2 (docs/results/v7-impl/CLARIFICATIONS-2026-10-15-round2.md) at the engine level:
 DK-10 (data-gap fills booked at the substitute bar), override 2 / DK-69 (a required non-halted exit without a
-bar within 60 min -> INVALID RUN), override 3 / DK-70 (no stale leg mark -> INVALID RUN), DK-42 (the A1 veto
-is entry-only), DK-77 (``maker_exit`` only while a maker limit rests), DK-78 (a flatten / the kill cancels an
-in-flight hedge open). Synthetic inputs only."""
+bar within 60 min -> INVALID RUN), override 3 / DK-70 + AMB-29 (a) (no stale leg mark, halted or not
+-> INVALID RUN), DK-42 (the A1 veto is entry-only), DK-77 (``maker_exit`` only while a maker limit rests),
+DK-78 (a flatten / the kill cancels an in-flight hedge open). Synthetic inputs only."""
 
 from dataclasses import replace
 
@@ -12,7 +12,7 @@ import pytest
 
 from luna.v7 import accounting
 from luna.v7.book.engine import run
-from luna.v7.book.execution import INVALID_EXIT_GAP, INVALID_MARK
+from luna.v7.book.execution import INVALID_EXIT_GAP, INVALID_MARK, INVALID_TERMINAL
 from luna.v7.timeutil import MIN, D, H
 
 from .engine_fixtures import BTC, END, LO, S0, base_inputs, gate_row, instrument
@@ -113,17 +113,50 @@ def test_leg_without_mark_at_tick_is_invalid():
     assert src[(tick, "AAAUSDT")] == "last" and src[(tick - 15 * MIN, "AAAUSDT")] == "mark"
 
 
-def test_halted_leg_without_mark_keeps_current_code_amb29():
-    """AMB-29 (normative amendment required, stopped sub-case): AAA HALTED at the 02:00 tick (no 1m bar in
-    [01:00, 02:00)) and without any 15m close there: no frozen rule supplies the mark; the current code (the
-    previous price event carried, ``mark_source`` = ``stale``) is kept, clearly marked."""
+def _halted_aaa(tick, **kw):
+    """AAA HALTED at ``tick`` (S-5.4: no volume > 0 1m bar in [tick - 60 min, tick)); 15m bars untouched."""
+    return instrument("AAAUSDT", 100.0, -1e-4, dead=((tick - 90 * MIN, tick + 30 * MIN),), **kw)
+
+
+def test_halted_leg_without_mark_is_invalid_amb29a():
+    """AMB-29 (a), user decision 2026-10-15: AAA HALTED at the 02:00 tick (no 1m bar in [01:00, 02:00)) and
+    without a mark-price or a last-price 15m close ending there -> INVALID RUN (required leg mark missing);
+    no stale carry of the previous price event, halted or not."""
     tick = LO + 2 * H
-    aaa = _drop15(instrument("AAAUSDT", 100.0, -1e-4, dead=((tick - 90 * MIN, tick + 30 * MIN),)),
-                  tick - 15 * MIN)
-    r = run("A0", base_inputs(aaa=aaa), (LO, END), 24)
+    r = run("A0", base_inputs(aaa=_drop15(_halted_aaa(tick), tick - 15 * MIN)), (LO, END), 24)
+    assert r.invalid == INVALID_MARK and r.invalid_ts == tick
+    assert r.invalid_detail.startswith(f"AAAUSDT#0@{tick}: no mark-price or last-price 15-minute close")
+    assert r.marks["ts"].max() < tick and not (r.positions["mark_source"] == "stale").any()
+
+
+def test_halted_leg_is_marked_by_its_mark_price_or_last_price_close():
+    """A HALTED held leg is marked like any other: the mark-price 15m close ending at the tick, else the
+    last-price 15m close of the same period; no invalidation."""
+    tick = LO + 2 * H
+    both = run("A0", base_inputs(aaa=_halted_aaa(tick)), (LO, END), 24)
+    assert both.valid
+    src = both.positions.set_index(["ts", "symbol"])["mark_source"]
+    assert src[(tick, "AAAUSDT")] == "mark"
+    last = _halted_aaa(tick)
+    last = replace(last, mark15=last.mark15[last.mark15["open_ts"] != tick - 15 * MIN].reset_index(drop=True))
+    r = run("A0", base_inputs(aaa=last), (LO, END), 24)
     assert r.valid
-    src = r.positions.set_index(["ts", "symbol"])["mark_source"]
-    assert src[(tick, "AAAUSDT")] == "stale"
+    pos = r.positions.set_index(["ts", "symbol"])
+    assert pos.loc[(tick, "AAAUSDT"), "mark_source"] == "last"
+    assert not (r.positions["mark_source"] == "stale").any()
+
+
+def test_bc_terminal_of_a_halted_leg_wins_over_the_missing_mark():
+    """DEC-43 unchanged: AAA's instance ceases at 12:00 with a class-B / C event, halted at the cessation tick
+    (no 1m bar in [10:30, 12:00)) and without any 15m close ending at 12:00. The terminal check at the
+    cessation resolves first: INVALID RUN - terminal settlement not reconstructible, never INVALID_MARK."""
+    cess = LO + 12 * H
+    for k in ("B", "C"):
+        aaa = instrument("AAAUSDT", 100.0, -1e-4, last_trade=cess, terminal=k,
+                         dead=((cess - 90 * MIN, cess),))
+        r = run("A0", base_inputs(aaa=_drop15(aaa, cess - 15 * MIN)), (LO, END), 24)
+        assert r.invalid == INVALID_TERMINAL and r.invalid_ts == cess
+        assert r.invalid_detail.startswith(f"AAAUSDT#0@{cess}")
 
 
 # --------------------------------------------------------------------------------------------- DK-42
@@ -295,8 +328,7 @@ def test_ceased_not_halted_leg_without_mark_is_invalid():
     """Fix round 1 (item 3): AAA's instance ceases at 12:00 with a class-A settlement at 12:30 (official time
     after the last trade). At the 12:15 tick no bar of the instance can end there and AAA is not yet halted
     (it traded in [11:15, 12:00)): DEC-43 supplies no mark, so override 3 applies literally -> INVALID RUN
-    (no stale exemption for a ceased, non-halted leg; only HALTED legs are the stopped AMB-29 (a)
-    sub-case)."""
+    (no stale exemption for any leg, AMB-29 (a), user decision 2026-10-15)."""
     cess = LO + 12 * H
     aaa = instrument("AAAUSDT", 100.0, -1e-4, last_trade=cess, terminal="A", settle_price=97.0)
     ev = aaa.terminals[0]

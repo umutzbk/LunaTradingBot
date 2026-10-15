@@ -514,6 +514,13 @@ def test_secondary_family_holm_and_a1_claim():
     assert sec2["non-selected ML family vs ML*"]["why"].startswith("not accountable: ValueError")
     assert sec2["ML* at non-selected horizon 1 vs A0"]["why"].startswith("not comparable")
     assert sec2["A1 vs A0"]["p_holm"] == pytest.approx(6 / 2001) and a1b
+    # AMB-29 (a): a secondary arm INVALID for a halted leg's missing mark voids only its own comparison
+    p4 = dict(pairs)
+    p4["ML* E_M vs E_T"] = (weak[6], replace(weak[7], invalid=INVALID_MARK,
+                                              invalid_detail="AAAUSDT#0@3: no mark (halted; AMB-29 (a))"))
+    sec4, a1d = V.secondary_family(p4, good_cal, 2000, 7)
+    assert not sec4["ML* E_M vs E_T"]["available"] and sec4["ML* E_M vs E_T"]["p_holm"] is None
+    assert all(sec4[n]["available"] for n in V.SECONDARY if n != "ML* E_M vs E_T") and a1d
     # A1 pair invalid -> unavailable, no claim
     p3 = {**pairs, "A1 vs A0": (replace(strong, invalid=INVALID_NO_EXIT), a0)}
     sec3, a1c = V.secondary_family(p3, good_cal, 2000, 7)

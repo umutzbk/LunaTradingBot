@@ -128,3 +128,11 @@ The user decided these during round-2 implementation, after Task 26c found that 
 | AMB-40(d) "dated within the instance" | **Literal reading kept.** An ended instance needs an identity source dated within [first_bar_ts, last_trade_ts]; without one, the instance is excluded. The outcome-free dry run reports how many instances this excludes before freeze. |
 
 These are clarifications of how the frozen identity rules apply to Binance's actual data. No frozen number changes.
+
+## Addendum — user decisions on AMB-29(a), R46 and R38, 2026-10-15
+
+| Item | Decision | Code status / tests |
+|---|---|---|
+| AMB-29(a) halted held leg without a mark | **INVALID.** "INVALID if a halted held leg requires a mark and no legitimate current mark/fallback exists; no stale carry." At every required 15-minute mark of a held leg, halted or not: the mark-price 15m close, else the last-price 15m close of the same period; neither -> `INVALID RUN — required leg mark missing` (`INVALID_MARK`, symbol#instance@tick). No previous-event carry remains for any leg (the hedge already follows this rule, AMB-21(b)). DEC-43 is unchanged: a B / C cessation at the same tick resolves through the terminal check (`INVALID_TERMINAL`). The halted exit wait and "no orders while halted" are unchanged. | Done (Task 27b): `engine._Sim.on_tick` (the `mark_exempt` halted exemption removed; `bc_terminal_due`). `test_halted_leg_without_mark_is_invalid_amb29a`, `test_halted_leg_is_marked_by_its_mark_price_or_last_price_close`, `test_bc_terminal_of_a_halted_leg_wins_over_the_missing_mark` (tests/v7/book/test_engine_round2.py); propagation `test_holdout_invalid_required_arm`, `test_em_runs_are_secondary`, `test_secondary_family_holm_and_a1_claim` (tests/v7/test_verdict.py). |
+| R46 post-opening mode (AMB-35 (e)) | **Approved as implemented:** the canonical W_HOLD authorization (never a boolean; `guard.verified_opening`), M6 sealed. | No change. |
+| R38 (section C, the 72 IC items) | **Confirmed:** the 72 IC items are approved unless the red-team finds a genuine contradiction. | No change. |

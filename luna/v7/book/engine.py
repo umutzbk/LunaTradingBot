@@ -11,8 +11,9 @@ Events (heap; same timestamp: funding settlement, 15-minute tick, fills in booki
 one-sided check, decision, terminal unwind):
 * **tick** (every 15 min from lo): marks every open position (mark-price bar ending at the tick, else the
   last-price bar of the same period, S-4.6; nothing else: a held leg without either -> ``INVALID RUN —
-  required leg mark missing``, round-2 override 3 / DK-70; only a HALTED leg keeps the previous price
-  event, ``mark_source`` ``stale``, AMB-29 (a): a stopped sub-case, normative amendment required), equity,
+  required leg mark missing``, round-2 override 3 / DK-70; halted or not, AMB-29 (a) user decision
+  2026-10-15: no previous-price carry for any leg; a B / C cessation at the same tick resolves through the
+  terminal check, DEC-43), equity,
   ``RiskLayer.on_tick``; its forced exits (kill, leg stop) fill per S-4.2; a kill also closes the hedge and
   cancels unfilled entries and in-flight hedge opens (AMB-19 (c), DK-78). After the tick's fills and terminal
   checks, the **one-sided check** (AMB-16 (d), user decision 2026-10-15): if holdable legs remain on exactly
@@ -474,15 +475,16 @@ class _Sim:
                     return
                 if p.p_last is None:
                     raise RuntimeError("internal: an open position without a price event")
-                if not self.mark_exempt(p, ts):  # round-2 override 3 (DK-70): no stale leg mark
-                    self.fail(RunInvalid(INVALID_MARK, p.symbol, p.view.inst.idx, ts,
-                                         f"no mark-price or last-price 15-minute close at tick {ts} "
-                                         "(not halted; DK-70)"))
+                if self.bc_terminal_due(p, ts):  # DEC-43 unchanged: the B / C terminal outcome comes first
+                    self.on_terminal(ts, pid)
                     return
-                # AMB-29 (a) (normative amendment required; sub-case STOPPED, current code kept): a HALTED
-                # held leg without any 15m close at the tick: no frozen rule supplies its mark -> the previous
-                # price event is carried (it moves no P&L)
-                m, src = p.p_last, "stale"
+                # round-2 override 3 (DK-70) + AMB-29 (a) (user decision 2026-10-15): no stale leg mark,
+                # halted or not; no previous-event carry
+                halt = "halted" if p.view.halted(ts) else "not halted"
+                self.fail(RunInvalid(INVALID_MARK, p.symbol, p.view.inst.idx, ts,
+                                     f"no mark-price or last-price 15-minute close at tick {ts} "
+                                     f"({halt}; DK-70, AMB-29 (a))"))
+                return
             elif p.role == "leg":
                 fresh[p.symbol] = m
             prices[pid] = (m, src)
@@ -501,12 +503,12 @@ class _Sim:
         if ts + TICK < self.unwind_ts:
             self.push(ts + TICK, EV_TICK, None)
 
-    @staticmethod
-    def mark_exempt(p: Position, ts: int) -> bool:
-        """AMB-29 (a) (stopped sub-case of DK-70): the leg is HALTED at the tick (S-5.4: no volume > 0 1m bar
-        in [ts - 60 min, ts)). Only then may a missing mark keep the current (stale) code. A ceased instance
-        that is not (yet) halted gets no exemption (fail closed, fix round 1): DEC-43 supplies no mark."""
-        return p.view.halted(ts)
+    def bc_terminal_due(self, p: Position, ts: int) -> bool:
+        """The leg's instance ceases at exactly ``ts`` with a class-B / C event (its terminal check is due at
+        this tick's timestamp, after the tick in the same-timestamp order): the terminal outcome (DEC-43,
+        ``INVALID_TERMINAL``) is the reason, never ``INVALID_MARK``."""
+        ev = self.instrument(p.symbol).terminals.get(p.view.inst.idx)
+        return ev is not None and ev.klass != "A" and p.view.inst.last_trade_ts == ts
 
     def on_neutral(self, ts: int) -> None:
         """AMB-16 (d) (user decision 2026-10-15), at every 15-minute tick after its fills: if held legs remain
