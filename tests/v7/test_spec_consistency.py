@@ -119,6 +119,8 @@ ROWS: list[tuple[str, str, object, object]] = [
     ("S-4.4 slip", r"\*\*Slippage\*\* `slip` = (\d+) bps per side", lambda: F.costs.slip, bps),
     ("S-4.4 liquidity cap", r"\*\*Liquidity cap:\*\* a leg's notional ≤ ([\d.]+) % of the symbol's trailing 24 h",
      lambda: F.costs.liquidity_cap, pct),
+    ("S-4.4 liquidity window", r"\*\*Liquidity cap:\*\* a leg's notional ≤ [\d.]+ % of the symbol's trailing (\d+) h",
+     lambda: F.costs.liquidity_window_h, int),
     # --- S-4.5 proxy ---------------------------------------------------------------------------------------
     ("S-4.5 lambda", r"\*\*λ = ([\d.]+), fixed\.\*\*", lambda: F.spread.lam, None),
     ("S-4.5 window (24 h + 15 min)", r"whose bar k opens ≥ τ − (\d+) h − (\d+) min", lambda: F.spread.window_ns, "hm"),

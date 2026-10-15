@@ -123,3 +123,35 @@ def test_nonfinite_target_refused():
     y[3] = np.nan
     with pytest.raises(ValueError):
         fit(Config("en", {"alpha": 0.1, "l1_ratio": 0.5}), X, y)
+
+
+# --- Task 19b: convergence recorded per linear fit (AMB-26) ------------------------------------------------
+
+
+def _collinear(n: int = 400, seed: int = 0):
+    g = np.random.default_rng(seed)
+    x = g.normal(size=(n, 1))
+    X = pd.DataFrame(np.hstack([x, x + 1e-6 * g.normal(size=(n, 1)), g.normal(size=(n, 3))]),  # noqa: N806
+                     columns=list("abcde"))
+    return X, 1e3 * (X["a"].to_numpy() + g.normal(size=n))  # bps-scale label
+
+
+def test_en_non_convergence_is_recorded_not_raised():
+    """Frozen small alpha on bps labels with collinear features: the ConvergenceWarning is recorded on the
+    Fitted (this test runs under -W error: nothing is raised) and nothing is filtered globally."""
+    import warnings
+
+    from sklearn.exceptions import ConvergenceWarning
+
+    X, y = _collinear()  # noqa: N806
+    f = models.fit(models.Config("en", {"alpha": 1e-3, "l1_ratio": 0.2}), X, y)
+    c = f.convergence
+    assert c is not None and c.converged is False and c.n_iter == c.max_iter == models.LINEAR_MAX_ITER
+    assert c.messages and "converge" in c.messages[0]
+    ok = models.fit(models.Config("en", {"alpha": 10.0, "l1_ratio": 0.8}), X, y)
+    assert ok.convergence.converged is True and ok.convergence.n_iter < models.LINEAR_MAX_ITER
+    lgb_cfg = models.Config("lgb_reg", {"num_leaves": 4, "min_data_in_leaf": 20})
+    lg = models.fit(lgb_cfg, X, y, X_sel=X, y_sel=y)
+    assert lg.convergence is None  # not applicable to LightGBM
+    with pytest.raises(ConvergenceWarning):  # the global filter is untouched by the recorded fit
+        warnings.warn("outside the fit", ConvergenceWarning, stacklevel=1)

@@ -42,6 +42,7 @@ class Costs:  # S-4.4 / S-4.5
     fallback_half_spread: float = 25e-4
     fallback_slip_mult: int = 3
     liquidity_cap: float = 0.005
+    liquidity_window_h: int = 24  # S-4.4: the symbol's trailing 24 h quote volume (runner qv24)
 
 
 @dataclass(frozen=True)

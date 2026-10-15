@@ -28,7 +28,7 @@ from sklearn.isotonic import IsotonicRegression
 from luna.v7 import models
 from luna.v7.constants import FROZEN
 from luna.v7.features import FEATURES, Preprocessor, features_for_horizon, raw_matrix
-from luna.v7.models import Config, Fitted
+from luna.v7.models import Config, Convergence, Fitted
 from luna.v7.timeutil import D, ns_array
 from luna.v7.windows import W_HOLD, Fold, final_blocks
 
@@ -202,6 +202,7 @@ class Selection:
     best_iter: int | None
     ic: float
     scores: tuple[tuple[Config, float], ...]
+    fits: tuple[tuple[Config, Convergence | None], ...] = ()  # solver convergence of every candidate fit
 
 
 @dataclass
@@ -240,6 +241,28 @@ class FoldModel:
             out[f"p_{fam}"] = p
             out[f"p_{fam}_cal"] = c.iso.predict(p)
         return out
+
+    def convergence(self) -> tuple[dict, ...]:
+        """Solver convergence of every linear fit of this fold (AMB-26): the T_tr candidate fits of the
+        selection and the T_fit refits. LightGBM fits have no convergence status (``converged`` None)."""
+        rows: list[dict] = []
+
+        def add(stage: str, cfg: Config, c: Convergence | None) -> None:
+            rows.append(dict(fold_id=self.fold.fold_id, horizon=self.horizon, stage=stage, family=cfg.family,
+                             params=tuple(sorted(cfg.params.items())),
+                             converged=None if c is None else c.converged,
+                             n_iter=None if c is None else c.n_iter,
+                             max_iter=None if c is None else c.max_iter,
+                             messages=() if c is None else c.messages))
+
+        for fam in sorted(self.selection):
+            for cfg, c in self.selection[fam].fits:
+                add("select", cfg, c)
+        for fam in sorted(self.reg):
+            add("refit", self.reg[fam].cfg, self.reg[fam].convergence)
+        for fam in sorted(self.clf):
+            add("refit", self.clf[fam].fitted.cfg, self.clf[fam].fitted.convergence)
+        return tuple(rows)
 
 
 def _design(cfg: Config, df: pd.DataFrame, cols: Sequence[str], pre: Preprocessor) -> pd.DataFrame:
@@ -287,18 +310,20 @@ def select_hparams(
         raise ValueError("empty T_tr or T_sel after the purge")
     pre_tr = Preprocessor(cols).fit(tr, _ts(tr), fold)
     scores: list[tuple[Config, float]] = []
+    fits: list[tuple[Config, Convergence | None]] = []
     best: tuple[float, Fitted] | None = None
     for c in cands:
         f = _fit_tr(c, "y_reg", tr, sel, cols, pre_tr)
         ic = _sel_ic(f, sel, cols, pre_tr)
         scores.append((c, ic))
+        fits.append((c, f.convergence))
         key = ic if np.isfinite(ic) else -np.inf
         if best is None or key > best[0]:
             best = (key, f)
     assert best is not None
     if best[0] == -np.inf:
         raise ValueError("no candidate has a defined T_sel date-level IC")
-    return Selection(best[1].cfg, best[1].best_iteration, float(best[0]), tuple(scores))
+    return Selection(best[1].cfg, best[1].best_iteration, float(best[0]), tuple(scores), tuple(fits))
 
 
 def _build(fold: Fold, samples: pd.DataFrame, horizon: int, families: Sequence[str]) -> FoldModel:

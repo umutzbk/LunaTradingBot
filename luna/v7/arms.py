@@ -33,6 +33,14 @@ AR1_MIN_OBS = 10
 
 _FAMILY = {"A2": ("en", "logit_en"), "A3": ("lgb_reg", "lgb_clf")}  # ML* -> (regressor, classifier)
 
+
+def families(ml_star: str) -> tuple[str, str]:
+    """(regressor family, classifier family) of ML* (S-7.2: A2 = EN / logistic EN, A3 = LightGBM)."""
+    if ml_star not in _FAMILY:
+        raise ValueError(f"ML* must be one of {tuple(_FAMILY)}, got {ml_star!r}")
+    return _FAMILY[ml_star]
+
+
 # Frozen V5 strategy knobs read by ``decide`` (spec S-7.2 A0-V5 row), pinned by sha256.
 V5_FROZEN_KNOBS = {
     "k": 2,

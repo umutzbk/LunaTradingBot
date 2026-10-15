@@ -348,11 +348,22 @@ def compute_row(
     sd: SymbolData, btc: SymbolData, universe_rows: Sequence[XSInput], t_ns: int, side: int, *, r4: R4Bars
 ) -> FeatureRow:
     """All FEATURES of candidate (sd.symbol, side) at t, side-adjusted, with the max known_at used."""
-    if side not in (1, -1):
-        raise ValueError(f"side must be +1 or -1, got {side!r}")
+    return compute_rows(sd, btc, universe_rows, t_ns, (side,), r4=r4)[side]
+
+
+def compute_rows(
+    sd: SymbolData, btc: SymbolData, universe_rows: Sequence[XSInput], t_ns: int, sides: Sequence[int], *,
+    r4: R4Bars
+) -> dict[int, FeatureRow]:
+    """``compute_row`` for several sides of one symbol at t: the side-independent values (symbol, BTC, cross
+    section) are computed once and side-adjusted per side (Task 19b speed-up; identical values)."""
+    sides = tuple(sides)
+    for side in sides:
+        if side not in (1, -1):
+            raise ValueError(f"side must be +1 or -1, got {side!r}")
     t_ns = int(t_ns)
     raw, used = _symbol(sd, r4, t_ns, xs_only=False)
-    v: dict[str, float] = {"side": float(side)}
+    v: dict[str, float] = {}
     for k in ("fl1", "fl3", "fl7", "fl30"):
         v[f"f1_{k}"] = raw.get(k, NAN)
     for k in ("premium_mean_8h", "premium_mean_24h", "premium_last"):
@@ -387,14 +398,15 @@ def compute_row(
     v["f14_cost_bps"] = cost * 1e4
     for h, col in zip(FROZEN.horizons_h, F14_COLS, strict=True):
         v[col] = abs(raw.get("fl7", NAN)) * 3.0 * h / 24.0 / cost  # same units (fractions): unitless
-    for k in FEATURES:
-        v.setdefault(k, NAN)
-    out = {k: (-side * v[k] if k in CARRY_DIRECTION else v[k]) for k in FEATURES}
-    out = {k: _f(x) for k, x in out.items()}
     ka = assert_pit(used, t_ns)
     xs_ka = [r.max_known_at for r in universe_rows if r.max_known_at is not None]
     ka = max([x for x in (ka, *xs_ka) if x is not None], default=None)
-    return FeatureRow(out, ka)
+    rows: dict[int, FeatureRow] = {}
+    for side in sides:
+        vs = {**v, "side": float(side)}
+        out = {k: (-side * vs.get(k, NAN) if k in CARRY_DIRECTION else vs.get(k, NAN)) for k in FEATURES}
+        rows[side] = FeatureRow({k: _f(x) for k, x in out.items()}, ka)
+    return rows
 
 
 def compute(

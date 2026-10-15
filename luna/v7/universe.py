@@ -15,6 +15,8 @@ Interpretations the spec does not fix are logged as AMB-07 in docs/results/v7-im
 
 from __future__ import annotations
 
+import hashlib
+from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
@@ -198,6 +200,63 @@ def _u8(bars: pd.DataFrame, t_ns: int) -> tuple[bool, int | None]:
     return bool(m.any()), _max_ka(bars, m)
 
 
+_PF_COLS = ["funding_ts", "rate", "interval_h_explicit", "known_at"]
+
+
+@dataclass(frozen=True)
+class _Prefix:
+    """The open-ended annotation of every current-instance record (sorted, fresh index) and its known_at."""
+
+    ann: pd.DataFrame
+    ka: np.ndarray
+
+
+_PF_CACHE: OrderedDict[tuple[bytes, int, int], _Prefix | None] = OrderedDict()
+_PF_CACHE_MAX = 1024  # entries (memory bound of the memo; no effect on any value)
+
+
+def _fingerprint(f: pd.DataFrame) -> bytes:
+    """Content key of the columns ``pit_funding`` reads (values in row order and dtypes)."""
+    h = hashlib.blake2b(digest_size=20)
+    h.update(repr((len(f), [(str(c), str(f[c].dtype)) for c in _PF_COLS if c in f.columns])).encode())
+    for c in _PF_COLS:
+        if c in f.columns:
+            h.update(pd.util.hash_pandas_object(f[c], index=False).to_numpy().tobytes())
+    return h.digest()
+
+
+def _build_prefix(f: pd.DataFrame, cur: Instance) -> _Prefix | None:
+    """Annotate the instance's whole record set once. None (no fast path) when the set is empty, a timestamp
+    is invalid or ``funding_ts`` is not strictly increasing after sorting (then the order of a PIT subset
+    could differ)."""
+    try:
+        ts = ns_array(f["funding_ts"], "funding_ts")
+        ns_array(f["known_at"], "funding_annot.known_at")
+        sub = f[ts >= cur.first_bar_ts].sort_values("funding_ts")
+        if len(sub) == 0:
+            return None
+        st = ns_array(sub["funding_ts"], "funding_ts")
+        if len(st) > 1 and not (np.diff(st) > 0).all():
+            return None
+        raw = sub[_PF_COLS].reset_index(drop=True)
+        ann = annotate(raw, [Instance(cur.idx, cur.first_bar_ts, None, None)])
+        return _Prefix(ann, ns_array(raw["known_at"], "known_at"))
+    except Exception:  # anything unusual: the reference path (same result, same errors)
+        return None
+
+
+def _prefix(f: pd.DataFrame, cur: Instance) -> _Prefix | None:
+    key = (_fingerprint(f), int(cur.idx), int(cur.first_bar_ts))
+    if key in _PF_CACHE:
+        _PF_CACHE.move_to_end(key)
+        return _PF_CACHE[key]
+    pre = _build_prefix(f, cur)
+    _PF_CACHE[key] = pre
+    if len(_PF_CACHE) > _PF_CACHE_MAX:
+        _PF_CACHE.popitem(last=False)
+    return pre
+
+
 def pit_funding(f: pd.DataFrame, cur: Instance, t_ns: int) -> pd.DataFrame:
     """Funding records of the current instance known by t - 1 min, annotated point-in-time.
 
@@ -206,8 +265,26 @@ def pit_funding(f: pd.DataFrame, cur: Instance, t_ns: int) -> pd.DataFrame:
     recomputed on that PIT set with an open-ended instance, so they depend only on earlier records
     (``intervals.annotate``). Sorted by ``funding_ts`` with a fresh index; may be empty. Used by U3 / U7
     and by the §9 funding features.
+
+    Incremental annotation (Task 19b): ``annotate`` on an open-ended instance is a forward recursion, so the
+    annotation of a prefix (in ``funding_ts`` order) equals the prefix of the whole set's annotation. The
+    whole current-instance set is annotated once per (frame content, instance) (a bounded memo keyed by a
+    hash of the columns read) and a call whose PIT set is such a prefix returns that slice; every other case
+    (empty PIT set, known_at not monotone in the sort order, duplicate timestamps) takes the reference path.
+    The output is identical (``test_pit_funding_incremental_equivalence``).
     """
-    cols = ["funding_ts", "rate", "interval_h_explicit", "known_at"]
+    pre = _prefix(f, cur)
+    if pre is not None:
+        ok = pre.ka <= int(t_ns) - MIN
+        k = int(ok.sum())
+        if k > 0 and ok[:k].all():
+            return pre.ann.iloc[:k].copy()
+    return _pit_funding_reference(f, cur, t_ns)
+
+
+def _pit_funding_reference(f: pd.DataFrame, cur: Instance, t_ns: int) -> pd.DataFrame:
+    """The direct computation (the definition the incremental path must reproduce)."""
+    cols = _PF_COLS
     f = pit_rows(f, t_ns, "funding_annot")
     if len(f):
         f = f[ns_array(f["funding_ts"], "funding_ts") >= cur.first_bar_ts].sort_values("funding_ts")

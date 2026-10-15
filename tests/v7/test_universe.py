@@ -323,3 +323,52 @@ def test_boundaries_u1_60d_and_u3_30d():
     assert not gates(make(b15=b, fund=funding(start=T - 60 * D)), T).u1
     assert gates(make(fund=funding(start=T - 30 * D)), T).u3
     assert not gates(make(fund=funding(start=T - 30 * D + 1)), T).u3
+
+
+# --- Task 19b: incremental pit_funding (identical output) --------------------------------------------------
+
+
+def _random_funding(seed: int) -> tuple[pd.DataFrame, uni.Instance]:
+    """Records with 8 h then 4 h spacing, missing / unreconciled / implicit intervals, late (non-monotone)
+    known_at values and an instance start inside the series (rows before it are not members)."""
+    g = np.random.default_rng(seed)
+    ts = np.concatenate([np.arange(S, S + 20 * D, 8 * H), np.arange(S + 20 * D, S + 40 * D, 4 * H)])
+    ts = ts + g.choice([0, 0, 0, 30 * 10**9, 90 * 10**9], len(ts))  # some off-grid (beyond +-60 s) stamps
+    ts = np.sort(np.delete(ts, g.choice(len(ts), 6, replace=False)))  # gaps
+    ex = pd.array(np.where(ts < S + 20 * D, 8, 4), dtype="Int64")
+    ex[g.random(len(ts)) < 0.2] = pd.NA  # implicit intervals (DEC-29 inference)
+    ex[g.random(len(ts)) < 0.05] = 2  # unreconciled explicit value
+    ka = ts + MIN
+    late = g.random(len(ts)) < (0.1 if seed % 2 else 0.0)  # REST-style late arrivals (odd seeds only)
+    ka[late] += g.integers(1, 30, late.sum()) * H
+    f = pd.DataFrame(dict(funding_ts=ts, rate=g.normal(1e-4, 3e-4, len(ts)), interval_h_explicit=ex,
+                          known_at=ka, extra=g.random(len(ts))))
+    f = f.sample(frac=1.0, random_state=seed).reset_index(drop=True)  # input order must not matter
+    return f, uni.Instance(seed % 3, int(S + (seed % 4) * D), None, None)
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_pit_funding_incremental_equivalence(seed):
+    f, cur = _random_funding(seed)
+    grid = np.arange(S - D, S + 45 * D, 9 * H + 7 * MIN, dtype=np.int64)
+    refs = {int(t): uni._pit_funding_reference(f, cur, int(t)) for t in grid}
+    assert uni._prefix(f, cur) is not None  # the incremental path is exercised (not only the fallback)
+    for _ in range(2):  # second sweep: memo hits
+        for t in grid:
+            got = uni.pit_funding(f, cur, int(t))
+            pd.testing.assert_frame_equal(got, refs[int(t)], check_exact=True)
+    # another object with the same content, and a changed copy, are both exact
+    g2 = f.copy()
+    g2.loc[g2.index[0], "rate"] += 1e-3
+    for t in grid[::6]:
+        pd.testing.assert_frame_equal(uni.pit_funding(f.copy(), cur, int(t)), refs[int(t)], check_exact=True)
+        pd.testing.assert_frame_equal(uni.pit_funding(g2, cur, int(t)),
+                                      uni._pit_funding_reference(g2, cur, int(t)), check_exact=True)
+
+
+def test_pit_funding_duplicate_timestamps_use_reference():
+    f, cur = _random_funding(2)
+    f = pd.concat([f, f.iloc[[3]]], ignore_index=True)  # a duplicated funding_ts: no fast path
+    t = int(S + 30 * D)
+    pd.testing.assert_frame_equal(uni.pit_funding(f, cur, t), uni._pit_funding_reference(f, cur, t),
+                                  check_exact=True)

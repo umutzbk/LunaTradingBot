@@ -13,16 +13,24 @@ settings listed in AMB-11 (convergence limits, determinism, single thread).
 * ``lgb_reg`` / ``lgb_clf``: LightGBM with the S-10.5 fixed settings, early stopping (100 rounds, max 1500
   trees) on the ``T_sel`` loss (l2 / logloss) in ``fit``; ``refit`` uses exactly ``best_iter`` trees, no
   early stopping.
+
+Convergence (Task 19b, AMB-26): every linear fit records whether the solver converged (``Fitted.convergence``:
+no sklearn ``ConvergenceWarning`` during the fit, ``n_iter`` vs ``max_iter``). The warning is captured with a
+local ``warnings.catch_warnings`` around that one ``fit`` call only, recorded and surfaced by the caller (cv,
+runner, DT4 run record); it is never raised and never filtered globally; every other warning is re-emitted
+unchanged. No solver setting changes (alpha, labels, ``max_iter`` stay as frozen / AMB-11).
 """
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
+from sklearn.exceptions import ConvergenceWarning
 from sklearn.linear_model import ElasticNet, LogisticRegression
 
 from luna.v7.constants import FROZEN
@@ -73,10 +81,21 @@ def search_space(h: int) -> list[Config]:
 
 
 @dataclass(frozen=True)
+class Convergence:
+    """Solver convergence of one linear fit (AMB-26): ``converged`` = no ConvergenceWarning was emitted."""
+
+    converged: bool
+    n_iter: int
+    max_iter: int
+    messages: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Fitted:
     cfg: Config
     model: Any
     best_iteration: int | None = None  # LightGBM only: the tree count used by predict / refit
+    convergence: Convergence | None = None  # linear fits only (LightGBM: not applicable)
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:  # noqa: N803
         """Regressors: y_reg estimate. Classifiers: P(y_pos = 1)."""
@@ -120,18 +139,36 @@ def _check_xy(X: pd.DataFrame, y, name: str) -> np.ndarray:  # noqa: N803
     return y
 
 
+def recorded_fit(m: Any, X: pd.DataFrame, y: np.ndarray, max_iter: int) -> tuple[Any, Convergence]:  # noqa: N803
+    """``m.fit(X, y)`` with its ConvergenceWarnings recorded (not raised, not shown); any other warning is
+    re-emitted as it was (so ``-W error`` still turns it into an error)."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ConvergenceWarning)
+        m.fit(X, y)
+    msgs = tuple(str(w.message) for w in caught if issubclass(w.category, ConvergenceWarning))
+    for w in caught:
+        if not issubclass(w.category, ConvergenceWarning):
+            warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
+    n_iter = int(np.max(np.asarray(m.n_iter_)))
+    return m, Convergence(not msgs, n_iter, int(max_iter), msgs)
+
+
 def _fit_linear(cfg: Config, X: pd.DataFrame, y: np.ndarray) -> Fitted:  # noqa: N803
     a, r = float(cfg.params["alpha"]), float(cfg.params["l1_ratio"])
     if cfg.family == "en":
         m = ElasticNet(alpha=a, l1_ratio=r, max_iter=LINEAR_MAX_ITER, tol=LINEAR_TOL, random_state=cfg.seed)
-        return Fitted(cfg, m.fit(X, y))
+        return Fitted(cfg, *_with_conv(recorded_fit(m, X, y, LINEAR_MAX_ITER)))
     if len(np.unique(y)) != 2:
         raise ValueError("logit_en needs both classes in y")
     m = LogisticRegression(
         solver="saga", l1_ratio=r, C=1.0 / (a * len(y)),
         max_iter=LINEAR_MAX_ITER, tol=LINEAR_TOL, random_state=cfg.seed,
     )
-    return Fitted(cfg, m.fit(X, y))
+    return Fitted(cfg, *_with_conv(recorded_fit(m, X, y, LINEAR_MAX_ITER)))
+
+
+def _with_conv(fc: tuple[Any, Convergence]) -> tuple[Any, None, Convergence]:
+    return fc[0], None, fc[1]
 
 
 def _lgb_data(X: pd.DataFrame, y: np.ndarray, params: dict, ref=None) -> lgb.Dataset:  # noqa: N803

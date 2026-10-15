@@ -14,33 +14,29 @@ W_HOLD / M6 overlap, so every guard runs unmodified):
 * ``TRNUSDT`` has no explicit funding interval and switches from 8 h to 4 h settlements on 2022-06-01 -> an
   EC-9 regime transition (``interval_transition``).
 
-``DecisionProvider`` is the test-side wiring of the per-decision inputs the engine expects (gates, h-hat,
-beta, 24 h quote volume, gated candidate rows with A0 inputs and §9 features); no ``luna.v7`` module provides
-it yet (Task 19 integration finding). ``FoldScorer`` adapts a ``cv.FoldModel`` to ``engine.ScoreModel``.
+* ``1000PEPEUSDT`` carries the identity multiplier 1000 (prices are per contract, so quantities are not
+  rescaled: ``qty * price`` is the leg notional);
+* synthetic aggTrades (E_M) over the dense 1-minute windows.
+
+The per-decision wiring (gates, h-hat, beta, 24 h quote volume, candidate rows, fold-model routing) is
+``luna.v7.runner`` (Task 19b); this module only builds the seeded ``runner.SymbolInputs``.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
 
-from luna.v7 import features
-from luna.v7.arms import cost_side
-from luna.v7.beta import beta_hat, hourly_close_from_15m, hourly_known_at_from_15m
-from luna.v7.book.engine import DecisionView, Instrument
-from luna.v7.cv import FoldModel
 from luna.v7.data import funding as fund_mod
 from luna.v7.data import klines
-from luna.v7.data.instances import Instance, build_instances, current_instance
-from luna.v7.data.intervals import annotate
-from luna.v7.features import R4Bars, XSInput
-from luna.v7.labels import LegData
+from luna.v7.data.instances import build_instances
+from luna.v7.features import R4Bars
 from luna.v7.models import Config
-from luna.v7.spread import half_spread
-from luna.v7.timeutil import MIN, D, H, ns_array, to_ns
-from luna.v7.universe import Identity, SymbolData, eligible, pit_rows
+from luna.v7.runner import ResearchUniverse, SymbolInputs
+from luna.v7.timeutil import MIN, D, H, to_ns
+from luna.v7.universe import Identity
 from luna.v7.windows import Fold, decision_times
 
 Q = 15 * MIN
@@ -66,7 +62,9 @@ H_STAR = 24
 FOLD = Fold(0, to_ns("2022-11-01"), to_ns("2023-01-01"), (START, to_ns("2022-07-01")),
             (to_ns("2022-07-01"), to_ns("2022-09-01")), (to_ns("2022-09-01"), to_ns("2022-11-01")))
 SAMPLE_LO, SAMPLE_HI, SAMPLE_STEP_D = to_ns("2022-03-03"), to_ns("2022-12-31"), 4
-BOOK = (to_ns("2022-12-05"), to_ns("2022-12-08"))  # inside the fold's test quarter
+BOOK = (to_ns("2022-12-05"), to_ns("2022-12-09"))  # inside the fold's test quarter (4 days)
+PEPE = "1000PEPEUSDT"
+MULTIPLIER = {PEPE: 1000.0}  # identity multiplier (immutable R1 field); 1 elsewhere
 
 SMALL = {"num_leaves": 4, "min_data_in_leaf": 20}
 # test-only stand-in for the frozen search space (as tests/v7/test_cv.py); the EN alphas are large enough for
@@ -148,27 +146,42 @@ def _bars1m(b15: pd.DataFrame, mask_ts: np.ndarray, seed: int, i: int) -> pd.Dat
                          "vol_base": 1.0, "known_at": ts + MIN})
 
 
-def _mask_1m() -> np.ndarray:
-    dense = np.arange(BOOK[0] - D, BOOK[1], MIN, dtype=np.int64)
-    parts = [dense]
+def _mask_1m(dense: Sequence[tuple[int, int]]) -> np.ndarray:
+    parts = [np.arange(lo - D, hi, MIN, dtype=np.int64) for lo, hi in dense]
     for t in sample_times():
         for anchor in (t + 15 * MIN, t + 15 * MIN + H_STAR * H):
             parts.append(np.arange(anchor - 65 * MIN, anchor + 66 * MIN, MIN, dtype=np.int64))
     return np.unique(np.concatenate(parts))
 
 
-def _raw_funding(sym: str, i: int, seed: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _aggtrades(b1: pd.DataFrame, dense: Sequence[tuple[int, int]], seed: int, i: int) -> pd.DataFrame:
+    """Two trades per 1-minute bar inside the dense windows, priced around the bar close (E_M fills)."""
+    g = _rng(seed, 40_000 + i)
+    ts = b1["open_ts"].to_numpy(np.int64)
+    m = np.zeros(len(ts), bool)
+    for lo, hi in dense:
+        m |= (ts >= lo) & (ts < hi)
+    c = b1["c"].to_numpy(np.float64)[m]
+    t0 = ts[m]
+    tt = np.concatenate([t0 + 20 * 10**9, t0 + 40 * 10**9])
+    px = np.concatenate([c, c]) * np.exp(g.normal(0.0, 5e-4, 2 * len(c)))
+    qty = 3000.0 / px * g.uniform(0.5, 1.5, len(px))
+    o = np.argsort(tt, kind="stable")
+    return pd.DataFrame({"ts": tt[o], "price": px[o], "qty": qty[o]})
+
+
+def _raw_funding(sym: str, i: int, seed: int, mu: Mapping[str, float]) -> tuple[pd.DataFrame, pd.DataFrame]:
     """(archive frame: calc_time ms, funding_interval_hours, last_funding_rate; REST frame)."""
     g = _rng(seed, 20_000 + i)
     if sym == TRANS:
         ts = np.concatenate([np.arange(START, TRANSITION_TS, 8 * H), np.arange(TRANSITION_TS, END, 4 * H)])
     else:
         ts = np.arange(START, END, 8 * H, dtype=np.int64)
-    mu = MU.get(sym, 1e-4)
+    mu_s = mu.get(sym, 1e-4)
     e = np.zeros(len(ts))
     for k in range(1, len(ts)):
         e[k] = 0.7 * e[k - 1] + g.normal(0.0, 1e-4)
-    rate = np.round(mu + e, 8)
+    rate = np.round(mu_s + e, 8)
     if sym == TRANS:
         rate = np.where(ts >= TRANSITION_TS, np.round(rate / 2, 8), rate)
     arch = pd.DataFrame({"calc_time": ts // 10**6, "last_funding_rate": rate})
@@ -183,26 +196,15 @@ def _raw_funding(sym: str, i: int, seed: int) -> tuple[pd.DataFrame, pd.DataFram
     return arch, rest
 
 
-@dataclass
-class Universe:
-    """Normalised per-symbol inputs (the outputs of the ingestion / instance / interval stages)."""
-
-    bars15: dict[str, pd.DataFrame]
-    bars1m: dict[str, pd.DataFrame]
-    funding: dict[str, pd.DataFrame]  # merged records (funding_ts, rate, interval_h_explicit, known_at, ...)
-    funding_annot: dict[str, pd.DataFrame]
-    r4: dict[str, R4Bars]
-    insts: dict[str, list[Instance]]
-    sd: dict[str, SymbolData] = field(default_factory=dict)
-    instruments: dict[str, Instrument] = field(default_factory=dict)
-    legs: dict[str, LegData] = field(default_factory=dict)
-
-
-def build_universe(seed: int) -> Universe:
-    """Ingestion normalisation -> instances -> interval annotation for every symbol (seeded)."""
+def build_inputs(seed: int, dense: Sequence[tuple[int, int]] = (BOOK,),
+                 mu: Mapping[str, float] | None = None) -> dict[str, SymbolInputs]:
+    """Ingestion normalisation -> instances (seeded) -> ``runner.SymbolInputs`` per symbol. ``dense``: the
+    windows with dense 1-minute bars and aggTrades (each starts one day earlier for the 1m bars); ``mu``
+    overrides the mean funding rates."""
+    mu_all = {**MU, **(mu or {})}
     btc_ret = _btc_returns(seed)
-    mask = _mask_1m()
-    u = Universe({}, {}, {}, {}, {}, {})
+    mask = _mask_1m(dense)
+    out: dict[str, SymbolInputs] = {}
     for i, sym in enumerate(SYMBOLS):
         raw = _raw_klines(sym, i, seed, btc_ret)
         raw.insert(0, "symbol", sym)
@@ -211,112 +213,24 @@ def build_universe(seed: int) -> Universe:
         daily = klines.normalise(raw.iloc[cut - 500:], "ms")  # overlapping keys agree (DEC-33)
         b15 = klines.union(monthly, daily).drop(columns="symbol").reset_index(drop=True)
         insts = build_instances(b15, END)
-        arch, rest = _raw_funding(sym, i, seed)
+        arch, rest = _raw_funding(sym, i, seed, mu_all)
         f = fund_mod.merge(fund_mod.normalise_archive(arch, "ms"), fund_mod.normalise_rest(rest, "ms"))
         g = _rng(seed, 30_000 + i)
-        prem = g.normal(0.0, 2e-4, len(b15)) + MU.get(sym, 0.0) / 4.0
+        prem = g.normal(0.0, 2e-4, len(b15)) + mu_all.get(sym, 0.0) / 4.0
         mark = b15[["open_ts"]].assign(c=b15["c"].to_numpy() * (1.0 + prem / 2.0), known_at=b15["known_at"])
         index = b15[["open_ts"]].assign(c=mark["c"].to_numpy() / (1.0 + prem), known_at=b15["known_at"])
         premium = b15[["open_ts"]].assign(c=prem, known_at=b15["known_at"])
-        u.bars15[sym], u.insts[sym], u.funding[sym] = b15, insts, f
-        u.funding_annot[sym] = annotate(f, insts)
-        u.bars1m[sym] = _bars1m(b15, mask, seed, i)
-        u.r4[sym] = R4Bars(premium, mark, index)
-    for sym in SYMBOLS:
-        ident = Identity(sym.removesuffix("USDT"), "PERPETUAL", "USDT", "COIN", 1.0, True)
-        u.sd[sym] = SymbolData(sym, u.bars15[sym], u.bars1m[sym], u.funding_annot[sym], u.insts[sym],
-                               identity=ident)
-        mark15 = u.r4[sym].mark[["open_ts", "c"]]
-        u.instruments[sym] = Instrument(sym, u.bars1m[sym], u.bars15[sym], mark15, u.funding[sym],
-                                        u.insts[sym])
-        u.legs[sym] = LegData(u.bars1m[sym], u.bars15[sym], mark15, u.funding[sym], u.insts[sym])
-    return u
+        b1 = _bars1m(b15, mask, seed, i)
+        mult = MULTIPLIER.get(sym, 1.0)
+        ident = Identity(sym.removesuffix("USDT"), "PERPETUAL", "USDT", "COIN", mult, True)
+        out[sym] = SymbolInputs(sym, b15, b1, f, insts, R4Bars(premium, mark, index), ident,
+                                aggtrades=_aggtrades(b1, dense, seed, i))
+    return out
 
 
-# ------------------------------------------------------------------------------------------- decision inputs
-
-
-def _instance_bars(sd: SymbolData, t: int) -> pd.DataFrame | None:
-    cur = current_instance(sd.insts, t)
-    if cur is None:
-        return None
-    b = pit_rows(sd.bars15, t, f"{sd.symbol}.bars15")
-    return b[ns_array(b["open_ts"], "open_ts") >= cur.first_bar_ts]
-
-
-def h_hat(sd: SymbolData, t: int) -> float | None:
-    b = _instance_bars(sd, t)
-    return None if b is None or len(b) == 0 else half_spread(b, t)
-
-
-def beta_at(sd: SymbolData, btc: SymbolData, t: int) -> float | None:
-    a, b = _instance_bars(sd, t), _instance_bars(btc, t)
-    if a is None or b is None or len(a) == 0 or len(b) == 0:
-        return None
-    return beta_hat(hourly_close_from_15m(a), hourly_close_from_15m(b), t, hourly_known_at_from_15m(a),
-                    hourly_known_at_from_15m(b))
-
-
-def qv24(sd: SymbolData, t: int) -> float | None:
-    """Trailing 24 h quote volume of the current instance: bars closing in (t - 24 h, t - 1 min]."""
-    b = _instance_bars(sd, t)
-    if b is None:
-        return None
-    close = ns_array(b["open_ts"], "open_ts") + Q
-    m = (close > t - D) & (close <= t - MIN)
-    return float(b.loc[m, "vol_quote"].sum()) if m.any() else None
-
-
-@dataclass
-class DecisionProvider:
-    """Point-in-time ``DecisionView`` per decision t (cached per t within one pipeline run)."""
-
-    u: Universe
-    with_features: bool
-    cache: dict[int, DecisionView] = field(default_factory=dict)
-
-    def xs(self, t: int) -> list[XSInput]:
-        return [features.xs_input(self.u.sd[s], self.u.r4[s], t) for s in ALTS]
-
-    def candidates(self, t: int, xs: list[XSInput], hh: dict[str, float | None]) -> pd.DataFrame:
-        rows = []
-        for x in xs:
-            if not eligible(x.gate):
-                continue
-            for side in (1, -1):
-                r = dict(symbol=x.symbol, side=side, gate_ok=True, fl30_r8=x.values["fl30"],
-                         cost_side=cost_side(hh[x.symbol]))  # eligible => U5 => h-hat finite
-                if self.with_features:
-                    r.update(features.compute(self.u.sd[x.symbol], self.u.sd[BTC], xs, t, side,
-                                              r4=self.u.r4[x.symbol]))
-                    r["side"] = side
-                rows.append(r)
-        cols = ["symbol", "side", "gate_ok", "fl30_r8", "cost_side"]
-        return pd.DataFrame(rows) if rows else pd.DataFrame(columns=cols)
-
-    def __call__(self, t: int) -> DecisionView:
-        t = int(t)
-        if t not in self.cache:
-            xs = self.xs(t)
-            hh = {s: h_hat(self.u.sd[s], t) for s in ALTS}
-            betas = {s: beta_at(self.u.sd[s], self.u.sd[BTC], t) for s in ALTS}
-            vols = {s: qv24(self.u.sd[s], t) for s in ALTS}
-            gates = {x.symbol: x.gate for x in xs}
-            self.cache[t] = DecisionView(t, gates, hh, betas, vols, self.candidates(t, xs, hh), False)
-        return self.cache[t]
-
-
-@dataclass
-class FoldScorer:
-    """``engine.ScoreModel`` over one fold model: adds the ``FoldModel.predict`` columns to the candidates."""
-
-    fm: FoldModel
-    ml_star: str = "A2"
-
-    def predict(self, t: int, cands: pd.DataFrame) -> pd.DataFrame:
-        if not (FOLD.test_lo <= t < FOLD.test_hi):
-            raise ValueError("the decision is outside the fold model's test quarter")
-        return pd.concat([cands, self.fm.predict(cands)], axis=1)
+def build_universe(seed: int, dense: Sequence[tuple[int, int]] = (BOOK,),
+                   mu: Mapping[str, float] | None = None) -> ResearchUniverse:
+    return ResearchUniverse(build_inputs(seed, dense, mu))
 
 
 def decisions_in(window: tuple[int, int]) -> np.ndarray:
