@@ -489,3 +489,18 @@ def test_instances_from_the_raw_store(tmp_path):
     got = metaingest.instances_from_store(rs, ["XYZUSDT"], t0, to_ns("2024-02-01"))
     assert got == {"XYZUSDT": build_instances(df[["open_ts", "vol_base"]], to_ns("2024-02-01"))}
     assert got["XYZUSDT"][0].last_trade_ts == int(ts[-1]) + 15 * MIN
+
+
+def test_identity_sources_from_stored_exchange_info_captures(tmp_path):
+    st = MetaStore(tmp_path / "m")
+    xi = "https://fapi.binance.com/fapi/v1/exchangeInfo"
+    st.put_capture(capture("20220601000000", xinfo(XYZUSDT=FULL), xi))
+    st.put_capture(capture("20230101000000", xinfo(XYZUSDT=FULL), xi))
+    st.put_capture(capture("20240308095620", page(DELIST_TITLE, DELIST_BODY)))  # a notice: not a source
+    srcs, filt = metaingest.identity_sources(st)
+    assert [(s.kind, s.ts) for s in srcs] == [("capture", to_ns("2022-06-01")),
+                                              ("capture", to_ns("2023-01-01"))]
+    assert [f.known_at for f in filt["XYZUSDT"]] == [to_ns("2022-06-01"), to_ns("2023-01-01")]
+    r = ins.build_instruments({"XYZUSDT": [Instance(0, to_ns("2022-01-01"), to_ns("2022-12-01"),
+                                                    to_ns("2022-12-08"))]}, srcs)
+    assert r.rows[0].reason == "verified" and r.rows[0].sources == (srcs[0].ref,)

@@ -65,8 +65,8 @@ from luna.v7.metastore import MetaStore, empty_table
 from luna.v7.rawstore import RawStore, TableLoader, _canonical, _create_once
 
 __all__ = ["CaptureOutcome", "CdxQuery", "MetaResult", "NoticeBuild", "REPORT_FORMAT", "build_notices",
-           "fetch_exchange_info", "identity_from_capture", "ingest_captures", "ingest_metadata",
-           "ingest_report", "instances_from_store", "r12_table"]
+           "fetch_exchange_info", "identity_from_capture", "identity_sources", "ingest_captures",
+           "ingest_metadata", "ingest_report", "instances_from_store", "notices_by_symbol", "r12_table"]
 
 REPORT_FORMAT = 1
 CDX_FIELDS = "timestamp,original"
@@ -125,6 +125,7 @@ def ingest_captures(fetcher: Fetcher, store: MetaStore, queries: Sequence[CdxQue
     """N5 -> N6 -> immutable store (module docstring)."""
     out: list[CaptureOutcome] = []
     with k9.using(fetcher.k9):
+        stored = {(e["ts"], e["original"]) for e in store.captures()}
         for q in queries:
             try:
                 rows = fetcher.fetch(q.request(auth), auth=auth).cdx_pairs
@@ -132,7 +133,7 @@ def ingest_captures(fetcher: Fetcher, store: MetaStore, queries: Sequence[CdxQue
                 out.append(CaptureOutcome(q.url, None, None, "cdx_failed", str(e)))
                 continue
             for ts, original in sorted(set(rows)):
-                if store.has_capture(ts, original):
+                if (ts, original) in stored:
                     out.append(CaptureOutcome(q.url, ts, original, "already_stored", "stored earlier"))
                     continue
                 url = f"https://web.archive.org/web/{ts}id_/{original}"
@@ -143,6 +144,7 @@ def ingest_captures(fetcher: Fetcher, store: MetaStore, queries: Sequence[CdxQue
                     continue
                 c = cap.Capture(ts, original, f.body or b"", f.sha256, f.recv_ts)
                 store.put_capture(c, auth=auth)
+                stored.add((ts, original))
                 out.append(CaptureOutcome(q.url, ts, original, "stored", "ok", c.sha256))
     return out
 
@@ -166,6 +168,22 @@ def identity_from_capture(c: cap.Capture) -> tuple[ins.IdentitySource, dict[str,
                               recv_ts=c.recv_ts if c.recv_ts is not None else c.capture_ts,
                               url=c.archive_url, sha256=c.sha256)
     return src, ins.pit_filters(cap.decode(c.body).encode("utf-8"), known_at=c.capture_ts)
+
+
+def identity_sources(store: MetaStore, *, auth: guard.HoldoutAuthorization | None = None
+                     ) -> tuple[list[ins.IdentitySource], dict[str, tuple[Filters, ...]]]:
+    """The identity sources and point-in-time filters of every stored ``exchangeInfo`` capture (original URL
+    ending in ``/fapi/v1/exchangeInfo``), in capture order; filters per symbol sorted by ``known_at``."""
+    srcs: list[ins.IdentitySource] = []
+    filt: dict[str, list[Filters]] = {}
+    for e in store.captures():
+        if not e["original"].split("?", 1)[0].endswith("/fapi/v1/exchangeInfo"):
+            continue
+        src, pit = identity_from_capture(store.get_capture(e["ts"], e["sha256"], auth=auth))
+        srcs.append(src)
+        for s, f in pit.items():
+            filt.setdefault(s, []).append(f)
+    return srcs, {s: tuple(sorted(v, key=lambda f: int(f.known_at or 0))) for s, v in sorted(filt.items())}
 
 
 # --------------------------------------------------------------------------------------- notices
