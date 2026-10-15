@@ -10,7 +10,11 @@
    and a response-size cap (``max_bytes``, default ``MAX_RESPONSE_BYTES`` = 1 GiB, an implementation
    parameter, AMB-35 (k); a larger response is refused, ``ResponseTooLarge``). Any redirect (3xx, or a
    transport reporting one) is a guard failure everywhere (the allowlist permits none): refused BEFORE the
-   body is read (the default transport never reads it; the fetcher never touches it) and K9-logged.
+   body is read (the default transport never reads it; the fetcher never touches it) and K9-logged. The
+   default transport keeps ONE pooled keep-alive ``httpx.Client`` (thread-safe; shared by the driver's worker
+   threads; Task 26d) instead of a new client / TLS connection per GET; ``Fetcher.close()`` (or leaving
+   ``with Fetcher(...)``) closes it. Nothing else changes: every request still passes ``netguard.check``
+   first, with the same redirect, timeout and size-cap rules.
 3. Every accepted response gets ``recv_ts`` (the fetcher's clock), the URL and the sha256 of its bytes, in
    the returned ``Fetched`` and in the run's append-only, fsynced ``FETCHES.jsonl``.
 4. Per class:
@@ -41,6 +45,7 @@ import json
 import math
 import os
 import re
+import threading
 import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Mapping
@@ -105,14 +110,41 @@ class Transport(Protocol):
 class HttpxTransport:
     """The default transport: ``httpx`` (a project dependency), ``follow_redirects=False``, a timeout per
     request, a streamed body capped at ``max_bytes`` (a declared or actual larger body is refused), a 3xx
-    body never read. ``_mock`` (an ``httpx`` transport) is for tests only (no network)."""
+    body never read. One pooled keep-alive ``httpx.Client`` per transport, created on the first GET and
+    shared by every thread (``httpx.Client`` is thread-safe for requests); ``close()`` closes it, after which
+    a GET raises. ``_mock`` (an ``httpx`` transport) is for tests only (no network)."""
 
     def __init__(self, *, _mock: httpx.BaseTransport | None = None) -> None:
         self._mock = _mock
+        self._client: httpx.Client | None = None
+        self._closed = False
+        self._lock = threading.Lock()
+
+    def _pooled(self) -> httpx.Client:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("HttpxTransport is closed")
+            if self._client is None:
+                self._client = httpx.Client(follow_redirects=False, timeout=DEFAULT_TIMEOUT_S,
+                                            transport=self._mock)
+            return self._client
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            client, self._client = self._client, None
+        if client is not None:
+            client.close()
+
+    def __enter__(self) -> HttpxTransport:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
 
     def get(self, url: str, params: Mapping[str, str], *, timeout: float, max_bytes: int) -> Response:
-        with httpx.Client(follow_redirects=False, timeout=timeout, transport=self._mock) as c, \
-                c.stream("GET", url, params=dict(params) or None) as r:
+        c = self._pooled()
+        with c.stream("GET", url, params=dict(params) or None, timeout=timeout, follow_redirects=False) as r:
             if 300 <= r.status_code < 400:  # refused by the fetcher; the body is never read
                 return Response(r.status_code, dict(r.headers), b"", str(r.url))
             declared = r.headers.get("content-length")
@@ -196,6 +228,18 @@ class Fetcher:
     @property
     def cdx_pairs(self) -> netguard.CdxPairs:
         return self._cdx
+
+    def close(self) -> None:
+        """Close the transport's pooled connections (a transport without ``close`` needs none)."""
+        close = getattr(self.transport, "close", None)
+        if callable(close):
+            close()
+
+    def __enter__(self) -> Fetcher:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
 
     # -- K9 -------------------------------------------------------------------------------------------------
 

@@ -22,7 +22,14 @@ from luna.v7 import guard, k9, metaingest
 from luna.v7.data import captures as cap
 from luna.v7.data import instruments as ins
 from luna.v7.data.instances import Instance, build_instances
-from luna.v7.data.notices import U6State, confident_match, known_at, scheduled_ts
+from luna.v7.data.notices import (
+    NoticeVersion,
+    U6State,
+    confident_match,
+    known_at,
+    scheduled_reason,
+    scheduled_ts,
+)
 from luna.v7.data.schema import IntegrityBlocker, validate
 from luna.v7.data.terminal import validate_r12
 from luna.v7.deploy import CurrentFiltersNotHistorical, assert_not_backdated
@@ -148,7 +155,6 @@ def test_unclassified_and_ambiguous_titles_are_never_guessed():
     ("Binance Futures Cancellation of Delisting of USDⓈ-M OMGUSDT", "cancel"),
     ("Binance Futures Will Delay the Delisting of USDⓈ-M OMGUSDT", "delay"),
     ("Binance Futures Will Not Delist USDⓈ-M OMGUSDT", "not"),
-    ("Delisting of USDⓈ-M OMGUSDT Postponed", "postpon"),
     ("Binance Futures Will Extend the Delisting Time of USDⓈ-M OMGUSDT", "extend"),
     ("Binance Futures Will Revoke the Delisting of USDⓈ-M OMGUSDT", "revok"),
     ("Update: Binance Futures Will Delist USDⓈ-M OMGUSDT", "updat"),
@@ -164,6 +170,177 @@ def test_explicit_lists_keep_their_kind_despite_the_modifier_stems():
     assert cap.classify_kind(pre + "Postpone the Delisting of USDⓈ-M OMGUSDT")[0] == "postponement"
     assert cap.classify_kind(pre + "Cancel the Delisting of USDⓈ-M OMGUSDT")[0] == "cancellation"
     assert cap.classify_kind(DELIST_TITLE) == ("delisting", "delisting:delist")
+
+
+R52A = ";r52a:leverage_margin_tiers_update_dropped"
+MOD = "ambiguous_kind:modifier:"
+
+
+@pytest.mark.parametrize("title", [
+    "Binance Futures Will Delist and Update the Leverage & Margin Tiers of XYZUSDT Perpetual Futures",
+    "Binance Futures Will Delist and Update the Leverage & Margin Tiers of USDⓈ-M XYZBUSD, ABCBUSD",
+    "Notice on Updating Leverage & Margin Tiers, and Delisting USDⓈ-M XYZBUSD and ABCBUSD Contracts",
+    "Binance Futures to Delist Coin-Margined XYZ Contracts and Update the Leverage & Margin Tiers for XYZ",
+    "Binance Futures Will Delist XYZUSDT and Updates on Leverage and Margin Tiers of ABCUSDT",
+])
+def test_r52a_a_leverage_margin_tiers_update_does_not_veto_a_delisting(title):
+    """R52 (a), the C4 evidence (28 of 47 W_DEV catalog titles): the update span is dropped, the rest is a
+    delisting."""
+    assert cap.classify_kind(title) == ("delisting", "delisting:delist" + R52A)
+
+
+@pytest.mark.parametrize(("title", "why"), [
+    # another `updat` outside the span keeps the veto ("Update:" prefix)
+    ("Update: Binance Futures Will Delist and Update the Leverage & Margin Tiers of XYZUSDT", MOD + "updat"),
+    ("Update: Binance Futures Will Delist USDⓈ-M XYZUSDT", MOD + "updat"),
+    ("Binance Futures Will Delist XYZUSDT and Update the Funding Rate of ABCUSDT", MOD + "updat"),
+    # `updat` is not the only stem: no drop
+    ("Binance Futures Will Delay the Delisting and Update the Leverage & Margin Tiers of XYZUSDT",
+     MOD + "delay|updat"),
+    # the span alone, no delisting phrase left: still no kind
+    ("Updates on Leverage & Margin Tiers of USDⓈ-M XYZUSDT Perpetual Contracts", "no_kind_phrase" + R52A),
+    ("Updates on Maintenance Margin Tiers of USDⓈ-M XYZUSDT Perpetual Contracts", "no_kind_phrase"),
+])
+def test_r52a_every_other_update_keeps_the_veto(title, why):
+    assert cap.classify_kind(title) == (None, why)
+
+
+@pytest.mark.parametrize("title", [
+    "Delisting of USDⓈ-M OMGUSDT Perpetual Contract Postponed",
+    "Delisting of USDⓈ-M OMGUSDT Perpetual Contract Will Be Further Postponed",
+    "Delisting of USDⓈ-M OMGUSDT Postponed",
+])
+def test_r52b_delisting_postponed_word_order_is_a_postponement(title):
+    assert cap.classify_kind(title) == ("postponement", "postponement:r52b:postponed+delist")
+
+
+@pytest.mark.parametrize(("title", "why"), [
+    ("Delisting of USDⓈ-M OMGUSDT Postponed, Then Cancelled", MOD + "cancel|postpon"),
+    ("Delisting of USDⓈ-M OMGUSDT Will Not Be Postponed", MOD + "postpon|not"),
+    ("Delisting of AUSDT Postponed; Binance Futures Will Delist BUSDT", MOD + "postpon"),
+    ("Automatic Settlement and Delisting of USDⓈ-M OMGUSDT Postponed", MOD + "postpon"),
+    ("Binance Futures Postponement of Delisting of USDⓈ-M OMGUSDT", MOD + "postpon"),
+])
+def test_r52b_is_narrow(title, why):
+    assert cap.classify_kind(title) == (None, why)
+
+
+# ------------------------------------------------------------------- R50 / R51: the real page structure
+
+
+def _t(s: str) -> dict:
+    return {"node": "text", "text": s}
+
+
+def _el(tag: str, *kids, **attr) -> dict:
+    d = {"node": "element", "tag": tag, "child": list(kids)}
+    if attr:
+        d["attr"] = attr
+    return d
+
+
+# Structure-only synthetic node tree shaped like the real bodies (root / element p, span, strong, a with attr,
+# table > tbody > tr > td, ul > li, br, h3, figure; text leaves with &nbsp; / &amp;); no real notice text.
+TREE = {"node": "root", "child": [
+    _el("p", _el("span", _t("Fellow&nbsp;Binancians,")), **{"data-block-id": "b1"}),
+    _el("p", _el("span", _t("Binance Futures will close all positions on the USDⓈ-M ")),
+        _el("strong", _t("XYZUSDT")), _el("span", _t(" Perpetual Contract at 2024-03-15 09:00 (UTC). ")),
+        _el("span", _t("Other contracts follow")), style="text-align: left"),
+    _el("h3", _t("Schedule")),
+    _el("figure", _el("table", _el("tbody",
+        _el("tr", _el("td", _t("Contract")), _el("td", _t("Time"))),
+        _el("tr", _el("td", _el("span", _t("DEFUSDT"))), _el("td", _t("2024-03-16 09:00 (UTC)")), _el("td")),
+        _el("tr", _el("td", _t("ABCUSDT")), _el("td", _t("2024-03-20 09:00 (UTC)")))))),
+    _el("ul", _el("li", _t("Terms &amp; conditions")), _el("li", _el("a", _t("link"), href="https://x/y"))),
+    _el("p", _t("Line one"), _el("br"), _t("line two"), {"node": "comment", "child": [_t(" kept")]}),
+]}
+TREE_TEXT = ("Fellow Binancians,\n"
+             "Binance Futures will close all positions on the USDⓈ-M XYZUSDT Perpetual Contract at "
+             "2024-03-15 09:00 (UTC). Other contracts follow\n"
+             "Schedule\n"
+             "Contract | Time\n"
+             "DEFUSDT | 2024-03-16 09:00 (UTC)\n"
+             "ABCUSDT | 2024-03-20 09:00 (UTC)\n"
+             "Terms & conditions\nlink\n"
+             "Line one\nline two kept")
+
+
+def test_r51_node_tree_text_document_order_blocks_cells_and_entities():
+    body = json.dumps(TREE, ensure_ascii=False)
+    assert cap.node_tree_text(body) == TREE_TEXT
+    assert cap.body_text(body) == TREE_TEXT
+    assert "href" not in TREE_TEXT and "data-block-id" not in TREE_TEXT  # attr values are never text
+    # detection: only a JSON object with a `node` key is a node tree; HTML keeps the Stage-0 path
+    assert cap.node_tree_text("<p>a &amp; b</p>") is None and cap.body_text("<p>a &amp; b</p>") == "a & b"
+    assert cap.node_tree_text('{"child": []}') is None and cap.node_tree_text("{not json") is None
+    assert cap.node_tree_text('[{"node": "root"}]') is None
+    assert cap.node_tree_text('{"node": "root"}') == ""
+
+
+def tree_page(title: str, tree: dict, *, publish: int | None = None, catalog: tuple = (),
+              other_catalog: tuple = (), art_release: int | None = None) -> bytes:
+    """A page shaped like the real captures: the article object carries a node-tree string body and
+    ``publishDate`` (no ``releaseDate``); ``releaseDate`` sits on body-less same-code catalog entries."""
+    art = {"id": 1, "code": CODE, "title": title, "body": json.dumps(tree, ensure_ascii=False),
+           "articleType": 1, "version": 1, "relatedArticles": []}
+    if publish is not None:
+        art["publishDate"] = publish // 10**6
+    if art_release is not None:
+        art["releaseDate"] = art_release // 10**6
+    cat = [{"id": 2, "code": CODE, "title": title, "type": 1, "releaseDate": r // 10**6} for r in catalog]
+    cat += [{"id": 3, "code": OTHER, "title": "x", "type": 1, "releaseDate": r // 10**6}
+            for r in other_catalog]
+    app = {"appState": {"loader": {"dataByRouteId": {"d": {"articleDetail": art, "catalogs": [
+        {"catalogId": 48, "articles": cat}]}}}}}
+    js = json.dumps(app, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e").replace(
+        "&", "\\u0026")
+    return (f"<html><head><title>{title} | Binance Support</title></head><body><main>x</main>"
+            f'<script id="__APP_DATA" type="application/json">{js}</script></body></html>').encode()
+
+
+def test_r50_release_date_from_the_catalog_entry_else_publish_date_the_later_if_both():
+    later = RELEASE + 9_500 * 10**6
+    cases = [
+        (dict(catalog=(RELEASE,), publish=RELEASE), RELEASE, "releaseDate=publishDate"),
+        (dict(catalog=(RELEASE,)), RELEASE, "releaseDate"),
+        (dict(publish=RELEASE), RELEASE, "publishDate"),
+        (dict(catalog=(RELEASE,), publish=later), later, "max:publishDate"),
+        (dict(catalog=(later,), publish=RELEASE), later, "max:releaseDate"),
+        (dict(catalog=(RELEASE, RELEASE), publish=RELEASE), RELEASE, "releaseDate=publishDate"),
+        (dict(art_release=RELEASE, publish=RELEASE), RELEASE, "releaseDate=publishDate"),
+        # another code's releaseDate is never taken
+        (dict(other_catalog=(later,), publish=RELEASE), RELEASE, "publishDate"),
+    ]
+    for kw, rel, src in cases:
+        t = cap.extract(tree_page(DELIST_TITLE, TREE, **kw), URL)
+        assert (t.article_reason, t.release_ts, t.release_src) == ("ok", rel, src), kw
+        assert t.text == DELIST_TITLE + "\n" + TREE_TEXT
+    for kw, why in [(dict(other_catalog=(RELEASE,)), "no_release_date"), ({}, "no_release_date"),
+                    (dict(catalog=(RELEASE, later), publish=RELEASE), "release_date_conflict")]:
+        t = cap.extract(tree_page(DELIST_TITLE, TREE, **kw), URL)
+        assert (t.text, t.release_ts, t.release_src, t.article_reason) == (None, None, None, why), kw
+
+
+def test_real_shaped_capture_end_to_end_matches_and_schedules_on_text():
+    """R50 + R51: the real page shape gives a usable classified version; scheduled_ts reads the symbol's own
+    sentence, and each table row keeps its symbol and timestamp on its own line."""
+    raw = tree_page(DELIST_TITLE, TREE, catalog=(RELEASE,), publish=RELEASE)
+    insts = {**INSTS, "DEFUSDT": [Instance(0, to_ns("2023-01-01"), None, None)]}
+    rep = metaingest.build_notices([capture("20240308095620", raw)], insts).report
+    (rec,) = rep["versions"]
+    assert (rec["status"], rec["kind"], rec["release_ts"], rec["release_src"]) == (
+        "classified", "delisting", RELEASE, "releaseDate=publishDate")
+    by = {m["symbol"]: m for m in rec["matches"]}
+    assert (by["XYZUSDT"]["scheduled_ts"], by["XYZUSDT"]["scheduled_reason"]) == (
+        to_ns("2024-03-15 09:00"), "mapped")
+    assert (by["ABCUSDT"]["scheduled_ts"], by["ABCUSDT"]["scheduled_reason"]) == (
+        to_ns("2024-03-20 09:00"), "mapped")
+    assert (by["DEFUSDT"]["scheduled_ts"], by["DEFUSDT"]["scheduled_reason"]) == (
+        to_ns("2024-03-16 09:00"), "mapped")
+    # without the block / row line breaks (whitespace collapsed, the pre-R51 path) the rows run together
+    flat = TREE_TEXT.replace("\n", " ")
+    v = NoticeVersion("n", 1, "delisting", RELEASE, RELEASE, DELIST_TITLE + "\n" + flat, "s")
+    assert scheduled_reason(v, "DEFUSDT") == (None, "several_timestamps_without_respectively")
 
 
 # ------------------------------------------------------------------------------- notices -> versions

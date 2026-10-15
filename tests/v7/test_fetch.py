@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import httpx
@@ -350,6 +351,37 @@ def test_default_transport_never_follows_redirects():
     assert r2.status == 200 and seen[-1].endswith("fundingRate?symbol=B&endTime=1") and r2.body == b"followed"
     with pytest.raises(fetch.ResponseTooLarge):  # streamed body over the cap
         tr.get("https://fapi.binance.com/fapi/v1/exchangeInfo", {}, timeout=5.0, max_bytes=4)
+
+
+def test_default_transport_reuses_one_pooled_client_across_calls_and_threads(tmp_path):
+    """Task 26d (C6 phase A): one keep-alive ``httpx.Client`` per transport, shared by worker threads, closed
+    with the fetcher; the redirect / timeout / cap behaviour is unchanged (tests above)."""
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.params.get("i", ""))
+        return httpx.Response(200, content=b"ok")
+
+    tr = fetch.HttpxTransport(_mock=httpx.MockTransport(handler))
+    assert tr._client is None  # created lazily on the first GET
+    url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
+    tr.get(url, {"i": "0"}, timeout=5.0, max_bytes=100)
+    first = tr._client
+    assert isinstance(first, httpx.Client) and not first.is_closed and first.follow_redirects is False
+    tr.get(url, {"i": "1"}, timeout=3.0, max_bytes=100)
+    assert tr._client is first
+    with ThreadPoolExecutor(8) as ex:
+        bodies = list(ex.map(lambda i: tr.get(url, {"i": str(i)}, timeout=5.0, max_bytes=100).body,
+                             range(2, 34)))
+    assert bodies == [b"ok"] * 32 and tr._client is first
+    assert sorted(seen, key=int) == [str(i) for i in range(34)]
+    f = Fetcher(tr, tmp_path)
+    with f:
+        assert f.fetch(Request(url)).body == b"ok" and tr._client is first  # through netguard, same client
+    assert first.is_closed and tr._client is None
+    with pytest.raises(RuntimeError, match="closed"):
+        tr.get(url, {}, timeout=5.0, max_bytes=100)
+    Fetcher(FakeTransport({}), tmp_path).close()  # a transport without close(): nothing to close
 
 
 def test_default_transport_refuses_a_declared_oversized_body():

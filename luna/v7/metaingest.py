@@ -33,10 +33,11 @@ Task 26c, AMB-39 / AMB-40).
   official settlement source exists, DEC-43 / DK-07; never a placeholder), the tables written once per scope
   and the ingest report written (exclusive create) as canonical JSON.
 * The report (``ingest_report``) is outcome-free: no price, return or label is read. Per version: status,
-  kind and the phrase that decided it, title, release / capture / known times and the release-date method,
-  the JSON date keys seen, every universe symbol occurring as a token with match / no match, its reason, a
-  short evidence snippet, the attributed instance and ``scheduled_ts`` or null with its reason; per matched
-  instance its versions; per instance R1 included / excluded with the reason and the sources used.
+  kind and the phrase that decided it, title, release / capture / known times and the release-date source
+  (``release_src``, R50), the JSON date keys seen, every universe symbol occurring as a token with match /
+  no match, its reason, a short evidence snippet, the attributed instance and ``scheduled_ts`` or null with
+  its reason; per matched instance its versions; per instance R1 included / excluded with the reason and the
+  sources used.
 """
 
 from __future__ import annotations
@@ -281,7 +282,7 @@ def build_notices(captures: Sequence[cap.Capture], insts_by_symbol: Mapping[str,
                                 "evidence": _evidence(text, s)})
             rec = {"notice_id": nid, "version": n, "status": status, "kind": kind, "kind_reason": kind_reason,
                    "title": t.title, "article_reason": t.article_reason, "release_ts": t.release_ts,
-                   "release_reason": t.release_reason,
+                   "release_reason": t.release_reason, "release_src": t.release_src,
                    "date_keys": list(t.date_keys), "capture_ts": c.capture_ts, "known_at": ka,
                    "archive_url": c.archive_url, "capture_sha256": c.sha256, "text_sha256": t.text_sha256,
                    "n_captures": n_caps, "matches": matches,
