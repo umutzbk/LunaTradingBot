@@ -26,7 +26,9 @@ def _git(repo: Path, *args: str) -> None:
 
 @pytest.fixture
 def repo(tmp_path, monkeypatch):
+    """The frozen repo and a tmp home as the guard's canonical location (``guard._roots``, tests only)."""
     r = af.frozen_repo(tmp_path / "repo")
+    af.roots(monkeypatch, r, tmp_path / "home")
     monkeypatch.setattr(guard, "verify_spec", lambda repo=None: None)
     return r
 
@@ -35,8 +37,7 @@ def _auth(repo, tmp_path):
     rec = tmp_path / "pre_opening.json"
     if not rec.exists():
         af.pre_opening(rec)
-    return guard.authorize_holdout(guard.approval_phrase(), repo, home=tmp_path / "home", pre_opening=rec,
-                                   manifest_sha256=af.MANIFEST)
+    return guard.authorize_holdout(guard.approval_phrase(), pre_opening=rec, manifest_sha256=af.MANIFEST)
 
 
 def test_hold_window_needs_authorization(repo, tmp_path):
@@ -45,8 +46,7 @@ def test_hold_window_needs_authorization(repo, tmp_path):
         guard.check_outcome_window(lo, hi, now_ns=NOW)
     with pytest.raises(guard.HoldoutBlocked):
         guard.check_outcome_window(lo, hi, auth=object(), now_ns=NOW)  # type: ignore[arg-type]
-    guard.check_outcome_window(lo, hi, auth=_auth(repo, tmp_path), now_ns=NOW, repo=repo,
-                               home=tmp_path / "home", fresh=True)
+    guard.check_outcome_window(lo, hi, auth=_auth(repo, tmp_path), now_ns=NOW, fresh=True)
     # dev window needs nothing
     guard.check_outcome_window(windows.W_DEV[0], windows.W_DEV[1], now_ns=NOW)
 
@@ -60,12 +60,11 @@ def test_m6_overlap_refused_even_with_auth(repo, tmp_path):
     auth = _auth(repo, tmp_path)
     for lo, hi in ((M6_START - D, M6_START + D), (M6_START, M6_START + 1), (M6_START + D, M6_START + 2 * D)):
         with pytest.raises(guard.EmbargoBlocked):
-            guard.check_outcome_window(lo, hi, auth=auth, now_ns=NOW, repo=repo, home=tmp_path / "home")
+            guard.check_outcome_window(lo, hi, auth=auth, now_ns=NOW)
     with pytest.raises(guard.EmbargoBlocked):
         guard.check_outcome_window(M6_START - D, M6_START + D, now_ns=NOW)
     # ends exactly at the M6 start: no overlap (half-open)
-    guard.check_outcome_window(M6_START - D, M6_START, auth=auth, now_ns=NOW, repo=repo,
-                               home=tmp_path / "home")
+    guard.check_outcome_window(M6_START - D, M6_START, auth=auth, now_ns=NOW)
 
 
 def test_m6_lifted_only_when_release_known_and_reached(monkeypatch):
@@ -115,14 +114,14 @@ def test_marker_exclusivity(repo, tmp_path):
     _auth(repo, tmp_path)
     with pytest.raises(guard.HoldoutBlocked, match="already opened"):
         _auth(repo, tmp_path)
-    assert guard.holdout_opened(repo, home=tmp_path / "home")
-    assert len(guard.marker_paths(repo, home=tmp_path / "home")) == 2
+    assert guard.holdout_opened()
+    assert len(guard.marker_paths()) == 2
 
 
 def test_authorize_needs_phrase_tags_clean_head(repo, tmp_path):
     with pytest.raises(guard.HoldoutBlocked, match="approval"):
-        guard.authorize_holdout("yes", repo, home=tmp_path / "home")
-    assert not guard.holdout_opened(repo, home=tmp_path / "home")
+        guard.authorize_holdout("yes")
+    assert not guard.holdout_opened()
     (repo / "dirty.txt").write_text("d")
     with pytest.raises(guard.HoldoutBlocked, match="not clean"):
         _auth(repo, tmp_path)
@@ -133,7 +132,7 @@ def test_authorize_needs_phrase_tags_clean_head(repo, tmp_path):
     _git(repo, "tag", "-d", guard.CODE_TAG)
     with pytest.raises(guard.HoldoutBlocked, match="missing"):
         _auth(repo, tmp_path)
-    assert not guard.holdout_opened(repo, home=tmp_path / "home")
+    assert not guard.holdout_opened()
 
 
 def test_spec_mismatch_blocks(repo, tmp_path, monkeypatch):
@@ -152,15 +151,14 @@ def test_run_id_and_phrase():
 
 def test_pin_manifest_once(repo, tmp_path):
     """The manifest is pinned by the opening itself, exclusively and once, next to both markers (SC-05)."""
-    home = tmp_path / "home"
-    assert guard.pinned_manifest(repo, home=home) is None and not hasattr(guard, "pin_manifest")
+    assert guard.pinned_manifest() is None and not hasattr(guard, "pin_manifest")
     auth = _auth(repo, tmp_path)
-    pin = guard.pinned_manifest(repo, home=home)
+    pin = guard.pinned_manifest()
     assert pin["manifest_sha256"] == af.MANIFEST and pin == auth.record["pin"]
-    assert all((m.parent / guard.PIN).exists() for m in guard.marker_paths(repo, home=home))
+    assert all((m.parent / guard.PIN).exists() for m in guard.marker_paths())
     with pytest.raises(guard.HoldoutBlocked, match="already opened"):
         _auth(repo, tmp_path)
-    assert guard.pinned_manifest(repo, home=home) == pin
+    assert guard.pinned_manifest() == pin
 
 
 def test_check_listing_only():

@@ -565,6 +565,21 @@ def test_holdout_report_must_cover_exactly_the_runs():
         V.holdout(replace(good, ml_T=replace(good.ml_T, invalid_detail="swapped")))
 
 
+def test_public_verdict_refuses_w_hold_inputs():
+    """Task 24 round 2, I-C: ``verdict.holdout`` computes verdicts only for runs outside W_HOLD (synthetic /
+    plumbing windows, as every test here); W_HOLD inputs go through ``runner_select.holdout_verdict`` only
+    (inputs issued by ``holdout_inputs``, verdict marker written once)."""
+    from luna.v7 import windows
+
+    good = _inputs()
+    assert V.holdout(good).cls in V.CLASSES  # W_DEV-dated synthetic runs: allowed
+    for field_ in ("ml_T", "a0_T", "ml_M", "a0_M"):
+        run = getattr(good, field_)
+        hold = replace(run, window=(windows.W_HOLD[0], windows.W_HOLD[0] + (run.window[1] - run.window[0])))
+        with pytest.raises(ValueError, match="holdout_verdict"):
+            V.holdout(replace(good, **{field_: hold}))
+
+
 def test_holdout_report_must_link_to_the_pre_report():
     """M-4: a holdout report built on another (verified, passed) pre-opening report is refused."""
     good = _inputs()

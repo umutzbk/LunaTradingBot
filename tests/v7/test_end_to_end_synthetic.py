@@ -54,7 +54,7 @@ def _sha(obj: object) -> str:
     return h.hexdigest()
 
 
-def run_pipeline(seed: int, base) -> tuple[dict[str, str], dict]:
+def run_pipeline(seed: int, base, monkeypatch) -> tuple[dict[str, str], dict]:
     """One full pass (``base``: a fresh directory for this pass's synthetic opening). Returns (sha256 per
     output, facts for the non-triviality assertions)."""
     u = fx.build_universe(seed)
@@ -78,13 +78,13 @@ def run_pipeline(seed: int, base) -> tuple[dict[str, str], dict]:
     hold = runner.label_panel(u, prov, fx.decisions_in(fx.BOOK), fx.H_STAR, fx.BOOK, fx.NOW)
     dev = af.dev_selection("A2", fx.H_STAR, window=fx.BOOK, em_runs={"ML*": em["A2"], "A0": em["A0"]},
                            runs={("A2", fx.H_STAR): runs["A2"], ("A0", fx.H_STAR): runs["A0"]})
-    opened = af.authorize(base, dev=dev)
-    x = holdout_inputs(auth=opened.auth, repo=opened.repo, home=opened.home, ml_T=runs["A2"], a0_T=runs["A0"],
+    opened = af.authorize(base, monkeypatch, dev=dev)
+    x = holdout_inputs(auth=opened.auth, ml_T=runs["A2"], a0_T=runs["A0"],
                        ml_M=em["A2"], a0_M=em["A0"],
                        quarter_edges=edges, panel=hold, final_model=lf.final(fx.H_STAR, "en"),
                        dev_ml_run=runs["A2"], dev_kill=(), leakage_report=opened.auth.leakage_report,
                        records=prov.record, integrity=(), B=B_SMALL)
-    v = holdout_verdict(x, auth=opened.auth, repo=opened.repo, home=opened.home)  # writes the verdict marker
+    v = holdout_verdict(x, auth=opened.auth)  # writes the verdict marker
     v_kill = None
     if kill:
         v_kill = verdict.classify(invalid=v.cls == verdict.INVALID, leakage=False, dev_kill=True,
@@ -127,13 +127,13 @@ def tiny_space(monkeypatch):
     monkeypatch.setattr(models, "search_space", lambda h: list(fx.TINY_SPACE))
 
 
-def test_end_to_end_synthetic(tiny_space, tmp_path):
+def test_end_to_end_synthetic(tiny_space, tmp_path, monkeypatch):
     t0 = time.perf_counter()
     universe._PF_CACHE.clear()  # independent passes: no memo carried between them
-    a, facts = run_pipeline(SEED, tmp_path / "pass1")
+    a, facts = run_pipeline(SEED, tmp_path / "pass1", monkeypatch)
     t1 = time.perf_counter()
     universe._PF_CACHE.clear()
-    b, _ = run_pipeline(SEED, tmp_path / "pass2")
+    b, _ = run_pipeline(SEED, tmp_path / "pass2", monkeypatch)
     t2 = time.perf_counter()
     diff = sorted(k for k in a if a[k] != b[k])
     assert a.keys() == b.keys() and not diff, f"non-deterministic outputs: {diff}"

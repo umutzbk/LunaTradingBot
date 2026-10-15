@@ -115,7 +115,7 @@ def _ts(v: object, what: str) -> int:
 
 def _doc(repo: Path, tag: str, ref: object, what: str) -> str:
     if not isinstance(ref, dict) or set(ref) != {"path", "sha256"} or not isinstance(ref["path"], str):
-        raise _Invalid(f"{what}: needs exactly path and sha256 (plus at)")
+        raise _Invalid(f"{what}: needs exactly path and sha256")
     sha = ref["sha256"]
     if not isinstance(sha, str) or not _SHA.match(sha):
         raise _Invalid(f"{what}: not a sha256")
@@ -180,9 +180,14 @@ def _canonical(key: str) -> tuple[RV6Release | None, ReviewPass | None]:
 
 
 @functools.cache
+def _resolved(absolute: str) -> str:
+    return str(Path(absolute).resolve())
+
+
 def repo_key(repo: Path | None = None) -> str:
-    """The resolved repository path (memoised: the guards call this per outcome window, review m1)."""
-    return str(Path(repo or code_repo()).resolve())
+    """The resolved repository path. The path is made absolute first (never a cwd-relative cache key), then
+    its resolution is memoised (the guards call this per outcome window, review m1)."""
+    return _resolved(str(Path(repo or code_repo()).absolute()))
 
 
 def _key(repo: Path | None) -> str:

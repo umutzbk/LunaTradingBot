@@ -47,7 +47,7 @@ import numpy as np
 import pandas as pd
 
 from luna.v7 import leakage as lk
-from luna.v7 import stats
+from luna.v7 import stats, windows
 from luna.v7.accounting import (
     Ledger,
     account,
@@ -431,8 +431,24 @@ def _p1_em(x: HoldoutInputs) -> tuple[stats.CBBResult | None, str | None]:
     return stats.cbb_test(rm, xm, stats.BLOCKS, x.B, x.seed), None
 
 
+def _on_w_hold(x: HoldoutInputs) -> bool:
+    return any(windows.overlaps(int(r.window[0]), int(r.window[1]), windows.W_HOLD)
+               for r in (x.ml_T, x.a0_T, x.ml_M, x.a0_M) if isinstance(r, BookRun))
+
+
 def holdout(x: HoldoutInputs) -> Verdict:
-    """The S-13.4 verdict on ``W_HOLD`` (most severe applicable class)."""
+    """The S-13.4 verdict (most severe applicable class) for runs OUTSIDE ``W_HOLD`` (synthetic / plumbing
+    windows, e.g. W_DEV-dated tests). Inputs whose runs touch ``W_HOLD`` are refused here: the only path to
+    the real W_HOLD verdict is ``runner_select.holdout_verdict`` (inputs issued by ``holdout_inputs`` for a
+    verified opening, verdict marker written once; Task 24 round 2, I-C)."""
+    if _on_w_hold(x):
+        raise ValueError("W_HOLD inputs: the W_HOLD verdict is produced only by "
+                         "runner_select.holdout_verdict (no verdict without the verdict marker)")
+    return _holdout(x)
+
+
+def _holdout(x: HoldoutInputs) -> Verdict:
+    """The S-13.4 computation (private: ``holdout`` / ``runner_select.holdout_verdict``)."""
     _check_inputs(x)
     leak = bool(x.holdout_leakage.findings)
     reasons = [f"leakage: {c}: {s}" for c, s in x.holdout_leakage.findings]

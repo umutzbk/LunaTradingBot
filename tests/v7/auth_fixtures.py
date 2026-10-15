@@ -10,8 +10,9 @@ AMB-34). No real data, never the real home directory or the real repository's gi
   ``test_opening.test_dev_issuer_is_only_used_by_dev_selection``). The happy paths use it because a real
   S-10.6 run over a full outer quarter is too slow for the test gate; the LeakageReport is always the real
   ``leakage.run_leakage_checks`` output on the tiny synthetic panels of ``leak_fixtures``.
-* ``authorize(...)``: writes the pre-opening record and opens a synthetic holdout (injected ``home``, the
-  frozen repo, ``guard.verify_spec`` patched exactly as in the existing guard tests).
+* ``authorize(...)``: writes the pre-opening record and opens a synthetic holdout at a tmp location
+  (``roots`` monkeypatches the guard's single location seam ``guard._roots``; ``guard.verify_spec`` patched
+  exactly as in the existing guard tests).
 * ``release_repo(...)``: a repository with the V6 artefacts at ``v6-code-frozen`` (bytes copied from the real
   tag, so their hashes verify) and optional R_V6 release / forward review-pass records under their annotated
   tags (``luna.v7.release``).
@@ -108,17 +109,24 @@ def verify_spec_off():
     return mock.patch.object(guard, "verify_spec", lambda repo=None: None)
 
 
-def authorize(base: Path, *, dev=None, report=None, manifest: str = MANIFEST) -> SimpleNamespace:
-    """A synthetic opening in ``base`` (frozen repo, injected home, real pre-opening record)."""
+def roots(monkeypatch, repo: Path, home: Path) -> None:
+    """Point the guard's single location seam (``guard._roots``) at a tmp repository / home (tests only: no
+    public opening function takes a location)."""
+    monkeypatch.setattr(guard, "_roots", lambda: (Path(repo), Path(home)))
+
+
+def authorize(base: Path, monkeypatch, *, dev=None, report=None, manifest: str = MANIFEST) -> SimpleNamespace:
+    """A synthetic opening in ``base`` (frozen repo, tmp home as the canonical location, real pre-opening
+    record). ``monkeypatch`` keeps ``guard._roots`` pointed at it."""
     base = Path(base)
     repo = frozen_repo(base / "repo")
     home = base / "home"
+    roots(monkeypatch, repo, home)
     dev = dev if dev is not None else dev_selection()
     report = report if report is not None else lf.passed_report(*dev.ml_star)
     rec = pre_opening(base / "pre_opening.json", dev, report)
     with verify_spec_off():
-        auth = guard.authorize_holdout(guard.approval_phrase(), repo, home=home, pre_opening=rec,
-                                       manifest_sha256=manifest)
+        auth = guard.authorize_holdout(guard.approval_phrase(), pre_opening=rec, manifest_sha256=manifest)
     return SimpleNamespace(auth=auth, repo=repo, home=home, record=rec, dev=dev, report=report)
 
 

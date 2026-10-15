@@ -652,7 +652,11 @@ def opened(dev_valid, tmp_path_factory):
     arm, h = dev.ml_star
     hooked = af.dev_selection(arm, h, runs=dev.runs, em_runs=dev.em_runs, result=dev.result,
                               window=dev.window)
-    return af.authorize(tmp_path_factory.mktemp("opening"), dev=hooked)
+    mp = pytest.MonkeyPatch()  # the guard's location seam points at this opening for the module
+    try:
+        yield af.authorize(tmp_path_factory.mktemp("opening"), mp, dev=hooked)
+    finally:
+        mp.undo()
 
 
 def test_dev_selection_runs_all_required(dev_valid):
@@ -701,7 +705,7 @@ def test_dev_selection_invalid_precondition(inputs, opened):
     rel = r72.fills[r72.fills["symbol"] == fx.RELIST]
     assert len(rel) > 0 and (rel["instance"] == i0.idx).all() and (rel["ts"] < i0.last_trade_ts).all()
     with pytest.raises(ValueError, match="no ML"):
-        holdout_inputs(auth=opened.auth, repo=opened.repo, home=opened.home, ml_T=r72, a0_T=r72, ml_M=r72,
+        holdout_inputs(auth=opened.auth, ml_T=r72, a0_T=r72, ml_M=r72,
                        a0_M=r72, quarter_edges=(), panel=None,
                        final_model=None, leakage_report=None, records=None, integrity=(), dev=dev)
     with pytest.raises(ValueError, match="no ML"):  # no ML*: no leakage report either (holdout sealed)
@@ -718,7 +722,7 @@ def _panel(h: int, n_days: int = 4, rate: float = 0.002) -> LabelPanel:
     return LabelPanel(h, s.reset_index(drop=True), pd.DataFrame(), len(s), 0, 0, rate, ())
 
 
-def test_holdout_inputs_require_authorization(dev_valid, opened):
+def test_holdout_inputs_require_authorization(dev_valid, opened, tmp_path, monkeypatch):
     dev, q = dev_valid
     arm, h = dev.ml_star
     reg, clf = families(arm)
@@ -728,7 +732,7 @@ def test_holdout_inputs_require_authorization(dev_valid, opened):
               quarter_edges=(q[0][0], q[0][0] + 12 * H, q[1][0], q[1][0] + 12 * H, q[1][1]),
               panel=_panel(h), final_model=final,
               leakage_report=opened.report, records=lf.clean_records, integrity=(),
-              dev_ml_run=dev.runs[(arm, h)], dev_kill=(), B=B_SMALL, repo=opened.repo, home=opened.home)
+              dev_ml_run=dev.runs[(arm, h)], dev_kill=(), B=B_SMALL)
     auth = lambda: opened.auth  # noqa: E731  (the real opening of this module)
     for bad in (None, object(), {"approved": True}, object.__new__(guard.HoldoutAuthorization)):
         with pytest.raises(guard.HoldoutBlocked):
@@ -797,23 +801,36 @@ def test_holdout_inputs_require_authorization(dev_valid, opened):
     other_ml = lf.passed_report("A2", 72) if (arm, h) != ("A2", 72) else lf.passed_report("A2", 24)
     with pytest.raises(ValueError, match=r"is for ML\*"):
         holdout_inputs(auth=auth(), **{**kw, "leakage_report": other_ml})
-    # review I-1: the binding uses the canonical opening of the given repo / home, not the auth's record
+    # the binding uses the canonical opening (the guard's location seam), never the authorization's record
+    af.roots(monkeypatch, af.frozen_repo(tmp_path / "elsewhere"), tmp_path / "elsewhere_home")
     with pytest.raises(guard.HoldoutBlocked):
-        holdout_inputs(auth=auth(), **{**kw, "home": opened.home.parent / "elsewhere"})
-    # R45: the verdict of the opening is produced once; then neither a second verdict nor a resume
-    v = holdout_verdict(x, auth=auth(), repo=opened.repo, home=opened.home)
+        holdout_inputs(auth=auth(), **kw)
+    # R45 / review round 2 I-C, on a separate opening of the same DevSelection (the module's stays open)
+    o2 = af.authorize(tmp_path / "o2", monkeypatch, dev=opened.dev)
+    x2 = holdout_inputs(auth=o2.auth, **{**kw, "leakage_report": o2.auth.leakage_report})
+    with pytest.raises(ValueError, match="holdout_verdict"):  # the public verdict refuses W_HOLD-shaped use
+        verdict.holdout(replace(x2, ml_T=replace(x2.ml_T, window=windows.W_HOLD)))
+    with pytest.raises(ValueError, match="issued by holdout_inputs"):  # inputs not issued for this opening
+        holdout_verdict(x, auth=o2.auth)
+    with pytest.raises(ValueError, match="issued by holdout_inputs"):
+        holdout_verdict(replace(x2, integrity=()), auth=o2.auth)
+    v = holdout_verdict(x2, auth=o2.auth)  # the W_HOLD verdict: once, with the verdict marker
     assert v.cls in verdict.CLASSES
-    assert guard.verdict_produced(opened.repo, home=opened.home)["opening_id"] == auth().opening_id
+    assert guard.verdict_produced()["opening_id"] == o2.auth.opening_id
+    with pytest.raises(guard.HoldoutBlocked, match="verdict"):  # no second look
+        holdout_verdict(x2, auth=o2.auth)
+    with pytest.raises(guard.HoldoutBlocked, match="verdict"):  # the authorization opens nothing any more
+        holdout_inputs(auth=o2.auth, **{**kw, "leakage_report": o2.auth.leakage_report})
     with pytest.raises(guard.HoldoutBlocked, match="verdict"):
-        holdout_verdict(x, auth=auth(), repo=opened.repo, home=opened.home)
+        guard.check_outcome_window(windows.W_HOLD[0], windows.W_HOLD[0] + D, auth=o2.auth, now_ns=NOW)
     with af.verify_spec_off(), pytest.raises(guard.HoldoutBlocked, match="verdict"):
-        guard.resume_holdout(guard.resume_phrase(), opened.repo, home=opened.home, pre_opening=opened.record,
-                             manifest_sha256=af.MANIFEST)
-    # the DT4 record of the holdout run lists the opening and every resume attempt (here: one refusal)
-    summary = guard.opening_summary(auth(), repo=opened.repo, home=opened.home)
+        guard.resume_holdout(guard.resume_phrase(), pre_opening=o2.record, manifest_sha256=af.MANIFEST)
+    # the DT4 record of the holdout run lists the opening, its attempts and the verdict (read-only summary)
+    summary = guard.opening_summary(o2.auth)
     assert [r["result"] for r in summary["resumes"]] == ["refused"]
+    assert [r["result"] for r in summary["openings"]] == ["opened"] and summary["verdict_produced"]
     rec = _record([kw["ml_T"], kw["a0_T"]], opening=summary)
-    assert rec["holdout_opening"]["opening_id"] == auth().opening_id
+    assert rec["holdout_opening"]["opening_id"] == o2.auth.opening_id
     with pytest.raises(ValueError, match="opening"):
         _record([kw["ml_T"]], opening={"pin": {}})
 
@@ -883,7 +900,7 @@ def test_missing_required_inputs_fail_closed(inputs, dev_valid, opened):
                         model=m24)
     dev, _ = dev_valid
     with pytest.raises(ValueError, match="W_DEV facts"):
-        holdout_inputs(auth=opened.auth, repo=opened.repo, home=opened.home, ml_T=dev.runs[("A2", 24)],
+        holdout_inputs(auth=opened.auth, ml_T=dev.runs[("A2", 24)],
                        a0_T=dev.runs[("A0", 24)],
                        ml_M=dev.em_runs["A0"], a0_M=dev.em_runs["A0"], quarter_edges=(), panel=_panel(24),
                        final_model=None, leakage_report=None, records=None, integrity=())
