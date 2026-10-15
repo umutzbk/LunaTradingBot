@@ -200,6 +200,39 @@ def _in_windows(df: pd.DataFrame, col: str, wins: Sequence[tuple[int, int]], lo:
     return out.iloc[np.unique(ts, return_index=True)[1]] if len(parts) > 1 else out
 
 
+def _frame_digest(h, df: pd.DataFrame | None) -> None:
+    if df is None:
+        h.update(b"none")
+        return
+    h.update(repr(([str(c) for c in df.columns], [str(t) for t in df.dtypes], len(df))).encode())
+    try:
+        h.update(pd.util.hash_pandas_object(df, index=False).to_numpy().tobytes())
+    except TypeError:  # unhashable cells
+        h.update(df.to_csv(index=False, lineterminator="\n").encode())
+
+
+def inputs_identity(inputs: Mapping[str, SymbolInputs]) -> str:
+    """sha256 content identity of in-memory inputs (every frame's columns, dtypes and values, the instances,
+    identity, notices and terminal events): the data identity of a view-store key (fix round 1, I2)."""
+    h = hashlib.sha256(b"inputs/v1")
+    for s in sorted(inputs):
+        x = inputs[s]
+        h.update(s.encode())
+        for df in (x.bars15, x.bars1m, x.funding, x.r4.premium, x.r4.mark, x.r4.index, x.aggtrades):
+            _frame_digest(h, df)
+        meta = (list(x.insts), x.identity, tuple(x.notices), sorted(dict(x.terminals).items()))
+        h.update(repr(meta).encode())
+    return h.hexdigest()
+
+
+def _with_anchor(full: pd.DataFrame, win: pd.DataFrame, col: str, floor: int, lo: int,
+                 what: str) -> pd.DataFrame:
+    """``win`` (the rows of [lo, hi)) preceded by the last row of ``full`` in [floor, lo): the row a windowed
+    slice takes as the instance's last PIT row when none is recent (fix round 1, m1)."""
+    before = _window(full, col, floor, lo, what) if lo > floor else full.iloc[0:0]
+    return pd.concat([before.iloc[-1:], win]) if len(before) else win
+
+
 class InMemorySource:
     """``UniverseSource`` over in-memory ``SymbolInputs`` (synthetic fixtures, small runs): ``load`` returns
     the frames' rows with event time in [lo, hi) (``EVENT_COLS``; positional slices), other inputs as
@@ -210,6 +243,12 @@ class InMemorySource:
 
     def symbols(self) -> tuple[str, ...]:
         return tuple(sorted(self.inputs))
+
+    def identity(self) -> dict:
+        """The data identity of a view-store key: the inputs' content hash (computed once)."""
+        if not hasattr(self, "_identity"):
+            self._identity = {"inputs": inputs_identity(self.inputs)}
+        return self._identity
 
     def load(self, symbol: str, lo: int, hi: int) -> SymbolInputs:
         lo, hi = int(lo), int(hi)
@@ -226,14 +265,21 @@ class InMemorySource:
                        funding=w(x.funding, "funding"), r4=r4, aggtrades=agg)
 
     def load_decision_inputs(self, symbol: str, lo: int, hi: int, history_lo: int) -> SymbolInputs:
-        """The inputs a decision view reads (``ResearchUniverse.for_decisions``): bars / R4 of [lo, hi),
-        funding of [history_lo, hi), 1-minute bars of the U6 halt windows in [history_lo, hi), no
-        aggTrades."""
+        """The inputs a decision view reads (``ResearchUniverse.for_decisions``): bars / R4 of [lo, hi), each
+        preceded by its last row of [history_lo, lo) (the anchor, m1), funding of [history_lo, hi), 1-minute
+        bars of the U6 halt windows in [history_lo, hi), no aggTrades."""
         lo, hi, history_lo = int(lo), int(hi), int(history_lo)
         x = self.load(symbol, lo, hi)
         full = self.inputs[symbol]
         wins = halt_windows(symbol, full.notices, list(full.insts))
-        return replace(x, funding=_window(full.funding, "funding_ts", history_lo, hi, f"{symbol}.funding"),
+
+        def a(f: pd.DataFrame, w: pd.DataFrame, name: str) -> pd.DataFrame:
+            return _with_anchor(f, w, "open_ts", history_lo, lo, f"{symbol}.{name}")
+
+        r4 = R4Bars(*(a(getattr(full.r4, k), getattr(x.r4, k), f"r4.{k}")
+                      for k in ("premium", "mark", "index")))
+        return replace(x, bars15=a(full.bars15, x.bars15, "bars15"), r4=r4,
+                       funding=_window(full.funding, "funding_ts", history_lo, hi, f"{symbol}.funding"),
                        bars1m=_in_windows(full.bars1m, "open_ts", wins, history_lo, hi, f"{symbol}.bars1m"),
                        aggtrades=None)
 
@@ -280,6 +326,11 @@ class ResearchUniverse:
                                                dict(x.terminals), x.aggtrades)
         self.candidates: tuple[str, ...] = tuple(s for s in sorted(self.inputs) if s != hedge)
         self.decisions_only = False
+        # view-store key parts (fix round 1, I2): the source's data identity and the history window; None
+        # for a universe built directly from inputs (its content hash is the data identity, no window)
+        self.source_identity: object = None
+        self.history_lo: int | None = None
+        self.window_hi: int | None = None
 
     @classmethod
     def from_source(cls, source: UniverseSource, lo: int, hi: int, hedge: str = HEDGE) -> ResearchUniverse:
@@ -288,14 +339,18 @@ class ResearchUniverse:
         lo, hi = int(lo), int(hi)
         if hi <= lo:
             raise ValueError(f"empty window [{lo}, {hi})")
-        return cls({s: source.load(s, lo, hi) for s in sorted(source.symbols())}, hedge)
+        u = cls({s: source.load(s, lo, hi) for s in sorted(source.symbols())}, hedge)
+        u.source_identity = _source_identity(source)
+        u.history_lo, u.window_hi = lo, hi
+        return u
 
     @classmethod
     def for_decisions(cls, source: UniverseSource, lo: int, hi: int, *, history_lo: int,
                       hedge: str = HEDGE) -> ResearchUniverse:
         """A decisions-only universe for decision times in [lo, hi) (module docstring, ``decision_pass``):
         each symbol's ``source.load_decision_inputs(symbol, max(history_lo, lo - LOOKBACK_15M), hi,
-        history_lo)``. Labels and books are refused on it."""
+        history_lo)`` (with the anchor rows, every windowed slice equals the full history's: m1). Labels and
+        books are refused on it."""
         lo, hi, history_lo = int(lo), int(hi), int(history_lo)
         if hi <= lo or lo < history_lo:
             raise ValueError(f"decision window [{lo}, {hi}) outside the history start {history_lo}")
@@ -303,6 +358,8 @@ class ResearchUniverse:
         u = cls({s: source.load_decision_inputs(s, bars_lo, hi, history_lo)  # type: ignore[attr-defined]
                  for s in sorted(source.symbols())}, hedge)
         u.decisions_only = True
+        u.source_identity = _source_identity(source)
+        u.history_lo, u.window_hi = history_lo, hi
         for s, sd in u.sd.items():  # the look-back argument needs the indexed path (sorted, monotone ka)
             c = sd.cache
             assert c is not None
@@ -311,9 +368,15 @@ class ResearchUniverse:
                                      for k in ("premium", "mark", "index"))):
                 raise ValueError(f"{s}: a decisions-only universe needs 15m / R4 bars with strictly "
                                  "increasing open_ts and non-decreasing known_at (use from_source)")
-            if bars_lo > history_lo:  # rows before bars_lo exist in the full history: refuse what they change
-                c.bars_lo = bars_lo
         return u
+
+    def view_identity(self, with_features: bool) -> dict:
+        """The view-store key body of this universe (``viewstore``; fix round 1, I2): FORMAT, the code
+        identity, the data identity (the source's, else the inputs' content hash), the history start, the
+        symbols, the hedge and ``with_features``."""
+        data = self.source_identity if self.source_identity is not None else {"inputs": inputs_identity(
+            self.inputs)}
+        return view_body(data, self.history_lo, tuple(self.inputs), self.hedge, with_features)
 
     def _no_outcomes(self, what: str) -> None:
         if self.decisions_only:
@@ -423,8 +486,6 @@ class DecisionProvider:
                  auth: guard.HoldoutAuthorization | None = None, store: ViewStore | None = None) -> None:
         if max_cached_decisions is not None and int(max_cached_decisions) < 1:
             raise ValueError("max_cached_decisions must be >= 1 or None")
-        if store is not None and bool(store.with_features) != bool(with_features):
-            raise ValueError("the view store holds views of another with_features setting")
         k9.require()
         self._span = u.check_data(auth)
         self.auth = auth
@@ -439,6 +500,9 @@ class DecisionProvider:
         self._wins: dict[str, pd.DataFrame | None] = {}
         self._win_t: int | None = None
         self.store = store
+        if store is not None:  # bound to this universe's key body (I2): another universe / code is refused
+            store.bind(u.view_identity(self.with_features))
+        self.n_computed = 0  # decisions computed here (not read back from the store)
 
     def _positions(self, sym: str) -> tuple[bool, np.ndarray, np.ndarray]:
         """(sliceable, open_ts, known_at) of the symbol's 15m bars, validated once."""
@@ -611,11 +675,19 @@ class DecisionProvider:
             self._views.move_to_end(t)
             self._records.move_to_end(t)
             return self._views[t]
-        got = self.store.get(t) if self.store is not None else None
+        got = None
+        if self.store is not None:
+            u = self.u
+            if ((u.history_lo is not None and t < u.history_lo)
+                    or (u.window_hi is not None and t >= u.window_hi)):
+                raise ValueError(f"decision {t} outside the universe window [{u.history_lo}, {u.window_hi}): "
+                                 "its view is not the stored one")
+            got = self.store.get(t)
         if got is not None:
             self._views[t], self._records[t] = got  # type: ignore[assignment]
         else:
             u = self.u
+            self.n_computed += 1
             xs = self._xs(t)
             syms = u.candidates
             hh = {s: self._h_hat(s, t) for s in syms}
@@ -645,23 +717,44 @@ class DecisionProvider:
         return self._records[int(t)]
 
 
+def _source_identity(source: object) -> object:
+    ident = getattr(source, "identity", None)
+    return ident() if callable(ident) else None
+
+
+def view_body(data: object, history_lo: int | None, symbols: Sequence[str], hedge: str,
+              with_features: bool) -> dict:
+    from luna.v7.viewstore import FORMAT, code_identity  # runtime import (cycle: viewstore -> ... -> runner)
+
+    return {"format": FORMAT, "code": code_identity(), "data": data,
+            "history_lo": None if history_lo is None else int(history_lo),
+            "symbols": sorted(str(s) for s in symbols), "hedge": str(hedge),
+            "with_features": bool(with_features)}
+
+
 def decision_pass(source: UniverseSource, decision_ts: Sequence[int], store: ViewStore, *, history_lo: int,
                   with_features: bool = True, chunk_ns: int = DECISION_CHUNK_NS, hedge: str = HEDGE,
                   auth: guard.HoldoutAuthorization | None = None) -> dict[str, int]:
     """Every decision view of ``decision_ts`` into ``store`` (module docstring): one decisions-only universe
     per chunk of ``chunk_ns`` (released before the next), a ``DecisionProvider`` per chunk (the per-call guard
-    as everywhere). Views already in the store are not recomputed. Returns counts."""
+    as everywhere). The store is bound to the source's key body (I2) first; every t passes the W_HOLD guard
+    (K9-logged) before the store is consulted, and only the existence of a stored view is checked (m2).
+    Views already in the store are not recomputed. Returns counts."""
     k9.require()
-    if bool(store.with_features) != bool(with_features):
-        raise ValueError("the view store holds views of another with_features setting")
+    ident = _source_identity(source)
+    if ident is None:
+        raise ValueError("decision_pass needs a source with a data identity (source.identity())")
+    store.bind(view_body(ident, history_lo, tuple(source.symbols()), hedge, with_features))
     ts = sorted({int(t) for t in decision_ts})
     if not ts or ts[0] < int(history_lo):
         raise ValueError("decision times must be non-empty and >= the history start")
+    for t in ts:
+        guard.check_data_span(t, t + 1, auth=auth, what="decision t")
     n = chunks = 0
     i = 0
     while i < len(ts):
         j = int(np.searchsorted(ts, ts[i] + int(chunk_ns), "left"))
-        todo = [t for t in ts[i:j] if store.get(t) is None]
+        todo = [t for t in ts[i:j] if not store.has(t)]
         if todo:
             u = ResearchUniverse.for_decisions(source, todo[0], todo[-1] + 1, history_lo=history_lo,
                                                hedge=hedge)

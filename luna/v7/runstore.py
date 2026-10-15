@@ -161,6 +161,27 @@ def _decode_kind(name: str, dtype: str, kind: str) -> None:
         raise IntegrityBlocker(f"{name}: column dtype {dtype!r} / storage {kind!r} is not a persistable kind")
 
 
+def _arrow_ok(dtype: str, kind: str, typ: pa.DataType) -> bool:
+    """Whether a stored arrow column type is what the writer produces for (dtype, kind) (fix round 1, m4):
+    numpy columns their own type; extension columns from Python values (ints -> int64 / uint64, floats ->
+    double, booleans -> bool, strings -> string; all missing -> null); JSON cells -> string."""
+    if kind == "numpy":
+        return typ == pa.from_numpy_dtype(np.dtype(dtype))
+    if kind == "json":
+        return typ == pa.string()
+    if pa.types.is_null(typ):
+        return True
+    if dtype.startswith("Int"):
+        return typ == pa.int64()
+    if dtype.startswith("UInt"):
+        return typ in (pa.int64(), pa.uint64())
+    if dtype.startswith("Float"):
+        return typ in (pa.float64(), pa.int64())
+    if dtype == "boolean":
+        return typ == pa.bool_()
+    return typ in (pa.string(), pa.large_string())
+
+
 def _encode_frame(name: str, df: pd.DataFrame | None) -> tuple[dict | None, bytes | None]:
     if df is None:
         return None, None
@@ -207,6 +228,9 @@ def _decode_frame(name: str, meta: dict | None, data: bytes | None) -> pd.DataFr
     for c, dtype, kind in meta["columns"]:
         _decode_kind(f"{name}.{c}", str(dtype), str(kind))
         col = tbl.column(c)
+        if not _arrow_ok(str(dtype), str(kind), col.type):
+            raise IntegrityBlocker(f"{name}.{c}: stored type {col.type} is not the writer's for "
+                                   f"{dtype} / {kind}")
         if kind == "numpy":
             out[c] = np.asarray(col.to_numpy(zero_copy_only=False)).astype(np.dtype(dtype), copy=True)
         elif kind == "ext":
@@ -276,8 +300,14 @@ def _plain_name(name: object) -> bool:
         return False
     if any(c in name for c in ("/", "\\", ":")):
         return False
+    if name.split(".")[0].rstrip(" ").upper() in _RESERVED:  # Windows device names (m5): CON, NUL.txt, ...
+        return False
     w = PureWindowsPath(name)
     return not (w.drive or w.is_absolute() or PurePosixPath(name).is_absolute()) and w.name == name
+
+
+_RESERVED = frozenset({"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
+                       *(f"LPT{i}" for i in range(1, 10))})
 
 
 class RunStore:

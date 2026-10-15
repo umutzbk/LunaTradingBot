@@ -232,7 +232,8 @@ def test_decode_reapplies_the_dtype_allowlist(dtype, kind):
         runstore._decode_frame("fills", meta, files[meta["file"]])
 
 
-@pytest.mark.parametrize("name", ["C:fills.parquet", r"c:\x", "/etc/x", r"\\host\share\x", "..", "a/b"])
+@pytest.mark.parametrize("name", ["C:fills.parquet", r"c:\x", "/etc/x", r"\\host\share\x", "..", "a/b",
+                                  "CON", "nul.txt", "COM1.parquet", "lpt9", "AUX.json"])
 def test_manifest_file_names_with_drive_or_absolute_refused(tmp_path, log, name):
     rs = RunStore(tmp_path / "runs")
     run = rf.funding_run([0.01], costs=[0.001])
@@ -244,3 +245,17 @@ def test_manifest_file_names_with_drive_or_absolute_refused(tmp_path, log, name)
     with pytest.raises(IntegrityBlocker, match="invalid file name"):
         rs.load(sha, file_sha256=run_file_sha256(run))
     assert runstore._plain_name("fills.parquet") and not runstore._plain_name(name)
+
+
+def test_decode_checks_the_arrow_storage_type():
+    """m4: a column whose stored arrow type is not the writer's for its declared (dtype, kind) is refused (a
+    float column declared int64)."""
+    files = encode_run(rf.funding_run([0.01, 0.02], costs=[0.001, 0.0]))
+    rec = json.loads(files["run.json"])
+    meta = rec["frames"]["fills"]
+    i = next(k for k, (_, dt, kind) in enumerate(meta["columns"]) if kind == "numpy" and dt == "float64")
+    meta["columns"][i][1] = "int64"
+    with pytest.raises(IntegrityBlocker, match="stored type"):
+        runstore._decode_frame("fills", meta, files[meta["file"]])
+    assert runstore._arrow_ok("Int64", "ext", runstore.pa.null())
+    assert not runstore._arrow_ok("object", "json", runstore.pa.int64())

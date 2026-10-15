@@ -47,6 +47,7 @@ R_A = START + 80 * D + 8 * H + 5 * MIN - MIN  # known_at = the 08:05 decision - 
 S_B = START + 87 * D + 12 * H  # BBBUSDT scheduled delisting (halted inside the 72 h)
 HOLE_B = (S_B + 30 * H, S_B + 30 * H + 90 * MIN)
 S_C = START + 95 * D
+S_G = START + 66 * D + 4 * H  # GAPUSDT / LAGUSDT: notices known only after S_G + 72 h (fix round 1, m3)
 LABEL_WIN = (START + 110 * D, START + 114 * D)  # dense 1m for every symbol (labels)
 HALT_A = (START + 111 * D + 23 * H, START + 112 * D + 2 * H)  # AAAUSDT volume-0 1m bars (halted exit)
 
@@ -109,8 +110,12 @@ def _funding(sym: str, i: int, seed: int) -> pd.DataFrame:
     e = np.cumsum(g.normal(0.0, 1e-4, len(ts))) * 0.1
     rate = np.round((1e-3 if i % 2 else -6e-4) + e, 8)
     expl = pd.array([pd.NA if sym in ("TRNUSDT", "GAPUSDT") else 8] * len(ts), dtype="Int64")
+    ka = ts + MIN
+    if sym == "CCCUSDT":  # late REST-like records: known_at not monotone in funding_ts (fix round 1, m3)
+        late = (ts >= START + 75 * D) & (ts < START + 76 * D)
+        ka = np.where(late, ts + 9 * H, ka)
     return pd.DataFrame({"funding_ts": ts, "rate": rate, "interval_h_explicit": expl,
-                         "mark_at_settle": np.nan, "known_at": ts + MIN})
+                         "mark_at_settle": np.nan, "known_at": ka})
 
 
 def _bars1m(b15: pd.DataFrame, windows: list[tuple[int, int]], seed: int, i: int,
@@ -150,6 +155,10 @@ def _notices(sym: str) -> tuple[NoticeVersion, ...]:
         post = f"Binance Futures postpones the delisting of the USDⓈ-M {sym} perpetual contract."
         return (_notice(sym, "n-c", "delisting", S_C - 4 * D, ctx.format(s=sym, w=_when(S_C))),
                 _notice(sym, "n-c2", "postponement", S_C - 2 * D + 7 * MIN, post))
+    if sym == "GAPUSDT":  # known after sched + 72 h, no halt: the 72 h test passes at known_at (never active)
+        return (_notice(sym, "n-g", "delisting", S_G + 80 * H, ctx.format(s=sym, w=_when(S_G))),)
+    if sym == "LAGUSDT":  # known after sched + 72 h without 1-minute bars: HALTED, active from known_at
+        return (_notice(sym, "n-l", "delisting", S_G + 75 * H, ctx.format(s=sym, w=_when(S_G))),)
     return ()
 
 
@@ -169,6 +178,8 @@ def build_inputs(seed: int = 11) -> dict[str, SymbolInputs]:
             holes.append(HOLE_B)
         if sym == "CCCUSDT":
             wins.append((S_C - 2 * H, S_C + 74 * H))
+        if sym == "GAPUSDT":
+            wins.append((S_G - 2 * H, S_G + 74 * H))
         b1 = _bars1m(b15, wins, seed, i, holes, zero)
         terms = {}
         if sym == "RELUSDT" and insts[0].last_trade_ts is not None:
@@ -183,7 +194,8 @@ def decision_sample(step_days: int = 9) -> list[int]:
     """Decision times over the span (every ``step_days``-th day, all three decisions) plus the U6 edges."""
     ts = [int(t) for t in decision_times(START + 62 * D, END - D)
           if (int(t) - START) // D % step_days == 0]
-    special = [START + 78 * D + 5 * MIN, R_A + MIN, S_A + 72 * H - MIN, S_A + 72 * H, S_A + 72 * H + MIN,
+    special = [S_G + 75 * H + 5 * MIN, S_G + 80 * H + MIN, S_G + 80 * H, START + 76 * D + 5 * MIN,
+               START + 78 * D + 5 * MIN, R_A + MIN, S_A + 72 * H - MIN, S_A + 72 * H, S_A + 72 * H + MIN,
                S_A + 72 * H + 5 * MIN, S_B + 72 * H + 5 * MIN, S_C - 2 * D + 8 * MIN, S_C - 2 * D + 7 * MIN,
                DORMANT[1] + 5 * MIN, DORMANT[1] + 16 * D + 5 * MIN, TRANSITION + 8 * H + 5 * MIN]
     return sorted(set(ts) | set(special))
@@ -200,11 +212,12 @@ def edge_times() -> list[int]:
 
 
 def scale_store(store, n_symbols: int, n_days: int, seed: int = 3, start: int = START,
-                notice_every: int = 10) -> dict:
+                notice_every: int = 10, write: bool = True) -> dict:
     """Write a synthetic universe in store form (``rawstore.RawStore``; archive known_at rule, monthly
     chunks): BTCUSDT + ``n_symbols - 1`` candidates of ``n_days`` 15m bars (R3), R4 mark / index / premium,
     8 h archive funding (R2) and, for every ``notice_every``-th symbol, a delisting notice whose 72 h window
-    has dense 1-minute bars (R5; the only 1m rows a decision reads). Returns ``{symbol: SymbolMeta}``."""
+    has dense 1-minute bars (R5; the only 1m rows a decision reads). Returns ``{symbol: SymbolMeta}``
+    (``write=False``: the metadata only, deterministic, for a process reading a store written earlier)."""
     from luna.v7 import rawstore
 
     g0 = np.random.default_rng([seed, 1])
@@ -217,6 +230,8 @@ def scale_store(store, n_symbols: int, n_days: int, seed: int = 3, start: int = 
     meta = {}
 
     def put(table, sym, df, col):
+        if not write:
+            return
         t = df[col].to_numpy(np.int64)
         for m in months:
             lo, hi = rawstore.month_period(m)

@@ -8,15 +8,21 @@ decision time, ``with_features`` and the code only); arm-specific scores are lay
 so the S-10.6 driver's books (and the decision logs, the holdout records) replay stored views instead of
 recomputing them. It replaces the 2,048-decision LRU that never hit on a sequential replay.
 
-Layout (one directory per key)::
+Layout (one store = one key)::
 
-    <root>/<key>/<t>.parquet    the candidate rows (``runstore`` canonical frame encoding, no pickle)
-    <root>/<key>/<t>.json       canonical JSON: the view's and the record's other fields (tagged values),
+    <root>/KEY.json             canonical JSON of the key body, written once, verified on every open
+    <root>/<t>.parquet          the candidate rows (``runstore`` canonical frame encoding, no pickle)
+    <root>/<t>.json             canonical JSON: the view's and the record's other fields (tagged values),
                                 the frame's columns / rows and the parquet sha256
 
-``key`` (``view_key``) is the sha256 of the data identity (the raw store's table-manifest sha256s, or an
-explicit identity for in-memory data), the universe's symbols and hedge, ``with_features``, the code identity
-and ``FORMAT``. Files are written once (``rawstore._create_once``: an existing file is never overwritten; a
+The key body (``runner.ResearchUniverse.view_identity``; fix round 1, I2) is derived by the code from the
+universe itself, never passed as a free string: the data identity of its source (the raw store's
+table-manifest sha256s and a hash of the per-symbol metadata, or a content hash of in-memory inputs), the
+history start (the funding annotation and U3 depend on it), the symbols, the hedge, ``with_features``, the
+code identity (``code_identity``: sha256 of every ``luna/v7`` source file, LF-normalised, in path order) and
+``FORMAT``. ``bind(body)`` writes ``KEY.json`` on first use and refuses (``IntegrityBlocker``) a store holding
+another body: a store filled for one universe / history start / code is never read by another. Files are
+written once (``rawstore._create_once``: an existing file is never overwritten; a
 second writer of the same t must produce identical bytes, else ``IntegrityBlocker``). A view is stored only
 when it round-trips canonically (decode(encode(x)) re-encodes to the same bytes and its frame has a default
 ``RangeIndex``); otherwise it stays in memory only (recomputed on demand). A stored file that does not decode,
@@ -32,7 +38,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from pathlib import Path
 
 import pandas as pd
@@ -43,21 +49,30 @@ from luna.v7.rawstore import _canonical, _create_once
 from luna.v7.runstore import _dec, _decode_frame, _enc, _encode_frame
 from luna.v7.universe import GateRow
 
-__all__ = ["FORMAT", "ViewStore", "view_key"]
+__all__ = ["FORMAT", "KEY_FILE", "ViewStore", "code_identity", "key_of"]
 
-FORMAT = "decisionview/parquet+json/v1"
+FORMAT = "decisionview/parquet+json/v2"
+KEY_FILE = "KEY.json"
+_CODE_ID: list[str] = []
 _GATE_FIELDS = ("u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "reasons", "max_known_at")
 _REC_FIELDS = ("stale_reasons", "eligible", "n_cands", "max_known_at")
 
 
-def view_key(*, data_identity: Mapping[str, str] | str, symbols: Sequence[str], hedge: str,
-             with_features: bool, code_id: str) -> str:
-    """The store key: sha256 of the canonical JSON of the data identity (``RawStore.manifest_sha256s()`` or
-    an explicit string), the sorted symbols, the hedge, ``with_features``, the code identity and FORMAT."""
-    data = dict(sorted(data_identity.items())) if isinstance(data_identity, Mapping) else str(data_identity)
-    body = {"format": FORMAT, "data": data, "symbols": sorted(str(s) for s in symbols), "hedge": str(hedge),
-            "with_features": bool(with_features), "code": str(code_id)}
-    return hashlib.sha256(_canonical(body)).hexdigest()
+def code_identity() -> str:
+    """sha256 of the ``luna/v7`` sources: every ``*.py`` file below the package in sorted relative-path
+    order, path and LF-normalised content; computed once per process."""
+    if not _CODE_ID:
+        root = Path(__file__).resolve().parent
+        h = hashlib.sha256(FORMAT.encode())
+        for p in sorted(root.rglob("*.py"), key=lambda q: q.relative_to(root).as_posix()):
+            h.update(p.relative_to(root).as_posix().encode() + b"\0")
+            h.update(p.read_bytes().replace(b"\r\n", b"\n") + b"\0")
+        _CODE_ID.append(h.hexdigest())
+    return _CODE_ID[0]
+
+
+def key_of(body: Mapping) -> str:
+    return hashlib.sha256(_canonical(dict(body))).hexdigest()
 
 
 def _gates_enc(g: Mapping[str, GateRow]) -> object:
@@ -111,20 +126,51 @@ def _decode(files: Mapping[str, bytes]) -> tuple[DecisionView, dict]:
 
 
 class ViewStore:
-    """Decision views of one key under ``root`` (module docstring). ``with_features`` is part of the key and
-    checked by the provider."""
+    """The decision views of ONE key body under ``root`` (module docstring). A provider / ``decision_pass``
+    binds it to its universe's body before any read or write."""
 
-    def __init__(self, root: str | Path, key: str, *, with_features: bool) -> None:
-        if not isinstance(key, str) or len(key) != 64 or any(ch not in "0123456789abcdef" for ch in key):
-            raise ValueError(f"not a view key: {key!r}")
-        self.dir = Path(root) / key
-        self.key, self.with_features = key, bool(with_features)
+    def __init__(self, root: str | Path) -> None:
+        self.dir = Path(root)
+        self.body: dict | None = None
         self.stats = {"hits": 0, "misses": 0, "writes": 0, "unstorable": 0}
+
+    @property
+    def with_features(self) -> bool | None:
+        return None if self.body is None else bool(self.body["with_features"])
+
+    @property
+    def key(self) -> str | None:
+        return None if self.body is None else key_of(self.body)
+
+    def bind(self, body: Mapping) -> None:
+        """Bind to ``body``: written to ``KEY.json`` on first use, else it must equal the stored one."""
+        data = _canonical(dict(body))
+        if self.body is not None and _canonical(self.body) != data:
+            raise IntegrityBlocker(f"{self.dir}: view store already bound to another universe")
+        p = self.dir / KEY_FILE
+        if p.exists():
+            if p.read_bytes() != data:
+                raise IntegrityBlocker(f"{p}: the view store holds the views of another key (universe, data, "
+                                       f"history start, with_features or code): {p.read_bytes()[:300]!r}")
+        else:
+            self.dir.mkdir(parents=True, exist_ok=True)
+            _create_once(p, data)
+        self.body = json.loads(data)
+
+    def _bound(self) -> None:
+        if self.body is None:
+            raise ValueError("view store not bound to a universe key (ViewStore.bind)")
+
+    def has(self, t: int) -> bool:
+        """Whether a view of t is stored (no decoding)."""
+        self._bound()
+        return self._paths(t)[0].exists()
 
     def _paths(self, t: int) -> tuple[Path, Path]:
         return self.dir / f"{int(t)}.json", self.dir / f"{int(t)}.parquet"
 
     def get(self, t: int) -> tuple[DecisionView, object] | None:
+        self._bound()
         pj, pp = self._paths(t)
         if not pj.exists():
             self.stats["misses"] += 1
@@ -145,6 +191,7 @@ class ViewStore:
 
     def put(self, view: DecisionView, record: object) -> bool:
         """Store (view, record) once; False when it cannot be stored exactly (kept in memory only)."""
+        self._bound()
         files = _encode(view, record)
         if files is None or _encode(*_decode(files)) != files:
             self.stats["unstorable"] += 1

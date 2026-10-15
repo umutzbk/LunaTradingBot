@@ -44,6 +44,7 @@ from luna.v7.runner_select import (
     verify_dev_selection,
 )
 from luna.v7.timeutil import MIN, D, H, to_ns
+from luna.v7.viewstore import ViewStore
 from luna.v7.windows import Fold
 from tests.v7 import auth_fixtures as af
 from tests.v7 import fixtures_v7 as fx
@@ -634,13 +635,40 @@ def test_dt4_run_record(tmp_path, dev_valid):
 # ------------------------------------------------------------------------------------- S-10.6 / S-10.7
 
 
+XS_CALLS: dict[int, int] = {}  # dev_valid: decision universes computed per decision t (fix round 1, I3)
+
+
 @pytest.fixture(scope="module")
-def dev_valid(inputs):
+def dev_valid(inputs, tmp_path_factory):
+    """S-10.6 through ONE shared decision universe: a provider that keeps only 2 views in memory, with a view
+    store (fix round 1, I3); the computations per decision are counted in ``XS_CALLS``."""
     u = uni(inputs)
-    p = DecisionProvider(u, with_features=True)
+    p = DecisionProvider(u, with_features=True, max_cached_decisions=2,
+                         store=ViewStore(tmp_path_factory.mktemp("views")))
+    inner = p._xs
+
+    def counted(t):
+        XS_CALLS[int(t)] = XS_CALLS.get(int(t), 0) + 1
+        return inner(t)
+
+    p._xs = counted  # type: ignore[method-assign]
     q = [(LO, LO + D), (LO + D, LO + 2 * D)]
     fm = {h: fakes(q, h=h) for h in selection.HORIZONS}
     return dev_selection(u, p, fm, NOW, B=B_SMALL), q
+
+
+def test_dev_selection_computes_each_decision_universe_once(dev_valid, inputs):
+    """I3: the 11 books (9 E_T + 2 E_M) replay one decision universe: every decision's views were computed
+    exactly once (the provider holds 2 in memory; the rest come back from the store); a provider that cannot
+    hold the window's decisions and has no store is refused before any book runs."""
+    dev, q = dev_valid
+    assert len(dev.runs) + len(dev.em_runs) == 11
+    assert XS_CALLS and set(XS_CALLS.values()) == {1}
+    assert set(XS_CALLS) <= {int(t) for t in fx.decisions_in((q[0][0], q[-1][1]))}
+    u = uni(inputs)
+    with pytest.raises(ValueError, match="ViewStore"):
+        dev_selection(u, DecisionProvider(u, with_features=True, max_cached_decisions=2),
+                      {h: fakes(q, h=h) for h in selection.HORIZONS}, NOW, B=B_SMALL)
 
 
 @pytest.fixture(scope="module")

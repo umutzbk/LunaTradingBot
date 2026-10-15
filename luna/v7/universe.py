@@ -415,17 +415,6 @@ class SymbolCache:
         self._halt: HaltIndex | None = None
         self._fx = LRU(FRAME_INDEX_ENTRIES)
         self.memo: dict[str, object] = {}
-        # decisions-only universes (runner.ResearchUniverse.for_decisions): the first event time loaded for
-        # the 15m / R4 bars; None = the frames hold the whole history of the evaluated window
-        self.bars_lo: int | None = None
-
-    def checked(self, ix: FrameIndex, a: int, k: int, cur: Instance) -> tuple[int, int]:
-        """Refuse (fail closed) a window that is empty only because rows before ``bars_lo`` were not loaded:
-        the instance started earlier, so the whole history could hold its last PIT row."""
-        if k <= a and self.bars_lo is not None and cur.first_bar_ts < self.bars_lo:
-            raise ValueError(f"{self.sd.symbol}: no PIT bar of the current instance since the loaded start "
-                             f"{self.bars_lo}; load a longer look-back (the result could differ)")
-        return a, k
 
     def frame_index(self, df: pd.DataFrame, float_cols: tuple[str, ...]) -> FrameIndex:
         """The ``FrameIndex`` of another frame of this symbol (the R4 bars), built once per frame object
@@ -438,7 +427,7 @@ class SymbolCache:
 
     # 15m
     def window15_range(self, cur: Instance, t_ns: int) -> tuple[int, int]:
-        return self.checked(self.b15, *self.b15.window_range(cur.first_bar_ts, t_ns, LOOKBACK_15M), cur)
+        return self.b15.window_range(cur.first_bar_ts, t_ns, LOOKBACK_15M)
 
     def window15(self, cur: Instance, t_ns: int) -> pd.DataFrame:
         a, k = self.window15_range(cur, t_ns)
@@ -545,13 +534,13 @@ class SymbolCache:
         if self._halt is None:
             self._halt = HaltIndex(b1)
         if self._halt.ok:
-            probe: object = HaltProbe(self._halt, self._halt.pit_end(t_ns))
-        else:
-            pb = pit_rows(b1, t_ns, "bars1m")
-
-            def probe(tau: int) -> bool:
-                return halted(pb, tau)
-        return state.active(cur, t_ns, probe, known_by=t_ns - MIN)  # type: ignore[arg-type]
+            probe = HaltProbe(self._halt, self._halt.pit_end(t_ns))
+            return state.active(cur, t_ns, probe, known_by=t_ns - MIN)  # type: ignore[arg-type]
+        # fallback (no 1-minute index): exactly the reference, a per-call state of the versions known by
+        # t - 1 min, so the closure and its PIT frame never enter the long-lived state's 72 h cache (bounded)
+        pb = pit_rows(b1, t_ns, "bars1m")
+        kn = [n for n in self.sd.notices if (k := known_at(n)) is not None and k <= t_ns - MIN]
+        return U6State(kn, self.sd.symbol, self.sd.insts).active(cur, t_ns, lambda tau: halted(pb, tau))
 
 
 def _month_start(ns: int) -> pd.Timestamp:

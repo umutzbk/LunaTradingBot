@@ -409,8 +409,7 @@ def _xs_indexed(sd: SymbolData, r4: R4Bars, ix: Mapping[str, FrameIndex], cur: I
         return dict(memo[2]), list(memo[3])  # type: ignore[index]
     fund, kf = c.pit_funding_ka(cur, t_ns)
     out = _funding_feats(fund, t_ns)
-    rng = {k: c.checked(ix[k], *ix[k].window_range(cur.first_bar_ts, t_ns, LOOKBACK_R4), cur)
-           for k in ("premium", "mark", "index")}
+    rng = {k: ix[k].window_range(cur.first_bar_ts, t_ns, LOOKBACK_R4) for k in ("premium", "mark", "index")}
     arrs = [x for k in ("premium", "mark", "index")
             for x in (ix[k].ts[slice(*rng[k])], ix[k].cols["c"][slice(*rng[k])])]
     out.update(_premium_sorted(*arrs, t_ns))
@@ -480,16 +479,15 @@ def xs_input(sd: SymbolData, r4: R4Bars, t_ns: int) -> XSInput:
     return XSInput(sd.symbol, t_ns, g, {k: vals.get(k, NAN) for k in XS_KEYS}, ka)
 
 
-_XS_PREP: list[tuple] = []  # one entry: (key, rows, prepared arrays) of the latest cross-section (Task 26b)
-
-
-def _xs_prep(rows: Sequence[XSInput], t_ns: int) -> tuple:
+def _xs_prep(rows: Sequence[XSInput], t_ns: int, memo: dict | None = None) -> tuple:
     """The candidate-independent part of ``_cross_section`` (validation, F11, the sorted finite values per
     key, the eligible values per symbol, the rows' max known_at), once per (rows, t): a one-entry memo keyed
-    by the row objects (held, so their identities stay valid)."""
+    by the row objects (held, so their identities stay valid). ``memo``: the caller's dict holding that one
+    entry (the hedge's ``SymbolCache.memo``: scoped to its universe, fix round 1 m6); None = no memo."""
     key = (int(t_ns), tuple(map(id, rows)))
-    if _XS_PREP and _XS_PREP[0][0] == key:
-        return _XS_PREP[0][2]
+    got = memo.get("xs_prep") if memo is not None else None
+    if got is not None and got[0] == key:  # type: ignore[index]
+        return got[2]  # type: ignore[index]
     seen: set[str] = set()
     for r in rows:
         if r.t_ns != t_ns:
@@ -512,15 +510,17 @@ def _xs_prep(rows: Sequence[XSInput], t_ns: int) -> tuple:
         per[k] = (np.sort(np.array([y for y in vals.values() if math.isfinite(y)], np.float64)), vals)
     kas = [r.max_known_at for r in rows if r.max_known_at is not None]
     prep = (f11, per, max(kas) if kas else None)
-    _XS_PREP[:] = [(key, tuple(rows), prep)]
+    if memo is not None:
+        memo["xs_prep"] = (key, tuple(rows), prep)
     return prep
 
 
-def _cross_section_indexed(rows: Sequence[XSInput], t_ns: int, symbol: str, own: dict[str, float]) -> dict:
+def _cross_section_indexed(rows: Sequence[XSInput], t_ns: int, symbol: str, own: dict[str, float],
+                           memo: dict | None = None) -> dict:
     """``_cross_section`` with the per-decision part from ``_xs_prep``: the average-rank percentile of the
     candidate's own value among the eligible values (its own eligible entry replaced by it) from integer
     counts on the sorted values (the same counts, so the same float expression)."""
-    f11, per, _ = _xs_prep(rows, t_ns)
+    f11, per, _ = _xs_prep(rows, t_ns, memo)
     out = dict(f11)
     for k in XS_KEYS:
         x = own.get(k, NAN)
@@ -690,7 +690,8 @@ def _compute_rows_indexed(sd: SymbolData, btc: SymbolData, universe_rows: Sequen
         if beta is not None:
             resid = ra - beta * rb
     v["f10_resid_ret_7d"] = _f(resid)
-    v.update(_cross_section_indexed(universe_rows, t_ns, sd.symbol, raw))
+    memo = btc.cache.memo if btc.cache is not None else None
+    v.update(_cross_section_indexed(universe_rows, t_ns, sd.symbol, raw, memo))
     v["f13_rvol_over_carry"] = _capped_ratio(
         raw.get("f9_rvol_7d", NAN), abs(raw.get("fl7", NAN)) * F.f13_settlements_per_year
     )
@@ -701,7 +702,7 @@ def _compute_rows_indexed(sd: SymbolData, btc: SymbolData, universe_rows: Sequen
     for h, col in zip(FROZEN.horizons_h, F14_COLS, strict=True):
         v[col] = abs(raw.get("fl7", NAN)) * 3.0 * h / 24.0 / cost  # same units (fractions): unitless
     ka = _assert_kas([*kas, bkmax], t_ns, (*_KA_NAMES[:len(kas)], "btc_bars15"))
-    xs_ka = _xs_prep(universe_rows, t_ns)[2]
+    xs_ka = _xs_prep(universe_rows, t_ns, memo)[2]
     ka = max([x for x in (ka, xs_ka) if x is not None], default=None)
     rows: dict[int, FeatureRow] = {}
     for side in sides:

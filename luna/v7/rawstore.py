@@ -758,6 +758,29 @@ class TableLoader:
         return pd.DataFrame({k: (np.array(v, copy=True) if isinstance(v, np.ndarray) else v)
                              for k, v in a.items()})
 
+    def last_before(self, symbol: str, ts: int, floor: int) -> pd.DataFrame:
+        """The last row of ``symbol`` with floor <= event time < ts (0 or 1 row, the ``frame`` columns),
+        located from the manifests' row spans: only the newest chunk holding such a row is read (guarded as
+        every read)."""
+        ts, floor = int(ts), int(floor)
+        if ts > floor and self._known(symbol):
+            months, los, _, ents = self._chunks(symbol)
+            for i in range(int(np.searchsorted(los, ts, "left")) - 1, -1, -1):
+                sp = ents[i].get("span")
+                if int(ents[i]["period"][1]) <= floor:
+                    break
+                if not sp or int(sp[0]) >= ts:
+                    continue
+                a, b = max(int(sp[0]), floor), min(int(sp[1]), ts)
+                if a < b:
+                    df = self.frame(symbol, a, b)
+                    if len(df):
+                        return df.iloc[-1:].reset_index(drop=True)
+        e = _empty(self.t, self.t.names)
+        if self.t.known_at_ns is not None:
+            e["known_at"] = np.empty(0, np.int64)
+        return pd.DataFrame(e)
+
 
 def _padded(lo: int, hi: int, pad: int, auth: guard.HoldoutAuthorization | None) -> tuple[int, int]:
     """[lo - pad, hi + pad) clipped so the padding never reaches content the window itself may not read: the
@@ -836,6 +859,7 @@ class StoreSource:
                  auth: guard.HoldoutAuthorization | None = None, cache: ChunkCache | None = None,
                  budget_bytes: int = DEFAULT_CACHE_BYTES) -> None:
         self.cache = cache if cache is not None else ChunkCache(budget_bytes)
+        self.store = store
         self.meta = dict(meta)
         self.bars = {k: TableLoader(store, k, auth=auth, cache=self.cache)
                      for k in ("R3", "R5", "R4_mark", "R4_index", "R4_premium")}
@@ -843,6 +867,14 @@ class StoreSource:
 
     def symbols(self) -> tuple[str, ...]:
         return tuple(sorted(self.meta))
+
+    def identity(self) -> dict:
+        """The data identity of a view-store key (fix round 1, I2): every table-manifest sha256 of the store
+        and a sha256 of the per-symbol metadata the views read (instances, identity, notices, terminal
+        events)."""
+        meta = sorted((s, (list(m.insts), m.identity, tuple(m.notices), sorted(dict(m.terminals).items())))
+                      for s, m in self.meta.items())
+        return {"raw": self.store.manifest_sha256s(), "meta": hashlib.sha256(repr(meta).encode()).hexdigest()}
 
     def load(self, symbol: str, lo: int, hi: int) -> SymbolInputs:
         m = self.meta[symbol]
@@ -858,13 +890,20 @@ class StoreSource:
 
     def load_decision_inputs(self, symbol: str, lo: int, hi: int, history_lo: int) -> SymbolInputs:
         """What a decision view reads (``runner.ResearchUniverse.for_decisions``, SC-01 part 2): R3 / R4 of
-        [lo, hi), merged R2 of [history_lo, hi), R5 only inside the symbol's U6 72 h halt windows
-        (``runner.halt_windows``) within [history_lo, hi), no aggTrades. Each read is guarded as usual."""
+        [lo, hi), each preceded by its last row of [history_lo, lo) (``TableLoader.last_before``: the anchor
+        a windowed slice takes when no recent row exists, fix round 1 m1), merged R2 of [history_lo, hi), R5
+        only inside the symbol's U6 72 h halt windows (``runner.halt_windows``) within [history_lo, hi), no
+        aggTrades. Each read is guarded as usual."""
         from luna.v7.runner import halt_windows  # runtime import: runner is imported by this module's caller
 
         lo, hi, history_lo = int(lo), int(hi), int(history_lo)
         m = self.meta[symbol]
-        r4 = R4Bars(*(self.bars[k].frame(symbol, lo, hi) for k in ("R4_premium", "R4_mark", "R4_index")))
+        def anchored(k: str) -> pd.DataFrame:
+            w = self.bars[k].frame(symbol, lo, hi)
+            a = self.bars[k].last_before(symbol, lo, history_lo) if lo > history_lo else w.iloc[0:0]
+            return pd.concat([a, w], ignore_index=True) if len(a) else w
+
+        r4 = R4Bars(*(anchored(k) for k in ("R4_premium", "R4_mark", "R4_index")))
         wins = [(max(a, history_lo), min(b, hi)) for a, b in sorted(halt_windows(symbol, m.notices,
                                                                                  list(m.insts)))]
         parts = [self.bars["R5"].frame(symbol, a, b) for a, b in wins if a < b]
@@ -875,6 +914,6 @@ class StoreSource:
         else:
             t5 = TABLES["R5"]
             b1 = pd.DataFrame({**_empty(t5, t5.names), "known_at": np.empty(0, np.int64)})
-        return SymbolInputs(symbol, self.bars["R3"].frame(symbol, lo, hi), b1,
+        return SymbolInputs(symbol, anchored("R3"), b1,
                             self.funding.frame(symbol, history_lo, hi), list(m.insts), r4, m.identity,
                             tuple(m.notices), dict(m.terminals), None)

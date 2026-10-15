@@ -1,7 +1,9 @@
 """Research runner, part 2: the S-10.6 / S-10.7 driver and the holdout-input assembly (spec S-10.6, S-10.7,
 S-13.2 / S-13.4 inputs, K3, K8, K11, EC-2, DEC-19; AMB-27). Orchestration only (see ``luna.v7.runner``).
 
-* ``dev_selection``: A0 at 24 / 72 / 168 h and A2 / A3 at every horizon, ONE continuous E_T / L-norm book
+* ``dev_selection`` (SC-01 part 2, fix round 1 I3: the books share ONE decision universe: a provider that
+  cannot hold every decision of the window in memory must carry a ``viewstore.ViewStore``, else refused):
+  A0 at 24 / 72 / 168 h and A2 / A3 at every horizon, ONE continuous E_T / L-norm book
   each over the concatenated outer test quarters (each decision scored by its own quarter's fold model,
   ``runner.FoldScoreModel``; positions carry across quarter boundaries; the terminal unwind is the window
   end - 1 min, before the W_DEV end). Then ``selection.choose`` (validity precondition, EC-2) and, only when
@@ -59,7 +61,7 @@ from luna.v7.runner import (
     run_book,
 )
 from luna.v7.verdict import HoldoutInputs, K8Rates
-from luna.v7.windows import W_DEV
+from luna.v7.windows import W_DEV, decision_times
 
 _DEV_ISSUER = object()  # module-private: only dev_selection builds a DevSelection
 # HoldoutInputs issued by holdout_inputs (by id, weakly held) and the opening they were issued for
@@ -194,6 +196,14 @@ def dev_selection(u: ResearchUniverse, provider: DecisionProvider, fold_models: 
         raise ValueError("S-10.6 runs on W_DEV only (terminal unwind before the W_DEV end)")
     if not provider.with_features:
         raise ValueError("the ML candidates score the §9 features: DecisionProvider(with_features=True)")
+    n_dec = len(decision_times(*window))
+    if provider.store is None and provider.max_cached is not None and n_dec > provider.max_cached:
+        # the 11 books replay the same decisions: without a shared store every book would recompute every
+        # view (SC-01 part 2, fix round 1 I3)
+        raise ValueError(f"S-10.6 replays {n_dec} decisions in {len(selection.REQUIRED) + 2 * em} books: the "
+                         f"provider keeps {provider.max_cached} views in memory; pass "
+                         "DecisionProvider(store=viewstore.ViewStore(...)) (one decision universe shared by "
+                         "every book; filled once, e.g. by runner.decision_pass)")
     ref = dict(reference_runs or {})
     bad = [k for k in ref if k[0] not in selection.REFERENCE_ARMS]
     if bad:
