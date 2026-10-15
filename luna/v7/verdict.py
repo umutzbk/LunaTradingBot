@@ -418,7 +418,7 @@ def secondary_family(pairs: Mapping[str, tuple | None], a1_calib: tuple | None, 
         p = mean_x = None
         if why is None:
             try:
-                _, x = stats.paired(la, lb)
+                _, x = _paired_common(la, lb) if name == KRAKEN else stats.paired(la, lb)
                 p = stats.p_max_over_blocks(x, stats.BLOCKS, B, seed)
                 mean_x = float(np.mean(x))
             except ValueError as e:
@@ -434,6 +434,20 @@ def secondary_family(pairs: Mapping[str, tuple | None], a1_calib: tuple | None, 
     e = ece(*a1_calib) if a1_calib is not None else None
     out["P8-classifier"] = dict(ece=e, holds=e is not None and e <= ACC.ece_max)
     return out, bool(out["A1 vs A0"]["rejects"] and out["P8-classifier"]["holds"])
+
+
+def _paired_common(la: Ledger, lb: Ledger) -> tuple[np.ndarray, np.ndarray]:
+    """Comparison #5 (AMB-41 (f), implementation clarification): S-13.1 "over the same days" with the Kraken
+    book covering only [2025-10-06, 2026-07-01): both daily-return series are restricted to their common days
+    (each return keeps its own day; nothing is re-based or re-run). (r_a, x = r_a − r_b) on those days."""
+    da, db = stats.ledger_days(la), stats.ledger_days(lb)
+    ra, rb = stats.ledger_returns(la), stats.ledger_returns(lb)
+    if len(ra) != len(da) or len(rb) != len(db):
+        raise ValueError("daily returns not aligned with the daily table")
+    _, ia, ib = np.intersect1d(da, db, assume_unique=True, return_indices=True)
+    if len(ia) < 2:
+        raise ValueError("fewer than 2 common days")
+    return ra[ia], ra[ia] - rb[ib]
 
 
 def _p1_em(x: HoldoutInputs) -> tuple[stats.CBBResult | None, str | None]:
@@ -478,14 +492,47 @@ def _on_w_hold(x: HoldoutInputs) -> bool:
                 return True
     if _reaches_hold(list(x.quarter_edges)):
         return True
-    return any(t is not None and len(t) >= 3 and _reaches_hold(t[2]) for t in (x.ic, x.calib, x.a1_calib))
+    if any(t is not None and len(t) >= 3 and _reaches_hold(t[2]) for t in (x.ic, x.calib, x.a1_calib)):
+        return True
+    return any(_secondary_reaches_hold(v) for v in (x.secondary or {}).values())
+
+
+def _secondary_reaches_hold(pair: object) -> bool:
+    """A secondary member touches W_HOLD? Fail closed: None / ``Unavailable`` carry no data; a pair must hold
+    BookRuns or Ledgers (window and every timestamped table checked); anything else is refused."""
+    if pair is None or isinstance(pair, Unavailable):
+        return False
+    if not isinstance(pair, tuple) or len(pair) != 2:
+        raise ValueError(f"a secondary member must be a pair, None or Unavailable, got {type(pair).__name__} "
+                         "(fail closed)")
+    for r in pair:
+        if r is None:
+            continue
+        if isinstance(r, BookRun):
+            tables = _RUN_TS
+        elif isinstance(r, Ledger):
+            tables = (("fills", "ts"), ("daily_engine", "start_ts"), ("daily_engine", "end_ts"))
+        else:
+            raise ValueError(f"a secondary run must be a BookRun or Ledger, got {type(r).__name__} "
+                             "(fail closed)")
+        if windows.overlaps(int(r.window[0]), int(r.window[1]), windows.W_HOLD):
+            return True
+        for table, col in tables:
+            df = getattr(r, table, None)
+            if isinstance(df, pd.DataFrame) and col in df.columns and _reaches_hold(df[col].to_numpy()):
+                return True
+    return False
 
 
 def holdout(x: HoldoutInputs) -> Verdict:
     """The S-13.4 verdict (most severe applicable class) for runs OUTSIDE ``W_HOLD`` (synthetic / plumbing
     windows, e.g. W_DEV-dated tests). Inputs whose runs touch ``W_HOLD`` are refused here: the only path to
     the real W_HOLD verdict is ``runner_select.holdout_verdict`` (inputs issued by ``holdout_inputs`` for a
-    verified opening, verdict marker written once; Task 24 round 2, I-C)."""
+    verified opening, verdict marker written once; Task 24 round 2, I-C). A pair-valued comparison #5 is
+    refused: member #5 enters only through ``holdout_inputs(kraken=...)`` (L11, AMB-41)."""
+    if x.secondary is not None and isinstance(x.secondary.get(KRAKEN), tuple):
+        raise ValueError("comparison #5 (ML* Binance vs Kraken) enters only through "
+                         "runner_select.holdout_inputs(kraken=kraken.comparison(...)) (L11)")
     if _on_w_hold(x):
         raise ValueError("W_HOLD inputs: the W_HOLD verdict is produced only by "
                          "runner_select.holdout_verdict (no verdict without the verdict marker)")

@@ -531,6 +531,9 @@ def test_secondary_family_holm_and_a1_claim():
     # the secondary family never changes the class
     base = _inputs()
     v1 = V.holdout(base)
+    with pytest.raises(ValueError, match="kraken"):  # Task 27 round 1: a raw Kraken pair never enters here
+        V.holdout(replace(base, secondary=p2, a1_calib=good_cal))
+    p2[V.KRAKEN] = V.Unavailable("STOPPED (AMB-41)")
     v2 = V.holdout(replace(base, secondary=p2, a1_calib=good_cal))
     assert v1.cls == v2.cls and v1.criteria == v2.criteria and v2.a1_better is True
 

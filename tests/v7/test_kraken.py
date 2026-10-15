@@ -19,6 +19,7 @@ import pytest
 
 from luna.v7 import guard, k9, kraken, runner_select, runrecord, stats
 from luna.v7 import verdict as V
+from luna.v7.accounting import account
 from luna.v7.timeutil import MIN, D, H, to_ns
 from tests.v7 import auth_fixtures as af
 from tests.v7.run_fixtures import funding_run
@@ -121,13 +122,13 @@ def test_pinned_constants():
     assert kraken.EXPLORATORY == "exploratory (previously observed window)" == V.EXPLORATORY
     assert kraken.COMPARISON == V.SECONDARY[5] == "ML* Binance vs Kraken"
     assert kraken.HEDGE == "BTC"
-    assert {g[1] for g in kraken.GAPS} <= {"yes", "no", "fallback", "n/a"}
-    assert set(kraken.STOPPED) == {"S-2.4 gates", "Kraken ML* book / labels / IC", "comparison #5 pairing"}
+    assert {g[1] for g in kraken.GAPS} <= {"yes", "no", "fallback", "n/a", "clarification"}
+    assert set(kraken.STOPPED) == {"S-2.4 gates", "Kraken ML* book / labels / IC"}
     assert "AMB-41" in kraken.UNAVAILABLE_WHY and "normative amendment required" in kraken.UNAVAILABLE_WHY
 
 
 def test_v6_universe_and_fees_come_from_the_hash_checked_constants():
-    v6 = kraken.v6_kraken()
+    v6 = kraken.v6_kraken()  # guard._roots() = the real code repository here
     assert v6.universe == ("ADA", "AVAX", "BNB", "BTC", "DOGE", "ENA", "ETH", "FET", "HYPE", "LINK", "NEAR",
                            "PEPE", "PUMP", "SOL", "SUI", "TAO", "UNI", "XLM", "XRP", "ZEC")
     assert (v6.futures_maker, v6.futures_taker) == (0.0002, 0.0005)
@@ -330,7 +331,13 @@ def test_comparison_5_never_changes_the_class_criteria_or_reasons():
     for kp in (V.Unavailable("STOPPED (AMB-41)"),
                (ml, funding_run(_nets(-0.004, 33), arm="A2", h=72)),  # extreme in either direction
                (ml, funding_run(_nets(0.008, 34), arm="A2", h=72)), None):
-        verdicts.append(V.holdout(replace(base, secondary=_family(kp))))
+        x = replace(base, secondary=_family(kp))
+        if isinstance(kp, tuple):  # the pure public path refuses a raw Kraken pair (round 1, item 4) ...
+            with pytest.raises(ValueError, match="kraken"):
+                V.holdout(x)
+            verdicts.append(V._holdout(x))  # ... the computation holdout_verdict runs is checked directly
+        else:
+            verdicts.append(V.holdout(x))
     ref = V.holdout(base)
     for v in verdicts:
         assert (v.cls, v.criteria, v.reasons, v.applicable, v.p1_em) == (ref.cls, ref.criteria, ref.reasons,
@@ -341,3 +348,74 @@ def test_comparison_5_never_changes_the_class_criteria_or_reasons():
     assert not verdicts[2].secondary[V.KRAKEN]["rejects"]
     assert verdicts[0].secondary[V.KRAKEN]["available"] is False
     assert LO < kraken.WINDOW[0]  # the synthetic runs are W_DEV-dated plumbing (the W_HOLD gate is elsewhere)
+
+
+def test_pure_verdict_scans_the_secondary_pairs_for_w_hold_and_fails_closed():
+    base = _inputs()
+    fam = _family(None)
+    hold_run = funding_run(_nets(0.0, 40), arm="A2", h=72, lo=V.windows.W_HOLD[0])
+    with pytest.raises(ValueError, match="W_HOLD"):
+        V.holdout(replace(base, secondary={**fam, "ML* E_M vs E_T": (fam["ML* E_M vs E_T"][0], hold_run)}))
+    with pytest.raises(ValueError, match="W_HOLD"):  # an accounted Ledger is scanned too
+        V.holdout(replace(base, secondary={**fam, "A1 vs A0": (fam["A1 vs A0"][0], account(hold_run))}))
+    for bad in ("x", (object(), None), [fam["A1 vs A0"][0], fam["A1 vs A0"][1]]):
+        with pytest.raises(ValueError, match="fail closed"):
+            V.holdout(replace(base, secondary={**fam, "A1 vs A0": bad}))
+
+
+def test_comparison_5_pairs_on_the_common_days():
+    """AMB-41 (f): both series restricted to their common days (S-13.1 "same days"); other members keep the
+    strict alignment."""
+    ml = funding_run(_nets(0.004, 31), arm="A2", h=72)
+    kr = funding_run(_nets(-0.004, 32)[:90], arm="A2", h=72, lo=LO + 30 * D)  # Kraken starts later
+    sec, _ = V.secondary_family(_family((ml, kr)), None, 2000, 7)
+    la, lb = account(ml), account(kr)
+    da, db = stats.ledger_days(la), stats.ledger_days(lb)
+    keep_a, keep_b = np.isin(da, db), np.isin(db, da)
+    assert keep_a.sum() == 90 and keep_b.all()
+    ra, rb = stats.ledger_returns(la)[keep_a], stats.ledger_returns(lb)[keep_b]
+    p = stats.p_max_over_blocks(ra - rb, stats.BLOCKS, 2000, 7)
+    assert sec[V.KRAKEN]["available"] and sec[V.KRAKEN]["p"] == p
+    assert sec[V.KRAKEN]["mean_x"] == pytest.approx(float(np.mean(ra - rb)))
+    other = _family(None)
+    other["ML* E_M vs E_T"] = (ml, kr)  # not #5: misaligned days stay "not comparable"
+    assert V.secondary_family(other, None, 2000, 7)[0]["ML* E_M vs E_T"]["why"].startswith("not comparable")
+    tiny = funding_run(_nets(0.0, 3)[:1], arm="A2", h=72, lo=LO + 200 * D)  # no common day
+    assert V.secondary_family(_family((ml, tiny)), None, 2000, 7)[0][V.KRAKEN]["why"].startswith(
+        "not comparable")
+
+
+def test_after_the_verdict_nothing_kraken_opens(tmp_path, monkeypatch, log):
+    """Round 1, item 2: once the W_HOLD verdict marker exists, authorize_kraken and every use of an existing
+    KrakenAuthorization are refused, each with an L11 K9 entry."""
+    o = af.authorize(tmp_path / "op", monkeypatch)  # a private opening: the verdict closes it for good
+    root = tmp_path / "frozen"
+    monkeypatch.setattr(kraken, "V5_MANIFEST_SHA256", build_copy(root))
+    ka = kraken.authorize_kraken(o.auth, *WIN, root)
+    guard.mark_verdict_produced(o.auth, "d" * 64)
+    n0 = len(log.records())
+    _refused(log, lambda: kraken.authorize_kraken(o.auth, *WIN, root), guard.HoldoutBlocked, "S-1.7")
+    _refused(log, lambda: kraken.load_symbol(ka, "ETH", *WIN), guard.HoldoutBlocked, "S-1.7")
+    _refused(log, lambda: kraken.comparison(ka, _ml_run()), guard.HoldoutBlocked, "S-1.7")
+    recs = log.records()[n0:]
+    assert len(recs) == 3 and all(r["rule"].startswith("L11 Kraken outcome guard") for r in recs)
+    assert all("verdict" in r["reason"] for r in recs)
+
+
+def test_any_unexpected_failure_is_an_l11_refusal(copy, log, opened, monkeypatch):
+    """Round 1, item 3: fail closed, every failure inside the guard / loader is an L11 refusal, K9-logged."""
+    def boom(*a, **k):
+        raise ZeroDivisionError("unexpected")
+
+    ka = kraken.authorize_kraken(opened.auth, *WIN, copy)
+    monkeypatch.setattr(kraken, "_spreads", boom)
+    _refused(log, lambda: kraken.load_symbol(ka, "ETH", *WIN), ZeroDivisionError, "input verification")
+    monkeypatch.setattr(kraken, "verify_copy", boom)
+    _refused(log, lambda: kraken.authorize_kraken(opened.auth, *WIN, copy), ZeroDivisionError,
+             "input verification")
+
+
+def test_only_the_root_manifest_is_exempt(copy, log, opened):
+    (copy / "bars" / kraken.MANIFEST).write_text("{}", encoding="utf-8")  # a nested manifest.json is unlisted
+    _refused(log, lambda: kraken.authorize_kraken(opened.auth, *WIN, copy), kraken.FrozenCopyMismatch,
+             "manifest")

@@ -33,14 +33,16 @@ only through ``runner_select.holdout_inputs(kraken=...)``.
   ML* book / labels / IC are not literally implementable from the permitted Kraken inputs (``GAPS``): no
   1-minute bars (S-5.2 P(t_e) at hh:20, the S-5.4 halt and gap rules), no Kraken funding convention (S-4.6 is
   Binance's discrete settlement; Kraken accrues pro rata per hourly period), no quote volume and no trade
-  counts (U2, S-4.4 liquidity cap, F8), no Kraken notice / terminal source (U6, S-5.4), the V5-value scope of
-  "where they differ" and the common-window pairing. ``comparison`` therefore runs the guard at the opening
+  counts for F8, and the V5-value scope of "where they differ". (U2 via the V5 24 h ``volume x close``, U6
+  inactive / R12 empty and the common-days pairing are implementation clarifications, AMB-41 (c) (d) (f).)
+  ``comparison`` therefore runs the guard at the opening
   and returns comparison #5 as UNAVAILABLE with that reason; it computes no Kraken label, book, P&L or IC.
 """
 
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import re
 import weakref
@@ -79,11 +81,12 @@ GAPS: tuple[tuple[str, str, str], ...] = (
     ("R2 funding convention (S-4.6 discrete settlement at mark(settle); S-2.6 nominal intervals)",
      "no", "hourly periods keyed by their START, continuous pro-rata accrual (V4 / V5 semantics); "
      "S-4.6 is the Binance convention"),
-    ("R3 quote volume (U2, S-4.4 liquidity cap, F8)", "no", "base volume only; volume x close is a V5 rule"),
+    ("R3 quote volume (U2, S-4.4 liquidity cap)", "clarification",
+     "S-2.4 names the V5 24 h quote volume: sum of volume x close over 96 bars (AMB-41 (c))"),
     ("trade counts (F8 log trades per day)", "no", "the V4 downloader writes trades = 0"),
     ("R4 premium index (F5)", "fallback", "mark / index 15-minute bars: the F5 mark-index fallback"),
-    ("R11 notices / U6, R12 terminal events (S-2.5, S-5.4)", "no",
-     "no Kraken source may be read (§3 last line: nothing else from Kraken is read)"),
+    ("R11 notices / U6, R12 terminal events (S-2.5, S-5.4)", "clarification",
+     "no Kraken source may be read (§3): U6 inactive (S-2.5, DEC-12), R12 zero rows (EC-7); AMB-41 (d)"),
     ("R1 identity (S-2.1)", "n/a", "replaced by the frozen 20-symbol V6 universe (S-2.4)"),
     ("S-4.5 spread proxy on R3 OHLC", "yes", "Kraken 15-minute trade bars (synthesised bars dropped)"),
     ("Kraken spread snapshots (S-1.6)", "yes", "real 5-minute snapshots from 2025-10-06, known at T + 5 min; "
@@ -93,14 +96,11 @@ GAPS: tuple[tuple[str, str, str], ...] = (
     ("BTC hedge and beta inputs (S-2.4, S-5.2)", "yes", "Kraken BTC 15-minute bars"),
 )
 STOPPED: Mapping[str, str] = MappingProxyType({
-    "S-2.4 gates": "the same U1-U8 definitions on Kraken data need quote volume (U2), a Kraken funding "
-                   "convention (U3 / U7), notices (U6) and the scope of the V5 values 'where they differ' "
-                   "(AMB-41 (b)-(e))",
+    "S-2.4 gates": "the same U1-U8 definitions on Kraken data need a Kraken funding convention (U3 / U7) "
+                   "and the scope of the V5 values 'where they differ' (AMB-41 (b), (e))",
     "Kraken ML* book / labels / IC": "no 1-minute bars (P(t_e) at hh:20, HALTED, data gap), no Kraken "
-                                     "funding payment convention, no quote volume / trade counts "
-                                     "(AMB-41 (a)-(d))",
-    "comparison #5 pairing": "the 'common window' pairing of the Binance ML* book (flat-start re-run vs "
-                             "restricted returns) is not fixed (AMB-41 (f))",
+                                     "funding payment convention, no trade counts for F8 "
+                                     "(AMB-41 (a), (b), (c) F8)",
 })
 UNAVAILABLE_WHY = ("STOPPED, normative amendment required (AMB-41): the Kraken ML* book cannot be computed "
                    "from the permitted Kraken inputs without a new economic rule; " + "; ".join(
@@ -130,9 +130,10 @@ class V6Kraken:
     record_sha256: str
 
 
-def v6_kraken(repo: Path | None = None) -> V6Kraken:
-    """From the V6 constants at ``v6-code-frozen`` (sha256 checked by ``spec``; SpecMismatch otherwise)."""
-    repo = Path(repo or spec.code_repo())
+def v6_kraken() -> V6Kraken:
+    """From the V6 constants at ``v6-code-frozen`` of the canonical code repository (``guard._roots``, the one
+    location seam; sha256 checked by ``spec``; SpecMismatch otherwise)."""
+    repo = Path(guard._roots()[0])
     c = spec._v6_json(repo, spec.V6_CONSTANTS_REL, spec.V6_CONSTANTS_SHA256)
     spec._v6_json(repo, spec.V6_RECORD_REL, spec.V6_RECORD_SHA256)  # the record verifies too (S-1.1)
     uni = tuple(str(a) for a in c["common"]["universe"])
@@ -175,8 +176,8 @@ def verify_copy(root: str | Path) -> dict:
         raise FrozenCopyMismatch("manifest lists no files")
     if to_ns(pd.Timestamp(m["cutoff"])) > WINDOW[1]:
         raise FrozenCopyMismatch(f"manifest cutoff {m['cutoff']} is after the W_HOLD end")
-    listed = {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file() and p.name != MANIFEST}
-    extra = sorted(listed - set(files))
+    listed = {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
+    extra = sorted(listed - set(files) - {MANIFEST})  # only the root manifest is exempt (relative paths)
     if extra:
         raise FrozenCopyMismatch(f"files not in the manifest: {extra}")
     for rel, e in sorted(files.items()):
@@ -236,10 +237,6 @@ def _refuse(exc: BaseException, request: Mapping) -> KrakenBlocked:
     return out
 
 
-_REFUSALS = (guard.HoldoutBlocked, guard.EmbargoBlocked, SealedBeforeL7, KrakenBlocked, FrozenCopyMismatch,
-             spec.SpecMismatch, OSError, ValueError, KeyError, TypeError)
-
-
 def authorize_kraken(auth: object, lo_ns: int, hi_ns: int, root: str | Path) -> KrakenAuthorization:
     """L11 (module docstring). Order: the hardened authorization, M6 / forward / W_HOLD seal (canonical,
     trusted clock), the DEC-17 window, the V6 constants, the frozen copy. Any refusal -> KrakenBlocked,
@@ -251,12 +248,13 @@ def authorize_kraken(auth: object, lo_ns: int, hi_ns: int, root: str | Path) -> 
         if hi <= lo:
             raise KrakenBlocked(f"empty Kraken window [{lo}, {hi})")
         pin = guard.verified_opening(auth)  # forged / foreign / no opening / verdict produced
-        guard._outcome_window(lo, hi, auth, release.trusted_now_ns(), None, True)  # M6 first, then L7, W_HOLD
+        guard._outcome_window(lo, hi, auth=auth, now_ns=release.trusted_now_ns(), m6_span=None,
+                              fresh=True)  # M6 first, then W_FWD7, then W_HOLD (not logged: _refuse logs L11)
         if lo < WINDOW[0] or hi > WINDOW[1]:
             raise KrakenBlocked(f"Kraken window [{lo}, {hi}) outside the DEC-17 window {WINDOW} (S-1.6)")
-        v6 = v6_kraken(guard._roots()[0])
+        v6 = v6_kraken()
         m = verify_copy(root)
-    except _REFUSALS as e:
+    except Exception as e:  # noqa: BLE001 - fail closed: every failure is an L11 refusal, K9-logged
         raise _refuse(e, req)  # noqa: B904 - _refuse sets the cause
     files = MappingProxyType({str(k): MappingProxyType(dict(v)) for k, v in m["files"].items()})
     ka = KrakenAuthorization(auth, str(pin["opening_id"]), (lo, hi), Path(root), V5_MANIFEST_SHA256, files,
@@ -273,7 +271,7 @@ def _check(kauth: object, what: str) -> KrakenAuthorization:
         pin = guard.verified_opening(kauth.auth)
         if pin["opening_id"] != kauth.opening_id:
             raise KrakenBlocked("the KrakenAuthorization belongs to another opening")
-    except _REFUSALS as e:
+    except Exception as e:  # noqa: BLE001 - fail closed: every failure is an L11 refusal, K9-logged
         raise _refuse(e, {"kind": "kraken", "what": what})  # noqa: B904 - _refuse sets the cause
     return kauth
 
@@ -295,17 +293,24 @@ class KrakenSymbol:
     label: str = EXPLORATORY
 
 
-def _frame(kauth: KrakenAuthorization, rel: str, cols: tuple[str, ...]) -> tuple[pd.DataFrame, np.ndarray]:
-    """A manifest-listed parquet file of the verified copy, re-hashed before the read; (frame, ns index)."""
+def _hashed_bytes(kauth: KrakenAuthorization, rel: str) -> bytes:
+    """The bytes of a manifest-listed file, read once and hashed; the caller parses exactly these bytes."""
     e = kauth.files.get(rel)
     if e is None:
         raise KrakenBlocked(f"{rel}: not in the frozen V5 manifest (fail closed, never empty)")
-    p = kauth.root / rel
-    if _sha_file(p) != e.get("sha256"):
+    raw = (kauth.root / rel).read_bytes()
+    if hashlib.sha256(raw).hexdigest() != e.get("sha256"):
         raise FrozenCopyMismatch(f"{rel}: sha256 changed since the manifest was verified")
-    if "rows" in e and pq.ParquetFile(p).metadata.num_rows != int(e["rows"]):
+    return raw
+
+
+def _frame(kauth: KrakenAuthorization, rel: str, cols: tuple[str, ...]) -> tuple[pd.DataFrame, np.ndarray]:
+    """A manifest-listed parquet file of the copy, parsed from its hashed bytes; (frame, ns index)."""
+    raw = _hashed_bytes(kauth, rel)
+    e = kauth.files[rel]
+    if "rows" in e and pq.ParquetFile(io.BytesIO(raw)).metadata.num_rows != int(e["rows"]):
         raise FrozenCopyMismatch(f"{rel}: row count differs from the manifest")
-    df = pd.read_parquet(p)
+    df = pd.read_parquet(io.BytesIO(raw))
     idx = df.index
     if not isinstance(idx, pd.DatetimeIndex) or idx.tz is None:
         raise ValueError(f"{rel}: a tz-aware UTC DatetimeIndex is required")
@@ -358,13 +363,7 @@ def _spreads(kauth: KrakenAuthorization, sym: str, lo: int, hi: int) -> pd.DataF
     rel = f"history_v5/spreads/{sym}.parquet"
     prel = f"history_v5/spreads/{sym}.provenance.json"
     df, ts = _frame(kauth, rel, ("spread_full",))
-    pe = kauth.files.get(prel)
-    if pe is None:
-        raise KrakenBlocked(f"{prel}: not in the frozen V5 manifest")
-    pp = kauth.root / prel
-    if _sha_file(pp) != pe.get("sha256"):
-        raise FrozenCopyMismatch(f"{prel}: sha256 differs from the manifest")
-    prov = json.loads(pp.read_text(encoding="utf-8"))
+    prov = json.loads(_hashed_bytes(kauth, prel).decode("utf-8"))
     if (prov.get("requested_interval_s") != 300 or prov.get("observed_cadence_s") != 300
             or prov.get("real_resolution_matches_interval") is not True
             or prov.get("sha256") != kauth.files[rel].get("sha256")):
@@ -394,13 +393,13 @@ def load_symbol(kauth: KrakenAuthorization, symbol: str, lo_ns: int, hi_ns: int)
         index, _ = _bars(kauth, f"history_v4/index/{symbol}.parquet", lo, hi, False)
         fund = _funding(kauth, f"history_v4/funding/{symbol}.parquet", lo, hi)
         spr = _spreads(kauth, symbol, lo, hi)
-    except (KrakenBlocked, FrozenCopyMismatch, OSError, ValueError, KeyError) as e:
+        frames = (("bars15", bars, "open_ts"), ("mark15", mark, "open_ts"), ("index15", index, "open_ts"),
+                  ("funding", fund, "period_start_ts"), ("spreads5m", spr, "label_ts"))
+        for name, df, col in frames:  # the data-span guard (its own K9 entry) and then the L11 entry
+            localdata.check_frame(df, [col], auth=kauth.auth,  # type: ignore[arg-type]
+                                  what=f"kraken {symbol}.{name}")
+    except Exception as e:  # noqa: BLE001 - fail closed: every failure is an L11 refusal, K9-logged
         raise _refuse(e, req)  # noqa: B904 - _refuse sets the cause
-    frames = (("bars15", bars, "open_ts"), ("mark15", mark, "open_ts"), ("index15", index, "open_ts"),
-              ("funding", fund, "period_start_ts"), ("spreads5m", spr, "label_ts"))
-    for name, df, col in frames:
-        localdata.check_frame(df, [col], auth=kauth.auth,  # type: ignore[arg-type]
-                              what=f"kraken {symbol}.{name}")
     return KrakenSymbol(symbol, bars, mark, index, fund, spr, dropped)
 
 

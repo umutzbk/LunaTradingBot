@@ -51,7 +51,7 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "S-2.3": _m("universe"),
     "S-2.4": (*_m("kraken"), KRAKEN,
               "doc: frozen 20-symbol V6 universe, BTC hedge and V6 fees from the hash-checked V6 constants; "
-              "the same gate definitions on Kraken data are not literally implementable (AMB-41 (b)-(e))"),
+              "the same gate definitions on Kraken data are not literally implementable (AMB-41 (b), (e))"),
     "S-2.5": (*_m("data.notices", "data.captures", "metaingest", "metastore", "universe"),
               "doc: versions from bounded Wayback captures; closed kind list to be ratified with the DK-05 "
               "validation report (AMB-39)"),
