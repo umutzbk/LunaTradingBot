@@ -140,6 +140,9 @@ def _kind(s: pd.Series) -> str:
     raise TypeError(f"column {s.name!r}: dtype {dt} cannot be persisted")
 
 
+_NUMPY_NAMES = frozenset(np.dtype(c).name for c in "?bhilqBHILQefd")  # bool, (u)int8..64, float16..64
+
+
 def _decode_kind(name: str, dtype: str, kind: str) -> None:
     """The writer's dtype allowlist (``_kind``) re-applied to a run.json column entry (Task 26a review minor:
     a pinned but crafted record must not decode into a dtype the writer refuses: category, Sparse, datetime,
@@ -147,7 +150,7 @@ def _decode_kind(name: str, dtype: str, kind: str) -> None:
     ok = False
     try:
         if kind == "numpy":
-            ok = dtype in {np.dtype(c).name for c in "?bhilqBHILQefd"} and np.dtype(dtype).kind in "biuf"
+            ok = dtype in _NUMPY_NAMES
         elif kind == "ext":
             ok = dtype in _EXT or isinstance(pd.api.types.pandas_dtype(dtype), pd.StringDtype)
         elif kind == "json":

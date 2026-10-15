@@ -402,7 +402,8 @@ def test_spec_tables_have_rows():
 # still match the frozen text once.
 NOT_CODED: list[tuple[str, str, str]] = [
     ("S-2.3 PIT lag 1 min", r"All inputs must have `known_at` ≤ `t` − 1 min\.",
-     "structural PIT lag = timeutil.MIN: universe.py:128 (assert_pit), universe.py:138 (pit_rows), features.py:122"),
+     "structural PIT lag = timeutil.MIN: universe.py:137 (assert_pit), universe.py:142 (pit_rows), features.py:136, "
+     "pitindex.py FrameIndex.pit_end / HaltIndex.pit_end (indexed PIT prefixes, Task 26b)"),
     ("S-4.3 support article id", r"\(360033544231\), in two official locales",
      "fee-evidence provenance (R9 record / binance-fee-evidence.md); governance, not code"),
     ("S-4.3 fee-evidence sha256", r"sha256 `63a9fa95ca32ea7d0015fd19dd7cce2d3549cec6b3feb740761794f5e135efb7`",
@@ -414,7 +415,8 @@ NOT_CODED: list[tuple[str, str, str]] = [
     ("S-4.5 reference package", r"CRAN `bidask` 2\.1\.5, method `\"AR\"`",
      "reference implementation version for the required equality test (tests/v7/ar_reference.py, AMB-06)"),
     ("S-7.3 U6 exit lag", r"an open leg exits at the first decision at or after the matched version's `known_at` \+ 1 min",
-     "structural PIT lag = timeutil.MIN at universe.py:268 (notice known_at <= t - 1 min); exit via U6 gate"),
+     "structural PIT lag = timeutil.MIN at universe.py:367 (notice known_at <= t - 1 min; U6State.active "
+     "known_by = t - 1 min in SymbolCache.u6_active); exit via U6 gate"),
     ("S-10.4 T_tr minimum length", r"\| `T_tr` \| \[D0, C − 12 mo\), ≥ 12 months \|",
      "implied by first_test_months = 24 and block_months = (12, 6) (checked rows)"),
     ("S-13.2 P4 quarter-hours per day", r"for ≥ \d+ of (96) quarter-hours",

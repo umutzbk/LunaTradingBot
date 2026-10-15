@@ -108,7 +108,7 @@ def main() -> None:
         out["extrapolation_w_dev"] = {
             "symbols": n_sym, "decisions": n_dec, "book_runs": books,
             "decision_pass_h_single_process": round(comp_h, 1),
-            "replay_h_all_books": round(out["replay_per_decision_s"] * n_sym / a.symbols * n_dec * books / 3600, 2),
+            "replay_h_all_books_linear_upper_bound": round(out["replay_per_decision_s"] * n_sym / a.symbols * n_dec * books / 3600, 2),
         }
         if rss0 is not None:
             out["extrapolation_w_dev"]["rss_mb_linear_in_symbols"] = round(
