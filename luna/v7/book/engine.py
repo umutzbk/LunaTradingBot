@@ -39,7 +39,11 @@ one-sided check, decision, terminal unwind):
   drift resizes, entries, U6 exits, ``risk_gross`` reduces (taker) and hedge trades at t_e = t + 15 min
   (E_M: maker-first for the non-forced leg orders); kill, leg-stop, ineligibility, empty-side
   ``neutrality`` and ``one_sided_flatten`` exits on the first 1-minute bar >= trigger + 1 min (S-4.2,
-  AMB-19 (a), AMB-28). A halted exit waits (``execution.halted_exit``).
+  AMB-19 (a), AMB-28). A halted exit waits (``execution.halted_exit``). §15 forward replay
+  (``EngineInputs.decisions``, built by ``luna.v7.forward_replay``): the decisions run at the scheduled times
+  instead of the grid (a stale quarter's decision shifted within 2 h); a decision flagged False is a skipped
+  decision's exits and risk exits: its ``open`` orders are dropped and the S-7.4 hedge follows the remaining
+  post-decision book (DK-105, AMB-43).
 * **terminal check** at a held instance's cessation (A: the official settlement time): A settles (DEC-43),
   B / C -> ``INVALID RUN — terminal settlement not reconstructible``.
 * **terminal unwind** at the last reference minute before the end (end - 1 min): every leg and the hedge
@@ -177,6 +181,10 @@ class EngineInputs:
     view: Callable[[int], DecisionView]
     now_ns: int  # passed to the guard
     auth: guard.HoldoutAuthorization | None = None
+    # §15 forward replay (``luna.v7.forward_replay``): the decision schedule {decision time: entries allowed}
+    # replacing the S-8.1 grid (shifted decisions; False = a skipped decision's exits and risk exits, no
+    # entries); None = the S-8.1 grid
+    decisions: Mapping[int, bool] | None = None
 
 
 @dataclass(frozen=True)
@@ -629,7 +637,7 @@ class _Sim:
         return True
 
     # --- decisions --------------------------------------------------------------------------------------
-    def on_decision(self, t: int) -> None:
+    def on_decision(self, t: int, entries: bool = True) -> None:
         self.notes = []
         t_e = t + FILL_DELAY
         v = self.inp.view(t)
@@ -651,6 +659,11 @@ class _Sim:
         eq = self.led.equity()
         tg = targets(t=t, equity=eq, held=tuple(legs), scores=scores, gates=v.gates, risk=acts, halted=halted,
                      betas=v.betas, quote_vol_24h=v.qv24, h_star_h=float(self.h_star), usd_per_unit=self.upu)
+        if not entries:  # §15 skipped decision: exits and risk exits only; the hedge follows the post book
+            opens = {o.symbol for o in tg.orders if o.kind == "open"}
+            tg = replace(tg, orders=tuple(o for o in tg.orders if o.kind != "open"),
+                         post={k: x for k, x in tg.post.items() if k not in opens},
+                         notes=(*tg.notes, "forward_exits_only"))
         extra: dict = {}
         if self.lots is None:
             for o in tg.orders:
@@ -875,9 +888,16 @@ class _Sim:
     # --- main loop --------------------------------------------------------------------------------------
     def run(self) -> None:
         self.push(self.lo, EV_TICK, None)
-        for t in windows.decision_times(self.lo, self.end):
-            if int(t) + FILL_DELAY < self.unwind_ts:
-                self.push(int(t), EV_DECISION, None)
+        plan = self.inp.decisions
+        if plan is None:
+            for t in windows.decision_times(self.lo, self.end):
+                if int(t) + FILL_DELAY < self.unwind_ts:
+                    self.push(int(t), EV_DECISION, True)
+        else:  # §15 forward schedule: every time inside the window, decided before the unwind
+            for t, entries in sorted(plan.items()):
+                if int(t) < self.lo or int(t) + FILL_DELAY >= self.unwind_ts or not isinstance(entries, bool):
+                    raise ValueError(f"forward decision {t} outside [lo, unwind - 15 min) or not a bool flag")
+                self.push(int(t), EV_DECISION, entries)
         self.push(self.unwind_ts, EV_UNWIND, None)
         while self.heap and self.invalid is None:
             ts, kind, _, payload = heapq.heappop(self.heap)
@@ -892,7 +912,7 @@ class _Sim:
             elif kind == EV_NEUTRAL:
                 self.on_neutral(ts)
             elif kind == EV_DECISION:
-                self.on_decision(ts)
+                self.on_decision(ts, payload)  # type: ignore[arg-type]
             else:
                 self.on_unwind()
                 break

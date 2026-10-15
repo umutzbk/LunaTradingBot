@@ -1,0 +1,224 @@
+"""§15 forward replay (DK-105, ruling R39; AMB-43): the decision shift within 2 h, skipped decisions and their
+exits, the stale-quarter decision no-op, the canonical L7 gate (no forged L7), and one synthetic end-to-end
+forward pass into ``forward.forward_evaluate`` (byte-identical across two runs).
+
+Synthetic only: engine fixtures (flat prices) on a short 2024 window for the engine hook; the canonical
+R_V6 / T_F7 records from ``auth_fixtures.canonical_repo`` behind ``guard._roots`` for the gated replay; the
+trusted clock pinned per test."""
+
+from __future__ import annotations
+
+import inspect
+import json
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from luna.v7 import forward, forward_replay, guard, k9, release, runrecord, verdict
+from luna.v7.book.engine import EngineInputs, Instrument, run
+from luna.v7.data.instances import Instance
+from luna.v7.forward_replay import DecisionPlan, decision_plan, replay
+from luna.v7.forward_store import SealedBeforeL7
+from luna.v7.timeutil import MIN, D, H, to_ns
+from tests.v7 import auth_fixtures as af
+from tests.v7.book.engine_fixtures import BTC, LO, NOW, b15, base_inputs, fund, gate_row, m1, provider
+
+Q = 15 * MIN
+G0 = LO + 5 * MIN  # the first S-8.1 grid decision of the engine window
+TF7 = to_ns("2026-10-16")  # canonical T_F7 of auth_fixtures.canonical_repo (review PASS 2026-10-15)
+L7 = to_ns("2027-10-15")  # max(T_F7 + 180 d, R_V6 = 2027-10-14) + 1 d
+WIN = (TF7, TF7 + 180 * D)
+
+
+def _ev(bad=()):
+    bad = set(int(b) for b in bad)
+    return lambda q: int(q) not in bad
+
+
+# --------------------------------------------------------------------------------- the decision plan (pure)
+
+
+def test_plan_on_time_shift_and_skip():
+    win = (LO, LO + 2 * D)
+    g1, g2, g3 = G0, G0 + 8 * H, G0 + 16 * H
+    q2 = g2 - 5 * MIN
+    bad = [LO] + [q2 + k * Q for k in range(9)]  # g1 shifted by one quarter; g2: no evaluable quarter in 2 h
+    p = decision_plan(win, _ev(bad))
+    assert isinstance(p, DecisionPlan)
+    assert p.schedule[g1 + Q] is True and g1 not in p.schedule  # shifted, same offset inside the quarter
+    assert p.shifted[0] == (g1, g1 + Q)
+    assert p.skipped[0] == (g2, g2 + 9 * Q)  # skipped: its exits at the first evaluable quarter after t
+    assert p.schedule[g2 + 9 * Q] is False  # no entries
+    assert p.schedule[g3] is True and g2 not in p.schedule
+
+
+def test_plan_shift_limit_is_two_hours():
+    win = (LO, LO + 2 * D)
+    q = G0 - 5 * MIN
+    p = decision_plan(win, _ev([q + k * Q for k in range(8)]))  # quarter k = 8 (t + 2 h) is evaluable
+    assert p.schedule[G0 + 8 * Q] is True and p.skipped == ()
+
+
+def test_plan_skipped_exits_merge_with_the_next_full_decision():
+    win = (LO, LO + 2 * D)
+    q = G0 - 5 * MIN
+    bad = [q + k * Q for k in range(32)]  # 8 h of stale quarters: the next grid decision is evaluable
+    p = decision_plan(win, _ev(bad))
+    assert p.skipped[0] == (G0, G0 + 8 * H)
+    assert p.schedule[G0 + 8 * H] is True  # the full decision of the next grid point carries the exits
+
+
+def test_plan_no_evaluable_quarter_left():
+    win = (LO, LO + 2 * D)
+    p = decision_plan(win, lambda q: False)
+    assert p.schedule == {} and all(x is None for _, x in p.skipped)
+
+
+# --------------------------------------------------------------------------------- the engine hook
+
+
+def _with_plan(schedule, **kw):
+    return EngineInputs(**{**base_inputs(**kw).__dict__, "decisions": dict(schedule)})
+
+
+def test_engine_runs_exactly_the_scheduled_decisions():
+    r = run("A0", _with_plan({G0 + Q: True, G0 + 8 * H: True}), (LO, LO + 2 * D), 24)
+    assert r.valid and list(r.decisions["t"]) == [G0 + Q, G0 + 8 * H]
+    legs = r.fills[r.fills["symbol"] != BTC]
+    assert legs["ts"].min() == G0 + Q + 15 * MIN  # the shifted decision fills at its own t + 15 min
+
+
+def test_skipped_decision_makes_no_entries():
+    r = run("A0", _with_plan({G0: False, G0 + 8 * H: True}), (LO, LO + 2 * D), 24)
+    plain = run("A0", base_inputs(), (LO, LO + 2 * D), 24)
+    assert plain.fills["ts"].min() == G0 + 15 * MIN  # the grid decision would have entered
+    assert r.valid and r.fills["ts"].min() == G0 + 8 * H + 15 * MIN
+    assert "forward_exits_only" in r.decisions.iloc[0]["notes"]
+
+
+def test_skipped_decision_still_exits():
+    def g6(t, s):  # AAA's U6 gate fails from the second decision on: a decision (U6) exit
+        return gate_row(t, u6=False) if (s == "AAAUSDT" and t >= LO + 8 * H) else gate_row(t)
+
+    r = run("A0", _with_plan({G0: True, G0 + 8 * H: False}, gates=g6), (LO, LO + 2 * D), 24)
+    assert r.valid
+    f = r.fills[(r.fills["symbol"] == "AAAUSDT") & (r.fills["ts"] == G0 + 8 * H + 15 * MIN)]
+    assert len(f) == 1 and f.iloc[0]["reason"] == "u6"
+    assert not r.fills["position_id"].astype(str).str.endswith(f"@{G0 + 8 * H}").any()  # nothing opened
+
+
+def test_engine_schedule_outside_the_window_refused():
+    with pytest.raises(ValueError):
+        run("A0", _with_plan({LO - Q: True}), (LO, LO + 2 * D), 24)
+
+
+# --------------------------------------------------------------------------------- the gated replay
+
+
+@pytest.fixture(scope="module")
+def canon(tmp_path_factory):
+    base = tmp_path_factory.mktemp("fwd_replay")
+    return dict(ok=af.canonical_repo(base / "ok"),
+                forged=af.canonical_repo(base / "forged", review_pass=None),
+                home=base / "home")
+
+
+def _forged_review(repo):
+    af.add_review(repo, "2026-10-15T00:00:00Z", tamper_record=True)
+    release.cache_clear()
+
+
+def _point(monkeypatch, repo, home, now):
+    monkeypatch.setattr(guard, "_roots", lambda: (repo, home))
+    af.clock(monkeypatch, now)
+    release.cache_clear()
+
+
+def _instrument(sym, px, rate):
+    s0 = TF7 - 3 * D
+    bb = b15(px, s0, WIN[1])
+    return Instrument(sym, m1(px, s0, WIN[1]), bb, bb[["open_ts", "c"]].copy(), fund(rate, px, s0, WIN[1]),
+                      [Instance(0, s0, None, None)], {})
+
+
+@pytest.fixture(scope="module")
+def fwd_inputs():
+    ins = {"AAAUSDT": _instrument("AAAUSDT", 100.0, -1e-4), "BBBUSDT": _instrument("BBBUSDT", 50.0, 1e-4)}
+    def gates(t, s):  # eligible for the first 10 days only: the book is flat afterwards (a fast replay)
+        return gate_row(t) if t < TF7 + 10 * D else gate_row(t, u2=False)
+
+    view = provider({"AAAUSDT": -0.003, "BBBUSDT": 0.003}, {"AAAUSDT": 2.0, "BBBUSDT": 1.0}, gates)
+    return EngineInputs(ins, _instrument(BTC, 1000.0, 5e-5), view, NOW)
+
+
+class _Model:
+    ml_star = "A2"
+
+    def predict(self, t, cands):
+        y = -cands["fl30_r8"].to_numpy() * cands["side"].to_numpy() * 1e4
+        return cands.assign(yhat_en=y, yhat_cal_en=y)
+
+
+def _evaluable(bad=()):
+    qs = np.arange(WIN[0], WIN[1], Q)
+    bad = set(int(b) for b in bad)
+    return {int(q): int(q) not in bad for q in qs}
+
+
+def test_replay_refused_before_l7(canon, monkeypatch, fwd_inputs, tmp_path):
+    _point(monkeypatch, canon["ok"], canon["home"], L7 - 1)
+    with k9.using(k9.K9Log(tmp_path / "k9")) as log:
+        with pytest.raises(SealedBeforeL7):
+            replay("A2", fwd_inputs, _evaluable(), 24, _Model())
+        assert log.records()[-1]["rule"] == "§15 W_FWD7 sealed before L7"
+
+
+def test_forged_l7_is_impossible(canon, monkeypatch, fwd_inputs):
+    params = set(inspect.signature(replay).parameters)
+    assert not params & {"l7", "L7", "r_v6", "t_f7", "now", "now_ns", "repo", "window"}
+    _forged_review(canon["forged"])  # a review-pass record whose record_sha256 does not verify
+    _point(monkeypatch, canon["forged"], canon["home"], to_ns("2030-01-01"))
+    assert release.l7(canon["forged"]) is None
+    with pytest.raises(SealedBeforeL7):
+        replay("A2", fwd_inputs, _evaluable(), 24, _Model())
+    # a caller clock past L7 cannot open the engine's W_FWD7 seal either (trusted clock before L7)
+    _point(monkeypatch, canon["ok"], canon["home"], L7 - 1)
+    with pytest.raises(SealedBeforeL7):
+        run("A2", EngineInputs(**{**fwd_inputs.__dict__, "now_ns": to_ns("2030-01-01")}), WIN, 24, _Model())
+
+
+def _bytes(fr, v) -> bytes:
+    body = {"run": runrecord.run_output_sha256(fr.run), "plan": [sorted(fr.plan.schedule.items()),
+                                                                list(fr.plan.shifted), list(fr.plan.skipped)],
+            "evaluable_days": fr.evaluable_days, "l7": fr.l7, "verdict": [v.cls, list(v.reasons)],
+            "criteria": sorted(v.criteria.items()), "missing": list(v.evidence_missing),
+            "details": {k: v.details[k] for k in sorted(v.details) if k in ("p_abs", "F_net", "mdd")}}
+    return json.dumps(body, sort_keys=True, default=str).encode()
+
+
+def test_end_to_end_forward_pass_byte_identical(canon, monkeypatch, fwd_inputs):
+    _point(monkeypatch, canon["ok"], canon["home"], L7)
+    g = TF7 + 8 * H + 5 * MIN  # the second grid decision: shifted by 2 quarters
+    day3 = TF7 + 3 * D  # a whole stale day: its first decision is skipped, the day is not evaluable
+    bad = [g - 5 * MIN, g + 10 * MIN] + list(range(day3, day3 + D, Q))
+    outs = []
+    for _ in range(2):
+        fr = replay("A2", fwd_inputs, _evaluable(bad), 24, _Model())
+        v = forward_replay.evaluate(fr, None, holdout_class=verdict.ADVANCE, integrity=(),
+                                    outcome_before_l7=(), unrecovered_funding=(), terminal_events=(), B=200)
+        outs.append(_bytes(fr, v))
+    assert outs[0] == outs[1]
+    assert fr.run.valid and fr.run.window == WIN and fr.l7 == L7
+    assert (g, g + 2 * Q) in fr.plan.shifted and fr.plan.schedule[g + 2 * Q] is True
+    assert fr.plan.skipped[0][0] == day3 + 5 * MIN
+    assert fr.evaluable_days == 179
+    assert list(fr.run.decisions["t"]) == sorted(fr.plan.schedule)
+    assert len(fr.run.fills) and fr.run.positions["ts"].max() < TF7 + 11 * D  # traded, then flat
+    # 10 active days then flat, costs > funding: NO-GO (H_F, P2, P6), P4 evidence short (DK-99 precedence)
+    assert v.cls == forward.NOGO and v.reasons == ("H_F fails", "P2 fails", "P6 fails", "evidence: p4")
+    assert v.details["evaluable_days"] == 179 and v.comparison == forward.INCOMPLETE  # no A0 supplied
+    with pytest.raises(forward.NoForwardTest):
+        forward_replay.evaluate(fr, None, holdout_class=verdict.NOGO, integrity=(), outcome_before_l7=(),
+                                unrecovered_funding=(), terminal_events=(), B=200)
+    assert isinstance(fr.run.decisions, pd.DataFrame)

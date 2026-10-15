@@ -93,7 +93,8 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "S-8.4": _m("accounting"),
     "S-10.1": _m("cv"),
     "S-10.2": _m("windows"),
-    "S-10.3": _m("cv"),
+    "S-10.3": (*_m("cv", "forward_model"),
+               "doc: the forward refit purges at its block boundaries (T_cal start, T_cal end; AMB-43 (a))"),
     "S-10.4": (*_m("cv", "windows"), "doc: T_fit = purged T_tr ∪ purged T_sel (round 2 DK-39, AMB-30)"),
     "S-10.5": _m("models", "cv"),
     "S-10.6": _m("selection", "stats", "runner", "runner_select"),
@@ -115,7 +116,10 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "DEC-7": _m("deploy", "book.engine"),
     "DEC-8": _m("arms"),
     "DEC-9": _m("models"),
-    "DEC-10": _m("forward"),
+    "DEC-10": (*_m("forward", "forward_model", "forward_replay", "book.engine"),
+               "doc: forward refit inside the opening before the verdict marker; decision shift and "
+               "skipped-decision exits wired; the tick-level stale-quarter risk no-op is STOPPED, normative "
+               "amendment required (AMB-43)"),
     "DEC-11": ("doc: superseded by DEC-22 - no code",),
     "DEC-12": _m("data.notices"),
     "DEC-13": (*_m("constants"), "doc: the BNB-on sensitivity is a report item, not implemented"),
@@ -148,7 +152,7 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "DEC-39": (*_m("constants"), "doc: fee-evidence provenance record binance-fee-evidence.md - governance"),
     "DEC-40": _m("book.execution", "data.notices", "data.intervals", "labels"),
     "DEC-41": _m("netguard"),
-    "DEC-42": _m("forward"),
+    "DEC-42": _m("forward", "forward_replay"),
     "DEC-43": _m("data.terminal", "labels", "book.execution", "selection"),
     "DEC-44": _m("data.instances"),
     "DEC-45": _m("forward_store", "release"),
@@ -161,7 +165,7 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
     "EC-7": _m("data.terminal"),
     "EC-8": _m("forward_store"),
     "EC-9": _m("data.intervals"),
-    "EC-11": _m("forward"),
+    "EC-11": _m("forward", "forward_replay"),
     "E6": (*_m("netguard", "fetch", "guard"),
            "doc: post-opening mode only through the re-verified hardened authorization; captures pinned "
            "by sha256 (SC-03, AMB-35 (e), (f))"),
@@ -219,7 +223,7 @@ SPEC_COVERAGE: dict[str, tuple[str, ...]] = {
            "(leakage.resolve_k7; unexplained -> K1), AMB-33"),
     "K8": (*_m("verdict", "runner", "runner_select"),
            "doc: missing-funding share AMB-27 (b) pending user decision"),
-    "K9": (*_m("k9", "guard", "netguard", "fetch", "localdata", "runner"),
+    "K9": (*_m("k9", "guard", "netguard", "fetch", "localdata", "runner", "forward_model", "forward_replay"),
            "doc: every seal refusal logged (K9_REFUSALS.jsonl) with an incident stub; the run configures "
            "the log under its output directory (SC-03, AMB-35 (g), (h))"),
     "K10": (*_m("accounting", "selection", "verdict"),
