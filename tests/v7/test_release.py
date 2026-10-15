@@ -93,14 +93,23 @@ def test_store_sealed_regardless_of_arguments(tmp_path, monkeypatch, canon):
     assert c.read(rec.sha256) == b"abc" and [r.sha256 for r in c.iter_records()] == [rec.sha256]
 
 
-@pytest.mark.parametrize("variant", ["record_hash", "evidence_hash", "lightweight_tag", "basis_a_too_early",
-                                     "basis_b_before_first_look", "unknown_basis", "unknown_status"])
+@pytest.mark.parametrize("variant", ["record_hash", "evidence_hash", "holdout_doc_hash", "lightweight_tag",
+                                     "basis_a_too_early", "basis_b_before_first_look", "basis_c_before_m6",
+                                     "unknown_basis", "unknown_status", "before_written_release",
+                                     "before_holdout_report", "before_evidence"])
 def test_unverified_release_record_is_absent(tmp_path, variant):
     kw = {"record_hash": dict(tamper_record=True), "evidence_hash": dict(tamper_evidence=True),
+          "holdout_doc_hash": dict(tamper_holdout=True),  # review m6
           "lightweight_tag": dict(annotated=False),
           "basis_a_too_early": dict(r_v6="2027-10-13T23:00:00Z"),
           "basis_b_before_first_look": dict(r_v6="2027-01-11T00:00:00Z", basis="b"),
-          "unknown_basis": dict(basis="d"), "unknown_status": dict(status="pending")}[variant]
+          "basis_c_before_m6": dict(r_v6="2026-06-30T00:00:00Z", basis="c", status="released_in_writing"),
+          "unknown_basis": dict(basis="d"), "unknown_status": dict(status="pending"),
+          # review m3: R_V6 also requires the V6-holdout event (S-1.2): never before its documented time
+          "before_written_release": dict(r_v6="2027-01-01T00:00:00Z", basis="c", status="released_in_writing",
+                                         holdout_at="2027-02-01T00:00:00Z"),
+          "before_holdout_report": dict(holdout_at="2027-10-20T00:00:00Z"),
+          "before_evidence": dict(evidence_at="2027-10-15T00:00:00Z")}[variant]
     r = af.canonical_repo(tmp_path / variant, **kw)
     assert release.rv6_release(r) is None and release.r_v6(r) is None
     assert windows.m6(r) == (M6_START, None) and forward.l7(r) is None
@@ -166,3 +175,34 @@ def test_w_fwd7_replay_runnable_only_at_l7(tmp_path, monkeypatch, canon):
     af.clock(monkeypatch, TF7 + 271 * D)
     guard.check_outcome_window(*ext, now_ns=TF7 + 271 * D, repo=early)
 
+
+
+def test_basis_c_floor_and_event_times_accepted(tmp_path):
+    """Review m6 / m3: a written release (c) at the V6 holdout start is accepted; R_V6 after the documented
+    V6-holdout event and evidence is accepted."""
+    r = af.canonical_repo(tmp_path / "c", r_v6="2026-07-01T00:00:00Z", basis="c",
+                          status="released_in_writing")
+    assert release.r_v6(r) == M6_START
+    r2 = af.canonical_repo(tmp_path / "c2", r_v6="2027-03-01T00:00:00Z", basis="c",
+                           status="released_in_writing", holdout_at="2027-02-01T00:00:00Z",
+                           evidence_at="2027-02-15T00:00:00Z")
+    assert release.r_v6(r2) == to_ns("2027-03-01")
+
+
+def test_extension_records_stay_sealed_until_the_extended_l7(tmp_path, monkeypatch):
+    """Review m2: records received at or after T_F7 + 180 d belong to the extension window: sealed until the
+    extended L7 even after the base look."""
+    r = af.canonical_repo(tmp_path / "early", r_v6="2027-01-01T00:00:00Z", basis="c",
+                          status="released_in_writing")
+    s = ForwardStore(tmp_path / "fs", repo=r)
+    a = s.write_raw("u", b"in window", TF7 + H)
+    b = s.write_raw("u", b"in extension", TF7 + 180 * D)
+    again = s.write_raw("u", b"in window", TF7 + 200 * D)  # the same bytes again in the extension
+    af.clock(monkeypatch, TF7 + 181 * D)  # base L7 reached, extended L7 not
+    assert s.read(a.sha256) == b"in window" and again.sha256 == a.sha256
+    with pytest.raises(SealedBeforeL7):
+        s.read(b.sha256)
+    assert [(x.sha256, x.recv_ts) for x in s.iter_records()] == [(a.sha256, a.recv_ts)]
+    af.clock(monkeypatch, TF7 + 271 * D)
+    assert s.read(b.sha256) == b"in extension"
+    assert [x.recv_ts for x in s.iter_records()] == [a.recv_ts, b.recv_ts, again.recv_ts]

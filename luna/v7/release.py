@@ -11,11 +11,13 @@ refusal). No caller value can set R_V6, T_F7 or L7.
   ``spec.v6_artifacts``). It names the basis -- (a) V6's day-365 look completed and reported, (b) a V6 look
   after which every slot is CLOSED, (c) the user's written release -- the release time ``r_v6`` (UTC), the
   evidence document (the V6 look report, or the written release) and the V6-holdout document ("opened and
-  reported" or "released in writing", S-1.2 last paragraph), each by repository path and sha256. Checked:
+  reported" or "released in writing", S-1.2 last paragraph), each by its event time ``at``, repository path
+  and sha256. Checked:
   the tag is annotated, the record's own ``record_sha256`` (canonical JSON of the other fields), both
   documents' sha256 at the same tag, the exact field set, the basis / status values, and ``r_v6`` not before
   the event it claims (basis (a): >= the day-365 look date; (b): >= the day-90 look date; (c): >= the V6
-  holdout start), with the V6 dates from the hash-checked V6 artefacts.
+  holdout start), with the V6 dates from the hash-checked V6 artefacts, and not before either documented
+  event time (the look report / written release, and the V6-holdout report / written release; review m3).
 * **T_F7 (§15)** = the first 00:00 UTC >= 24 h after the independent review PASS: a committed review-pass
   record (``TF7_RECORD_REL`` at the annotated tag ``TF7_TAG``) with the PASS time and the review document's
   sha256, checked the same way.
@@ -113,7 +115,7 @@ def _ts(v: object, what: str) -> int:
 
 def _doc(repo: Path, tag: str, ref: object, what: str) -> str:
     if not isinstance(ref, dict) or set(ref) != {"path", "sha256"} or not isinstance(ref["path"], str):
-        raise _Invalid(f"{what}: needs exactly path and sha256")
+        raise _Invalid(f"{what}: needs exactly path and sha256 (plus at)")
     sha = ref["sha256"]
     if not isinstance(sha, str) or not _SHA.match(sha):
         raise _Invalid(f"{what}: not a sha256")
@@ -142,15 +144,18 @@ def _load_rv6(repo: Path) -> RV6Release:
     if basis not in BASES:
         raise _Invalid(f"unknown R_V6 basis {basis!r}")
     r_v6 = _ts(rec["r_v6"], "r_v6")
-    ev = _doc(repo, RV6_TAG, rec["evidence"], "evidence")
-    hold = rec["v6_holdout"]
-    if not isinstance(hold, dict) or hold.get("status") not in HOLDOUT_STATUS:
+    evi, hold = rec["evidence"], rec["v6_holdout"]
+    if not isinstance(evi, dict) or not isinstance(hold, dict) or hold.get("status") not in HOLDOUT_STATUS:
         raise _Invalid("v6_holdout.status must be one of " + ", ".join(HOLDOUT_STATUS))
-    _doc(repo, RV6_TAG, {k: v for k, v in hold.items() if k != "status"}, "v6_holdout")
+    ev_at, hold_at = _ts(evi.get("at"), "evidence.at"), _ts(hold.get("at"), "v6_holdout.at")
+    ev = _doc(repo, RV6_TAG, {k: v for k, v in evi.items() if k != "at"}, "evidence")
+    _doc(repo, RV6_TAG, {k: v for k, v in hold.items() if k not in ("status", "at")}, "v6_holdout")
     v6 = v6_artifacts(repo)
     floor = {"a": v6.looks[2], "b": v6.looks[0], "c": v6.holdout_start}[basis]
     if r_v6 < floor:
         raise _Invalid(f"r_v6 precedes the event of basis ({basis})")
+    if r_v6 < ev_at or r_v6 < hold_at:  # S-1.2: R_V6 needs the documented event AND the V6-holdout condition
+        raise _Invalid("r_v6 precedes its documented evidence or the V6-holdout opening / written release")
     return RV6Release(r_v6, basis, ev, hold["status"], rec["record_sha256"])
 
 
@@ -169,13 +174,19 @@ def _absent_on_failure(fn, repo: Path):
 
 
 @functools.cache
-def _canonical(repo_key: str) -> tuple[RV6Release | None, ReviewPass | None]:
-    repo = Path(repo_key)
+def _canonical(key: str) -> tuple[RV6Release | None, ReviewPass | None]:
+    repo = Path(key)
     return _absent_on_failure(_load_rv6, repo), _absent_on_failure(_load_review, repo)
 
 
-def _key(repo: Path | None) -> str:
+@functools.cache
+def repo_key(repo: Path | None = None) -> str:
+    """The resolved repository path (memoised: the guards call this per outcome window, review m1)."""
     return str(Path(repo or code_repo()).resolve())
+
+
+def _key(repo: Path | None) -> str:
+    return repo_key(repo)
 
 
 def cache_clear() -> None:
@@ -213,4 +224,4 @@ def l7(repo: Path | None = None, *, extended: bool = False) -> int | None:
 
 __all__ = ["BASES", "HOLDOUT_STATUS", "RV6Release", "RV6_KIND", "RV6_RECORD_REL", "RV6_TAG", "ReviewPass",
            "TF7_KIND", "TF7_RECORD_REL", "TF7_TAG", "cache_clear", "l7", "r_v6", "record_sha256",
-           "review_pass", "rv6_release", "t_f7", "tf7_from_review", "trusted_now_ns"]
+           "repo_key", "review_pass", "rv6_release", "t_f7", "tf7_from_review", "trusted_now_ns"]

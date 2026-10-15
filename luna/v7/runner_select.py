@@ -38,11 +38,13 @@ import json
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from luna.v7 import cv, guard, leakage, models, runrecord, selection, stats
+from luna.v7 import verdict as verdict_mod
 from luna.v7.accounting import account, mean_daily_net, period_net
 from luna.v7.arms import families
 from luna.v7.book.engine import BookRun
@@ -257,7 +259,8 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
                    records: Callable[[int], object], integrity: Sequence[str],
                    dev: DevSelection | None = None, dev_ml_run: BookRun | None = None,
                    dev_kill: Sequence[str] | None = None, secondary: Mapping | None = None,
-                   B: int = stats.B_DEFAULT, seed: int = stats.SEED) -> HoldoutInputs:
+                   B: int = stats.B_DEFAULT, seed: int = stats.SEED, repo: Path | None = None,
+                   home: Path | None = None) -> HoldoutInputs:
     """``verdict.HoldoutInputs`` (see module docstring). W_DEV facts come from ``dev`` or, for plumbing on
     synthetic windows, from ``dev_ml_run`` + ``dev_kill``. ``final_model`` (``cv.final_model``, or any model
     with ``predict(df)``) predicts the canonical panel: P7 ``ic`` = (ŷ, y_reg, dates), P8 ``calib`` = (ŷ_cal,
@@ -265,7 +268,8 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
     ``missing_funding_rate`` of the required E_T runs). ``leakage_report``: the passed pre-opening
     ``leakage.LeakageReport`` of ML*; ``records``: the decision records of the holdout runs (L1 re-check,
     ``leakage.run_holdout_checks``). Everything is bound to the opening's pin (module docstring)."""
-    pin = guard.verify_authorization(auth)  # HoldoutBlocked: forged, markers / pin missing or altered
+    # HoldoutBlocked: forged, or the canonical markers / pins of repo / home missing or not this opening's
+    pin = guard.verify_authorization(auth, repo=repo, home=home)
     if dev is not None:
         if dev.ml_star is None or dev.kill is None:
             raise ValueError("the S-10.6 validity precondition failed: no ML* (the holdout stays sealed)")
@@ -339,5 +343,20 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
                          secondary=secondary, a1_calib=a1, B=B, seed=seed)
 
 
+def holdout_verdict(x: HoldoutInputs, *, auth: guard.HoldoutAuthorization, repo: Path | None = None,
+                    home: Path | None = None) -> verdict_mod.Verdict:
+    """The W_HOLD verdict of the opening (S-13.4): ``verdict.holdout`` on inputs bound to a verified
+    authorization, then the verdict marker is written once (``guard.mark_verdict_produced``, exclusive
+    create); the verdict is returned only after the marker exists, so it can never be produced twice and the
+    opening can no longer be resumed (ruling R45: no second look). ``verdict.holdout`` itself stays pure."""
+    guard.verify_authorization(auth, repo=repo, home=home)
+    v = verdict_mod.holdout(x)
+    body = {"cls": v.cls, "reasons": list(v.reasons), "leakage": x.leakage.sha256,
+            "holdout_leakage": x.holdout_leakage.sha256}
+    sha = hashlib.sha256(runrecord.canonical_json(body).encode()).hexdigest()
+    guard.mark_verdict_produced(auth, sha, repo=repo, home=home)
+    return v
+
+
 __all__ = ["DevSelection", "dev_leakage_checks", "dev_selection", "dev_selection_record", "holdout_inputs",
-           "missing_funding_rate", "quarters", "verify_dev_selection"]
+           "holdout_verdict", "missing_funding_rate", "quarters", "verify_dev_selection"]

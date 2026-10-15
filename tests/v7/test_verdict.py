@@ -570,7 +570,7 @@ def test_holdout_report_must_link_to_the_pre_report():
     good = _inputs()
     content = lf.leakage.report_content(good.leakage)
     content["data_manifests"] = [["W_DEV", "d" * 64]]
-    twin = lf.leakage.load_persisted_report(content, _content_sha(content))
+    twin = lf.leakage._load_persisted_report(content, _content_sha(content))
     assert twin.passed and twin.sha256 != good.leakage.sha256
     hold = lf.holdout_report(twin, [good.ml_T, good.a0_T, good.ml_M, good.a0_M])
     assert hold.pre_sha256 == twin.sha256 != good.leakage.sha256

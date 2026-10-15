@@ -4,10 +4,11 @@ A run record (keyed by a deterministic ``run_id``, the ``data.schema`` DT4 colum
 working-tree state, the config sha256, the data manifest sha256s, the seeds, the library versions (and the
 ``uv.lock`` sha256), the identity and output sha256 of every executed book, the sha256 of every leakage report
 (``leakage.LeakageReport`` / ``HoldoutLeakageReport``, SC-02, AMB-33) and, per fit, the solver convergence
-status (recorded, never raised, AMB-26). ``run_record`` is pure (every value is passed in; no
-wall-clock: a timestamp, if wanted, is the caller's ``extra``). The only I/O is explicit:
-``write_run_record`` (exclusive create at a caller-supplied path: a record is immutable), ``file_sha256``
-and ``code_state`` / ``code_commit`` (git, read-only).
+status (recorded, never raised, AMB-26); for a holdout run the opening summary (``guard.opening_summary``:
+opening id, pin, every logged resume attempt, verdict marker; ruling R45). ``run_record`` is pure (every
+value is passed in; no wall-clock: a timestamp, if wanted, is the caller's ``extra``). The only I/O is
+explicit: ``write_run_record`` (exclusive create at a caller-supplied path: a record is immutable),
+``file_sha256`` and ``code_state`` / ``code_commit`` (git, read-only).
 """
 
 from __future__ import annotations
@@ -122,7 +123,8 @@ def default_seeds() -> dict[str, int]:
 def run_record(*, commit: str, dirty: bool, config: Mapping, data_manifests: Mapping[str, str],
                seeds: Mapping[str, int], uv_lock_sha256: str, libraries: Mapping[str, str],
                convergence: Sequence[Mapping], runs: Sequence[BookRun], research: bool = False,
-               extra: Mapping | None = None, leakage_reports: Sequence = ()) -> dict:
+               extra: Mapping | None = None, leakage_reports: Sequence = (),
+               opening: Mapping | None = None) -> dict:
     """The DT4 record with the ``data.schema`` DT4 columns (``run_id`` key, ``code_commit``,
     ``config_sha256``, ``data_manifest_sha256s``, ``seeds``, ``library_versions``) plus the working-tree
     state, the ``uv.lock`` sha256, the identity and output sha256 of every executed book, the per-fit
@@ -181,6 +183,10 @@ def run_record(*, commit: str, dirty: bool, config: Mapping, data_manifests: Map
         "leakage_reports": leak,
         "extra": json.loads(canonical_json(dict(extra or {}))),
     }
+    if opening is not None:  # the holdout opening (``guard.opening_summary``): id, pin, resume attempts
+        if not isinstance(opening, Mapping) or not _SHA.match(str(opening.get("opening_id", ""))):
+            raise ValueError("opening: a guard.opening_summary is required")
+        body["holdout_opening"] = json.loads(canonical_json(dict(opening)))
     rec = {"run_id": hashlib.sha256(canonical_json(body).encode()).hexdigest(), **body}
     schema.validate("DT4", pd.DataFrame([{k: [v] if isinstance(v, dict | list) else v
                                           for k, v in rec.items()}]))

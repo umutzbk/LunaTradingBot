@@ -17,7 +17,8 @@ and the opening normally runs in a later process, so the producing run persists 
 * ``load_pre_opening(path, head=...)`` (called by ``guard.preflight`` / ``guard.authorize_holdout``):
   reloads the file; recomputes the DevSelection record hash, the LeakageReport content hash and the record
   hash and checks each against the recorded value; rebuilds the LeakageReport
-  (``leakage.load_persisted_report``) and re-derives ``passed`` from the content (every check executed and
+  (``leakage._load_persisted_report``, private to this flow) and re-derives ``passed`` from the content
+  (every check executed and
   passed, every evaluated K7 trigger resolved "explained", clean tree, a final-model hash); checks the S-10.7
   gate from the content (an S-10.6 choice, an EMPTY kill list); the DevSelection <-> report link (ML*, the
   fold-model hashes of ML*'s family at every horizon, the label-panel hashes, M-5); and the code commit of
@@ -159,7 +160,7 @@ def _load(path: str | Path, head: str) -> PreOpening:
         raise ValueError("pre-opening record: LeakageReport hash mismatch (tampered)")
     if not isinstance(rec["dev_label_panels"], dict):
         raise ValueError("pre-opening record: dev_label_panels")
-    rep = leakage.load_persisted_report(rec["leakage_report"], rec["leakage_report_sha256"])
+    rep = leakage._load_persisted_report(rec["leakage_report"], rec["leakage_report_sha256"])
     _semantics(rec, rep)
     if rec["code_commit"] != head or rep.commit != head:
         raise ValueError(f"the records were produced at {rec['code_commit']}, not at HEAD {head} "

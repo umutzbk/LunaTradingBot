@@ -343,16 +343,16 @@ def test_persisted_report_round_trip(report, monkeypatch):
     content = json.loads(json.dumps(leakage.report_content(report)))
     monkeypatch.setattr(leakage, "_ISSUED", set())
     assert not leakage.verify_report(report)  # a fresh process: nothing issued
-    r = leakage.load_persisted_report(content, report.sha256)
+    r = leakage._load_persisted_report(content, report.sha256)
     assert r == report and r.sha256 == report.sha256 and leakage.verify_report(r) and r.passed
     with pytest.raises(ValueError, match="pinned"):
-        leakage.load_persisted_report(content, "0" * 64)
+        leakage._load_persisted_report(content, "0" * 64)
     for mutate in (lambda c: c.pop("seed"), lambda c: c.update(seed="0"), lambda c: c.update(kind="X"),
                    lambda c: c["l9a"][0].update(passed=1), lambda c: c["k7"][0].update(resolution="maybe")):
         bad = json.loads(json.dumps(content))
         mutate(bad)
         with pytest.raises(ValueError):
-            leakage.load_persisted_report(bad, report.sha256)
+            leakage._load_persisted_report(bad, report.sha256)
     with pytest.raises(ValueError, match="run_leakage_checks"):
         leakage.report_content(dataclasses.replace(report, commit="c" * 40))
 

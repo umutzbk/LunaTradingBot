@@ -31,7 +31,7 @@ import pytest
 
 from luna.v7 import accounting, guard, models, runner, selection, stats, universe, verdict, windows
 from luna.v7.constants import FROZEN
-from luna.v7.runner_select import holdout_inputs
+from luna.v7.runner_select import holdout_inputs, holdout_verdict
 from luna.v7.timeutil import D
 from tests.v7 import auth_fixtures as af
 from tests.v7 import fixtures_v7 as fx
@@ -79,11 +79,12 @@ def run_pipeline(seed: int, base) -> tuple[dict[str, str], dict]:
     dev = af.dev_selection("A2", fx.H_STAR, window=fx.BOOK, em_runs={"ML*": em["A2"], "A0": em["A0"]},
                            runs={("A2", fx.H_STAR): runs["A2"], ("A0", fx.H_STAR): runs["A0"]})
     opened = af.authorize(base, dev=dev)
-    x = holdout_inputs(auth=opened.auth, ml_T=runs["A2"], a0_T=runs["A0"], ml_M=em["A2"], a0_M=em["A0"],
+    x = holdout_inputs(auth=opened.auth, repo=opened.repo, home=opened.home, ml_T=runs["A2"], a0_T=runs["A0"],
+                       ml_M=em["A2"], a0_M=em["A0"],
                        quarter_edges=edges, panel=hold, final_model=lf.final(fx.H_STAR, "en"),
                        dev_ml_run=runs["A2"], dev_kill=(), leakage_report=opened.auth.leakage_report,
                        records=prov.record, integrity=(), B=B_SMALL)
-    v = verdict.holdout(x)
+    v = holdout_verdict(x, auth=opened.auth, repo=opened.repo, home=opened.home)  # writes the verdict marker
     v_kill = None
     if kill:
         v_kill = verdict.classify(invalid=v.cls == verdict.INVALID, leakage=False, dev_kill=True,

@@ -965,7 +965,7 @@ def _run(arm: str, inputs: EngineInputs, window: tuple[int, int], h_star: int, m
     lo, end = int(window[0]), int(window[1])
     if lo % TICK or end % MIN or end - lo <= 2 * FILL_DELAY:
         raise ValueError("the window must start on the 15-minute grid and span more than 30 min")
-    guard.check_outcome_window(lo, end, auth=inputs.auth, now_ns=inputs.now_ns)
+    guard.check_outcome_window(lo, end, auth=inputs.auth, now_ns=inputs.now_ns, fresh=True)  # full re-check
     sim = _Sim(arm, inputs, (lo, end), h_star, model, execution, e0=equity0, upu=upu, lots=lots)
     sim.run()
     led = sim.led

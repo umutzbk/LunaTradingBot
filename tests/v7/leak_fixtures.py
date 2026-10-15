@@ -39,7 +39,7 @@ SIGNAL = ("f2_same_sign_share_30d", "f5_premium_last", "f9_rvol_24h", "f10_ret_2
 AR_RHO, AR_SD = 0.9, 10.0  # overlapping-horizon labels are autocorrelated: the L9b shifted label predicts
 STEP_DAYS = 4  # sampled days (runtime: the per-date IC loop dominates)
 DECISIONS = np.array([5 * MIN, 8 * H + 5 * MIN, 16 * H + 5 * MIN])  # the S-4.1 decision clock
-COMMIT = "c4308eabe9bd33652d50893bfa78f673d2cd8fa0"  # HEAD of auth_fixtures.frozen_repo (deterministic)
+COMMIT = "13d041cf65f911ea25ae4d2b07cc5122dcb1d131"  # HEAD of auth_fixtures.frozen_repo (deterministic)
 MANIFESTS = {"W_DEV": "b" * 64}
 PROV = dict(commit=COMMIT, dirty=False, data_manifests=MANIFESTS)
 

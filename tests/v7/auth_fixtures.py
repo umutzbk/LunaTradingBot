@@ -58,8 +58,10 @@ def frozen_repo(path: Path) -> Path:
     """The deterministic code-frozen repository (HEAD == HEAD_COMMIT, both V7 tags annotated on HEAD)."""
     r = _init(Path(path))
     (r / "a.txt").write_text("x", encoding="utf-8")
-    git(r, "add", "a.txt")
+    _v6_files(r)  # the canonical M6 source of this repository (``check_outcome_window(repo=...)``)
+    git(r, "add", "-A")
     git(r, "commit", "-q", "-m", "c")
+    git(r, "tag", "-a", spec.V6_TAG, "-m", "v6")
     git(r, "tag", "-a", guard.SPEC_TAG, "-m", "spec")
     git(r, "tag", "-a", guard.CODE_TAG, "-m", "code")
     head = git(r, "rev-parse", "HEAD")
@@ -135,13 +137,17 @@ def _sealed(body: dict, tamper: bool = False) -> bytes:
     return json.dumps(body, indent=1, sort_keys=True).encode()
 
 
-def release_repo(path: Path) -> Path:
-    """A repository with the hash-checked V6 artefacts at ``v6-code-frozen`` and no release record yet."""
-    r = _init(Path(path))
+def _v6_files(r: Path) -> None:
     for rel in (spec.V6_CONSTANTS_REL, spec.V6_RECORD_REL):
         p = r / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(spec._git_show(spec.code_repo(), spec.V6_TAG, rel))
+
+
+def release_repo(path: Path) -> Path:
+    """A repository with the hash-checked V6 artefacts at ``v6-code-frozen`` and no release record yet."""
+    r = _init(Path(path))
+    _v6_files(r)
     git(r, "add", "-A")
     git(r, "commit", "-q", "-m", "v6")
     git(r, "tag", "-a", spec.V6_TAG, "-m", "v6")
@@ -162,16 +168,20 @@ def _commit_tag(repo: Path, files: dict[str, bytes], tag: str, *, annotated: boo
 
 
 def add_release(repo: Path, r_v6: str, *, basis: str = "a", status: str = "opened_and_reported",
-                tamper_record: bool = False, tamper_evidence: bool = False, annotated: bool = True) -> None:
-    """Commit an R_V6 release record (S-1.2) with its evidence documents and tag it ``release.RV6_TAG``."""
+                tamper_record: bool = False, tamper_evidence: bool = False, tamper_holdout: bool = False,
+                annotated: bool = True, evidence_at: str | None = None,
+                holdout_at: str | None = None) -> None:
+    """Commit an R_V6 release record (S-1.2) with its evidence documents and tag it ``release.RV6_TAG``.
+    ``evidence_at`` / ``holdout_at``: the documented event times (default: ``r_v6``)."""
     ev, hold = b"V6 look report (synthetic)\n", b"V6 holdout report (synthetic)\n"
     body = {"kind": release.RV6_KIND, "basis": basis, "r_v6": r_v6,
-            "evidence": {"path": "docs/results/v6-look-report.md", "sha256": _sha(ev)},
-            "v6_holdout": {"status": status, "path": "docs/results/v6-holdout-report.md",
-                           "sha256": _sha(hold)}}
+            "evidence": {"at": evidence_at or r_v6, "path": "docs/results/v6-look-report.md",
+                         "sha256": _sha(ev)},
+            "v6_holdout": {"status": status, "at": holdout_at or r_v6,
+                           "path": "docs/results/v6-holdout-report.md", "sha256": _sha(hold)}}
     files = {release.RV6_RECORD_REL: _sealed(body, tamper_record),
              "docs/results/v6-look-report.md": ev + (b"edited" if tamper_evidence else b""),
-             "docs/results/v6-holdout-report.md": hold}
+             "docs/results/v6-holdout-report.md": hold + (b"edited" if tamper_holdout else b"")}
     _commit_tag(repo, files, release.RV6_TAG, annotated=annotated)
 
 

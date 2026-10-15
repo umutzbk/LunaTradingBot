@@ -45,7 +45,8 @@ def test_hold_window_needs_authorization(repo, tmp_path):
         guard.check_outcome_window(lo, hi, now_ns=NOW)
     with pytest.raises(guard.HoldoutBlocked):
         guard.check_outcome_window(lo, hi, auth=object(), now_ns=NOW)  # type: ignore[arg-type]
-    guard.check_outcome_window(lo, hi, auth=_auth(repo, tmp_path), now_ns=NOW)
+    guard.check_outcome_window(lo, hi, auth=_auth(repo, tmp_path), now_ns=NOW, repo=repo,
+                               home=tmp_path / "home", fresh=True)
     # dev window needs nothing
     guard.check_outcome_window(windows.W_DEV[0], windows.W_DEV[1], now_ns=NOW)
 
@@ -59,11 +60,12 @@ def test_m6_overlap_refused_even_with_auth(repo, tmp_path):
     auth = _auth(repo, tmp_path)
     for lo, hi in ((M6_START - D, M6_START + D), (M6_START, M6_START + 1), (M6_START + D, M6_START + 2 * D)):
         with pytest.raises(guard.EmbargoBlocked):
-            guard.check_outcome_window(lo, hi, auth=auth, now_ns=NOW)
+            guard.check_outcome_window(lo, hi, auth=auth, now_ns=NOW, repo=repo, home=tmp_path / "home")
     with pytest.raises(guard.EmbargoBlocked):
         guard.check_outcome_window(M6_START - D, M6_START + D, now_ns=NOW)
     # ends exactly at the M6 start: no overlap (half-open)
-    guard.check_outcome_window(M6_START - D, M6_START, auth=auth, now_ns=NOW)
+    guard.check_outcome_window(M6_START - D, M6_START, auth=auth, now_ns=NOW, repo=repo,
+                               home=tmp_path / "home")
 
 
 def test_m6_lifted_only_when_release_known_and_reached(monkeypatch):

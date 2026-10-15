@@ -197,8 +197,9 @@ def _pairs(v: object, what: str) -> list:
     return v
 
 
-def load_persisted_report(content: dict, sha256: str) -> LeakageReport:
-    """Rebuild a persisted LeakageReport (``report_content``) in another process (Task 24 I-1, AMB-34).
+def _load_persisted_report(content: dict, sha256: str) -> LeakageReport:
+    """PRIVATE to the opening flow (``opening.load_pre_opening``; review m4). Rebuild a persisted
+    LeakageReport (``report_content``) in another process (Task 24 I-1, AMB-34).
 
     The content is parsed strictly (exact field sets and types), the rebuilt report must hash to ``sha256``
     (the hash pinned by the pre-opening record), and only then is it registered as issued in this process, so
@@ -707,6 +708,6 @@ def run_holdout_checks(pre: LeakageReport, *, runs: Sequence[BookRun],
 
 __all__ = ["HOLDOUT_CHECKS", "HoldoutLeakageReport", "K7Result", "L9aResult", "L9bResult", "LABEL_COLS",
            "LeakageReport", "SANDBOX_COLUMN", "SHIFT_NAME", "SandboxIC", "concentration", "covers",
-           "feature_shares", "l9a", "l9a_result", "l9b", "l9b_refusal", "load_persisted_report", "model_hash",
+           "feature_shares", "l9a", "l9a_result", "l9b", "l9b_refusal", "model_hash",
            "oof", "panel_sha256", "permute_within_dates", "report_content", "resolve_k7",
            "run_holdout_checks", "run_leakage_checks", "shifted_label_feature", "verify_report"]

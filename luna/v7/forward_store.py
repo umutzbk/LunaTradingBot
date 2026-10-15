@@ -21,7 +21,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from luna.v7 import release
-from luna.v7.timeutil import to_ns
+from luna.v7.constants import FROZEN
+from luna.v7.timeutil import D, to_ns
 
 
 class SealedBeforeL7(RuntimeError):
@@ -36,11 +37,19 @@ class Record:
     size: int
 
 
-def _gate(repo: Path | None) -> None:
+def _gate(repo: Path | None) -> int | None:
+    """Refuse before the canonical L7; return the ``recv_ts`` bound of the readable records: T_F7 + 180 d
+    until the extended L7 (records of the extension window [T_F7 + 180 d, ...) stay sealed until the extended
+    look, review m2), None (no bound) from the extended L7 on."""
     l7 = release.l7(repo)
-    if l7 is None or release.trusted_now_ns() < l7:
+    now = release.trusted_now_ns()
+    if l7 is None or now < l7:
         raise SealedBeforeL7("the forward store is sealed until the canonical L7 (and while L7 / R_V6 / T_F7 "
                              "is undetermined)")
+    ext = release.l7(repo, extended=True)
+    if ext is not None and now >= ext:
+        return None
+    return int(release.t_f7(repo)) + FROZEN.forward.days * D  # type: ignore[arg-type]
 
 
 class ForwardStore:
@@ -69,17 +78,24 @@ class ForwardStore:
             f.write(json.dumps(asdict(rec), sort_keys=True) + "\n")
         return rec
 
-    def iter_records(self) -> Iterator[Record]:
-        _gate(self._repo)
+    def _records(self) -> list[Record]:
         if not self._index.exists():
-            return
-        for line in self._index.read_text(encoding="utf-8").splitlines():
-            yield Record(**json.loads(line))
+            return []
+        return [Record(**json.loads(line)) for line in self._index.read_text(encoding="utf-8").splitlines()]
+
+    def iter_records(self) -> Iterator[Record]:
+        bound = _gate(self._repo)
+        for r in self._records():
+            if bound is None or r.recv_ts < bound:
+                yield r
 
     def read(self, sha256: str) -> bytes:
-        _gate(self._repo)
+        bound = _gate(self._repo)
         if not sha256.isalnum():
             raise ValueError("invalid sha256")
+        if bound is not None and not any(r.sha256 == sha256 and r.recv_ts < bound for r in self._records()):
+            raise SealedBeforeL7("this blob was received only in the extension window: sealed until the "
+                                 "extended L7")
         data = (self._blobs / sha256).read_bytes()
         if hashlib.sha256(data).hexdigest() != sha256:
             raise ValueError(f"stored blob does not match its sha256 {sha256}")

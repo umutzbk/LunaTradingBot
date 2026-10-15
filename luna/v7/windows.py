@@ -11,7 +11,7 @@ import pandas as pd
 
 from luna.v7 import release
 from luna.v7.constants import FROZEN
-from luna.v7.spec import code_repo, v6_artifacts
+from luna.v7.spec import v6_artifacts
 from luna.v7.timeutil import MIN, D, to_ns
 
 D0 = to_ns(FROZEN.d0)
@@ -96,7 +96,7 @@ def m6_cached(repo: Path | None = None) -> tuple[int, int | None]:
     """``m6(repo)`` read once per process and resolved repository (the hash-checked V6 artefacts and R_V6
     release record via git); a failure (SpecMismatch) is not cached. This is the canonical span every guard
     compares against (outcome guard, ``netguard.partition_m6_keys``)."""
-    return _m6_by_repo(str(Path(repo or code_repo()).resolve()))
+    return _m6_by_repo(release.repo_key(repo))
 
 
 def overlaps(lo: int, hi: int, span: tuple[int, int | None]) -> bool:
