@@ -2,8 +2,9 @@
 
 A run record (keyed by a deterministic ``run_id``, the ``data.schema`` DT4 columns) holds the code commit and
 working-tree state, the config sha256, the data manifest sha256s, the seeds, the library versions (and the
-``uv.lock`` sha256), the identity and output sha256 of every executed book and, per fit, the solver
-convergence status (recorded, never raised, AMB-26). ``run_record`` is pure (every value is passed in; no
+``uv.lock`` sha256), the identity and output sha256 of every executed book, the sha256 of every leakage report
+(``leakage.LeakageReport`` / ``HoldoutLeakageReport``, SC-02, AMB-33) and, per fit, the solver convergence
+status (recorded, never raised, AMB-26). ``run_record`` is pure (every value is passed in; no
 wall-clock: a timestamp, if wanted, is the caller's ``extra``). The only I/O is explicit:
 ``write_run_record`` (exclusive create at a caller-supplied path: a record is immutable), ``file_sha256``
 and ``code_state`` / ``code_commit`` (git, read-only).
@@ -121,11 +122,12 @@ def default_seeds() -> dict[str, int]:
 def run_record(*, commit: str, dirty: bool, config: Mapping, data_manifests: Mapping[str, str],
                seeds: Mapping[str, int], uv_lock_sha256: str, libraries: Mapping[str, str],
                convergence: Sequence[Mapping], runs: Sequence[BookRun], research: bool = False,
-               extra: Mapping | None = None) -> dict:
+               extra: Mapping | None = None, leakage_reports: Sequence = ()) -> dict:
     """The DT4 record with the ``data.schema`` DT4 columns (``run_id`` key, ``code_commit``,
     ``config_sha256``, ``data_manifest_sha256s``, ``seeds``, ``library_versions``) plus the working-tree
     state, the ``uv.lock`` sha256, the identity and output sha256 of every executed book, the per-fit
-    convergence rows (with a not-converged count) and ``extra``. ``run_id`` is the sha256 of the canonical
+    convergence rows (with a not-converged count), the leakage reports (kind, sha256, passed / findings; each
+    must verify: ``leakage.verify_report``) and ``extra``. ``run_id`` is the sha256 of the canonical
     JSON of everything else (deterministic). Validated (malformed commit / sha256, missing manifest or runs:
     refused) and checked with ``schema.validate("DT4", ...)``. A research record is refused from a dirty
     working tree; otherwise ``code_dirty`` records it. The record is a research record when any covered run
@@ -148,6 +150,18 @@ def run_record(*, commit: str, dirty: bool, config: Mapping, data_manifests: Map
             raise ValueError(f"{name}: not a sha256")
     if not seeds or not all(isinstance(v, int) and not isinstance(v, bool) for v in seeds.values()):
         raise ValueError("seeds must be a non-empty mapping of ints")
+    from luna.v7 import leakage  # local: leakage imports this module
+
+    leak = []
+    for rep in leakage_reports:
+        if not leakage.verify_report(rep):
+            raise ValueError("leakage_reports: a report not issued by the leakage check runners (or altered)")
+        if isinstance(rep, leakage.LeakageReport):
+            leak.append({"kind": "pre_opening", "sha256": rep.sha256, "passed": bool(rep.passed),
+                         "ml_star": [rep.ml_star[0], int(rep.ml_star[1])]})
+        else:
+            leak.append({"kind": "holdout", "sha256": rep.sha256, "pre_sha256": rep.pre_sha256,
+                         "findings": len(rep.findings)})
     conv = [dict(r) for r in convergence]
     bad = [r for r in conv if r.get("converged") is False]
     body = {
@@ -164,6 +178,7 @@ def run_record(*, commit: str, dirty: bool, config: Mapping, data_manifests: Map
         "runs": [run_identity(r) for r in runs],
         "convergence": json.loads(canonical_json(conv)),
         "convergence_summary": {"fits": len(conv), "not_converged": len(bad)},
+        "leakage_reports": leak,
         "extra": json.loads(canonical_json(dict(extra or {}))),
     }
     rec = {"run_id": hashlib.sha256(canonical_json(body).encode()).hexdigest(), **body}

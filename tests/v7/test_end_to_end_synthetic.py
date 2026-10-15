@@ -31,6 +31,7 @@ from luna.v7.constants import FROZEN
 from luna.v7.runner_select import holdout_inputs
 from luna.v7.timeutil import D
 from tests.v7 import fixtures_v7 as fx
+from tests.v7 import leak_fixtures as lf
 
 SEED = 7
 SAMPLE_EVERY = 7  # every 7th day of the 4-day sample grid -> 28-day spacing, 11 sample decisions
@@ -77,7 +78,8 @@ def run_pipeline(seed: int) -> tuple[dict[str, str], dict]:
     hold = runner.label_panel(u, prov, fx.decisions_in(fx.BOOK), fx.H_STAR, fx.BOOK, fx.NOW)
     x = holdout_inputs(auth=synthetic_auth(), ml_T=runs["A2"], a0_T=runs["A0"], ml_M=em["A2"], a0_M=em["A0"],
                        quarter_edges=edges, panel=hold, final_model=fm, dev_ml_run=runs["A2"], dev_kill=(),
-                       leakage=(), integrity=(), B=B_SMALL)
+                       leakage_report=lf.passed_report("A2", fx.H_STAR), records=prov.record, integrity=(),
+                       B=B_SMALL)
     v = verdict.holdout(x)
     v_kill = None
     if kill:
@@ -108,10 +110,11 @@ def run_pipeline(seed: int) -> tuple[dict[str, str], dict]:
     out["kill"] = _sha(kill)
     out["cbb"] = _sha((cbb.mean_r, cbb.mean_x, cbb.p_abs_by_ell, cbb.p_diff_by_ell, cbb.p_P))
     out["holdout_panel"] = _sha((hold.samples, hold.invalid_by_reason, x.k8))
+    out["holdout_leakage"] = _sha((x.holdout_leakage.sha256, x.holdout_leakage.findings))
     out["verdict"] = _sha((v.cls, v.reasons, v.applicable, v.criteria, v.p1_em, v.maker_split_undecidable,
                            v.a1_better, v_kill))
     facts = dict(u=u, samples=samples, panel=panel, fm=fm, runs=runs, em=em, leds=leds, kill=kill, cbb=cbb,
-                 logs=logs, verdict=v, verdict_kill=v_kill, hold=hold)
+                 logs=logs, verdict=v, verdict_kill=v_kill, hold=hold, holdout_leakage=x.holdout_leakage)
     return out, facts
 
 
@@ -155,6 +158,8 @@ def test_end_to_end_synthetic(tiny_space):
         assert accounting.k10_ok(led) and accounting.daily_ok(led)
         assert abs(led.NET - led.equity_change) <= 1e-9
     assert np.isfinite(facts["cbb"].p_P)
+    hl = facts["holdout_leakage"]  # L1 re-checked at every decision through the real provider records
+    assert hl.findings == () and dict(hl.checks)["L1"] > 0
     # E_M runs (secondary) are valid books with maker fills
     for k, r in facts["em"].items():
         assert r.valid and r.execution == "E_M", (k, r.invalid)

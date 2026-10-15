@@ -22,6 +22,8 @@ from luna.v7.book.execution import (
     INVALID_TERMINAL,
 )
 from luna.v7.timeutil import MIN, D
+from luna.v7.universe import LeakageError
+from tests.v7 import leak_fixtures as lf
 from tests.v7.run_fixtures import LO, funding_run
 
 N = 120  # holdout days in the synthetic runs (4 quarters of 30 days)
@@ -240,7 +242,18 @@ def _ic_data(seed=0, n_dates=40, signal=1.0):
     return (signal * y + rng.normal(0, 1, len(dates)), y, dates)
 
 
-def _inputs(ml_mu=0.002, ml_m_mu=None, a0_mu=0.0, **kw):
+def _leak_late(t):
+    """A holdout decision record with an input known at t (> t - 1 min): an L1 finding."""
+    return lf.clean_records(int(t) + MIN)
+
+
+def _leak(runs, records=lf.clean_records) -> dict:
+    """The passed pre-opening LeakageReport (ML* = A2 at 72 h) and a holdout-phase report of ``runs``."""
+    pre = lf.passed_report("A2", 72)
+    return dict(leakage=pre, holdout_leakage=lf.holdout_report(pre, runs, records))
+
+
+def _inputs(ml_mu=0.002, ml_m_mu=None, a0_mu=0.0, leak_records=lf.clean_records, **kw):
     ml_m_mu = ml_mu if ml_m_mu is None else ml_m_mu
     _, y, dts = _ic_data(1)
     base = dict(
@@ -249,9 +262,11 @@ def _inputs(ml_mu=0.002, ml_m_mu=None, a0_mu=0.0, **kw):
         ml_M=funding_run(_nets(ml_m_mu, 3), arm="A2", h=72, execution="E_M"),
         a0_M=funding_run(_nets(a0_mu, 4), arm="A0", h=72, execution="E_M"),
         quarter_edges=EDGES, ic=_ic_data(), calib=(y, y, dts),  # slope exactly 1
-        dev_mean_daily_net=0.001, dev_kill=(), leakage=(), integrity=(), k8=NO_K8, B=2000, seed=7,
+        dev_mean_daily_net=0.001, dev_kill=(), integrity=(), k8=NO_K8, B=2000, seed=7,
     )
     base.update(kw)
+    if "leakage" not in kw:
+        base.update(_leak([base[k] for k in ("ml_T", "a0_T", "ml_M", "a0_M")], leak_records))
     return V.HoldoutInputs(**base)
 
 
@@ -335,8 +350,9 @@ def test_holdout_p1_execution_classes():
     # P1 needs BOTH legs of the IUT: ML* strongly positive but not better than A0
     v = V.holdout(_inputs(ml_mu=0.002, a0_mu=0.002))
     assert v.details["p1"].p_abs < 0.05 and v.details["p1"].p_diff >= 0.05 and not v.criteria["P1"]
-    v = V.holdout(_inputs(leakage=("L3: label spike",)))
-    assert v.cls == V.LEAKAGE and "leakage: L3: label spike" in v.reasons
+    v = V.holdout(_inputs(leak_records=_leak_late))
+    assert v.cls == V.LEAKAGE and v.reasons[0].startswith("leakage: L1: decision ")
+    assert "max_known_at" in v.reasons[0]
     v = V.holdout(_inputs(dev_mean_daily_net=0.0))
     assert not v.criteria["P10"] and v.cls == V.INCONCLUSIVE  # P4 still fails -> INCONCLUSIVE outranks NO-GO
     v = V.holdout(_inputs(ic=_ic_data(signal=0.0)))
@@ -398,11 +414,12 @@ def test_em_runs_are_secondary():
 
 def test_holdout_invalid_required_arm():
     good = _inputs()
+    leaky = _inputs(leak_records=_leak_late).holdout_leakage
     for field_ in ("ml_T", "a0_T"):
         # INVALID_BTC: AMB-21 (b); INVALID_EXIT_GAP / INVALID_MARK: round-2 overrides 2 / 3 (DK-69, DK-70)
         for why in (INVALID_TERMINAL, INVALID_NO_EXIT, INVALID_BTC, INVALID_EXIT_GAP, INVALID_MARK):
             run = replace(getattr(good, field_), invalid=why)
-            v = V.holdout(replace(good, **{field_: run}, leakage=("L1",)))
+            v = V.holdout(replace(good, **{field_: run}, holdout_leakage=leaky))
             assert v.cls == V.INVALID and any(why in s for s in v.reasons)
             assert v.applicable[:2] == (V.INVALID, V.LEAKAGE) and v.criteria == {}
             assert set(v.details["run_integrity"]) == {"ML* E_T", "A0 E_T", "ML* E_M", "A0 E_M"}
@@ -438,7 +455,7 @@ def test_k8_and_required_findings_inputs():
     # findings are required (no defaults); None / a bare string is refused, an empty tuple means "checked"
     with pytest.raises(TypeError):
         V.HoldoutInputs(good.ml_T, good.a0_T, good.ml_M, good.a0_M, EDGES, good.ic, good.calib, 0.001)
-    for name in ("leakage", "integrity", "dev_kill"):
+    for name in ("leakage", "holdout_leakage", "integrity", "dev_kill"):
         for bad in (None, "L1"):
             with pytest.raises(ValueError):
                 V.holdout(replace(good, **{name: bad}))
@@ -499,3 +516,40 @@ def test_secondary_family_holm_and_a1_claim():
     v1 = V.holdout(base)
     v2 = V.holdout(replace(base, secondary=p2, a1_calib=good_cal))
     assert v1.cls == v2.cls and v1.criteria == v2.criteria and v2.a1_better is True
+
+
+# --- leakage reports (SC-02, AMB-33) ------------------------------------------------------------------------
+def test_holdout_requires_a_passed_pre_opening_report():
+    good = _inputs()
+    assert V.holdout(good).cls != V.LEAKAGE and good.leakage.passed
+    # a free tuple / a forged or altered report is refused
+    for bad in ((), ("L1",), replace(good.leakage, commit="c" * 40)):
+        with pytest.raises(ValueError, match="run_leakage_checks"):
+            V.holdout(replace(good, leakage=bad))
+    # a real report with checks not executed is not passed: the holdout is never opened
+    skipped = lf.run_checks("A2", 72, samples={}, fold_models={}, final_model=None)
+    assert lf.leakage.verify_report(skipped) and not skipped.passed
+    with pytest.raises(ValueError, match="did not pass"):
+        V.holdout(replace(good, leakage=skipped))
+    # a report for another ML*
+    a3 = dict(ml_T=replace(good.ml_T, arm="A3"), ml_M=replace(good.ml_M, arm="A3"))
+    with pytest.raises(ValueError, match=r"ML\*"):
+        V.holdout(replace(good, **a3))
+    # the holdout-phase report must be issued by run_holdout_checks and unaltered
+    for bad in ((), replace(good.holdout_leakage, findings=())
+                if good.holdout_leakage.findings else replace(good.holdout_leakage, runs=())):
+        with pytest.raises(ValueError, match="run_holdout_checks"):
+            V.holdout(replace(good, holdout_leakage=bad))
+
+
+def test_holdout_phase_findings_give_no_go_leakage():
+    def raising(t):
+        raise LeakageError(f"decision {t}: an input known at {t} > t - 1 min")
+
+    for rec in (_leak_late, raising):
+        x = _inputs(leak_records=rec)
+        assert x.holdout_leakage.findings and x.leakage.passed
+        v = V.holdout(x)
+        assert v.cls == V.LEAKAGE and V.LEAKAGE in v.applicable
+        n = len(x.holdout_leakage.findings)
+        assert all(r.startswith("leakage: L1: decision ") for r in v.reasons[:n])

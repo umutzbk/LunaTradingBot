@@ -22,10 +22,11 @@ from luna.v7.data.notices import NoticeVersion
 from luna.v7.data.terminal import TerminalEvent
 from luna.v7.features import FEATURES
 from luna.v7.runner import DecisionProvider, FoldScoreModel, LabelPanel, ResearchUniverse
-from luna.v7.runner_select import dev_selection, holdout_inputs, missing_funding_rate
+from luna.v7.runner_select import dev_leakage_checks, dev_selection, holdout_inputs, missing_funding_rate
 from luna.v7.timeutil import MIN, D, H, to_ns
 from luna.v7.windows import Fold
 from tests.v7 import fixtures_v7 as fx
+from tests.v7 import leak_fixtures as lf
 
 BTC = fx.BTC
 SHORTS = ("AAAUSDT", "BBBUSDT", "CCCUSDT")  # positive funding: A0 shorts them
@@ -672,7 +673,9 @@ def test_dev_selection_invalid_precondition(inputs):
     assert len(rel) > 0 and (rel["instance"] == i0.idx).all() and (rel["ts"] < i0.last_trade_ts).all()
     with pytest.raises(ValueError, match="no ML"):
         holdout_inputs(auth=auth(), ml_T=r72, a0_T=r72, ml_M=r72, a0_M=r72, quarter_edges=(), panel=None,
-                       final_model=None, leakage=(), integrity=(), dev=dev)
+                       final_model=None, leakage_report=None, records=None, integrity=(), dev=dev)
+    with pytest.raises(ValueError, match="no ML"):  # no ML*: no leakage report either (holdout sealed)
+        dev_leakage_checks(dev, {}, None, **lf.PROV)
 
 
 # -------------------------------------------------------------------------------------- holdout inputs
@@ -691,7 +694,8 @@ def test_holdout_inputs_require_authorization(dev_valid):
     kw = dict(ml_T=dev.runs[(arm, h)], a0_T=dev.runs[("A0", h)], ml_M=dev.em_runs["ML*"],
               a0_M=dev.em_runs["A0"],
               quarter_edges=(q[0][0], q[0][0] + 12 * H, q[1][0], q[1][0] + 12 * H, q[1][1]),
-              panel=_panel(h), final_model=FakeFold(fold(9, 0, 1), h, 1.0), leakage=(), integrity=(),
+              panel=_panel(h), final_model=FakeFold(fold(9, 0, 1), h, 1.0),
+              leakage_report=lf.passed_report(arm, h), records=lf.clean_records, integrity=(),
               dev_ml_run=dev.runs[(arm, h)], dev_kill=(), B=B_SMALL)
     for bad in (None, object(), {"approved": True}):
         with pytest.raises(guard.HoldoutBlocked):
@@ -701,6 +705,21 @@ def test_holdout_inputs_require_authorization(dev_valid):
     assert x.k8.missing_funding_rate == missing_funding_rate([kw["ml_T"], kw["a0_T"]])
     assert len(x.ic[0]) == len(x.calib[0]) == len(x.a1_calib[0]) == len(kw["panel"].samples)
     assert verdict.holdout(x).cls in verdict.CLASSES  # the assembled inputs are accepted by the verdict
+    # SC-02: the holdout-phase leakage report is built here over the four runs, linked to the pre report
+    assert x.leakage is kw["leakage_report"] and x.holdout_leakage.pre_sha256 == x.leakage.sha256
+    assert lf.leakage.covers(x.holdout_leakage, [kw[k] for k in ("ml_T", "a0_T", "ml_M", "a0_M")])
+    assert x.holdout_leakage.findings == ()
+    late = holdout_inputs(auth=auth(), **{**kw, "records": lambda t: lf.clean_records(t + MIN)})
+    assert late.holdout_leakage.findings and verdict.holdout(late).cls in (verdict.LEAKAGE, verdict.INVALID)
+    skipped = lf.run_checks(arm, h, samples={}, fold_models={}, final_model=None)
+    for bad, msg in (((), "run_leakage_checks"), (replace(kw["leakage_report"], commit="c" * 40),
+                                                   "run_leakage_checks"), (skipped, "did not pass")):
+        with pytest.raises(ValueError, match=msg):
+            holdout_inputs(auth=auth(), **{**kw, "leakage_report": bad})
+    other = ("A3" if arm == "A2" else "A2", h)
+    wrong = lf.run_checks(*other, samples={}, fold_models={}, final_model=None)
+    with pytest.raises(ValueError, match="did not pass|ML"):
+        holdout_inputs(auth=auth(), **{**kw, "leakage_report": wrong})
     with pytest.raises(ValueError, match="kill"):
         holdout_inputs(auth=auth(), **{**kw, "dev_kill": ("F_net <= 0",)})
     with pytest.raises(ValueError, match="is not"):
@@ -721,10 +740,28 @@ def test_holdout_inputs_require_authorization(dev_valid):
             holdout_inputs(auth=auth(), **{**kw, "final_model": bad})
     good = _FamilyFold(fm, reg={reg: object()}, clf={clf: object(), other: object()})
     assert isinstance(holdout_inputs(auth=auth(), **{**kw, "final_model": good}), verdict.HoldoutInputs)
+    rest = {k: v for k, v in kw.items() if k not in ("dev_ml_run", "dev_kill")}
     if dev.kill:  # the real W_DEV result: a kill never opens the holdout (DEC-19)
         with pytest.raises(ValueError, match="kill"):
-            rest = {k: v for k, v in kw.items() if k not in ("dev_ml_run", "dev_kill")}
             holdout_inputs(auth=auth(), **rest, dev=dev)
+    else:  # the report must have been run on this DevSelection's fold models (Task 24 link)
+        with pytest.raises(ValueError, match="DevSelection"):
+            holdout_inputs(auth=auth(), **rest, dev=dev)
+
+
+def test_dev_leakage_checks_use_the_dev_fold_models():
+    """dev_leakage_checks passes ML* and the fold models the S-10.6 books scored with (no canary inputs here:
+    the report records the provenance and is not passed)."""
+    from types import SimpleNamespace
+
+    fms = lf.fold_models()
+    dev = SimpleNamespace(ml_star=("A2", 72), models={
+        (a, h): SimpleNamespace(models=fms[h]) for a in ("A2", "A3") for h in fms})
+    with lf.tiny_space():
+        r = dev_leakage_checks(dev, {}, None, **lf.PROV)
+    assert r.ml_star == ("A2", 72) and not r.passed
+    assert dict(r.fold_model_hashes) == {h: tuple(lf.leakage.model_hash(m) for m in fms[h]) for h in fms}
+    assert {k.key for k in r.k7 if k.evaluated} == {(72, "fold0", "en"), (72, "fold0", "logit_en")}
 
 
 def test_missing_funding_rate(dev_valid):
@@ -779,7 +816,7 @@ def test_missing_required_inputs_fail_closed(inputs, dev_valid):
     with pytest.raises(ValueError, match="W_DEV facts"):
         holdout_inputs(auth=auth(), ml_T=dev.runs[("A2", 24)], a0_T=dev.runs[("A0", 24)],
                        ml_M=dev.em_runs["A0"], a0_M=dev.em_runs["A0"], quarter_edges=(), panel=_panel(24),
-                       final_model=None, leakage=(), integrity=())
+                       final_model=None, leakage_report=None, records=None, integrity=())
 
 
 def test_dev_selection_refusals(inputs):

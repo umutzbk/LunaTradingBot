@@ -21,6 +21,7 @@ from luna.v7.constants import FROZEN
 from luna.v7.data.instances import Instance, current_instance
 from luna.v7.features import _funding_feats
 from luna.v7.timeutil import MIN, D, H, ns_array, to_ns
+from tests.v7 import leak_fixtures as lf
 from tests.v7.book.engine_fixtures import LO as BLO
 from tests.v7.book.engine_fixtures import base_inputs
 from tests.v7.run_fixtures import funding_run
@@ -179,9 +180,12 @@ def _hold_inputs(**kw):
         ml_M=funding_run(rng.normal(0.002, 0.002, n), arm="A2", h=72, execution="E_M"),
         a0_M=funding_run(rng.normal(0.0, 0.002, n), arm="A0", h=72, execution="E_M"),
         quarter_edges=edges, ic=(y + rng.normal(0, 1, len(y)), y, dates), calib=(y, y, dates),
-        dev_mean_daily_net=0.001, dev_kill=(), leakage=(), integrity=(), k8=V.K8Rates(0.0, 0.0), B=200,
+        dev_mean_daily_net=0.001, dev_kill=(), integrity=(), k8=V.K8Rates(0.0, 0.0), B=200,
         seed=7,
     )
+    pre = lf.passed_report("A2", 72)  # the holdout-phase report of the unmodified runs (verdict: pure)
+    base.update(leakage=pre, holdout_leakage=lf.holdout_report(
+        pre, [base[k] for k in ("ml_T", "a0_T", "ml_M", "a0_M")]))
     base.update(kw)
     return V.HoldoutInputs(**base)
 

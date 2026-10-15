@@ -14,17 +14,23 @@ S-13.2 / S-13.4 inputs, K3, K8, K11, EC-2, DEC-19; AMB-27). Orchestration only (
   classifier family is not ML*'s (A2: ``en`` / ``logit_en``, A3: ``lgb_reg`` / ``lgb_clf``).
 * Every book of ``dev_selection`` comes from ``run_book`` and is therefore a research run: its DT4 record is
   always a research record (``runrecord.run_record``), refused from a dirty working tree (DK-114 / m10).
+* Leakage (SC-02, AMB-33): ``dev_leakage_checks`` runs ``leakage.run_leakage_checks`` on the S-10.6 fold
+  models of a DevSelection (ML*, the fold-model hashes). ``holdout_inputs`` takes that report (it must verify,
+  be passed, be for ML* at h* and, with ``dev``, carry dev's fold-model hashes) and builds the holdout-phase
+  report itself (``leakage.run_holdout_checks`` over the four holdout runs with the caller's decision
+  ``records``, e.g. ``DecisionProvider.record``); no free leakage tuple exists any more.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
+import pandas as pd
 
-from luna.v7 import cv, guard, selection, stats
+from luna.v7 import cv, guard, leakage, models, selection, stats
 from luna.v7.accounting import account, mean_daily_net, period_net
 from luna.v7.arms import families
 from luna.v7.book.engine import BookRun
@@ -134,9 +140,25 @@ def missing_funding_rate(runs: Sequence[BookRun]) -> float:
     return miss / den if den else 0.0
 
 
+def dev_leakage_checks(dev: DevSelection, samples: Mapping[int, pd.DataFrame], final_model: object, *,
+                       commit: str, dirty: bool, data_manifests: Mapping[str, str],
+                       seed: int = models.SEED) -> leakage.LeakageReport:
+    """``leakage.run_leakage_checks`` on a DevSelection: its ML* and the fold models its books scored with
+    (``FoldScoreModel.models`` per horizon), ``samples`` = the W_DEV label panels of those fold models."""
+    if dev.ml_star is None:
+        raise ValueError("the S-10.6 validity precondition failed: no ML* (no leakage report, the holdout "
+                         "stays sealed)")
+    arm, _ = dev.ml_star
+    fms = {h: dev.models[(arm, h)].models for h in HORIZONS if (arm, h) in dev.models}
+    return leakage.run_leakage_checks(samples=samples, fold_models=fms, final_model=final_model,
+                                      ml_star=dev.ml_star, commit=commit, dirty=dirty,
+                                      data_manifests=data_manifests, seed=seed)
+
+
 def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: BookRun,  # noqa: N803
                    ml_M: BookRun, a0_M: BookRun, quarter_edges: Sequence[int],  # noqa: N803
-                   panel: LabelPanel, final_model: object, leakage: Sequence[str], integrity: Sequence[str],
+                   panel: LabelPanel, final_model: object, leakage_report: leakage.LeakageReport,
+                   records: Callable[[int], object], integrity: Sequence[str],
                    dev: DevSelection | None = None, dev_ml_run: BookRun | None = None,
                    dev_kill: Sequence[str] | None = None, secondary: Mapping | None = None,
                    B: int = stats.B_DEFAULT, seed: int = stats.SEED) -> HoldoutInputs:
@@ -144,7 +166,9 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
     synthetic windows, from ``dev_ml_run`` + ``dev_kill``. ``final_model`` (``cv.final_model``, or any model
     with ``predict(df)``) predicts the canonical panel: P7 ``ic`` = (ŷ, y_reg, dates), P8 ``calib`` = (ŷ_cal,
     y_reg, dates), the A1 calibration = (P̂_cal, y_pos, dates); K8 = (the panel's invalid-label rate,
-    ``missing_funding_rate`` of the required E_T runs)."""
+    ``missing_funding_rate`` of the required E_T runs). ``leakage_report``: the passed pre-opening
+    ``leakage.LeakageReport`` of ML*; ``records``: the decision records of the holdout runs (L1 re-check,
+    ``leakage.run_holdout_checks``)."""
     if not isinstance(auth, guard.HoldoutAuthorization):
         raise guard.HoldoutBlocked("holdout inputs need the user's HoldoutAuthorization (DEC-19)")
     if dev is not None:
@@ -164,6 +188,18 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
     for name, r in (("ml_T", ml_T), ("a0_T", a0_T), ("ml_M", ml_M), ("a0_M", a0_M), ("W_DEV ML*", dev_run)):
         if not r.research:  # DK-114 / m10: only runs of the research entry point (runner.run_book)
             raise ValueError(f"{name}: not a research run (runner.run_book); its DT4 record would not be one")
+    rep = leakage_report
+    if not isinstance(rep, leakage.LeakageReport) or not leakage.verify_report(rep):
+        raise ValueError("leakage_report: a LeakageReport issued by leakage.run_leakage_checks is required")
+    if not rep.passed:
+        raise ValueError(f"the pre-opening LeakageReport did not pass: the holdout is never opened (DEC-19): "
+                         f"{rep.blocking}")
+    if rep.ml_star != (arm, int(h)):
+        raise ValueError(f"the LeakageReport is for ML* = {rep.ml_star}, not {(arm, int(h))}")
+    if dev is not None:
+        dev_hashes = {hh: tuple(m.hashes) for (a, hh), m in dev.models.items() if a == arm}
+        if dict(rep.fold_model_hashes) != dev_hashes:
+            raise ValueError("the LeakageReport was not run on this DevSelection's fold models")
     reg, clf = families(arm)
     if int(getattr(final_model, "horizon", -1)) != int(h):
         raise ValueError(f"the final model is not for h* = {h}h")
@@ -188,9 +224,13 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
     if not math.isfinite(panel.invalid_rate):
         raise ValueError("K8: the invalid-label rate is undefined (no labels)")
     k8 = K8Rates(float(panel.invalid_rate), missing_funding_rate([ml_T, a0_T]))
-    return HoldoutInputs(ml_T, a0_T, ml_M, a0_M, tuple(int(x) for x in quarter_edges), ic, calib,
-                         mean_daily_net(account(dev_run)), tuple(kill), tuple(leakage), tuple(integrity), k8,
-                         secondary, a1, B, seed)
+    hold = leakage.run_holdout_checks(rep, runs=[ml_T, a0_T, ml_M, a0_M], records=records)
+    return HoldoutInputs(ml_T=ml_T, a0_T=a0_T, ml_M=ml_M, a0_M=a0_M,
+                         quarter_edges=tuple(int(x) for x in quarter_edges), ic=ic, calib=calib,
+                         dev_mean_daily_net=mean_daily_net(account(dev_run)), dev_kill=tuple(kill),
+                         leakage=rep, holdout_leakage=hold, integrity=tuple(integrity), k8=k8,
+                         secondary=secondary, a1_calib=a1, B=B, seed=seed)
 
 
-__all__ = ["DevSelection", "dev_selection", "holdout_inputs", "missing_funding_rate", "quarters"]
+__all__ = ["DevSelection", "dev_leakage_checks", "dev_selection", "holdout_inputs", "missing_funding_rate",
+           "quarters"]

@@ -2,7 +2,7 @@
 §16, EC-11; AMB-21, AMB-22).
 
 Pure: every input is already computed (executed ``BookRun``s, IC / calibration arrays, the ``W_DEV`` facts,
-leakage / integrity findings). No I/O, no data access, no training.
+the leakage reports, integrity findings). No I/O, no data access, no training.
 
 * **Required arms on `W_HOLD` (S-13.4, K11, EC-11):** ML* and A0 under ``E_T`` (the acceptance execution
   model, S-13.2 / S-6.1). Either ``invalid`` → ``INVALID RUN`` with the run's S-5.4 text (B / C: ``INVALID RUN
@@ -14,8 +14,14 @@ leakage / integrity findings). No I/O, no data access, no training.
   m8) or whose decision log lacks ``killed`` (the P3 input; the engine always writes it, DK-113): never an
   exception; so is any caller-supplied integrity / guard finding and a K8 rate (invalid labels, missing
   funding) > 0.5 %.
-  Leakage, integrity, K8 and the S-10.7 result are REQUIRED inputs (an empty tuple means "checked, nothing
-  found"); a non-empty S-10.7 kill refuses the call (the holdout is never opened, DEC-19).
+  Integrity, K8 and the S-10.7 result are REQUIRED inputs (an empty tuple means "checked, nothing found"); a
+  non-empty S-10.7 kill refuses the call (the holdout is never opened, DEC-19).
+* **Leakage (SC-02, L9 / K7 / S-13.4; AMB-33):** never a caller tuple. ``leakage`` is the pre-opening
+  ``leakage.LeakageReport`` (L9a / L9b / K7): it must verify (issued by ``leakage.run_leakage_checks``) and be
+  ``passed`` for ML* at h*, else the call is refused like an S-10.7 kill (DEC-19 "all leakage / canary checks
+  passed"). ``holdout_leakage`` is the holdout-phase ``leakage.HoldoutLeakageReport`` (built by
+  ``leakage.run_holdout_checks``, linked to that report by its sha256, every check executed); any of its
+  findings gives "NO-GO: leakage".
 * **E_M runs are secondary (S-6.2; AMB-22 (g), normative amendment required):** an invalid or non-accountable
   ML* / A0 ``E_M`` run voids only P1(E_M) and comparison 4; when P1(E_T) fails and P1(E_M) is unavailable the
   class is ``NO-GO`` (above INCONCLUSIVE, see ``classify``) with the flag ``maker_split_undecidable``.
@@ -40,6 +46,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from luna.v7 import leakage as lk
 from luna.v7 import stats
 from luna.v7.accounting import (
     Ledger,
@@ -288,7 +295,8 @@ class HoldoutInputs:
     calib: tuple  # (ŷ_cal, y_reg(h*), dates) over every eligible W_HOLD candidate (P8-primary)
     dev_mean_daily_net: float  # P10: ML* out-of-fold mean daily net on W_DEV
     dev_kill: Sequence[str]  # S-10.7 result (must be empty: a kill never opens the holdout)
-    leakage: Sequence[str]  # L1–L14 findings, any model
+    leakage: lk.LeakageReport  # pre-opening L9 / K7 report: must verify and be passed (else refused)
+    holdout_leakage: lk.HoldoutLeakageReport  # holdout-phase L1–L14 findings (any -> NO-GO: leakage)
     integrity: Sequence[str]  # guard / Stage 0-type integrity findings (any -> INVALID RUN)
     k8: K8Rates
     secondary: Mapping[str, tuple[BookRun | Ledger, BookRun | Ledger] | None] | None = None
@@ -330,13 +338,33 @@ def _check_inputs(x: HoldoutInputs) -> None:
         raise ValueError("dev_mean_daily_net must be finite")
     if _seq(x.dev_kill, "dev_kill"):
         raise ValueError("S-10.7 development kill: the holdout is never opened (NO-GO: no viable edge, K3)")
-    _seq(x.leakage, "leakage")
+    _check_leakage(x)
     _seq(x.integrity, "integrity")
     if not isinstance(x.k8, K8Rates):
         raise ValueError("k8 must be K8Rates")
     for v in (x.k8.invalid_label_rate, x.k8.missing_funding_rate):
         if isinstance(v, bool) or not (isinstance(v, int | float) and math.isfinite(v) and 0.0 <= v <= 1.0):
             raise ValueError(f"K8 rate must be a share in [0, 1], got {v!r}")
+
+
+def _check_leakage(x: HoldoutInputs) -> None:
+    """The pre-opening report must be issued by ``run_leakage_checks``, passed and for ML* at h*; the
+    holdout-phase report must be issued by ``run_holdout_checks``, complete and linked to it (AMB-33)."""
+    pre, hold = x.leakage, x.holdout_leakage
+    if not isinstance(pre, lk.LeakageReport) or not lk.verify_report(pre):
+        raise ValueError("leakage: a pre-opening LeakageReport issued by leakage.run_leakage_checks is "
+                         "required")
+    if not pre.passed:
+        raise ValueError(f"leakage: the pre-opening LeakageReport did not pass, the holdout is never opened "
+                         f"(L9 / K7, DEC-19): {pre.blocking}")
+    if pre.ml_star != (x.ml_T.arm, int(x.ml_T.h_star)):
+        raise ValueError(f"leakage: the LeakageReport is for ML* = {pre.ml_star}, not "
+                         f"{(x.ml_T.arm, int(x.ml_T.h_star))}")
+    if not isinstance(hold, lk.HoldoutLeakageReport) or not lk.verify_report(hold):
+        raise ValueError("holdout_leakage: a HoldoutLeakageReport issued by leakage.run_holdout_checks is "
+                         "required")
+    if hold.pre_sha256 != pre.sha256 or not hold.complete:
+        raise ValueError("holdout_leakage: not linked to the pre-opening report or a check was not executed")
 
 
 def _usable(obj: BookRun | Ledger | None) -> tuple[Ledger | None, str | None]:
@@ -402,8 +430,8 @@ def _p1_em(x: HoldoutInputs) -> tuple[stats.CBBResult | None, str | None]:
 def holdout(x: HoldoutInputs) -> Verdict:
     """The S-13.4 verdict on ``W_HOLD`` (most severe applicable class)."""
     _check_inputs(x)
-    leak = bool(x.leakage)
-    reasons = [f"leakage: {s}" for s in x.leakage]
+    leak = bool(x.holdout_leakage.findings)
+    reasons = [f"leakage: {c}: {s}" for c, s in x.holdout_leakage.findings]
     req = {"ML* E_T": x.ml_T, "A0 E_T": x.a0_T}
     det: dict = dict(k8=x.k8, run_integrity={k: tuple(r.integrity) for k, r in
                                              {**req, "ML* E_M": x.ml_M, "A0 E_M": x.a0_M}.items()})

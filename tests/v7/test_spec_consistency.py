@@ -274,6 +274,11 @@ ROWS: list[tuple[str, str, object, object]] = [
     # --- §16 kill criteria ---------------------------------------------------------------------------------
     ("§16 K8 invalid share", r"\| K8 \| During the holdout run: invalid labels or missing funding > ([\d.]+) %",
      lambda: F.invalid_max, pct),
+    ("§16 K7 50 % gain / weight share (leakage.SHARE_MAX)", r"\| K7 \| One feature carries > (50) % of total LightGBM gain",
+     lambda: F.k7_max_share, pct),
+    # --- §11 leakage controls --------------------------------------------------------------------------------
+    ("§11 L9 (a) permuted-label IC within ±2 SE (leakage.SE_MULT)", r"out-of-fold IC within ±(\d+) SE of 0",
+     lambda: F.l9_se_mult, None),
     ("§16 K10 tolerance", r"\| K10 \| \\\|Σ_c ρ_c \+ MKT − PR\\\| > (1e-9) × Σ\\\|fill notional\\\|", lambda: F.k10_tol, None),
     # --- rows of numbers the checked sections state outside their main tables (fix round 1) -----------------
     ("S-4.2 forced exit delay (min)", r"Forced risk exits fill on the first 1-minute bar after the trigger \+ (\d+) min",
@@ -422,8 +427,6 @@ NOT_CODED: list[tuple[str, str, str]] = [
      "operational recorder cadence (forward recorder service, not in this engine)"),
     ("§15 depth snapshot cadence", r"a depth snapshot every (5) minutes",
      "recorder cadence only; depth is diagnostic (DEC-42) and never read by the engine"),
-    ("§16 K7 50 % gain / weight share", r"\| K7 \| One feature carries > (50) % of total LightGBM gain",
-     "mandatory leakage audit before the holdout: review item, text only at verdict.py:88 (K_TABLE)"),
 ]
 
 
