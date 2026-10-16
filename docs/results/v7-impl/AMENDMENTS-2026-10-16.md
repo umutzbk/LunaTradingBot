@@ -56,3 +56,20 @@ Filled in as items land.
 | A-2 | implemented (Task 29d) | `luna/v7/leakage.py` `L9_TESTS` = 6, `L9_Z` = `norm.ppf(1 − 0.05/12)` ≈ 2.6383; `FROZEN.l9_fwer_alpha` = 0.05 replaces `l9_se_mult`. Record: AMB-33 (a) note. |
 | A-3 | implemented (Task 29d) | `luna/v7/book/engine.py` (`EngineInputs.tick_evaluable`, forward schedule only), `luna/v7/book/risk.py` (`skip_tick`), `luna/v7/forward_replay.py`. Record: AMB-43 (d) RESOLVED by A-3. |
 | R57 (controller) | implemented (Task 29d) | `luna/v7/forward_model.py` (`bridge_decisions`, `BRIDGE_WINDOW`, bridge coverage in `bound_samples`), `luna/v7/runner.py` (`_holdout_labelled`). Record: AMB-43 (a) RESOLVED by R57. |
+
+## A-5 (NORMATIVE REFINEMENT of A-1, user decision 2026-10-16) — AMB-46: same-sentence context for the base-asset match
+
+The C4 re-run after A-1 showed that the base-asset rule, applied literally, also matched BTC, BNB, ETH, USDC and NOT. Delisting and token-swap notices mention these as trading pairs or examples, while a USDⓈ-M phrase appears elsewhere in the notice. None of these assets terminated, and with no scheduled time the U6 flag would never clear.
+
+User decision: A-1 rule 1 applies only when the base-asset token and a USDⓈ-M context phrase are in the SAME sentence. Sentences are split as in DEC-37 / `_SENT_RE`, on R51 text. Everything else in A-1 is unchanged. C4 is re-run, and the gains and losses are reported before freeze.
+
+## A-6 (NORMATIVE CLARIFICATION, user decision 2026-10-16) — resolving DEC-33 monthly/daily conflicts
+
+The first real conflict appeared in the C6 dry run: R3 BTCUSDT 15m, 2023-11-10 from 15:15 UTC, 5 bars where the monthly and daily files disagree on `open`. Under DEC-33 and R55, such a conflict blocks every run that includes BTCUSDT.
+
+User decision:
+- The conflicting keys are removed and treated as MISSING bars. Neither value is chosen.
+- The removal is recorded explicitly in the ingest ledger and in DT4 as "resolved by A-6", together with the keys and both value sets.
+- The existing missing-data rules then apply: the fallback chain, the S-5.4 data-gap rule, and INVALID where a required price is missing.
+- This applies to every DEC-33 conflict, in W_DEV and in W_HOLD.
+- R55 still blocks a conflict that has not been resolved this way.
