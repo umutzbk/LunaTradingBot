@@ -37,7 +37,10 @@ from luna.v7 import guard, windows
 from luna.v7.guard import GuardFailure
 from luna.v7.timeutil import D
 
-__all__ = ["Allowed", "Bounds", "CdxPairs", "EndpointRefused", "GuardFailure", "Request", "bounds", "check",
+N3_SYMBOL_REFUSAL = "N3 symbol must be alphanumeric"  # the refusal text (Task 29e: not-applicable evidence)
+
+__all__ = ["N3_SYMBOL_REFUSAL", "Allowed", "Bounds", "CdxPairs", "EndpointRefused", "GuardFailure", "Request",
+           "bounds", "check",
            "check_wayback_response", "drop_m6_keys", "params_of", "partition_m6_keys", "post_opening_bounds",
            "wayback_pair"]
 
@@ -255,7 +258,7 @@ def check(req: Request, *, auth: object = None, cdx_pairs: CdxPairs | None = Non
             if "limit" in p and _int_param(p["limit"]) is None:
                 raise _refuse("N3 limit must be an integer", req)
             if not p["symbol"].isalnum():
-                raise _refuse("N3 symbol must be alphanumeric", req)
+                raise _refuse(N3_SYMBOL_REFUSAL, req)
             return Allowed("N3")
         if path == "/fapi/v1/exchangeInfo":
             if p:

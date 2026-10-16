@@ -183,36 +183,42 @@ WIN2 = (LO, LO + 2 * D)
 
 
 def test_a3_stale_quarter_tick_without_leg_mark_is_skipped():
-    """A-3 (AMENDMENTS-2026-10-16): in the forward replay a tick inside a stale quarter (the quarter
-    [tick, tick + 15 min), the decision_time convention) is skipped: no mark, no risk action, no INVALID."""
+    """A-3 (AMENDMENTS-2026-10-16) / controller ruling R59: in the forward replay the tick at ``tick`` needs
+    the close of the quarter ENDING at it ([tick - 15 min, tick)); with that quarter stale (isolated) and its
+    close missing, the dependent tick is skipped: no mark, no risk action, no INVALID. The tick at the stale
+    quarter's own start (its needed quarter is fine) is marked."""
     tick = LO + 2 * H
-    aaa = _drop15(instrument("AAAUSDT", 100.0, -1e-4), tick - Q)  # held leg, no close ending at the tick
-    r = run("A0", _a3({G0: True}, _ev([tick]), aaa=aaa), WIN2, 24)
+    stale = tick - Q  # the quarter whose close the tick needs
+    aaa = _drop15(instrument("AAAUSDT", 100.0, -1e-4), stale)  # held leg, no close ending at the tick
+    r = run("A0", _a3({G0: True}, _ev([stale]), aaa=aaa), WIN2, 24)
     assert r.valid and r.invalid is None
     assert tick not in set(r.marks["ts"]) and tick not in set(r.positions["ts"])  # no mark taken
-    assert {tick - Q, tick + Q} <= set(r.marks["ts"])  # the neighbouring evaluable ticks are marked
+    assert {stale, tick + Q} <= set(r.marks["ts"])  # the tick at the stale quarter's start is marked
     assert not (r.fills["ts"].between(tick, tick + Q) & (r.fills["role"] == "leg")).any()  # no risk action
     led = accounting.account(r)
     assert accounting.daily_ok(led) and accounting.k10_ok(led)
 
 
 def test_a3_same_missing_mark_outside_the_forward_skip_is_invalid():
-    """W_DEV / W_HOLD keep AMB-29 (a): the same held leg without a mark is INVALID_MARK on the S-8.1 grid, and
-    in a forward schedule whose tick quarter is evaluable."""
+    """Controls: W_DEV / W_HOLD keep AMB-29 (a): the same held leg without a mark is INVALID_MARK on the S-8.1
+    grid; in a forward schedule it is INVALID_MARK too when the stale quarter is not the one whose close the
+    tick needs (the quarter [tick, tick + 15 min), the pre-R59 key) or when every quarter is evaluable."""
     tick = LO + 2 * H
     aaa = _drop15(instrument("AAAUSDT", 100.0, -1e-4), tick - Q)
     grid = run("A0", base_inputs(aaa=aaa), WIN2, 24)
     assert grid.invalid == INVALID_MARK and grid.invalid_ts == tick
-    fwd_ok_quarter = run("A0", _a3({G0: True}, _ev([tick - Q]), aaa=aaa), WIN2, 24)
-    assert fwd_ok_quarter.invalid == INVALID_MARK and fwd_ok_quarter.invalid_ts == tick
+    wrong_quarter = run("A0", _a3({G0: True}, _ev([tick]), aaa=aaa), WIN2, 24)
+    assert wrong_quarter.invalid == INVALID_MARK and wrong_quarter.invalid_ts == tick
+    all_ok = run("A0", _a3({G0: True}, _ev(), aaa=aaa), WIN2, 24)
+    assert all_ok.invalid == INVALID_MARK and all_ok.invalid_ts == tick
     no_pred = run("A0", _a3({G0: True}, None, aaa=aaa), WIN2, 24)
     assert no_pred.invalid == INVALID_MARK and no_pred.invalid_ts == tick
 
 
 def test_a3_stale_tick_takes_no_risk_action():
-    """BBB (the only short) spikes 20 % in the bar ending at 05:45 only: on an evaluable tick its leg stop
-    fires (and the one-sided flatten follows); with the 05:45 quarter stale the tick is skipped and nothing
-    fires."""
+    """BBB (the only short) spikes 20 % in the bar [05:30, 05:45) only: on an evaluable tick its leg stop
+    fires at 05:45 (and the one-sided flatten follows); with that quarter stale (R59: the quarter the 05:45
+    tick needs) the tick is skipped and nothing fires."""
     spike_lo, tick = LO + 5 * H + 30 * MIN, LO + 5 * H + 45 * MIN
 
     def px(ts):
@@ -221,17 +227,17 @@ def test_a3_stale_tick_takes_no_risk_action():
     bbb = instrument("BBBUSDT", px, 1e-4)
     plain = run("A0", _a3({G0: True}, _ev(), bbb=bbb), WIN2, 24)
     assert plain.valid and (plain.fills["reason"] == "leg_stop").any()
-    r = run("A0", _a3({G0: True}, _ev([tick]), bbb=bbb), WIN2, 24)
+    r = run("A0", _a3({G0: True}, _ev([spike_lo]), bbb=bbb), WIN2, 24)
     assert r.valid and not r.fills["reason"].isin(["leg_stop", "one_sided_flatten", "kill"]).any()
-    assert tick not in set(r.marks["ts"])
+    assert tick not in set(r.marks["ts"]) and spike_lo in set(r.marks["ts"])
 
 
 def test_a3_stale_midnight_tick_defers_the_day_close():
-    """No mark at a skipped midnight tick: the UTC day closes at the first marked tick after it (contiguous
-    daily rows; the accounting identities hold)."""
+    """No mark at a skipped midnight tick (its needed quarter [23:45, 00:00) stale): the UTC day closes at the
+    first marked tick after it (contiguous daily rows; the accounting identities hold)."""
     mid = LO + D
-    r = run("A0", _a3({G0: True}, _ev([mid])), WIN2, 24)
-    assert r.valid and mid not in set(r.marks["ts"])
+    r = run("A0", _a3({G0: True}, _ev([mid - Q])), WIN2, 24)
+    assert r.valid and mid not in set(r.marks["ts"]) and mid - Q in set(r.marks["ts"])
     d = r.daily
     assert d["end_ts"].iloc[0] == mid + Q and d["start_ts"].iloc[1] == mid + Q
     assert d["day"].iloc[1] == mid // D
@@ -399,9 +405,10 @@ def test_end_to_end_forward_pass_byte_identical(frozen, monkeypatch, fwd_inputs)
     assert list(fr.run.decisions["t"]) == sorted(fr.plan.schedule)
     assert model.log and set(model.log) <= set(fr.plan.schedule)  # the frozen model scored the decisions
     assert len(fr.run.fills) and fr.run.positions["ts"].max() < TF7 + 11 * D  # traded, then flat
-    # A-3: the stale day's ticks are skipped (no mark), the ticks around it are marked
+    # A-3 / R59: the ticks that need a stale day's quarter close (day3 + 15 min .. day3 + D) are skipped (no
+    # mark); the ticks around them are marked
     marked = set(fr.run.marks["ts"])
-    assert not marked & set(range(day3, day3 + D, Q)) and {day3 - Q, day3 + D} <= marked
+    assert not marked & set(range(day3 + Q, day3 + D + Q, Q)) and {day3, day3 + D + Q} <= marked
     # 10 active days then flat, costs > funding: NO-GO (H_F, P2, P6), P4 evidence short (DK-99 precedence)
     assert v.cls == forward.NOGO and v.reasons == ("H_F fails", "P2 fails", "P6 fails", "evidence: p4")
     assert v.details["evaluable_days"] == 179 and v.comparison == forward.INCOMPLETE  # no A0 supplied

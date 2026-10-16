@@ -490,27 +490,52 @@ def cmd_funding_rest(a) -> None:
                                             "remaining": len(todo) - sum(n.values())})
 
 
-def cmd_funding_rest_na(_a) -> None:
-    """Task 29e: the unresolved R2_rest keys of non-perpetual symbols (the earlier N3 plan's netguard refusals
-    of delivery / settled names) are recorded as not applicable (``ingest.mark_not_applicable``, S-2.1), so
-    R55 stops blocking on them; every other unresolved key is left as it is. Idempotent."""
+def cmd_funding_rest_na(a) -> None:
+    """Task 29e (fix round 1): the unresolved R2_rest keys whose N3 request netguard refused as a
+    non-alphanumeric symbol (the progress record of the earlier N3 plan carries that refusal; delivery /
+    settled names) are recorded as not applicable (``ingest.mark_not_applicable``, S-2.1) unless the R1
+    identity of the symbol (MetaStore, ``--scope``) has contract type PERPETUAL, which is reported and never
+    hidden. Every other unresolved key is left as it is. Idempotent."""
+    from luna.v7.metastore import MetaStore
+
     t0 = time.time()
     store = LockedStore(STORE)
-    idx = store.ingest_index()
-    keys = sorted(k for k in idx.unresolved if k[0] == "R2_rest" and isinstance(k[1], str)
-                  and not perpetual_shaped(k[1]))
-    for t, s, m in keys:
-        ingest.mark_not_applicable(store, t, s, m)
+    last: dict[tuple[str, str], dict] = {}
+    for r in read_jsonl(PROG / "R2_rest.chunks.jsonl"):
+        last[(r.get("symbol"), r.get("month"))] = r
+    r1: dict[str, set] = defaultdict(set)
+    try:
+        tab = MetaStore(META).load_table("R1", a.scope)
+        for sym, ct in zip(tab["symbol"], tab["contract_type"], strict=True):
+            r1[str(sym)].add(None if ct is None or ct != ct else str(ct))
+    except Exception as e:  # noqa: BLE001 - no R1 yet: the netguard evidence alone decides
+        print("R1 not available:", type(e).__name__, e, flush=True)
+    marked, kept_perp, no_evidence = [], [], []
+    for t, s, m in sorted(k for k in store.ingest_index().unresolved if k[0] == "R2_rest"):
+        rec = last.get((s, m)) or {}
+        why = rec.get("reason") or ""
+        if rec.get("status") != "refused" or netguard.N3_SYMBOL_REFUSAL not in why:
+            no_evidence.append((s, m))
+            continue
+        cts = r1.get(s, set())
+        if "PERPETUAL" in cts:
+            kept_perp.append((s, m))
+            continue
+        ct = next(iter(cts)) if len(cts) == 1 else None
+        ingest.mark_not_applicable(store, t, s, m, evidence=why, r1_contract_type=ct)
+        marked.append((s, m))
     left = sorted(k for k in store.ingest_index().unresolved if k[0] == "R2_rest")
-    log_run("funding_rest_na", "R2_rest", t0, {"marked_not_applicable": len(keys),
-                                               "symbols": sorted({k[1] for k in keys}),
+    log_run("funding_rest_na", "R2_rest", t0, {"marked_not_applicable": len(marked),
+                                               "symbols": sorted({x[0] for x in marked}),
+                                               "kept_r1_perpetual": kept_perp,
+                                               "kept_without_netguard_evidence": len(no_evidence),
                                                "r2_rest_unresolved_left": len(left)})
 
 
 def cmd_rechunk(a) -> None:
     """Task 29e (A-6): re-run ONE bar chunk through the frozen ingest (e.g. the real BTCUSDT 2023-11 DEC-33
-    conflict ledgered as a gap before A-6): the conflicting keys are dropped as missing, the rest is stored and
-    the ``conflict_resolved_A6`` record is appended. Deterministic (same sources, same plan); prints the
+    conflict ledgered as a gap before A-6): the conflicting keys are dropped as missing, the rest is stored
+    and the ``conflict_resolved_A6`` record is appended. Deterministic (same sources, same plan); prints the
     store ledger's verdict for the key."""
     t0 = time.time()
     plan = json.loads((PROG / f"{a.table}.months.json").read_text())
@@ -720,7 +745,8 @@ def main() -> None:
         s = b if name == "bars" else sub.add_parser(name)
         s.add_argument("--budget", type=float, default=480)
         s.add_argument("--workers", type=int, default=8)
-    sub.add_parser("funding-rest-na")
+    na = sub.add_parser("funding-rest-na")
+    na.add_argument("--scope", default="W_DEV")
     rc = sub.add_parser("rechunk")
     rc.add_argument("--table", default="R3", choices=("R3", "R5"))
     rc.add_argument("--symbol", required=True)

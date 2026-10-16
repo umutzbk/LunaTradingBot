@@ -908,18 +908,33 @@ def test_holdout_inputs_require_authorization(dev_valid, opened, tmp_path, monke
         _record([kw["ml_T"]], opening={"pin": {}})
 
 
-def test_run_book_issues_w_hold_books_with_their_provenance(inputs, opened, tmp_path, monkeypatch):
+def _hold_store_universe(tmp_path, auth):
+    """A real raw store under the opening (Tasks 29d / 29e fix round 1): BTCUSDT + 3 candidates, 15m bars /
+    R4 / archive funding from 35 days before W_HOLD to 2025-08-05; the pinned W_HOLD file (R3 BTCUSDT
+    2025-08) is the stored chunk's source (R56 coverage). Returns (store source, universe over the store)."""
+    import hashlib
+
+    from luna.v7 import rawstore
+    from tests.v7 import perf_fixtures as pf
+
+    pinned = {"url": "https://data.binance.vision/" + af.HOLD_ZIP_KEY, "bytes": len(af.HOLD_ZIP_BODY),
+              "md5": hashlib.md5(af.HOLD_ZIP_BODY).hexdigest()}
+    start, n_days = windows.W_HOLD[0] - 35 * D, 70
+    st = rawstore.RawStore(tmp_path / "raw")
+    meta = pf.scale_store(st, 4, n_days, start=start, notice_every=100, auth=auth,
+                          sources=lambda t, s, m: [pinned] if (t, s, m) == ("R3", "BTCUSDT", "2025-08")
+                          else [])
+    src = rawstore.StoreSource(st, meta, auth=auth, budget_bytes=8 * 2**20)
+    return src, ResearchUniverse.from_source(src, start, start + n_days * D)
+
+
+def test_run_book_issues_w_hold_books_with_their_provenance(opened, tmp_path):
     """Red-team r2 MJ3 / m1: ``run_book`` under the verified opening issues a W_HOLD book with its opening,
     window, universe identity, score-model hashes and the bound provider's per-decision max_known_at
-    (``runner.holdout_run_coverage``); a book outside W_HOLD, or without the opening, is not issued."""
-    from luna.v7 import rawstore
-
-    u = uni(inputs)
-    # Task 29e hardening: under auth the ingest check must be a StoreSource's opened with that auth (its store
-    # check itself is tested in test_manifest_gate; here a passing one over the synthetic inputs)
-    monkeypatch.setattr(rawstore.StoreSource, "check_ingest", lambda self, lo, hi: None)
-    src = rawstore.StoreSource(rawstore.RawStore(tmp_path / "raw"), {}, auth=opened.auth)
-    u._ingest_check = (src.check_ingest, *u._ingest_check[1:])
+    (``runner.holdout_run_coverage``); a book outside W_HOLD, or without the opening, is not issued. The
+    universe comes from a real ``rawstore.StoreSource`` opened with the authorization (fix round 1: no
+    swapped-in check), so the R55 / R56 store check and the store-source binding run as in production."""
+    src, u = _hold_store_universe(tmp_path, opened.auth)
     p = DecisionProvider(u, with_features=True, auth=opened.auth)
     win = (windows.W_HOLD[0], windows.W_HOLD[0] + D)
     oid = opened.auth.opening_id
@@ -939,8 +954,25 @@ def test_run_book_issues_w_hold_books_with_their_provenance(inputs, opened, tmp_
     assert mc is not None and mc.model_hashes == real and mc.arm == "A2"
     assert runner.holdout_run_coverage(ml, "0" * 64) is None  # issued for this opening only
     assert runner.holdout_run_coverage(replace(ml, arm="A3"), oid) is None  # identity, not only outputs
-    dev = runner.run_book("A0", u, p, (T - 5 * MIN, T + D), 24, NOW, auth=opened.auth)
+    dev_win = (windows.W_HOLD[0] - 3 * D, windows.W_HOLD[0] - 2 * D)
+    dev = runner.run_book("A0", u, p, dev_win, 24, NOW, auth=opened.auth)
     assert runner.holdout_run_coverage(dev, oid) is None  # outside W_HOLD: not a W_HOLD book
+    # the binding: a window beyond the bound check, or a changed store identity, is refused
+    from luna.v7.data.schema import IntegrityBlocker
+
+    with pytest.raises(IntegrityBlocker, match="cover the window"):
+        runner._require_store_source(u, opened.auth, (win[0], windows.W_HOLD[0] + 60 * D))
+    u2 = replace_identity(u, {"raw": {}})
+    with pytest.raises(IntegrityBlocker, match="data identity"):
+        runner._require_store_source(u2, opened.auth, win)
+
+
+def replace_identity(u, ident):
+    import copy
+
+    u2 = copy.copy(u)
+    u2.source_identity = ident
+    return u2
 
 
 def _mj3_refusals(kw, auth, fh, h):

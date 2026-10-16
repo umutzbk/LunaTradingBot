@@ -104,8 +104,10 @@ def test_conflict_on_five_keys_stores_the_chunk_minus_those_keys(tmp_path, log):
 
 
 def _chunk(st, sym="BTCUSDT"):
+    """January without its first bar (the key ``_a6`` records as dropped)."""
     lo, hi = JAN, FEB
-    return st.put_chunk("R3", sym, "2024-01", month_of(bars(lo, 31 * 96), lo, hi), sources=[{"url": "s://1"}])
+    df = month_of(bars(lo, 31 * 96), lo, hi).iloc[1:].reset_index(drop=True)
+    return st.put_chunk("R3", sym, "2024-01", df, sources=[{"url": "s://1"}])
 
 
 def _a6(e, **kw):
@@ -125,8 +127,14 @@ def test_r55_blocks_before_and_passes_after_the_a6_resolution(tmp_path, log):
     st.append_ledger(_a6(e, sha256="f" * 64))  # a resolution of another chunk content: still blocks
     with pytest.raises(IntegrityBlocker, match="conflict"):
         st.check_ingest_complete(JAN, FEB)
-    st.append_ledger(_a6(e, rule="something else"))  # malformed (no A-6 rule): blocks itself
-    with pytest.raises(IntegrityBlocker):
+    st.append_ledger(_a6(e, rule="something else"))  # malformed (no A-6 rule): resolves nothing
+    with pytest.raises(IntegrityBlocker, match="conflict"):
+        st.check_ingest_complete(JAN, FEB)
+    st.append_ledger(_a6(e, keys=[JAN + 15 * 60 * 10**9]))  # a "dropped" key the chunk still holds: nothing
+    with pytest.raises(IntegrityBlocker, match="conflict"):
+        st.check_ingest_complete(JAN, FEB)
+    st.append_ledger(_a6(e, keys=[FEB]))  # a key outside the chunk's month: nothing
+    with pytest.raises(IntegrityBlocker, match="conflict"):
         st.check_ingest_complete(JAN, FEB)
     st2 = RawStore(tmp_path / "raw2")
     e2 = _chunk(st2)
@@ -172,29 +180,57 @@ def test_dt4_lists_the_a6_resolutions(tmp_path, log):
                 convergence=(), runs=[funding_run([0.0] * 3)])
     with pytest.raises(ValueError, match="a6_resolutions"):  # a raw-store record must list them
         runrecord.run_record(**base)
-    rec = runrecord.run_record(**base, a6_resolutions=st.a6_resolutions(JAN, FEB))
+    with pytest.raises(ValueError, match="store and data_window"):  # bound to the store (fix round 1)
+        runrecord.run_record(**base, a6_resolutions=st.a6_resolutions(JAN, FEB))
+    bound = dict(base, store=st, data_window=(JAN, FEB))
+    rec = runrecord.run_record(**bound, a6_resolutions=st.a6_resolutions(JAN, FEB))
     assert rec["a6_resolutions"][0]["keys"] == [JAN] and rec["a6_resolutions"][0]["rule"] == rawstore.RULE_A6
-    assert runrecord.run_record(**base, a6_resolutions=[])["a6_resolutions"] == []
+    with pytest.raises(ValueError, match="mismatch"):  # an omitted resolution is refused
+        runrecord.run_record(**bound, a6_resolutions=[])
+    altered = [{**st.a6_resolutions(JAN, FEB)[0], "keys": [JAN + 15 * MIN]}]
+    with pytest.raises(ValueError, match="mismatch"):  # other keys
+        runrecord.run_record(**bound, a6_resolutions=altered)
     with pytest.raises(ValueError, match="conflict_resolved_A6"):
-        runrecord.run_record(**base, a6_resolutions=[{"status": "stored"}])
+        runrecord.run_record(**bound, a6_resolutions=[{"status": "stored"}])
+    later = dict(bound, data_window=(FEB, FEB + 86_400 * 10**9))  # outside the window: none to list
+    assert runrecord.run_record(**later, a6_resolutions=[])["a6_resolutions"] == []
+    st.append_ledger(rawstore.ledger_record("R3", "ETHUSDT", "2024-01", "attempt", reason="x"))
+    with pytest.raises(ValueError, match="ingest ledger state"):  # the store changed since the manifests
+        runrecord.run_record(**bound, a6_resolutions=rec["a6_resolutions"])
 
 
 def test_not_applicable_n3_keys_of_non_perpetual_symbols(tmp_path, log):
-    """Dry-run driver (Task 29e): N3 refusals of delivery / settled symbols are recorded as not applicable
-    (S-2.1) and stop blocking; a perpetual symbol's gap still blocks; a hand-written not-applicable record
-    for a perpetual is ignored."""
+    """Dry-run driver (Task 29e, fix round 1): an N3 key netguard refused as a non-alphanumeric symbol
+    (delivery / settled names), with that refusal as evidence and no R1 PERPETUAL identity, is recorded as not
+    applicable (S-2.1) and stops blocking; a perpetual's gap, a key without the refusal evidence or with an R1
+    PERPETUAL identity is never hidden, and hand-written records that lack these are ignored."""
+    from luna.v7 import netguard
+
+    refusal = f"EndpointRefused: {netguard.N3_SYMBOL_REFUSAL}"
     st = RawStore(tmp_path / "raw")
-    for sym in ("BTCUSDT_240628", "ICPUSDT_SETTLED", "TLMUSDTSETTLED", "ETHUSDT"):
+    for sym in ("BTCUSDT_240628", "ICPUSDT_SETTLED", "ETHUSDT", "XRPUSDT_250328"):
         st.append_ledger(rawstore.ledger_record("R2_rest", sym, "2024-01", "attempt", reason="started"))
     with pytest.raises(IntegrityBlocker, match="attempt"):
         st.check_ingest_complete(JAN, FEB)
-    for sym in ("BTCUSDT_240628", "ICPUSDT_SETTLED", "TLMUSDTSETTLED"):
-        assert ingest.mark_not_applicable(st, "R2_rest", sym, "2024-01")["status"] == rawstore.NOT_APPLICABLE
-    for bad in (("R2_rest", "ETHUSDT"), ("R3", "BTCUSDT_240628")):
+    for sym in ("BTCUSDT_240628", "ICPUSDT_SETTLED"):
+        rec = ingest.mark_not_applicable(st, "R2_rest", sym, "2024-01", evidence=refusal,
+                                         r1_contract_type="CURRENT_QUARTER" if "_2" in sym else None)
+        assert rec["status"] == rawstore.NOT_APPLICABLE and netguard.N3_SYMBOL_REFUSAL in rec["evidence"]
+    refused = [dict(table="R2_rest", symbol="ETHUSDT", evidence=refusal, r1_contract_type=None),  # alnum
+               dict(table="R3", symbol="BTCUSDT_240628", evidence=refusal, r1_contract_type=None),
+               dict(table="R2_rest", symbol="XRPUSDT_250328", evidence="HTTP 503", r1_contract_type=None),
+               dict(table="R2_rest", symbol="XRPUSDT_250328", evidence=refusal, r1_contract_type="PERPETUAL")]
+    for kw in refused:
         with pytest.raises(ValueError):
-            ingest.mark_not_applicable(st, bad[0], bad[1], "2024-01")
+            ingest.mark_not_applicable(st, kw["table"], kw["symbol"], "2024-01", evidence=kw["evidence"],
+                                       r1_contract_type=kw["r1_contract_type"])
+    # hand-written records: no evidence / an R1 PERPETUAL / an alphanumeric symbol -> ignored
     st.append_ledger(rawstore.ledger_record("R2_rest", "ETHUSDT", "2024-01", rawstore.NOT_APPLICABLE))
-    with pytest.raises(IntegrityBlocker, match="ETHUSDT"):  # a real gap still blocks
-        st.check_ingest_complete(JAN, FEB)
-    st.check_ingest_complete(JAN, FEB, symbols=["BTCUSDT_240628", "ICPUSDT_SETTLED", "TLMUSDTSETTLED"])
+    na = rawstore.ledger_record("R2_rest", "XRPUSDT_250328", "2024-01", rawstore.NOT_APPLICABLE)
+    st.append_ledger({**na,
+                      "evidence": refusal, "r1_contract_type": "PERPETUAL"})
+    for sym in ("ETHUSDT", "XRPUSDT_250328"):
+        with pytest.raises(IntegrityBlocker, match=sym):  # a real gap still blocks
+            st.check_ingest_complete(JAN, FEB, symbols=[sym])
+    st.check_ingest_complete(JAN, FEB, symbols=["BTCUSDT_240628", "ICPUSDT_SETTLED"])
     assert rawstore.perpetual_shaped("1000PEPEUSDT") and not rawstore.perpetual_shaped("BTCUSDT_240628")

@@ -43,12 +43,13 @@ one-sided check, decision, terminal unwind):
   (``EngineInputs.decisions``, built by ``luna.v7.forward_replay``): the decisions run at the scheduled times
   instead of the grid (a stale quarter's decision shifted within 2 h); a decision flagged False is a skipped
   decision's exits and risk exits: its ``open`` orders are dropped and the S-7.4 hedge follows the remaining
-  post-decision book (DK-105, AMB-43). A-3 (AMENDMENTS-2026-10-16, user-approved; AMB-43 (d)), forward replay
-  only (``EngineInputs.tick_evaluable``, accepted only with a forward schedule): a 15-minute tick at ``ts``
-  inside a non-evaluable quarter (the quarter [ts, ts + 15 min), the ``forward.decision_time`` convention) is
-  skipped for risk and marking: no mark, no risk action (``on_tick``, leg stops, kill, the one-sided flatten),
-  no INVALID (a missing leg / BTC mark there is not checked); a UTC day whose midnight tick is skipped closes
-  at the next marked tick. W_DEV / W_HOLD (the S-8.1 grid) keep AMB-29 (a) / DK-70 at every tick.
+  post-decision book (DK-105, AMB-43). A-3 (AMENDMENTS-2026-10-16, user-approved; AMB-43 (d)), forward
+  replay only (``EngineInputs.tick_evaluable``, accepted only with a forward schedule): a 15-minute tick at
+  ``ts`` whose needed quarter is not evaluable (controller ruling R59: the quarter ENDING at ``ts``, [ts -
+  15 min, ts), whose 15m close the tick marks with) is skipped for risk and marking: no mark, no risk action
+  (``on_tick``, leg stops, kill, the one-sided flatten), no INVALID (a missing leg / BTC mark there is not
+  checked); a UTC day whose midnight tick is skipped closes at the next marked tick. W_DEV / W_HOLD (the
+  S-8.1 grid) keep AMB-29 (a) / DK-70 at every tick.
 * **terminal check** at a held instance's cessation (A: the official settlement time): A settles (DEC-43),
   B / C -> ``INVALID RUN — terminal settlement not reconstructible``.
 * **terminal unwind** at the last reference minute before the end (end - 1 min): every leg and the hedge
@@ -190,8 +191,9 @@ class EngineInputs:
     # replacing the S-8.1 grid (shifted decisions; False = a skipped decision's exits and risk exits, no
     # entries); None = the S-8.1 grid
     decisions: Mapping[int, bool] | None = None
-    # A-3 (§15 forward replay only, with ``decisions``): {quarter start -> evaluable}; a tick whose quarter
-    # [ts, ts + 15 min) is not evaluable is skipped for risk and marking (module docstring); None = every tick
+    # A-3 / R59 (§15 forward replay only, with ``decisions``): {quarter start -> evaluable}; a tick whose
+    # needed quarter [ts - 15 min, ts) (the bar ending at ts) is not evaluable is skipped for risk and marking
+    # (module docstring); None = every tick
     tick_evaluable: Callable[[int], bool] | None = None
 
 
@@ -482,7 +484,9 @@ class _Sim:
 
     def on_tick(self, ts: int) -> None:
         ev = self.inp.tick_evaluable
-        if ev is not None and not ev(ts - ts % TICK):  # A-3: a stale quarter's tick is a no-op (forward only)
+        # A-3 / R59 (forward only): the tick needs the close of the quarter ENDING at ts ([ts - 15 min, ts),
+        # the 15m bar ``execution.mark`` reads); when that quarter is stale the tick is a no-op
+        if ev is not None and not ev(ts - ts % TICK - TICK):
             self.state = self.risk.skip_tick(self.state, ts)
             if ts + TICK < self.unwind_ts:
                 self.push(ts + TICK, EV_TICK, None)

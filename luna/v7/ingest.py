@@ -65,7 +65,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from luna.v7 import guard, k9
+from luna.v7 import guard, k9, netguard
 from luna.v7.constants import FROZEN
 from luna.v7.data import funding as fund_mod
 from luna.v7.data import klines
@@ -82,7 +82,6 @@ from luna.v7.rawstore import (
     _symbol,
     ledger_record,
     month_period,
-    perpetual_shaped,
     store_bound,
 )
 
@@ -335,18 +334,24 @@ def a6_record(table: str, symbol: str, month: str, entry: Mapping, conf: Mapping
                         for s in entry["sources"]]}
 
 
-def mark_not_applicable(store: RawStore, table: str, symbol: str, month: str) -> dict:
-    """S-2.1 (perpetual contracts only): record an N3 (``R2_rest``) key of a non-perpetual symbol (delivery /
-    settled names, which netguard refuses as non-alphanumeric) as not applicable, so its ``attempt`` /
-    ``gap`` records stop blocking (R55). Refused for a perpetual-shaped symbol or another table: a real gap
-    stays a gap. Returns the appended record."""
-    if table != "R2_rest" or perpetual_shaped(symbol):
-        raise ValueError(f"not applicable only for R2_rest keys of non-perpetual symbols, got {table} "
+def mark_not_applicable(store: RawStore, table: str, symbol: str, month: str, *, evidence: str,
+                        r1_contract_type: str | None) -> dict:
+    """S-2.1 (perpetual contracts only): record an N3 (``R2_rest``) key as not applicable, so its ``attempt``
+    / ``gap`` records stop blocking (R55). Only for a key whose N3 request netguard refused as a
+    non-alphanumeric symbol (``evidence``: that refusal, ``netguard.N3_SYMBOL_REFUSAL``; delivery / settled
+    names) and whose R1 contract type is not ``PERPETUAL`` (``r1_contract_type``: the R1 identity's, None when
+    R1 has none). Anything else is refused: a real gap stays a gap. Returns the appended record."""
+    if table != "R2_rest" or symbol.isalnum():
+        raise ValueError(f"not applicable only for R2_rest keys of non-alphanumeric symbols, got {table} "
                          f"{symbol}")
+    if netguard.N3_SYMBOL_REFUSAL not in str(evidence):
+        raise ValueError(f"{symbol} {month}: no netguard N3 refusal as evidence")
+    if r1_contract_type == "PERPETUAL":
+        raise ValueError(f"{symbol}: R1 contract type PERPETUAL, its N3 gap is never hidden")
     month_period(month)
     rec = {**ledger_record(table, symbol, month, NOT_APPLICABLE,
                            reason="not_applicable: non-perpetual symbol (S-2.1 covers PERPETUAL contracts)"),
-           "conflict": False}
+           "conflict": False, "evidence": str(evidence)[:300], "r1_contract_type": r1_contract_type}
     store.append_ledger(rec)
     return rec
 

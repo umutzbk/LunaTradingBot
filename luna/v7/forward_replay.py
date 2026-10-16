@@ -22,8 +22,9 @@ AMB-43).
   S-7.4 hedge follows the post-decision book, AMB-43 (c)). A skipped decision's exit time that coincides with
   a full decision merges into it (the full decision carries the exits). So a stale quarter is a no-op for
   DECISIONS. Ticks (A-3, AMENDMENTS-2026-10-16, user-approved; AMB-43 (d) RESOLVED): the replay passes the
-  same quarter predicate as ``EngineInputs.tick_evaluable``; a 15-minute tick at ``ts`` inside a stale
-  quarter ([ts, ts + 15 min), the ``forward.decision_time`` convention) is skipped for risk and marking: no
+  same quarter predicate as ``EngineInputs.tick_evaluable``; a 15-minute tick at ``ts`` whose needed quarter
+  is stale (controller ruling R59: the quarter ending at ``ts``, [ts - 15 min, ts), whose close the tick
+  marks with; decisions keep the ``forward.decision_time`` convention) is skipped for risk and marking: no
   mark, no risk action, no INVALID (§15's coverage rules handle the gap). W_DEV / W_HOLD keep AMB-29 (a).
 * **Verdict** (``evaluate``): ``forward.forward_evaluate`` on the replay's ML* (and optional A0) books and
   evaluable days, with the canonical source of the guards (DK-99 / DK-100 / DK-102 / DK-103 / DK-104).

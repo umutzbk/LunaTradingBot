@@ -659,14 +659,21 @@ def test_under_auth_only_a_store_source_with_that_auth_passes(opened, tmp_path, 
     def uni(chk):
         u = runner.ResearchUniverse.__new__(runner.ResearchUniverse)
         u._ingest_check = (chk, 0, 1)
+        u.source_identity = good.identity()
         return u
 
-    runner._require_store_source(uni(good.check_ingest), opened.auth)  # passes
-    runner._require_store_source(uni(fx.LedgeredSource({}).check_ingest), None)  # no auth: no requirement
+    runner._require_store_source(uni(good.check_ingest), opened.auth, (0, 1))  # passes
+    runner._require_store_source(uni(fx.LedgeredSource({}).check_ingest), None, (0, 1))  # no auth: none
     for chk in (fx.LedgeredSource({}).check_ingest, Duck().check_ingest,
                 Sub(st, {}, auth=opened.auth).check_ingest, other.check_ingest):
         with pytest.raises(IntegrityBlocker, match="StoreSource"):
-            runner._require_store_source(uni(chk), opened.auth)
+            runner._require_store_source(uni(chk), opened.auth, (0, 1))
+    with pytest.raises(IntegrityBlocker, match="cover the window"):  # the bound check covers [0, 1) only
+        runner._require_store_source(uni(good.check_ingest), opened.auth, (0, 2))
+    stale = uni(good.check_ingest)
+    stale.source_identity = {**good.identity(), "raw": {"R3": "0" * 64}}
+    with pytest.raises(IntegrityBlocker, match="data identity"):
+        runner._require_store_source(stale, opened.auth, (0, 1))
     assert _rules(log)[-1] == runner.RULE_AUTH_STORE
     u = uni(fx.LedgeredSource({}).check_ingest)  # the entry points run it right after the R55 check
     for call in (lambda: runner.run_book("A0", u, object(), windows.W_HOLD, 72, 0, auth=opened.auth),

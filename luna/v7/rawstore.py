@@ -499,6 +499,15 @@ def perpetual_shaped(symbol: object) -> bool:
             and not symbol.endswith("SETTLED"))
 
 
+def _na_ok(r: Mapping) -> bool:
+    """A not-applicable N3 record (fix round 1): an ``R2_rest`` key of a symbol netguard refuses for N3
+    (non-alphanumeric), carrying the netguard refusal as evidence and no R1 ``PERPETUAL`` contract type."""
+    s = r.get("symbol")
+    return (r.get("table") == "R2_rest" and isinstance(s, str) and not s.isalnum()
+            and netguard.N3_SYMBOL_REFUSAL in str(r.get("evidence") or "")
+            and r.get("r1_contract_type") != "PERPETUAL")
+
+
 def _a6_ok(r: Mapping) -> bool:
     """A well-formed A-6 resolution record: a DEC-33 (monthly union daily) table, the resolved chunk's
     sha256, non-empty int keys with both value sets of the same length, the source files and the rule."""
@@ -603,7 +612,7 @@ class RawStore:
             if r.get("status") == A6_RESOLVED and _a6_ok(r):
                 a6.setdefault(k, []).append(r)
                 continue
-            if r.get("status") == NOT_APPLICABLE and k[0] == "R2_rest" and not perpetual_shaped(k[1]):
+            if r.get("status") == NOT_APPLICABLE and _na_ok(r):
                 na.add(k)
                 continue
             why = f"{r.get('status')}: {r.get('reason')}"
@@ -614,7 +623,8 @@ class RawStore:
             if old is None or _rank(why) > _rank(old):
                 blocking[k] = why  # the most informative record: a conflict, else a gap over an attempt
         resolved = frozenset(k for k, sha in chunks.items() if sha in stored.get(k, ()))
-        cur_a6 = {k: tuple(r for r in rs if k in resolved and r["sha256"] == chunks[k])
+        cur_a6 = {k: tuple(r for r in rs if k in resolved and r["sha256"] == chunks[k]
+                           and self._keys_absent(k, r["sha256"], r["keys"]))
                   for k, rs in a6.items()}
         cur_a6 = {k: rs for k, rs in cur_a6.items() if rs}
 
@@ -629,6 +639,21 @@ class RawStore:
                           frozenset(na))
         self._ingest_cache = (key, idx)
         return idx
+
+    def _keys_absent(self, k: tuple, sha: str, keys: Sequence[int]) -> bool:
+        """A-6 cross-check (fix round 1): the stored chunk (file sha256 ``sha``) holds none of the dropped
+        keys, and every key lies in its month; an unreadable / other file -> False (the conflict stays)."""
+        t = TABLES[k[0]]
+        try:
+            lo, hi = month_period(k[2])
+            data = self.chunk_path(k[0], k[1], k[2]).read_bytes()
+            if _sha_bytes(data) != sha:
+                return False
+            ts = np.asarray(_decode(t, data, [t.ts_col])[t.ts_col], np.int64)
+        except (OSError, ValueError, IntegrityBlocker, pa.ArrowException):
+            return False
+        ks = np.asarray(list(keys), np.int64)
+        return bool(((ks >= lo) & (ks < hi)).all()) and not np.isin(ks, ts).any()
 
     def ingest_state_sha256(self) -> str:
         """The sha256 of the ledger's resolved state (the unresolved keys with their reasons, the

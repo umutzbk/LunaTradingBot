@@ -212,12 +212,14 @@ def edge_times() -> list[int]:
 
 
 def scale_store(store, n_symbols: int, n_days: int, seed: int = 3, start: int = START,
-                notice_every: int = 10, write: bool = True) -> dict:
+                notice_every: int = 10, write: bool = True, auth=None, sources=None) -> dict:
     """Write a synthetic universe in store form (``rawstore.RawStore``; archive known_at rule, monthly
     chunks): BTCUSDT + ``n_symbols - 1`` candidates of ``n_days`` 15m bars (R3), R4 mark / index / premium,
     8 h archive funding (R2) and, for every ``notice_every``-th symbol, a delisting notice whose 72 h window
     has dense 1-minute bars (R5; the only 1m rows a decision reads). Returns ``{symbol: SymbolMeta}``
-    (``write=False``: the metadata only, deterministic, for a process reading a store written earlier)."""
+    (``write=False``: the metadata only, deterministic, for a process reading a store written earlier).
+    ``auth``: passed to ``put_chunk`` (a W_HOLD store under the opening); ``sources(table, symbol,
+    month)``: the chunk's source records (default none)."""
     from luna.v7 import rawstore
 
     g0 = np.random.default_rng([seed, 1])
@@ -237,7 +239,8 @@ def scale_store(store, n_symbols: int, n_days: int, seed: int = 3, start: int = 
             lo, hi = rawstore.month_period(m)
             a, b = np.searchsorted(t, lo), np.searchsorted(t, hi)
             if b > a:
-                store.put_chunk(table, sym, m, df.iloc[a:b].reset_index(drop=True), sources=[])
+                store.put_chunk(table, sym, m, df.iloc[a:b].reset_index(drop=True),
+                                sources=sources(table, sym, m) if sources else [], auth=auth)
 
     for i, sym in enumerate(syms):
         g = np.random.default_rng([seed, 2, i])

@@ -125,7 +125,8 @@ def run_record(*, commit: str, dirty: bool, config: Mapping, data_manifests: Map
                convergence: Sequence[Mapping], runs: Sequence[BookRun], research: bool = False,
                extra: Mapping | None = None, leakage_reports: Sequence = (),
                opening: Mapping | None = None, kraken: object = None,
-               a6_resolutions: Sequence[Mapping] | None = None) -> dict:
+               a6_resolutions: Sequence[Mapping] | None = None, store: object = None,
+               data_window: tuple[int, int] | None = None) -> dict:
     """The DT4 record with the ``data.schema`` DT4 columns (``run_id`` key, ``code_commit``,
     ``config_sha256``, ``data_manifest_sha256s``, ``seeds``, ``library_versions``) plus the working-tree
     state, the ``uv.lock`` sha256, the identity and output sha256 of every executed book, the per-fit
@@ -141,7 +142,10 @@ def run_record(*, commit: str, dirty: bool, config: Mapping, data_manifests: Map
     hashes join ``data_manifest_sha256s`` and its exploratory block is recorded as ``kraken_exploratory``.
     ``a6_resolutions``: A-6 (AMENDMENTS-2026-10-16), the store's DEC-33 conflict resolutions inside the data
     window (``RawStore.a6_resolutions(lo, hi)``), recorded as ``a6_resolutions``; required (fail closed) when
-    the manifests come from a raw store (they name ``ingest_ledger_state``)."""
+    the manifests come from a raw store (they name ``ingest_ledger_state``), together with that ``store`` and
+    the ``data_window``: the store's current ``ingest_state_sha256`` must equal the manifests'
+    ``ingest_ledger_state`` and the given records must equal the store's A-6 records of the window (count,
+    keys, content), else refused (fix round 1: the listed resolutions are bound to the ledger state)."""
     if not _COMMIT.match(str(commit)):
         raise ValueError("commit must be a 40-hex git commit")
     if not isinstance(dirty, bool):
@@ -159,6 +163,19 @@ def run_record(*, commit: str, dirty: bool, config: Mapping, data_manifests: Map
     a6 = [dict(r) for r in (a6_resolutions or ())]
     if not all(r.get("status") == "conflict_resolved_A6" for r in a6):
         raise ValueError("a6_resolutions: only conflict_resolved_A6 ledger records")
+    if "ingest_ledger_state" in data_manifests:
+        from luna.v7.rawstore import RawStore  # local: rawstore imports the runner
+
+        if not isinstance(store, RawStore) or data_window is None:
+            raise ValueError("a6_resolutions: a raw-store record needs its store and data_window"
+                             " (cross-check)")
+        if store.ingest_state_sha256() != data_manifests["ingest_ledger_state"]:
+            raise ValueError("a6_resolutions: the store's ingest ledger state differs from the record's "
+                             "ingest_ledger_state")
+        want = store.a6_resolutions(int(data_window[0]), int(data_window[1]))
+        if canonical_json(a6) != canonical_json(want):
+            raise ValueError(f"a6_resolutions: {len(a6)} record(s) given, the store holds {len(want)} in the "
+                             f"window (keys {[r['keys'] for r in want]}): mismatch")
     kr_block = None
     if kraken is not None:
         from luna.v7 import kraken as kr  # local: kraken imports this module
