@@ -113,6 +113,7 @@ from luna.v7.book.risk import RiskActions, RiskLayer
 from luna.v7.constants import FROZEN
 from luna.v7.data.instances import Instance, current_instance
 from luna.v7.data.terminal import TerminalEvent
+from luna.v7.lazy1m import Lazy1m
 from luna.v7.refs import FundingSchedule, funding_schedule, restrict
 from luna.v7.timeutil import MIN, D
 from luna.v7.universe import GateRow, assert_pit
@@ -132,14 +133,15 @@ SCORE_COLS = ["symbol", "side", "rank_key", "passes_hurdle", "vetoed"]
 
 @dataclass(frozen=True)
 class Instrument:
-    """One symbol's raw inputs: R5 1m bars (open_ts, o, c, vol_base), R3 15m bars (open_ts, o, h, l, c,
+    """One symbol's raw inputs: R5 1m bars (open_ts, o, c, vol_base; or a ``lazy1m.Lazy1m`` over them,
+    red-team r2 MJ1), R3 15m bars (open_ts, o, h, l, c,
     vol_base, known_at), R4 15m mark bars (open_ts, c), raw funding records (funding_ts, rate,
     interval_h_explicit, known_at, optional mark_at_settle), instances, the classified terminal event per
     instance idx (required when a held position reaches that instance's cessation) and, for E_M, aggTrades
     (ts, price, qty)."""
 
     symbol: str
-    bars1m: pd.DataFrame
+    bars1m: pd.DataFrame | Lazy1m
     bars15: pd.DataFrame
     mark15: pd.DataFrame
     funding: pd.DataFrame

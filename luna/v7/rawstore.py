@@ -72,7 +72,9 @@ The research entry points call it (``StoreSource.check_ingest``; ``runner.Resear
 ``for_decisions``, ``label_panel``, ``run_book``; ``metaingest.instances_from_store``): a hole is never read
 as missing data.
 
-``StoreSource``: the loader-backed ``runner.UniverseSource``. Executed ``BookRun`` objects are persisted by
+``StoreSource``: the loader-backed ``runner.UniverseSource``; ``StoreSource.load_outcome_inputs`` gives the
+outcome side lazy 1-minute access (``lazy1m.Lazy1m`` over the R5 ``TableLoader`` with its own byte-bounded
+``ChunkCache``, red-team r2 MJ1, AMB-38 (h)). Executed ``BookRun`` objects are persisted by
 ``luna.v7.runstore`` (canonical parquet + JSON, no pickle), which reuses this module's write-once helpers.
 """
 
@@ -95,7 +97,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from luna.v7 import guard, k9, manifest, netguard, windows
+from luna.v7 import guard, k9, lazy1m, manifest, netguard, windows
 from luna.v7.constants import FROZEN
 from luna.v7.data import funding as fund_mod
 from luna.v7.data.instances import Instance
@@ -1101,12 +1103,40 @@ class TableLoader:
         lo, hi = int(lo), int(hi)
         if hi <= lo:
             raise ValueError(f"empty window [{lo}, {hi})")
+        names = self._names(columns)
+        guard.check_data_span(lo, hi, auth=self.auth, what=f"raw {self.t.key} {symbol}")
+        return self._rows(symbol, lo, hi, names)
+
+    def _names(self, columns: Sequence[str] | None) -> tuple[str, ...]:
         ts_col = self.t.ts_col
         names = self.t.names if columns is None else (ts_col, *[c for c in columns if c != ts_col])
         bad = [c for c in names if c not in self.t.names]
         if bad:
             raise ValueError(f"{self.t.key}: unknown columns {bad}")
+        return names
+
+    def window_reader(self, symbol: str, lo: int, hi: int):
+        """A reader of the rows of [lo, hi) for repeated small requests (the outcome side's lazy 1-minute
+        reads, red-team r2 MJ1 / AMB-38 (h)): ``guard.check_data_span`` runs ONCE over [lo, hi) here (as one
+        ``arrays`` / ``frame`` load of the window would); ``read(a, b, columns)`` then returns ``arrays`` of
+        [a, b), refused unless lo <= a < b <= hi; each chunk read still passes the chunk-period guard and the
+        sha256 check (``_chunk``)."""
+        lo, hi = int(lo), int(hi)
+        if hi <= lo:
+            raise ValueError(f"empty window [{lo}, {hi})")
         guard.check_data_span(lo, hi, auth=self.auth, what=f"raw {self.t.key} {symbol}")
+
+        def read(a: int, b: int, columns: Sequence[str] | None = None) -> dict[str, object]:
+            a, b = int(a), int(b)
+            if not (lo <= a < b <= hi):
+                raise ValueError(f"{self.t.key} {symbol}: [{a}, {b}) outside the guarded window [{lo}, {hi})")
+            return self._rows(symbol, a, b, self._names(columns))
+
+        return read
+
+    def _rows(self, symbol: str, lo: int, hi: int, names: tuple[str, ...]) -> dict[str, object]:
+        """``arrays`` after its request guard."""
+        ts_col = self.t.ts_col
         parts: dict[str, list] = {n: [] for n in names}
         if self._known(symbol):
             months, los, his, ents = self._chunks(symbol)
@@ -1229,7 +1259,8 @@ class StoreSource:
 
     def __init__(self, store: RawStore, meta: Mapping[str, SymbolMeta], *,
                  auth: guard.HoldoutAuthorization | None = None, cache: ChunkCache | None = None,
-                 budget_bytes: int = DEFAULT_CACHE_BYTES) -> None:
+                 budget_bytes: int = DEFAULT_CACHE_BYTES,
+                 lazy_1m_budget_bytes: int = lazy1m.LAZY_1M_CACHE_BYTES) -> None:
         self.cache = cache if cache is not None else ChunkCache(budget_bytes)
         self.store = store
         self.auth = auth
@@ -1237,6 +1268,9 @@ class StoreSource:
         self.bars = {k: TableLoader(store, k, auth=auth, cache=self.cache)
                      for k in ("R3", "R5", "R4_mark", "R4_index", "R4_premium")}
         self.funding = FundingLoader(store, auth=auth, cache=self.cache)
+        # the outcome side's lazy 1-minute reads: R5 with its own cache (AMB-38 (h)), so the universe's other
+        # tables never evict the (symbol, month) chunks the labels / books are moving through
+        self.r5_lazy = TableLoader(store, "R5", auth=auth, cache=ChunkCache(lazy_1m_budget_bytes))
 
     def symbols(self) -> tuple[str, ...]:
         return tuple(sorted(self.meta))
@@ -1268,14 +1302,62 @@ class StoreSource:
                             self.bars["R5"].frame(symbol, lo, hi), self.funding.frame(symbol, lo, hi),
                             list(m.insts), r4, m.identity, tuple(m.notices), dict(m.terminals), agg)
 
+    def _halt_window_r5(self, symbol: str, lo: int, hi: int) -> pd.DataFrame:
+        """R5 rows of the symbol's U6 72 h halt windows (``runner.halt_windows``) within [lo, hi)."""
+        from luna.v7.runner import halt_windows  # runtime import: runner is imported by this module's caller
+
+        m = self.meta[symbol]
+        wins = [(max(a, lo), min(b, hi)) for a, b in sorted(halt_windows(symbol, m.notices, list(m.insts)))]
+        parts = [self.bars["R5"].frame(symbol, a, b) for a, b in wins if a < b]
+        if parts:
+            b1 = pd.concat(parts, ignore_index=True)
+            keep = np.unique(b1["open_ts"].to_numpy(np.int64), return_index=True)[1]
+            return b1.iloc[keep].reset_index(drop=True)
+        t5 = TABLES["R5"]
+        return pd.DataFrame({**_empty(t5, t5.names), "known_at": np.empty(0, np.int64)})
+
+    def lazy_1m(self, symbol: str, lo: int, hi: int) -> lazy1m.Lazy1m:
+        """The symbol's R5 rows of [lo, hi) read on demand (``lazy1m.Lazy1m``): the columns a rule needs, per
+        (symbol, month) chunk through ``r5_lazy``: the window is guarded once here, as a load of it would be
+        (``TableLoader.window_reader``), every chunk read by its period and verified (sha256); the data span
+        is the envelope of the stored chunks' row spans."""
+        ld = self.r5_lazy
+        lo, hi = int(lo), int(hi)
+        fetch = ld.window_reader(symbol, lo, hi) if hi > lo else (lambda a, b, cols: {})  # guards [lo, hi)
+
+        def span_of(a: int, b: int) -> tuple[int, int] | None:
+            if not ld._known(symbol):
+                return None
+            got = [(max(a, int(e["span"][0])), min(b, int(e["span"][1]))) for e in ld._chunks(symbol)[3]
+                   if e.get("span")]
+            got = [(x, y) for x, y in got if x < y]
+            return (min(x for x, _ in got), max(y for _, y in got)) if got else None
+
+        return lazy1m.Lazy1m(symbol, int(lo), int(hi), fetch, span_of)
+
+    def load_outcome_inputs(self, symbol: str, lo: int, hi: int) -> tuple[SymbolInputs, lazy1m.Lazy1m]:
+        """``load(symbol, lo, hi)`` for the outcome side (red-team r2 MJ1, AMB-38 (h)): the R5 frame holds
+        only the U6 halt windows' rows within [lo, hi) (all a decision view reads); labels and books read R5
+        through ``lazy_1m(symbol, lo, hi)``. Nothing loads the window's full 1-minute history."""
+        lo, hi = int(lo), int(hi)
+        m = self.meta[symbol]
+        r4 = R4Bars(*(self.bars[k].frame(symbol, lo, hi) for k in ("R4_premium", "R4_mark", "R4_index")))
+        agg = m.aggtrades
+        if agg is not None:
+            ts = (ns_array(agg["ts"].to_numpy(), f"{symbol}.aggtrades.ts") if len(agg)
+                  else np.empty(0, np.int64))
+            agg = agg.iloc[int(np.searchsorted(ts, lo, "left")):int(np.searchsorted(ts, hi, "left"))]
+        x = SymbolInputs(symbol, self.bars["R3"].frame(symbol, lo, hi), self._halt_window_r5(symbol, lo, hi),
+                         self.funding.frame(symbol, lo, hi), list(m.insts), r4, m.identity, tuple(m.notices),
+                         dict(m.terminals), agg)
+        return x, self.lazy_1m(symbol, lo, hi)
+
     def load_decision_inputs(self, symbol: str, lo: int, hi: int, history_lo: int) -> SymbolInputs:
         """What a decision view reads (``runner.ResearchUniverse.for_decisions``, SC-01 part 2): R3 / R4 of
         [lo, hi), each preceded by its last row of [history_lo, lo) (``TableLoader.last_before``: the anchor
         a windowed slice takes when no recent row exists, fix round 1 m1), merged R2 of [history_lo, hi), R5
         only inside the symbol's U6 72 h halt windows (``runner.halt_windows``) within [history_lo, hi), no
         aggTrades. Each read is guarded as usual."""
-        from luna.v7.runner import halt_windows  # runtime import: runner is imported by this module's caller
-
         lo, hi, history_lo = int(lo), int(hi), int(history_lo)
         m = self.meta[symbol]
         def anchored(k: str) -> pd.DataFrame:
@@ -1284,16 +1366,7 @@ class StoreSource:
             return pd.concat([a, w], ignore_index=True) if len(a) else w
 
         r4 = R4Bars(*(anchored(k) for k in ("R4_premium", "R4_mark", "R4_index")))
-        wins = [(max(a, history_lo), min(b, hi)) for a, b in sorted(halt_windows(symbol, m.notices,
-                                                                                 list(m.insts)))]
-        parts = [self.bars["R5"].frame(symbol, a, b) for a, b in wins if a < b]
-        if parts:
-            b1 = pd.concat(parts, ignore_index=True)
-            keep = np.unique(b1["open_ts"].to_numpy(np.int64), return_index=True)[1]
-            b1 = b1.iloc[keep].reset_index(drop=True)
-        else:
-            t5 = TABLES["R5"]
-            b1 = pd.DataFrame({**_empty(t5, t5.names), "known_at": np.empty(0, np.int64)})
+        b1 = self._halt_window_r5(symbol, history_lo, hi)
         return SymbolInputs(symbol, anchored("R3"), b1,
                             self.funding.frame(symbol, history_lo, hi), list(m.insts), r4, m.identity,
                             tuple(m.notices), dict(m.terminals), None)

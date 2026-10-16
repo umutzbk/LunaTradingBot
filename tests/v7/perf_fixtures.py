@@ -211,15 +211,43 @@ def edge_times() -> list[int]:
 # ------------------------------------------------------------------- representative scale (raw store)
 
 
+def _dense_1m(ts15: np.ndarray, o15: np.ndarray, lo: int, hi: int, g: np.random.Generator) -> pd.DataFrame:
+    """Dense 1-minute bars over [lo, hi) priced from the 15m opens (Task 29a): about 0.5 % of the minutes
+    missing and 2 % with volume 0 (R5 store columns)."""
+    t1 = np.arange(lo, hi, MIN, dtype=np.int64)
+    t1 = t1[g.uniform(size=len(t1)) > 0.005]
+    o1 = np.round(np.interp(t1, ts15, o15) * np.exp(g.normal(0.0, 1e-4, len(t1))), 6)
+    c1 = np.round(o1 * np.exp(g.normal(0.0, 1e-4, len(t1))), 6)
+    vol = np.where(g.uniform(size=len(t1)) < 0.02, 0.0, np.round(g.uniform(1.0, 50.0, len(t1)), 3))
+    return pd.DataFrame({"open_ts": t1, "o": o1, "h": np.maximum(o1, c1), "l": np.minimum(o1, c1), "c": c1,
+                         "vol_base": vol, "vol_quote": np.round(vol * c1, 2), "n_trades": 1,
+                         "taker_buy_quote": 0.0})
+
+
+def _agg_from_1m(b1: pd.DataFrame, g: np.random.Generator, every: int = 5) -> pd.DataFrame:
+    """Sparse synthetic aggTrades (one per ``every`` 1-minute bars, 30 s after the open, priced around the
+    bar close): E_M maker fills for the outcome-side benchmark / tests (Task 29a)."""
+    b = b1.iloc[::every]
+    t = b["open_ts"].to_numpy(np.int64) + 30 * 10**9
+    px = b["c"].to_numpy(np.float64) * np.exp(g.normal(0.0, 5e-4, len(b)))
+    return pd.DataFrame({"ts": t, "price": px, "qty": 3000.0 / px * g.uniform(0.5, 1.5, len(b))})
+
+
 def scale_store(store, n_symbols: int, n_days: int, seed: int = 3, start: int = START,
-                notice_every: int = 10, write: bool = True, auth=None, sources=None) -> dict:
+                notice_every: int = 10, write: bool = True, auth=None, sources=None,
+                dense_1m: tuple[int, int] | None = None, edit_1m=None, aggtrades: bool = False,
+                carry: bool = False) -> dict:
     """Write a synthetic universe in store form (``rawstore.RawStore``; archive known_at rule, monthly
     chunks): BTCUSDT + ``n_symbols - 1`` candidates of ``n_days`` 15m bars (R3), R4 mark / index / premium,
     8 h archive funding (R2) and, for every ``notice_every``-th symbol, a delisting notice whose 72 h window
     has dense 1-minute bars (R5; the only 1m rows a decision reads). Returns ``{symbol: SymbolMeta}``
     (``write=False``: the metadata only, deterministic, for a process reading a store written earlier).
     ``auth``: passed to ``put_chunk`` (a W_HOLD store under the opening); ``sources(table, symbol,
-    month)``: the chunk's source records (default none)."""
+    month)``: the chunk's source records (default none). Task 29a: ``dense_1m`` = (lo, hi) writes dense
+    1-minute bars for EVERY symbol over that window (``_dense_1m``; ``edit_1m(symbol, frame) -> frame`` may
+    alter them, e.g. a halt or a hole at a month boundary); ``aggtrades`` puts sparse aggTrades derived from
+    them into the metadata (E_M); ``carry``: mean funding rates of +10 / -6 bps per 8 h on alternate
+    candidates (so A0 books trade)."""
     from luna.v7 import rawstore
 
     g0 = np.random.default_rng([seed, 1])
@@ -257,20 +285,37 @@ def scale_store(store, n_symbols: int, n_days: int, seed: int = 3, start: int = 
         for table, cc in (("R4_mark", c), ("R4_index", np.round(c * (1 - prem), 6)), ("R4_premium", prem)):
             put(table, sym, pd.DataFrame({"open_ts": ts, "o": cc, "h": cc, "l": cc, "c": cc}), "open_ts")
         fts = np.arange(start, end, 8 * H, dtype=np.int64)
-        rate = np.round(g.normal(1e-4, 1e-4, len(fts)), 8)
+        mu = (1e-3 if i % 2 else -6e-4) if carry and i else 1e-4
+        rate = np.round(g.normal(mu, 1e-4, len(fts)), 8)
         put("R2_archive", sym, pd.DataFrame({"funding_ts": fts, "rate": rate,
                                              "interval_h_explicit": pd.array([8] * len(fts), dtype="Int64"),
                                              "mark_at_settle": np.nan}), "funding_ts")
         notices: tuple = ()
+        b1 = None
+        if dense_1m is not None and (write or aggtrades):
+            b1 = _dense_1m(ts, o, int(dense_1m[0]), int(dense_1m[1]), np.random.default_rng([seed, 4, i]))
+            if edit_1m is not None:
+                b1 = edit_1m(sym, b1).reset_index(drop=True)
         if i and i % notice_every == 0:
             sched = start + (n_days - 20) * D + 9 * H
             text = f"Binance Futures will delist the USDⓈ-M {sym} perpetual contract at {_when(sched)} (UTC)."
             notices = (_notice(sym, f"n-{sym}", "delisting", sched - 3 * D, text),)
             t1 = np.arange(sched - 2 * H, sched + 74 * H, MIN, dtype=np.int64)
             o1 = np.round(np.interp(t1, ts, o), 6)
-            put("R5", sym, pd.DataFrame({"open_ts": t1, "o": o1, "h": o1, "l": o1, "c": o1, "vol_base": 1.0,
-                                         "vol_quote": o1, "n_trades": 1, "taker_buy_quote": 0.0}), "open_ts")
+            nb = pd.DataFrame({"open_ts": t1, "o": o1, "h": o1, "l": o1, "c": o1, "vol_base": 1.0,
+                               "vol_quote": o1, "n_trades": 1, "taker_buy_quote": 0.0})
+            if b1 is not None:  # the dense rows win where both exist
+                nb = nb[(nb["open_ts"] < dense_1m[0]) | (nb["open_ts"] >= dense_1m[1])]  # type: ignore[index]
+                b1 = pd.concat([b1, nb]).sort_values("open_ts", kind="mergesort").reset_index(drop=True)
+            else:
+                b1 = nb
+        if b1 is not None:
+            put("R5", sym, b1, "open_ts")
         from luna.v7.data.instances import build_instances
         ident = Identity(sym.removesuffix("USDT"), "PERPETUAL", "USDT", "COIN", 1.0, True)
-        meta[sym] = rawstore.SymbolMeta(build_instances(bars, end), ident, notices, {}, None)
+        agg = None
+        if aggtrades:
+            agg = _agg_from_1m(b1 if b1 is not None else pd.DataFrame({"open_ts": [], "c": []}),
+                               np.random.default_rng([seed, 5, i]))
+        meta[sym] = rawstore.SymbolMeta(build_instances(bars, end), ident, notices, {}, agg)
     return meta

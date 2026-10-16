@@ -317,10 +317,13 @@ def test_in_memory_source_is_the_window_of_the_inputs(fx_inputs, log):
     src = fx.LedgeredSource({s: fx_inputs[s] for s in SUB})
     full = ResearchUniverse({s: fx_inputs[s] for s in SUB})
     lo, hi = full.data_span()
-    same = ResearchUniverse.from_source(src, lo, hi)
+    same = ResearchUniverse.from_source(src, lo, hi, lazy_1m=False)
+    lazy = ResearchUniverse.from_source(src, lo, hi)  # Task 29a: the outcome side's 1m rows read lazily
     for s in SUB:
         pd.testing.assert_frame_equal(same.inputs[s].bars1m.reset_index(drop=True),
                                       fx_inputs[s].bars1m.reset_index(drop=True))
+        got = lazy.lazy_1m[s].frame(lo, hi)
+        pd.testing.assert_frame_equal(got, fx_inputs[s].bars1m[list(got.columns)].reset_index(drop=True))
     p_full = runner.DecisionProvider(full, with_features=True)
     p_same = runner.DecisionProvider(same, with_features=True)
     t = fx.BOOK[0] + D + 5 * MIN

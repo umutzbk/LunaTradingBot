@@ -27,6 +27,12 @@ entry / increase and gives an exit 25 bps + 3 x slip (flag ``proxy_fallback``). 
 volume > 0 1-minute bar of the instance opening >= due, filled at its close at its close time, half-spread
 max(h_fill, 25 bps), 3 x slip (flag ``halted_exit``). Terminal A: official time and price, taker fee, no
 spread / slippage (flag ``terminal_A``); B / C: ``RunInvalid(INVALID_TERMINAL)``.
+
+Lazy 1-minute access (red-team r2 MJ1, AMB-38 (h)): the view's 1-minute input may be a ``lazy1m.Lazy1m``;
+``ExecView.b1(lo, hi)`` then reads the rows of [lo, hi) on demand (the same rows, sorted, as the slice of the
+resident sorted frame) and the halted-exit search runs forward window by window
+(``ExecView.first_executable``; the first executable bar of disjoint ordered windows is the one of their
+union).
 """
 
 from __future__ import annotations
@@ -39,9 +45,11 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
+from luna.v7 import lazy1m
 from luna.v7.book import EPS
 from luna.v7.constants import FROZEN
 from luna.v7.data.terminal import TerminalEvent
+from luna.v7.lazy1m import Lazy1m
 from luna.v7.market import P, first_bar_within, first_executable_after, halted
 from luna.v7.refs import InstView, positive_close, ref_price, trim, usable_open
 from luna.v7.spread import half_spread
@@ -159,7 +167,7 @@ class ExecView:
     @staticmethod
     def build(symbol: str, x: InstView, aggtrades: pd.DataFrame | None = None) -> ExecView:
         s = {k: getattr(x, k).sort_values("open_ts", kind="mergesort").reset_index(drop=True)
-             for k in ("b1", "b15", "m15")}
+             for k in ("b1", "b15", "m15") if not isinstance(getattr(x, k), Lazy1m)}  # lazy: sorted reads
         tr = None
         if aggtrades is not None:
             hi = x.end if x.inst.last_trade_ts is None else min(x.end, x.inst.last_trade_ts)
@@ -189,7 +197,23 @@ class ExecView:
         return df.iloc[a:b]
 
     def b1(self, lo: int, hi: int) -> pd.DataFrame:
+        if isinstance(self.x.b1, Lazy1m):
+            return self.x.b1.frame(lo, hi)
         return self._cut(self.x.b1, self._t1, lo, hi)
+
+    def first_executable(self, due: int, hi: int) -> tuple[int, float] | None:
+        """``market.first_executable_after(self.b1(due, hi), due, inst)``; lazy: window by window
+        (``lazy1m.SCAN_STEP_NS``), stopping at the first window with an executable bar."""
+        if not isinstance(self.x.b1, Lazy1m):
+            return first_executable_after(self.b1(due, hi), due, self.inst)
+        s = int(due)
+        while s < hi:
+            e = min(int(hi), s + lazy1m.SCAN_STEP_NS)
+            fx = first_executable_after(self.b1(s, e), due, self.inst)
+            if fx is not None:
+                return fx
+            s = e
+        return None
 
     def b15(self, lo: int, hi: int) -> pd.DataFrame:
         return self._cut(self.x.b15, self._t15, lo, hi)
@@ -209,6 +233,8 @@ class ExecView:
         return self._cut(self.trades, self._tt, lo, hi)
 
     def halted(self, tau: int) -> bool:
+        if isinstance(self.x.b1, Lazy1m):  # the same rows' rule on arrays (``refs.InstIndex.halted``)
+            return self.x.b1.halted(tau)
         return halted(self.b1(tau - H, tau), tau)
 
     def ref(self, tau: int) -> tuple[float, bool] | None:
@@ -318,7 +344,7 @@ def halted_exit(v: ExecView, p: Pending) -> Fill | Literal["terminal"] | None:
     the window end, filled at its close at its close time with stressed costs. None executable: "terminal"
     if the instance ceased before the window end (the terminal rule applies), else None (no exit)."""
     end = v.x.end
-    fx = first_executable_after(v.b1(p.due, end - MIN), p.due, v.inst)  # close <= end - 1 min
+    fx = v.first_executable(p.due, end - MIN)  # close <= end - 1 min
     if fx is not None:
         ts, c = fx
         hf = v.h_fill(ts)

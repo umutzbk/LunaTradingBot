@@ -49,6 +49,7 @@ from luna.v7.beta import beta_hat, beta_hat_sorted, hourly_close_from_15m, hourl
 from luna.v7.constants import FROZEN
 from luna.v7.data.instances import Instance, current_instance
 from luna.v7.data.terminal import TerminalEvent
+from luna.v7.lazy1m import Lazy1m
 from luna.v7.refs import (
     FundingProblem,
     InstView,
@@ -83,7 +84,8 @@ _FB_SLIP = FROZEN.costs.fallback_slip_mult * FROZEN.costs.slip
 class LegData:
     """One instrument's raw inputs (the candidate leg, or BTC for the pro-forma hedge).
 
-    bars1m: R5 1m last-price bars (``open_ts``, ``o``, ``c``, ``vol_base``).
+    bars1m: R5 1m last-price bars (``open_ts``, ``o``, ``c``, ``vol_base``), or a ``lazy1m.Lazy1m`` over them
+      (red-team r2 MJ1: read per window, identical results).
     bars15: R3 15m last-price bars (``open_ts``, ``o``, ``h``, ``l``, ``c``, ``vol_base``, ``known_at``).
     mark15: R4 15m mark-price bars (``open_ts``, ``c``) for the S-4.6 mark fallback (may be empty).
     funding: raw funding records (``funding_ts``, ``rate``, ``interval_h_explicit``, ``known_at`` and
@@ -92,7 +94,7 @@ class LegData:
       reach (required when that instance's cessation is reached, else ignored).
     """
 
-    bars1m: pd.DataFrame
+    bars1m: pd.DataFrame | Lazy1m
     bars15: pd.DataFrame
     mark15: pd.DataFrame
     funding: pd.DataFrame

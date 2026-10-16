@@ -15,6 +15,9 @@
   arrays, and ``funding_schedule`` reuses the view's per-instance annotation, marks and mark-chain arrays.
   Each returns what the frame-level definition returns; when the arrays do not qualify (unsorted, duplicate
   labels, non-numeric) the frame-level function runs.
+* Lazy 1-minute access (red-team r2 MJ1, AMB-38 (h)): the 1-minute input may be a ``lazy1m.Lazy1m`` instead of
+  a frame; ``restrict`` narrows it like a frame and ``InstIndex`` answers the 1-minute rules from it (the
+  15m arrays must qualify then, else ``ValueError``: no frame-level fallback without the frame).
 No price is interpolated or invented: a missing value is ``None`` or a named problem.
 """
 
@@ -29,6 +32,7 @@ import pandas as pd
 from luna.v7.constants import FROZEN
 from luna.v7.data.instances import Instance
 from luna.v7.data.intervals import u3_gap
+from luna.v7.lazy1m import Lazy1m
 from luna.v7.market import P, first_bar_within, first_executable_after, halted, mark_at_settle
 from luna.v7.pitindex import Hourly
 from luna.v7.spread import half_spread
@@ -67,7 +71,7 @@ class InstView:
     """An instrument restricted to one instance and to timestamps before the window end."""
 
     inst: Instance
-    b1: pd.DataFrame
+    b1: pd.DataFrame | Lazy1m  # a frame, or the lazy 1-minute window (red-team r2 MJ1)
     b15: pd.DataFrame
     m15: pd.DataFrame
     funding: pd.DataFrame
@@ -82,12 +86,14 @@ class InstView:
         return self.memo["ix"]
 
 
-def restrict(bars1m: pd.DataFrame, bars15: pd.DataFrame, mark15: pd.DataFrame, funding: pd.DataFrame,
+def restrict(bars1m: pd.DataFrame | Lazy1m, bars15: pd.DataFrame, mark15: pd.DataFrame, funding: pd.DataFrame,
              cur: Instance, w_end: int) -> InstView:
     hi = w_end if cur.last_trade_ts is None else min(w_end, cur.last_trade_ts)
+    b1 = bars1m.window(cur.first_bar_ts, hi) if isinstance(bars1m, Lazy1m) else trim(
+        bars1m, "open_ts", cur.first_bar_ts, hi)
     return InstView(
         cur,
-        trim(bars1m, "open_ts", cur.first_bar_ts, hi),
+        b1,
         trim(bars15, "open_ts", cur.first_bar_ts, hi),
         trim(mark15, "open_ts", cur.first_bar_ts, hi),
         trim(funding, "funding_ts", None, w_end),  # pit_funding applies the instance start
@@ -139,6 +145,10 @@ class InstIndex:
     def __init__(self, x: InstView) -> None:
         self.x = x
         self.ok = False
+        self.lazy: Lazy1m | None = x.b1 if isinstance(x.b1, Lazy1m) else None
+        if self.lazy is not None:
+            self._init_lazy(x)
+            return
         try:
             b1, b15 = x.b1, x.b15
             t1, t15 = _int64(b1, "open_ts"), _int64(b15, "open_ts")
@@ -159,7 +169,29 @@ class InstIndex:
         self.usable = np.flatnonzero(np.isfinite(o1) & (o1 > 0))
         self.ok = True
 
+    def _init_lazy(self, x: InstView) -> None:
+        """The 15m arrays as in the resident case; the 1-minute rules read ``self.lazy``. A 15m frame that
+        does not qualify is refused (the frame-level fallback needs the resident 1-minute frame)."""
+        b15 = x.b15
+        try:
+            t15 = _int64(b15, "open_ts")
+            ka15 = ns_array(b15["known_at"], "known_at") if len(b15) else np.empty(0, np.int64)
+            o15, c15 = b15["o"].to_numpy(np.float64), b15["c"].to_numpy(np.float64)
+            b15["h"].to_numpy(np.float64)
+            b15["l"].to_numpy(np.float64)
+            ok = b15.index.is_unique and bool((np.diff(t15) > 0).all())
+        except (ValueError, TypeError, KeyError, OverflowError):
+            ok = False
+        if not ok:
+            sym = self.lazy.symbol if self.lazy is not None else "?"
+            raise ValueError(f"{sym}: the lazy 1-minute path needs 15m bars with int64 strictly increasing "
+                             "open_ts, unique labels and numeric prices (use the resident universe)")
+        self.t15, self.o15, self.c15, self.ka15 = t15, o15, c15, ka15
+        self.ok = True
+
     def halted(self, tau: int) -> bool:
+        if self.lazy is not None:
+            return self.lazy.halted(tau)
         lo = int(np.searchsorted(self.t1, tau - H, "left"))
         hi = int(np.searchsorted(self.t1, tau, "left"))
         return bool(self.cnt1[hi] - self.cnt1[lo] == 0)
@@ -172,12 +204,14 @@ class InstIndex:
         return float(o[i])
 
     def P(self, tau: int) -> float | None:  # noqa: N802
-        v = self._open_at(self.t1, self.o1, tau)
+        v = self.lazy.open_at(tau) if self.lazy is not None else self._open_at(self.t1, self.o1, tau)
         if v is None or v <= 0:
             v = self._open_at(self.t15, self.o15, tau)
         return v if v is not None and v > 0 else None
 
     def first_bar_within(self, tau: int, window_ns: int) -> tuple[int, float] | None:
+        if self.lazy is not None:
+            return self.lazy.first_usable_open(tau, window_ns)
         tu = self.t1[self.usable]
         j = int(np.searchsorted(tu, tau, "left"))
         if j >= len(tu) or tu[j] > tau + window_ns:
@@ -191,6 +225,8 @@ class InstIndex:
 
     def first_executable_after(self, tau: int, hi: int) -> tuple[int, float] | None:
         inst = self.x.inst
+        if self.lazy is not None:
+            return self.lazy.first_executable_after(tau, hi, inst)
         a = int(np.searchsorted(self.t1, max(int(tau), int(inst.first_bar_ts)), "left"))
         b = int(np.searchsorted(self.t1, hi, "left"))
         t, v, c = self.t1[a:b], self.v1[a:b], self.c1[a:b]
