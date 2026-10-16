@@ -302,6 +302,8 @@ class Fetcher:
             out["checksum_sha256"] = self._verify_checksum(req, body, sha, auth)
         elif kind == "N2":
             out["listing"] = self._listing(req, body)
+            if auth is not None:  # round 1, minor 6: the live listing must equal the pinned manifest
+                self._check_listing_pinned(req, out["listing"], auth)
             body = None  # type: ignore[assignment]  (the raw listing may name M6 keys: never returned)
         elif kind == "N5":
             out["cdx_pairs"] = self._register_cdx(req, body, auth)
@@ -317,6 +319,20 @@ class Fetcher:
         return Fetched(kind, req.url, params, status, recv_ts, sha, body, **out)
 
     # -- per class ----------------------------------------------------------------------------------------
+
+    def _check_listing_pinned(self, req: Request, listing: Listing, auth) -> None:
+        """Round 1, minor 6: an N2 listing under the authorization holds exactly the pinned in-scope W_HOLD
+        keys directly under its prefix (``manifest.check_listing``), else ManifestMismatch, K9-logged."""
+        try:
+            pin = guard.verified_opening(auth)
+            why = manifest.check_listing(manifest.load_pinned(pin["manifest_sha256"]), listing.prefix,
+                                         listing.entries)
+        except guard.HoldoutBlocked as e:
+            why = f"pinned W_HOLD manifest unavailable ({e})"
+        if why is not None:
+            e = ManifestMismatch(f"{why}; refused (the opening ingest plans from live listings)")
+            self._refused(e, req, RULE_MANIFEST)
+            raise e
 
     def _check_pinned(self, req: Request, body: bytes, auth) -> None:
         """Ruling R56: a W_HOLD N1 file (zip or .CHECKSUM) fetched under the authorization must match the

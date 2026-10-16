@@ -74,6 +74,8 @@ def _bucket(truncate: str | None = None) -> tuple[dict, FakeTransport]:
             [(f"{UM}/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2025-08-02.zip", 4, "e" * 32)], []),
         f"{UM}/monthly/fundingRate/BTCUSDT/": (
             [(f"{UM}/monthly/fundingRate/BTCUSDT/BTCUSDT-fundingRate-2026-06.zip", 2, "f" * 32)], []),
+        f"{UM}/daily/aggTrades/BTCUSDT/BTCUSDT-aggTrades-2025-08-": (  # R56b
+            [(f"{UM}/daily/aggTrades/BTCUSDT/BTCUSDT-aggTrades-2025-08-03.zip", 6, "1" * 32)], []),
     }
 
     def route(url, params):
@@ -90,6 +92,7 @@ def test_builder_keeps_w_hold_listing_fields_only(tmp_path, log):
     doc = manifest.build_document(Fetcher(t, tmp_path / "run", clock=lambda: RECV))
     assert doc["symbols"] == ["BTCUSDT", "XYZUSDT"] and doc["hedge"] == "BTCUSDT"
     assert doc["entries"] == [
+        [f"{UM}/daily/aggTrades/BTCUSDT/BTCUSDT-aggTrades-2025-08-03.zip", 6, "1" * 32],
         [f"{UM}/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2025-08-02.zip", 4, "e" * 32],
         [f"{UM}/monthly/fundingRate/BTCUSDT/BTCUSDT-fundingRate-2026-06.zip", 2, "f" * 32],
         [f"{UM}/monthly/klines/BTCUSDT/15m/BTCUSDT-15m-2025-07.zip", 7, "b" * 32],
@@ -100,7 +103,11 @@ def test_builder_keeps_w_hold_listing_fields_only(tmp_path, log):
     # daily files: one listing per (symbol, W_HOLD month), never the whole daily directory (DK-01)
     assert f"{UM}/daily/klines/BTCUSDT/15m/" not in prefixes
     assert f"{UM}/daily/klines/BTCUSDT/15m/BTCUSDT-15m-2026-06-" in prefixes
-    assert not any("XYZUSDT" in p for p in prefixes if "/daily/" in p)  # no daily directory for XYZUSDT
+    assert not any("XYZUSDT" in p for p in prefixes if "/daily/klines/" in p)  # no daily klines directory
+    # R56b: aggTrades of every in-scope symbol, one listing per (symbol, W_HOLD month)
+    agg = {f"{UM}/daily/aggTrades/{s}/{s}-aggTrades-2026-06-" for s in ("BTCUSDT", "XYZUSDT")}
+    assert agg <= set(prefixes)
+    assert manifest.counts(doc)["R10/daily"] == 1
     assert manifest.validate(doc).symbols == ("BTCUSDT", "XYZUSDT")
     again = manifest.build_document(Fetcher(_bucket()[1], tmp_path / "run2", clock=lambda: RECV))
     assert manifest.canonical_bytes(again) == manifest.canonical_bytes(doc)  # deterministic
@@ -121,6 +128,9 @@ def test_builder_fails_closed_on_a_truncated_listing_and_without_the_hedge(tmp_p
 
 def test_scope_matches_the_raw_store_tables():
     for table, freq, dataset, interval in manifest.SCOPE:
+        if table == "R10":  # aggTrades (R56b): not a raw-store table
+            assert (freq, dataset, interval) == ("daily", "aggTrades", None)
+            continue
         t = rawstore.TABLES[table]
         assert (t.dataset, t.interval) == (dataset, interval)
         assert freq == "monthly" or t.daily_union
@@ -236,8 +246,13 @@ def test_gate_with_the_authorization_needs_every_pinned_w_hold_file_stored(opene
     with pytest.raises(IntegrityBlocker, match="pinned W_HOLD file"):  # stored, but not from the pinned file
         st.check_ingest_complete(lo, hi, auth=opened.auth)
     st2 = RawStore(tmp_path / "raw2")
-    _hold_chunk(st2, opened.auth, [{"url": ZIP}])
-    st2.check_ingest_complete(lo, hi, auth=opened.auth)
+    _hold_chunk(st2, opened.auth, [{"url": ZIP, "bytes": len(af.HOLD_ZIP_BODY), "md5": _md5(b"other")}])
+    with pytest.raises(IntegrityBlocker, match="differs from the pinned"):  # round 1 m5: size / md5 compared
+        st2.check_ingest_complete(lo, hi, auth=opened.auth)
+    st3 = RawStore(tmp_path / "raw3")
+    good = {"url": ZIP, "bytes": len(af.HOLD_ZIP_BODY), "md5": _md5(af.HOLD_ZIP_BODY)}
+    _hold_chunk(st3, opened.auth, [good])
+    st3.check_ingest_complete(lo, hi, auth=opened.auth)  # the aggTrades key (R10) is not a store table
     assert rawstore.RULE_INGEST in _rules(log)
 
 
@@ -468,3 +483,140 @@ def test_decision_pass_runs_the_gate_first(tmp_path, log):
 
     with pytest.raises(IntegrityBlocker):
         runner.decision_pass(Never({}), [10**18], NoStore(), history_lo=0)
+
+
+# ------------------------------------------------------------------------------------- round 1 (29b/29c)
+
+
+AGG = BVIS + af.HOLD_AGG_KEY
+
+
+def test_aggtrades_w_hold_files_are_accepted_when_listed_and_refused_when_not(opened, tmp_path):
+    out = tmp_path / "run"
+    f = Fetcher(FakeTransport({AGG: ok(af.HOLD_AGG_BODY), AGG + ".CHECKSUM": ok(af.HOLD_AGG_CK)}), out,
+                clock=lambda: RECV)
+    assert f.fetch(Request(AGG), auth=opened.auth).body == af.HOLD_AGG_BODY  # R56b: listed, matching
+    other = AGG.replace("2025-08-03", "2025-08-04")
+    body = b"x"
+    g = Fetcher(FakeTransport({other: ok(body), other + ".CHECKSUM": ok(
+        f"{_sha(body)}  BTCUSDT-aggTrades-2025-08-04.zip".encode())}), out, clock=lambda: RECV)
+    with pytest.raises(ManifestMismatch, match="not in the pinned"):
+        g.fetch(Request(other), auth=opened.auth)
+
+
+def test_live_listing_must_equal_the_pinned_manifest(opened, tmp_path):
+    prefix = f"{UM}/monthly/klines/BTCUSDT/15m/"
+    keys = [(af.HOLD_ZIP_KEY, len(af.HOLD_ZIP_BODY), _md5(af.HOLD_ZIP_BODY)),
+            (af.HOLD_ZIP_KEY + ".CHECKSUM", len(af.HOLD_CK_BODY), _md5(af.HOLD_CK_BODY)),
+            (prefix + "BTCUSDT-15m-2025-06.zip", 1, "a" * 32)]  # W_DEV: not compared
+    out = tmp_path / "run"
+
+    def fetch_listing(ks):
+        t = FakeTransport({manifest.S3: lambda u, p: ok(_xml(p["prefix"], ks))})
+        return Fetcher(t, out, clock=lambda: RECV).fetch(Request(manifest.S3, {"delimiter": "/",
+                                                                               "prefix": prefix}),
+                                                         auth=opened.auth)
+
+    assert len(fetch_listing(keys).listing.entries) == 3
+    extra = keys + [(prefix + "BTCUSDT-15m-2025-09.zip", 5, "b" * 32)]  # a W_HOLD key the manifest lacks
+    for ks in (extra, keys[1:], [(keys[0][0], keys[0][1] + 1, keys[0][2])] + keys[1:]):
+        with pytest.raises(ManifestMismatch, match="differs from the pinned"):
+            fetch_listing(ks)
+        assert _k9(out)[-1]["rule"] == fetch.RULE_MANIFEST
+    assert fetch_listing(keys).listing is not None  # pre-opening (no auth): no comparison either way
+    t = FakeTransport({manifest.S3: lambda u, p: ok(_xml(p["prefix"], extra))})
+    Fetcher(t, out, clock=lambda: RECV).fetch(Request(manifest.S3, {"delimiter": "/", "prefix": prefix}))
+
+
+def test_store_less_universes_are_refused(opened, tmp_path, log):
+    from luna.v7 import runner_select
+
+    u = runner.ResearchUniverse.__new__(runner.ResearchUniverse)  # a universe built from inputs: no check
+    u._ingest_check = None
+    for call in (lambda: runner.run_book("A0", u, object(), windows.W_HOLD, 72, 0, auth=opened.auth),
+                 lambda: runner.label_panel(u, object(), [1], 72, windows.W_HOLD, 0, auth=opened.auth),
+                 lambda: runner_select.dev_selection(u, object(), {}, 0),
+                 lambda: runner.ResearchUniverse.from_source(runner.InMemorySource({}), 0, 10),
+                 lambda: runner.decision_pass(runner.InMemorySource({}), [], object(), history_lo=0)):
+        with pytest.raises(IntegrityBlocker, match="no verified ingest ledger"):
+            call()
+    assert _rules(log)[-1] == runner.RULE_NO_LEDGER
+
+
+def test_run_book_binds_the_provider_and_the_model_type(tmp_path, log):
+    from tests.v7 import fixtures_v7 as fx
+
+    u = runner.ResearchUniverse.__new__(runner.ResearchUniverse)
+    u._ingest_check = (fx.LedgeredSource({}).check_ingest, 0, 1)
+    u.inputs = {}
+    u.engine_inputs = lambda *a: None  # the universe span check is tested elsewhere
+
+    class P:
+        with_features = True
+
+    with pytest.raises(ValueError, match="provider.u is not u"):
+        runner.run_book("A0", u, P(), (0, 1), 72, 0)
+    p = P()
+    p.u = u
+    with pytest.raises(TypeError, match="FoldScoreModel"):
+        runner.run_book("A2", u, p, (0, 1), 72, 0, model=object())
+    with pytest.raises(IntegrityBlocker, match="in-memory ledger"):  # the test-only ledger is a real check
+        rec = rawstore.ledger_record("R3", "X", "1970-01", "gap", reason="r")
+        fx.LedgeredSource({}, [rec]).check_ingest(0, 1)
+
+
+def test_only_label_panel_and_run_book_issue_into_the_holdout_registries():
+    from pathlib import Path
+
+    src = Path(runner.__file__).read_text(encoding="utf-8")
+    body = src.split("def label_panel(", 1)[1]
+    assert src.count("_issue_holdout_panel(") == 2 and "_issue_holdout_panel(panel, auth" in body
+    assert src.count("_issue_holdout_run(") == 2 and "_issue_holdout_run(run, auth" in src.split(
+        "def run_book(", 1)[1]
+    others = [p.name for p in Path(runner.__file__).parent.rglob("*.py") if p.name != "runner.py"
+              and ("_issue_holdout_panel" in p.read_text(encoding="utf-8")
+                   or "_issue_holdout_run" in p.read_text(encoding="utf-8"))]
+    assert others == []
+
+
+def test_note_holdout_universe_refusal_is_k9_logged(opened, tmp_path, log):
+    panel = runner.LabelPanel(72, pd.DataFrame(), pd.DataFrame(), 0, 0, 0, 0.0, ())
+    with pytest.raises(guard.HoldoutBlocked, match="not issued"):
+        runner._note_holdout_universe(panel, opened.auth)
+    assert log.records()[-1]["exception"] == "HoldoutBlocked"
+
+
+def test_structured_conflict_field(tmp_path, log):
+    st = RawStore(tmp_path / "raw")
+    lo, hi = rawstore.month_period("2024-01")
+    st.append_ledger({**rawstore.ledger_record("R3", "BTCUSDT", "2024-01", "gap", reason="FetchError: x"),
+                      "conflict": True})
+    st.append_ledger({**rawstore.ledger_record("R3", "ETHUSDT", "2024-01", "gap",
+                                               reason="the word conflict in a 503"), "conflict": False})
+    for sym in ("BTCUSDT", "ETHUSDT"):
+        st.put_chunk("R3", sym, "2024-01", month_of(bars(lo, 31 * 96), lo, hi), sources=[{"url": "s://1"}])
+    with pytest.raises(IntegrityBlocker, match="BTCUSDT"):  # conflict: true is never resolved
+        st.check_ingest_complete(lo, hi)
+    st.check_ingest_complete(lo, hi, symbols=["ETHUSDT"])  # the field decides, not the reason text
+    assert ingest._err_gap("R3", "X", "2024-01", IntegrityBlocker("kline conflict"))["conflict"] is False
+    from luna.v7.data.schema import IntegrityConflict
+
+    assert ingest._err_gap("R3", "X", "2024-01", IntegrityConflict("x"))["conflict"] is True
+
+
+def test_planned_listing_coverage_and_torn_line_repair(tmp_path, log):
+    st = RawStore(tmp_path / "raw")
+    lo, hi = rawstore.month_period("2024-01")
+    st.put_chunk("R3", "BTCUSDT", "2024-01", month_of(bars(lo, 31 * 96), lo, hi), sources=[{"url": "s://1"}])
+    st.check_ingest_complete(lo, hi, planned=[("R3", "BTCUSDT", "2024-01")])
+    with pytest.raises(IntegrityBlocker, match="planned"):  # listed but never ingested, no ledger record
+        st.check_ingest_complete(lo, hi, planned=[("R3", "BTCUSDT", "2024-01"), ("R3", "ETHUSDT", "2024-01")])
+    with open(st.ledger_path, "ab") as f:
+        f.write(b'{"table": "R3", "sym')  # a torn last line
+    with pytest.raises(IntegrityBlocker, match="unreadable"):
+        st.check_ingest_complete(lo, hi)
+    assert st.quarantine_unreadable() == 1
+    st.check_ingest_complete(lo, hi)  # repaired, append-only
+    assert b"sym" in (tmp_path / "raw" / "INGEST_LEDGER.quarantine.jsonl").read_bytes()
+    assert log.records()[-1]["rule"] == rawstore.RULE_REPAIR
+    assert st.quarantine_unreadable() == 0

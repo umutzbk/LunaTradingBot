@@ -11,7 +11,8 @@ AMB-34). No real data, never the real home directory or the real repository's gi
   S-10.6 run over a full outer quarter is too slow for the test gate; the LeakageReport is always the real
   ``leakage.run_leakage_checks`` output on the tiny synthetic panels of ``leak_fixtures``.
 * ``MANIFEST``: the sha256 of a synthetic, valid DEC-19 W_HOLD listing manifest (ruling R56: one R3 monthly
-  W_HOLD zip of the hedge and its ``.CHECKSUM``, sizes and md5 ETags of ``HOLD_ZIP_BODY`` / ``HOLD_CK_BODY``),
+  W_HOLD zip of the hedge and its ``.CHECKSUM``, sizes and md5 ETags of ``HOLD_ZIP_BODY`` / ``HOLD_CK_BODY``;
+  R56b: one daily aggTrades zip ``HOLD_AGG_KEY`` and its ``.CHECKSUM``),
   written to the canonical location by ``roots`` (so ``guard.preflight`` finds it).
 * ``authorize(...)``: writes the pre-opening record and opens a synthetic holdout at a tmp location
   (``roots`` monkeypatches the guard's single location seam ``guard._roots``; ``guard.verify_spec`` patched
@@ -42,9 +43,14 @@ DATE = "2026-01-01T00:00:00+0000"
 HOLD_ZIP_KEY = "data/futures/um/monthly/klines/BTCUSDT/15m/BTCUSDT-15m-2025-08.zip"
 HOLD_ZIP_BODY = b"W_HOLD zip"
 HOLD_CK_BODY = f"{hashlib.sha256(HOLD_ZIP_BODY).hexdigest()}  BTCUSDT-15m-2025-08.zip".encode()
+HOLD_AGG_KEY = "data/futures/um/daily/aggTrades/BTCUSDT/BTCUSDT-aggTrades-2025-08-03.zip"  # R56b (R10)
+HOLD_AGG_BODY = b"W_HOLD aggTrades zip"
+HOLD_AGG_CK = f"{hashlib.sha256(HOLD_AGG_BODY).hexdigest()}  BTCUSDT-aggTrades-2025-08-03.zip".encode()
 MANIFEST_DOC = wman.document([
     (HOLD_ZIP_KEY, len(HOLD_ZIP_BODY), hashlib.md5(HOLD_ZIP_BODY).hexdigest()),
-    (HOLD_ZIP_KEY + ".CHECKSUM", len(HOLD_CK_BODY), hashlib.md5(HOLD_CK_BODY).hexdigest())])
+    (HOLD_ZIP_KEY + ".CHECKSUM", len(HOLD_CK_BODY), hashlib.md5(HOLD_CK_BODY).hexdigest()),
+    (HOLD_AGG_KEY, len(HOLD_AGG_BODY), hashlib.md5(HOLD_AGG_BODY).hexdigest()),
+    (HOLD_AGG_KEY + ".CHECKSUM", len(HOLD_AGG_CK), hashlib.md5(HOLD_AGG_CK).hexdigest())])
 MANIFEST = hashlib.sha256(wman.canonical_bytes(MANIFEST_DOC)).hexdigest()  # pinned at the opening (synthetic)
 
 

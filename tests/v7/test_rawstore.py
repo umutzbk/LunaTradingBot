@@ -314,7 +314,7 @@ SUB = (fx.BTC, "AAAUSDT", "EEEUSDT")
 
 
 def test_in_memory_source_is_the_window_of_the_inputs(fx_inputs, log):
-    src = InMemorySource({s: fx_inputs[s] for s in SUB})
+    src = fx.LedgeredSource({s: fx_inputs[s] for s in SUB})
     full = ResearchUniverse({s: fx_inputs[s] for s in SUB})
     lo, hi = full.data_span()
     same = ResearchUniverse.from_source(src, lo, hi)

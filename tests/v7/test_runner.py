@@ -71,7 +71,8 @@ def inputs() -> dict[str, runner.SymbolInputs]:
 
 def uni(inputs, syms=SUB, **repl) -> ResearchUniverse:
     """A universe of ``syms``; ``repl`` maps a symbol to replaced ``SymbolInputs`` fields."""
-    return ResearchUniverse({s: (replace(inputs[s], **repl[s]) if s in repl else inputs[s]) for s in syms})
+    return fx.ledgered(ResearchUniverse({s: (replace(inputs[s], **repl[s]) if s in repl else inputs[s])
+                                         for s in syms}))
 
 
 def scaled(x: runner.SymbolInputs, from_ts: int, factor: float) -> dict:
@@ -924,9 +925,11 @@ def test_run_book_issues_w_hold_books_with_their_provenance(inputs, opened):
     assert ts and [t for t, _ in cov.known_at] == ts
     assert all(mk == p.record(t).max_known_at for t, mk in cov.known_at)
     m = FoldScoreModel(fakes([win]), "A2", 24)
+    real = m.hashes
+    m.hashes = ("f" * 64,)  # round 1: the mutable attribute is not trusted; recomputed at issuance
     ml = runner.run_book("A2", u, p, win, 24, NOW, model=m, auth=opened.auth)
     mc = runner.holdout_run_coverage(ml, oid)
-    assert mc is not None and mc.model_hashes == m.hashes and mc.arm == "A2"
+    assert mc is not None and mc.model_hashes == real and mc.arm == "A2"
     assert runner.holdout_run_coverage(ml, "0" * 64) is None  # issued for this opening only
     assert runner.holdout_run_coverage(replace(ml, arm="A3"), oid) is None  # identity, not only outputs
     dev = runner.run_book("A0", u, p, (T - 5 * MIN, T + D), 24, NOW, auth=opened.auth)

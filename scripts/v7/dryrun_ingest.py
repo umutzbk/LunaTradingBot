@@ -297,9 +297,9 @@ def run_chunk(store: RawStore, table: str, sym: str, month: str, daily_only: boo
         if daily_only:  # DEC-33: a month with daily files only (no monthly file), same frozen path
             try:
                 e = ingest.ingest_bars(f, store, table, sym, month, monthly=False)
-                rec = ingest._ledger(f, ingest._stored(table, sym, month, e))
-            except ingest.NONFATAL as err:
-                rec = ingest._ledger(f, ingest._gap(table, sym, month, f"{type(err).__name__}: {err}"))
+                rec = ingest._ledger(f, ingest._stored(table, sym, month, e), store)
+            except ingest.NONFATAL as err:  # R55: gap + conflict flag also in the store ledger
+                rec = ingest._ledger(f, ingest._err_gap(table, sym, month, err), store)
         else:
             rec = ingest.ingest_months(f, store, table, sym, [month])[0]
         status, reason = rec["status"], rec["reason"]

@@ -17,6 +17,11 @@ class IntegrityBlocker(RuntimeError):
     """Data-integrity blocker (S-2.2 DEC-33, S-2.6 DEC-32): conflicting sources are never picked silently."""
 
 
+class IntegrityConflict(IntegrityBlocker):
+    """A conflict between sources (DEC-33 monthly vs daily, S-2.6 / R48 funding records): ledgered with
+    ``conflict: true`` and never auto-resolved by a re-ingest (ruling R55)."""
+
+
 @dataclass(frozen=True)
 class TableSpec:
     name: str

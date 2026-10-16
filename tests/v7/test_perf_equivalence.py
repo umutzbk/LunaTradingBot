@@ -403,7 +403,7 @@ def test_decision_pass_equals_full_universe(tmp_path):
     45-day R4 hole (m1: no refusal); a decisions-only universe refuses labels and books; the store's key is
     bound to the source, the history start and the code (I2); every t is guarded before the store (m2)."""
     inputs = _m1_inputs()
-    src = runner.InMemorySource(inputs)
+    src = fx.LedgeredSource(inputs)
     times = [t for t in pf.decision_sample() if t >= pf.START + 70 * D][::2] + [pf.S_A + 72 * H + 5 * MIN]
     times = sorted(set(times))
     st = ViewStore(tmp_path / "v")
@@ -453,7 +453,7 @@ def test_decision_pass_equals_full_universe(tmp_path):
     with pytest.raises(ValueError, match="decisions-only"):
         u.engine_inputs(lambda t: None, pf.NOW)  # type: ignore[arg-type,return-value]
     with pytest.raises(ValueError, match="strictly increasing"):
-        runner.ResearchUniverse.for_decisions(runner.InMemorySource(pf.build_inputs()), pf.START + 90 * D,
+        runner.ResearchUniverse.for_decisions(fx.LedgeredSource(pf.build_inputs()), pf.START + 90 * D,
                                               pf.START + 91 * D, history_lo=pf.START)
 
 

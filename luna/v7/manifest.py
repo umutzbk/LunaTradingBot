@@ -6,7 +6,9 @@ for the Stage 0 completeness check", N1 / N2, DK-01, K9; red-team r2 MJ4, contro
   checksum (the S3 ``ETag`` of the N2 listing), nothing else (S-1.7 allows exactly these before the opening).
 * **Scope** (``SCOPE``): R3 15m monthly + daily, R5 1m monthly + daily, R4 mark / index / premium 15m monthly
   (ruling R47), ``fundingRate`` monthly; every USD-M symbol with W_HOLD files in those listings, plus the
-  hedge ``BTCUSDT`` (which must have W_HOLD files). A key is kept when its whole file period lies in W_HOLD
+  hedge ``BTCUSDT`` (which must have W_HOLD files); and (controller ruling R56b) the W_HOLD DAILY
+  ``aggTrades`` files (R10, fetched per (symbol, UTC day) with an E_M order) of every in-scope symbol, from
+  one single-page listing per (symbol, W_HOLD month). A key is kept when its whole file period lies in W_HOLD
   (``.zip`` and ``.zip.CHECKSUM`` keys alike; both are N1 files fetched at the opening).
 * **Builder** (``build_document`` / ``build_and_write``): single-page N2 listings through the ONE fetch layer
   (a truncated listing fails closed, DK-01; M6 keys are dropped there; only name / size / checksum kept). The
@@ -26,6 +28,10 @@ for the Stage 0 completeness check", N1 / N2, DK-01, K9; red-team r2 MJ4, contro
   ETag and size are checked, and whose sha256 the fetch layer verifies the zip against; AMB-44 (c)). Every
   manifest key that never reaches the store is an unresolved gap of the ingest-completeness gate
   (``rawstore.RawStore.check_ingest_complete`` with the authorization; ruling R55).
+* **Live listings == manifest** (round 1, minor 6): every N2 listing fetched under the authorization (the
+  opening ingest plans its months / days from live listings) must hold exactly the pinned in-scope W_HOLD keys
+  directly under its prefix, with the same sizes and checksums (``check_listing``; ``fetch`` refuses and
+  K9-logs any difference), so a hand-trimmed manifest cannot reduce what the opening ingests and checks.
 
 Pure except ``build_*`` (fetch layer) and the file helpers; no wall clock in the document (its sha256 is a
 function of the listings only).
@@ -39,6 +45,7 @@ import os
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 
 import pandas as pd
@@ -48,8 +55,9 @@ from luna.v7.guard import HoldoutBlocked
 from luna.v7.netguard import Request
 
 __all__ = ["FILE", "FORMAT", "HEDGE", "KIND", "S3", "SCOPE", "Entry", "Manifest", "ManifestError",
-           "build_and_write", "build_document", "canonical_bytes", "document", "load_pinned", "manifest_path",
-           "match_entry", "parse_key", "validate", "verify_pinned", "w_hold_months", "write_document"]
+           "build_and_write", "build_document", "canonical_bytes", "check_listing", "counts", "document",
+           "load_pinned", "manifest_path", "match_entry", "match_source", "parse_key", "validate",
+           "verify_pinned", "w_hold_months", "write_document"]
 
 FILE = "W_HOLD_MANIFEST.json"
 KIND = "V7_W_HOLD_LISTING_MANIFEST"
@@ -62,7 +70,8 @@ SCOPE: tuple[tuple[str, str, str, str | None], ...] = (
     ("R3", "monthly", "klines", "15m"), ("R3", "daily", "klines", "15m"),
     ("R5", "monthly", "klines", "1m"), ("R5", "daily", "klines", "1m"),
     ("R4_mark", "monthly", "markPriceKlines", "15m"), ("R4_index", "monthly", "indexPriceKlines", "15m"),
-    ("R4_premium", "monthly", "premiumIndexKlines", "15m"), ("R2_archive", "monthly", "fundingRate", None))
+    ("R4_premium", "monthly", "premiumIndexKlines", "15m"), ("R2_archive", "monthly", "fundingRate", None),
+    ("R10", "daily", "aggTrades", None))  # R56b: W_HOLD daily aggTrades of the in-scope symbols (E_M, R10)
 _KEY = re.compile(r"data/futures/um/(?P<freq>monthly|daily)/(?P<dataset>[A-Za-z]+)/"
                   r"(?P<symbol>[A-Z0-9_]{1,40})/(?:(?P<interval>\d+[mhdwM])/)?"
                   r"(?P<name>[A-Za-z0-9_\-]+\.zip(?:\.CHECKSUM)?)\Z", re.ASCII)
@@ -90,12 +99,19 @@ class Manifest:
     symbols: tuple[str, ...]
     entries: Mapping[str, tuple[int, str]]
 
-    def zips(self) -> Iterable[tuple[str, str, str, str]]:
-        """(table, symbol, period, key) of every ``.zip`` key (period: YYYY-MM or YYYY-MM-DD)."""
-        for key in self.entries:
+    @cached_property
+    def _zips(self) -> tuple[tuple[str, str, str, str], ...]:
+        out = []
+        for key in sorted(self.entries):
             p = parse_key(key)
             if p is not None and not key.endswith(".CHECKSUM"):
-                yield p[0], p[2], p[3], key
+                out.append((p[0], p[2], p[3], key))
+        return tuple(out)
+
+    def zips(self) -> tuple[tuple[str, str, str, str], ...]:
+        """(table, symbol, period, key) of every ``.zip`` key, sorted by key (period: YYYY-MM or YYYY-MM-DD);
+        parsed once per manifest object."""
+        return self._zips
 
 
 def w_hold_months() -> list[str]:
@@ -254,6 +270,33 @@ def verify_pinned(sha256: str | None) -> Manifest:
     return load_pinned(sha256)  # type: ignore[arg-type]
 
 
+def match_source(size: int, ck: str, src: Mapping) -> str | None:
+    """None when a stored chunk's source record (``ingest._source``: bytes, md5) matches the pinned entry
+    (size, and md5 for a single-part ETag; a multipart ETag: size only); else the reason (round 1, m5)."""
+    if src.get("bytes") != size:
+        return f"{src.get('bytes')} bytes, pinned {size}"
+    etag = ck.strip('"').lower()
+    if _MD5.match(etag):
+        return None if src.get("md5") == etag else f"md5 {src.get('md5')}, pinned {etag}"
+    return None if _MULTIPART.match(etag) else f"pinned checksum {ck!r} cannot be verified"
+
+
+def check_listing(m: Manifest, prefix: str, entries: Iterable) -> str | None:
+    """Round 1, minor 6: the in-scope W_HOLD keys directly under ``prefix`` in a live listing (entries with
+    ``key`` / ``size`` / ``checksum``) must equal the pinned ones under that prefix; None, else the
+    difference."""
+    live = {e.key: (int(e.size), str(e.checksum)) for e in entries
+            if e.key.startswith(prefix) and "/" not in e.key[len(prefix):] and parse_key(e.key) is not None}
+    pinned = {k: v for k, v in m.entries.items() if k.startswith(prefix) and "/" not in k[len(prefix):]}
+    if live == pinned:
+        return None
+    extra = sorted(set(live) - set(pinned))
+    gone = sorted(set(pinned) - set(live))
+    changed = sorted(k for k in set(live) & set(pinned) if live[k] != pinned[k])
+    return (f"live listing {prefix!r} differs from the pinned W_HOLD manifest: {len(extra)} unlisted "
+            f"{extra[:3]}, {len(gone)} missing {gone[:3]}, {len(changed)} changed {changed[:3]}")
+
+
 def match_entry(m: Manifest, key: str, body: bytes) -> str | None:
     """None when ``body`` matches the pinned entry of ``key`` (size, and the md5 of a single-part ETag; a
     ``.zip`` with a multipart ETag: size only, its ``.CHECKSUM`` binds the content); else the reason."""
@@ -297,12 +340,14 @@ def build_document(fetcher) -> dict:
     """The manifest document from the live N2 listings (module docstring). ``fetcher``: the run's
     ``fetch.Fetcher`` (pre-opening mode; N2 only)."""
     syms: dict[tuple[str, str], list[str]] = {}
-    for _t, freq, dataset, _i in SCOPE:
-        if (freq, dataset) not in syms:
+    for t, freq, dataset, _i in SCOPE:
+        if t != "R10" and (freq, dataset) not in syms:
             syms[(freq, dataset)] = _symbols(fetcher, freq, dataset)
     months = w_hold_months()
     entries: list[Entry] = []
     for table, freq, dataset, interval in SCOPE:
+        if table == "R10":  # aggTrades: only the in-scope symbols, below
+            continue
         for sym in syms[(freq, dataset)]:
             base = f"{ROOT}/{freq}/{dataset}/{sym}/" + (f"{interval}/" if interval else "")
             stem = f"{sym}-{interval}-" if interval else f"{sym}-{dataset}-"
@@ -312,7 +357,24 @@ def build_document(fetcher) -> dict:
                     p = parse_key(e.key)
                     if p is not None and p[0] == table and p[1] == freq and p[2] == sym:
                         entries.append(Entry(e.key, int(e.size), e.checksum))
+    for sym in sorted({parse_key(e.key)[2] for e in entries} | {HEDGE}):  # type: ignore[index]  (R56b)
+        for mo in months:
+            prefix = f"{ROOT}/daily/aggTrades/{sym}/{sym}-aggTrades-{mo}-"
+            for e in _list(fetcher, prefix).entries:
+                p = parse_key(e.key)
+                if p is not None and p[0] == "R10" and p[2] == sym:
+                    entries.append(Entry(e.key, int(e.size), e.checksum))
     return document(entries)
+
+
+def counts(doc: Mapping) -> dict[str, int]:
+    """Key counts per (table, freq) of a manifest document (for the builder dry run)."""
+    out: dict[str, int] = {}
+    for k, _s, _c in doc["entries"]:
+        p = parse_key(k)
+        name = f"{p[0]}/{p[1]}{'/CHECKSUM' if k.endswith('.CHECKSUM') else ''}"  # type: ignore[index]
+        out[name] = out.get(name, 0) + 1
+    return dict(sorted(out.items()))
 
 
 def build_and_write(fetcher) -> tuple[Path, str]:

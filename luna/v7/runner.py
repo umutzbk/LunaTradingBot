@@ -43,13 +43,19 @@ wall-clock; the DT4 run record is written by ``luna.v7.runrecord`` to a caller-s
   hardened authorization (``auth``; None before the opening). A W_HOLD t or input in W_HOLD is refused
   before the opening, M6 until the canonical R_V6; a refusal is raised and K9-logged. Every research entry
   point refuses to run without a configured K9 log (``k9.require``).
-* Ingest completeness (red-team r2 MJ2, ruling R55, AMB-45): ``from_source`` / ``for_decisions`` (so
-  ``decision_pass``) first call the source's ``check_ingest(lo, hi)`` when it has one
-  (``rawstore.StoreSource``: the store's ledger, ``RawStore.check_ingest_complete``), and the universe keeps
-  that check: ``label_panel`` and ``run_book`` (so ``runner_select.dev_selection``) re-run it
-  (``ResearchUniverse.check_ingest``). An unresolved ingest gap or conflict in the data used is refused
-  (IntegrityBlocker, K9-logged), never read as missing data. A universe built directly from in-memory inputs
-  has no store and nothing to check.
+* Ingest completeness (red-team r2 MJ2, ruling R55, AMB-45; Tasks 29b / 29c round 1): ``from_source`` /
+  ``for_decisions`` / ``decision_pass`` first call the source's ``check_ingest(lo, hi)``
+  (``rawstore.StoreSource``: the store's ledger, ``RawStore.check_ingest_complete``, with the pinned W_HOLD
+  manifest coverage under the authorization, R56) and the universe keeps that check; ``label_panel``,
+  ``run_book`` and ``runner_select.dev_selection`` re-run it (``ResearchUniverse.check_ingest``). FAIL CLOSED:
+  a source without ``check_ingest`` (``InMemorySource``) and a universe without an ingest check (built
+  directly from inputs) are refused (IntegrityBlocker, K9-logged), so nothing reaches a book, a label panel,
+  a DevSelection or the ``_HOLD_*`` registries (issued only by ``label_panel`` / ``run_book``, after the
+  check; the module-private issuers are test hooks) without a verified ledger. The only in-memory path is
+  test-only: ``tests/v7/fixtures_v7.LedgeredSource`` (an ``InMemorySource`` with an in-memory ledger whose
+  ``check_ingest`` is a real check: an empty ledger passes, any gap / conflict record in use refuses) and
+  ``fixtures_v7.ledgered(u)`` for a universe built from inputs. An unresolved ingest gap or conflict in the
+  data used is never read as missing data.
 * ``FoldScoreModel``: ``engine.ScoreModel`` over the outer-fold models: a decision t uses the model whose test
   quarter contains t (S-10.6 "each quarter uses its own fold model") and t outside every test quarter is
   refused. Logs (fold id, model sha256) and the predictions per decision.
@@ -343,11 +349,13 @@ class ResearchUniverse:
         self._ingest_check: tuple[object, int, int] | None = None  # (source check, lo, hi): ruling R55
 
     def check_ingest(self) -> None:
-        """Ruling R55: re-run the source's ingest-completeness check over this universe's window (nothing for
-        a universe built directly from inputs)."""
-        if self._ingest_check is not None:
-            chk, lo, hi = self._ingest_check
-            chk(lo, hi)  # type: ignore[operator]
+        """Ruling R55: re-run the source's ingest-completeness check over this universe's window; a universe
+        without one (built directly from inputs, no store) is refused (fail closed; IntegrityBlocker,
+        K9-logged)."""
+        if self._ingest_check is None:
+            _no_ledger("a universe without a store ingest check (built directly from inputs)")
+        chk, lo, hi = self._ingest_check  # type: ignore[misc]
+        chk(lo, hi)  # type: ignore[operator]
 
     @classmethod
     def from_source(cls, source: UniverseSource, lo: int, hi: int, hedge: str = HEDGE) -> ResearchUniverse:
@@ -749,13 +757,27 @@ class DecisionProvider:
         return self._records[int(t)]
 
 
-def _ingest_gate(source: object, lo: int, hi: int) -> tuple[object, int, int] | None:
-    """Ruling R55: run the source's ``check_ingest(lo, hi)`` (a store-backed source) and return it for the
-    universe's later re-checks; None for a source without a store."""
+RULE_NO_LEDGER = ("ruling R55 ingest completeness: a research input without a verified ingest ledger (no "
+                  "store check) is refused")
+
+
+def _no_ledger(what: str) -> None:
+    from luna.v7.data.schema import IntegrityBlocker
+
+    e = IntegrityBlocker(f"{what}: no verified ingest ledger (ruling R55, fail closed); research inputs come "
+                         "from rawstore.StoreSource")
+    k9.log_refusal(e, request={"kind": "ingest_completeness", "what": what}, rule=RULE_NO_LEDGER)
+    raise e
+
+
+def _ingest_gate(source: object, lo: int, hi: int) -> tuple[object, int, int]:
+    """Ruling R55: run the source's ``check_ingest(lo, hi)`` and return it for the universe's later re-checks;
+    a source without one is refused (fail closed)."""
+    k9.require()
     chk = getattr(source, "check_ingest", None)
     if not callable(chk):
-        return None
-    chk(lo, hi)
+        _no_ledger(f"source {type(source).__name__} without check_ingest")
+    chk(lo, hi)  # type: ignore[misc]
     return chk, int(lo), int(hi)
 
 
@@ -786,8 +808,8 @@ def decision_pass(source: UniverseSource, decision_ts: Sequence[int], store: Vie
     ident = _source_identity(source)
     if ident is None:
         raise ValueError("decision_pass needs a source with a data identity (source.identity())")
-    if len(decision_ts):  # ruling R55: the whole pass's data first (each chunk's universe re-checks it)
-        _ingest_gate(source, history_lo, max(int(t) for t in decision_ts) + 1)
+    # ruling R55: the whole pass's data first (each chunk's universe re-checks it); fail closed
+    _ingest_gate(source, history_lo, max([int(t) for t in decision_ts], default=int(history_lo)) + 1)
     store.bind(view_body(ident, history_lo, tuple(source.symbols()), hedge, with_features))
     ts = sorted({int(t) for t in decision_ts})
     if not ts or ts[0] < int(history_lo):
@@ -931,6 +953,7 @@ def label_panel(u: ResearchUniverse, provider: DecisionProvider, decision_ts: Se
     if h not in HORIZONS:
         raise ValueError(f"unknown horizon {h}")
     k9.require()
+    u.check_ingest()  # ruling R55 (fail closed: a universe without a store ingest check is refused)
     if not provider.with_features:
         raise ValueError("label_panel needs the §9 features (DecisionProvider(with_features=True))")
     ts = sorted({int(t) for t in decision_ts})
@@ -939,7 +962,6 @@ def label_panel(u: ResearchUniverse, provider: DecisionProvider, decision_ts: Se
     w_lo, w_end = int(window[0]), int(window[1])
     guard.check_outcome_window(ts[0], min(ts[-1] + FILL_DELAY + h * H + MIN, w_end), auth=auth, now_ns=now_ns)
     u.check_data(auth)
-    u.check_ingest()
     rows: list[dict] = []
     res: list[labels.LabelResult | None] = []
     lab_rows: list[dict] = []
@@ -1053,7 +1075,10 @@ def _note_holdout_universe(panel: LabelPanel, auth: guard.HoldoutAuthorization |
     pin = guard.verified_opening(auth)
     cov = holdout_panel_coverage(panel)
     if cov is None or cov.opening_id != pin["opening_id"]:
-        raise guard.HoldoutBlocked("the W_HOLD label panel was not issued by label_panel under this opening")
+        e = guard.HoldoutBlocked("the W_HOLD label panel was not issued by label_panel under this opening")
+        k9.log_refusal(e, request={"kind": "holdout_panel", "opening_id": pin["opening_id"]},
+                       rule=guard.k9_rule(e))
+        raise e
     prior = _HOLD_UNIVERSE.setdefault(pin["opening_id"], cov.universe)
     if prior != cov.universe:
         raise ValueError("the W_HOLD panel's universe differs from the one already used for this opening")
@@ -1134,6 +1159,9 @@ def run_book(arm: str, u: ResearchUniverse, provider: DecisionProvider, window: 
     point: the run is marked ``research=True``, so its DT4 record is a research record (refused from a dirty
     working tree; DK-114 / red-team m10)."""
     k9.require()
+    u.check_ingest()  # ruling R55 (fail closed: a universe without a store ingest check is refused)
+    if model is not None and not isinstance(model, FoldScoreModel):
+        raise TypeError(f"run_book: the score model must be a FoldScoreModel, got {type(model).__name__}")
     if arm != "A0" and not provider.with_features:
         raise ValueError(f"{arm} scores the §9 features: the provider must be built with_features=True")
     if arm != "A0" and model is not None and model.ml_star != arm and arm in ("A2", "A3"):
@@ -1144,15 +1172,16 @@ def run_book(arm: str, u: ResearchUniverse, provider: DecisionProvider, window: 
         miss = [s for s in u.candidates if u.instruments[s].aggtrades is None]
         if miss:
             raise ValueError(f"E_M needs aggTrades for {miss}")
-    u.check_ingest()  # ruling R55
     inputs = u.engine_inputs(provider, now_ns, auth)  # checks the universe span (``check_data``)
+    if getattr(provider, "u", None) is not u:  # round 1: the provider must be bound to this universe
+        raise ValueError("run_book: the provider is bound to another universe (provider.u is not u)")
     run = replace(engine.run(arm, inputs, window, h, model=model, execution=execution), research=True)
     if auth is not None and int(window[0]) < W_HOLD[1] and W_HOLD[0] < int(window[1]):
         # a W_HOLD book (the engine verified the opening): issued with its provenance (red-team r2 MJ3 / m1)
         dec = run.decisions
         ts = [int(t) for t in ns_array(dec["t"], "decisions.t")] if len(dec) else []
         _issue_holdout_run(run, auth, universe=universe_identity(u),
-                           model_hashes=None if model is None else model.hashes,
+                           model_hashes=None if model is None else tuple(model_hash(m) for m in model.models),
                            known_at=[(t, provider.record(t).max_known_at) for t in ts])
     return run
 

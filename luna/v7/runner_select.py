@@ -196,6 +196,8 @@ def dev_selection(u: ResearchUniverse, provider: DecisionProvider, fold_models: 
                   B: int = FROZEN.stats.B, seed: int = stats.SEED, em: bool = True) -> DevSelection:
     """S-10.6 then S-10.7 (see module docstring). Reference arms (A0-V5, TS) are not engine arms: runs the
     caller supplies are passed through to ``selection.choose`` (reported only; AMB-27 (a))."""
+    k9.require()
+    u.check_ingest()  # ruling R55 (fail closed: a universe without a verified store ledger is refused)
     q = quarters(fold_models)
     window = (q[0][0], q[-1][1])
     if not (W_DEV[0] <= window[0] and window[1] <= W_DEV[1]):

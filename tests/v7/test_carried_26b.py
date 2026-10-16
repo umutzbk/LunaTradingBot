@@ -17,6 +17,7 @@ from luna.v7 import runner, viewstore
 from luna.v7.data.schema import IntegrityBlocker
 from luna.v7.timeutil import MIN, D
 from luna.v7.viewstore import ViewStore
+from tests.v7 import fixtures_v7 as fx
 from tests.v7 import perf_fixtures as pf
 
 LO = pf.START + 100 * D  # decision chunk start: GAPUSDT's premium bars are an anchor only (45-day hole)
@@ -36,12 +37,12 @@ def full_inputs() -> dict[str, runner.SymbolInputs]:
     return out
 
 
-def _with_anchor_known_at(inputs, ka: int) -> runner.InMemorySource:
+def _with_anchor_known_at(inputs, ka: int) -> fx.LedgeredSource:
     x = inputs["GAPUSDT"]
     f = x.r4.premium.copy()
     i = int((f["open_ts"] < pf.START + 60 * D).to_numpy().nonzero()[0][-1])  # the anchor row
     f.loc[i, "known_at"] = ka
-    return runner.InMemorySource({**inputs, "GAPUSDT": replace(x, r4=replace(x.r4, premium=f))})
+    return fx.LedgeredSource({**inputs, "GAPUSDT": replace(x, r4=replace(x.r4, premium=f))})
 
 
 def test_for_decisions_refuses_an_anchor_not_pit_for_the_whole_chunk(full_inputs):

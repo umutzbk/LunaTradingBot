@@ -14,7 +14,7 @@ from typing import Literal
 
 import pandas as pd
 
-from luna.v7.data.schema import IntegrityBlocker
+from luna.v7.data.schema import IntegrityBlocker, IntegrityConflict
 from luna.v7.timeutil import MIN, NS_HI, NS_LO
 
 RAW_COLUMNS = ("open_time", "open", "high", "low", "close", "volume", "close_time", "quote_volume", "count",
@@ -80,7 +80,7 @@ def union(monthly: pd.DataFrame, daily: pd.DataFrame) -> pd.DataFrame:
     for c in VALUE_COLUMNS:
         bad = both[both[f"{c}_m"] != both[f"{c}_d"]]
         if len(bad):
-            raise IntegrityBlocker(
+            raise IntegrityConflict(
                 f"kline conflict monthly vs daily in {c} for {len(bad)} key(s), first: "
                 f"{bad[key].iloc[0].to_dict()}"
             )

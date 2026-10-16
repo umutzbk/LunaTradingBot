@@ -51,10 +51,17 @@ chunk file's sha256); the ingestion appends an ``attempt`` record before it fetc
 (``IntegrityBlocker``, K9-logged) when, among the (table, symbol, month) keys in use (month overlapping
 [lo, hi)): a key has an unresolved blocking record (``gap`` / ``spill_not_requested`` / ``attempt`` / an
 unknown status; resolved only by a ``stored`` record of the chunk the store now holds, whatever the order;
-a record whose reason is a DEC-33 / S-2.6 conflict is never resolved by a re-ingest), a stored chunk has no
-``stored`` record of its own sha256 (the ledger is not this store's complete ledger), or the ledger has an
-unreadable line. With the verified authorization, every ``.zip`` key of the pinned W_HOLD manifest in use
-must be a source of its stored chunk (ruling R56: a manifest entry that never reached the store is a gap).
+a record with ``conflict: true`` (DEC-33 / S-2.6; a legacy record without the field: its reason names a
+conflict) is never resolved by a re-ingest), a stored chunk has no ``stored`` record of its own sha256 (the
+ledger is not this store's complete ledger), a ``planned`` key (the caller's planned listing, optional) has no
+stored chunk, or the ledger has an unreadable line. Repair of an unreadable (torn) line, append-only:
+``quarantine_unreadable`` copies its bytes to ``INGEST_LEDGER.quarantine.jsonl``, appends a ``quarantined``
+record (line number + sha256 of the bytes) and writes a K9 entry; the line is then skipped (whatever record it
+held, the chunk's ``attempt`` record stays unresolved until the chunk is stored). With the verified
+authorization, every ``.zip`` key of the pinned W_HOLD manifest in use must be a source of its stored
+chunk with the pinned size (and md5, for a single-part ETag) (ruling R56: a
+manifest entry that never reached the store is a gap; R10 aggTrades are not raw-store tables and are bound at
+fetch time only).
 The research entry points call it (``StoreSource.check_ingest``; ``runner.ResearchUniverse.from_source`` /
 ``for_decisions``, ``label_panel``, ``run_book``; ``metaingest.instances_from_store``): a hole is never read
 as missing data.
@@ -111,6 +118,8 @@ RULE_INGEST = ("ruling R55 ingest completeness: unresolved ingest gap / DEC-33 c
                "in the data used (refused, never read as missing data)")
 LEDGER = "INGEST_LEDGER.jsonl"
 STORED = "stored"
+QUARANTINED = "quarantined"
+RULE_REPAIR = "ruling R55 ingest ledger repair: an unreadable line quarantined (append-only)"
 BLOCKING = frozenset({"gap", "spill_not_requested", "attempt"})
 _LEDGER_LOCK = threading.Lock()
 _SYMBOL = re.compile(r"[A-Z0-9_]{1,40}\Z", re.ASCII)
@@ -462,8 +471,17 @@ def append_ledger(path: Path, rec: Mapping) -> None:
             os.fsync(f.fileno())
 
 
-def _conflict(reason: object) -> bool:
+def _conflict(rec: Mapping) -> bool:
+    """The structured ``conflict`` field (ruling R55 round 1); a legacy record without it: its reason names a
+    conflict (read as it is, fail closed)."""
+    if "conflict" in rec:
+        return rec.get("conflict") is True
+    reason = rec.get("reason")
     return isinstance(reason, str) and "conflict" in reason.lower()
+
+
+def _rank(why: str) -> int:
+    return 2 if why.startswith("conflict") else 0 if why.startswith("attempt") else 1
 
 
 @dataclass(frozen=True)
@@ -474,6 +492,8 @@ class IngestIndex:
     unresolved: Mapping[tuple, str]
     unledgered: frozenset
     unreadable: tuple[int, ...]
+    stored: frozenset = frozenset()  # keys with a chunk and its stored record
+    unreadable_sha: tuple[tuple[int, str], ...] = ()  # (line, sha256 of its bytes)
 
 
 # ------------------------------------------------------------------------------------------------ store
@@ -513,19 +533,22 @@ class RawStore:
         if self._ingest_cache is not None and self._ingest_cache[0] == key:
             return self._ingest_cache[1]
         records: list[dict] = []
-        bad: list[int] = []
+        bad: list[tuple[int, str]] = []
         if sig is not None:
-            for i, line in enumerate(p.read_bytes().decode("utf-8", errors="replace").splitlines(), 1):
-                if not line.strip():
+            for i, raw in enumerate(p.read_bytes().split(b"\n"), 1):
+                if not raw.strip():
                     continue
                 try:
-                    r = json.loads(line)
+                    r = json.loads(raw.decode("utf-8"))
                 except ValueError:
                     r = None
                 if isinstance(r, dict):
                     records.append(r)
                 else:
-                    bad.append(i)
+                    bad.append((i, _sha_bytes(raw)))
+        quarantined = {(r.get("line"), r.get("line_sha256")) for r in records
+                       if r.get("status") == QUARANTINED}
+        bad = [b for b in bad if b not in quarantined]
         chunks: dict[tuple, str] = {}
         for t in TABLES:
             tm = self.table_manifest(t) or {"symbols": {}}
@@ -534,19 +557,26 @@ class RawStore:
                     chunks[(t, sym, month)] = e["sha256"]
         stored: dict[tuple, set] = {}
         blocking: dict[tuple, str] = {}
+        conflicts: set[tuple] = set()
         for r in records:
             k = (r.get("table"), r.get("symbol"), r.get("month"))
+            if r.get("status") == QUARANTINED:
+                continue
             if r.get("status") == STORED:
                 stored.setdefault(k, set()).add(r.get("sha256"))
                 continue
             why = f"{r.get('status')}: {r.get('reason')}"
+            if _conflict(r):
+                conflicts.add(k)
+                why = f"conflict: {why}"
             old = blocking.get(k)
-            if old is None or (not _conflict(old) and (_conflict(why) or old.startswith("attempt"))):
+            if old is None or _rank(why) > _rank(old):
                 blocking[k] = why  # the most informative record: a conflict, else a gap over an attempt
         unresolved = {k: why for k, why in blocking.items()
-                      if _conflict(why) or k not in chunks or chunks[k] not in stored.get(k, ())}
+                      if k in conflicts or k not in chunks or chunks[k] not in stored.get(k, ())}
         unledgered = frozenset(k for k, sha in chunks.items() if sha not in stored.get(k, ()))
-        idx = IngestIndex(unresolved, unledgered, tuple(bad))
+        resolved = frozenset(k for k, sha in chunks.items() if sha in stored.get(k, ()))
+        idx = IngestIndex(unresolved, unledgered, tuple(i for i, _ in bad), resolved, tuple(bad))
         self._ingest_cache = (key, idx)
         return idx
 
@@ -566,9 +596,29 @@ class RawStore:
         (``ingest_state_sha256``; ruling R55)."""
         return {**self.manifest_sha256s(), "ingest_ledger_state": self.ingest_state_sha256()}
 
+    def quarantine_unreadable(self) -> int:
+        """The documented repair of unreadable (torn) ledger lines, append-only (module docstring): each
+        one is copied to ``INGEST_LEDGER.quarantine.jsonl``, a ``quarantined`` record (line, sha256) is
+        appended to the ledger and a K9 entry is written. Returns the number quarantined."""
+        lg = k9.require()
+        idx = self.ingest_index()
+        if not idx.unreadable_sha:
+            return 0
+        lines = self.ledger_path.read_bytes().split(b"\n")
+        for i, sha in idx.unreadable_sha:
+            raw = lines[i - 1]
+            append_ledger(self.root / "INGEST_LEDGER.quarantine.jsonl",
+                          {"line": i, "line_sha256": sha, "bytes": raw.decode("utf-8", errors="replace")})
+            self.append_ledger({"status": QUARANTINED, "line": i, "line_sha256": sha,
+                                "reason": "unreadable ledger line quarantined (repair, append-only)"})
+            lg.record(request={"kind": "ingest_ledger_repair", "store": str(self.root), "line": i,
+                               "line_sha256": sha}, rule=RULE_REPAIR, reason="unreadable line quarantined")
+        return len(idx.unreadable_sha)
+
     def check_ingest_complete(self, lo: int, hi: int, *, tables: Sequence[str] | None = None,
                               symbols: Sequence[str] | None = None,
-                              auth: guard.HoldoutAuthorization | None = None) -> None:
+                              auth: guard.HoldoutAuthorization | None = None,
+                              planned: Sequence[tuple[str, str, str]] | None = None) -> None:
         """Ruling R55 (module docstring): refuse (IntegrityBlocker, K9-logged) when the data in use, the
         (table, symbol, month) keys of ``tables`` / ``symbols`` (None: all) whose month overlaps [lo, hi), is
         not completely ingested."""
@@ -594,6 +644,9 @@ class RawStore:
         bad += [f"{k}: unresolved {why}" for k, why in sorted(idx.unresolved.items(), key=repr) if used(k)]
         bad += [f"{k}: stored chunk without a stored ledger record" for k in sorted(idx.unledgered)
                 if used(k)]
+        if planned is not None:  # optional listing coverage (AMB-45): every planned key in use is stored
+            keys = sorted({tuple(x) for x in planned})
+            bad += [f"{k}: planned (listed) but not stored" for k in keys if used(k) and k not in idx.stored]
         if auth is not None:
             bad += self._manifest_gaps(lo, hi, tset, sset, auth)
         if bad:
@@ -611,7 +664,9 @@ class RawStore:
         m = manifest.load_pinned(pin["manifest_sha256"])
         srcs: dict[tuple[str, str], dict] = {}
         out: list[str] = []
-        for table, sym, period, key in sorted(m.zips()):
+        for table, sym, period, key in m.zips():
+            if table not in TABLES:  # R10 aggTrades: not a raw-store table (bound at fetch time, R56b)
+                continue
             per = guard.file_period(key)
             if per is None or not (per[0] < hi and lo < per[1]):
                 continue
@@ -621,8 +676,13 @@ class RawStore:
                 srcs[(table, sym)] = (self.symbol_manifest(table, sym) or {"chunks": {}})["chunks"]
             e = srcs[(table, sym)].get(period[:7])
             url = "https://data.binance.vision/" + key
-            if e is None or url not in {s.get("url") for s in e.get("sources", [])}:
+            src = [s for s in (e or {}).get("sources", []) if s.get("url") == url]
+            size, ck = m.entries[key]
+            if not src:
                 out.append(f"({table}, {sym}, {period[:7]}): pinned W_HOLD file {key} not stored")
+            elif manifest.match_source(size, ck, src[0]) is not None:
+                out.append(f"({table}, {sym}, {period[:7]}): stored source of {key} differs from the pinned "
+                           f"entry ({manifest.match_source(size, ck, src[0])})")
         return out
 
     # paths

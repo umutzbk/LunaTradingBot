@@ -52,7 +52,8 @@ def opened(_opening, monkeypatch):
 
 
 def uni(inputs, **repl) -> ResearchUniverse:
-    return ResearchUniverse({s: (replace(inputs[s], **repl[s]) if s in repl else inputs[s]) for s in SUB})
+    return fx.ledgered(ResearchUniverse({s: (replace(inputs[s], **repl[s]) if s in repl else inputs[s])
+                                         for s in SUB}))
 
 
 def with_row_at(df: pd.DataFrame, col: str, ts: int) -> pd.DataFrame:

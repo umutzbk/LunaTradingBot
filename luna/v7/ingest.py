@@ -50,6 +50,7 @@ is rebuilt and ``put_chunk`` accepts only identical content. Before the opening 
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -64,7 +65,7 @@ from luna.v7 import guard, k9
 from luna.v7.constants import FROZEN
 from luna.v7.data import funding as fund_mod
 from luna.v7.data import klines
-from luna.v7.data.schema import IntegrityBlocker
+from luna.v7.data.schema import IntegrityBlocker, IntegrityConflict
 from luna.v7.fetch import MAX_RESPONSE_BYTES, Fetched, Fetcher, FetchError, ListingEntry
 from luna.v7.netguard import Request
 from luna.v7.rawstore import TABLES, RawStore, StoreTable, _symbol, ledger_record, month_period, store_bound
@@ -164,8 +165,10 @@ def daily_days(fetcher: Fetcher, table: str, symbol: str, month: str, *,
 
 
 def _source(f: Fetched) -> dict:
-    return {"url": f.url, "name": f.url.rsplit("/", 1)[-1], "kind": f.kind, "bytes": len(f.body or b""),
-            "sha256": f.sha256, "checksum_sha256": f.checksum_sha256, "recv_ts": int(f.recv_ts)}
+    body = f.body or b""
+    return {"url": f.url, "name": f.url.rsplit("/", 1)[-1], "kind": f.kind, "bytes": len(body),
+            "sha256": f.sha256, "checksum_sha256": f.checksum_sha256, "recv_ts": int(f.recv_ts),
+            "md5": hashlib.md5(body, usedforsecurity=False).hexdigest()}  # R56: vs the pinned ETag
 
 
 def _csv_text(body: bytes, url: str) -> str:
@@ -319,7 +322,7 @@ def _dedupe_month(rows: pd.DataFrame, month: str) -> tuple[pd.DataFrame, list[st
         if not (np.abs(rates - rates[0]) <= fund_mod.RATE_ATOL).all() or iv.astype("object").nunique(
                 dropna=False) > 1:
             files = sorted(set(g["_file"]))
-            raise IntegrityBlocker(f"funding {month}: conflicting records from files {files} "
+            raise IntegrityConflict(f"funding {month}: conflicting records from files {files} "
                                    f"at {g['funding_ts'].tolist()} (S-2.6 key rule, ruling R48)")
         order = sorted(idx, key=lambda i: (bool(r["_other"].iat[i]), str(r["_file"].iat[i]), int(ts[i])))
         best = order[0]  # the row from the month's own file, else from the earliest file
@@ -378,9 +381,15 @@ def _stored(table: str, symbol: str, month: str, e: Mapping) -> dict:
             "rows": e["rows"], "reason": None}
 
 
-def _gap(table: str, symbol: str, month: str, reason: str) -> dict:
+def _gap(table: str, symbol: str, month: str, reason: str, *, conflict: bool = False) -> dict:
+    """A gap record; ``conflict`` (new field, ruling R55 round 1): a source conflict, never resolved."""
     return {"table": table, "symbol": symbol, "month": month, "status": "gap", "sha256": None, "rows": None,
-            "reason": reason}
+            "reason": reason, "conflict": bool(conflict)}
+
+
+def _err_gap(table: str, symbol: str, month: str, err: BaseException) -> dict:
+    return _gap(table, symbol, month, f"{type(err).__name__}: {err}",
+                conflict=isinstance(err, IntegrityConflict))
 
 
 def listed_months(fetcher: Fetcher, table: str, symbol: str, *,
@@ -457,7 +466,7 @@ def ingest_funding_archive(fetcher: Fetcher, store: RawStore, symbol: str,
                                     sources=[srcs[x] for x in sorted(set(files) | {m})], auth=auth)
                 out.append(_ledger(fetcher, _stored(table, symbol, m, e)))
             except IntegrityBlocker as err:
-                out.append(_ledger(fetcher, _gap(table, symbol, m, f"{type(err).__name__}: {err}"), store))
+                out.append(_ledger(fetcher, _err_gap(table, symbol, m, err), store))
         for m in sorted(set(ev) - set(months)):
             out.append(_ledger(fetcher, {**_gap(table, symbol, str(m), f"{int((ev == m).sum())} rows of this "
                                                 "month in the files of its neighbours; month not requested"),
@@ -524,5 +533,5 @@ def ingest_months(fetcher: Fetcher, store: RawStore, table: str, symbol: str,
                     e = ingest_bars(fetcher, store, table, symbol, m, auth=auth)
                 out.append(_ledger(fetcher, _stored(table, symbol, m, e)))
             except NONFATAL as err:
-                out.append(_ledger(fetcher, _gap(table, symbol, m, f"{type(err).__name__}: {err}"), store))
+                out.append(_ledger(fetcher, _err_gap(table, symbol, m, err), store))
         return out

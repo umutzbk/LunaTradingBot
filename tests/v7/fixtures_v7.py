@@ -18,6 +18,12 @@ W_HOLD / M6 overlap, so every guard runs unmodified):
   rescaled: ``qty * price`` is the leg notional);
 * synthetic aggTrades (E_M) over the dense 1-minute windows.
 
+TEST-ONLY ingest path (ruling R55 round 1): research entry points refuse a universe without a verified store
+ingest ledger. ``LedgeredSource`` is an ``InMemorySource`` with an in-memory ingest ledger whose
+``check_ingest`` is a real check (an empty ledger passes; a non-``stored`` or conflict record overlapping the
+window refuses, IntegrityBlocker); ``ledgered(u)`` binds that check to a universe built directly from inputs.
+Production code has no in-memory path (``runner.InMemorySource`` has no ``check_ingest``).
+
 The per-decision wiring (gates, h-hat, beta, 24 h quote volume, candidate rows, fold-model routing) is
 ``luna.v7.runner`` (Task 19b); this module only builds the seeded ``runner.SymbolInputs``.
 """
@@ -32,9 +38,10 @@ import pandas as pd
 from luna.v7.data import funding as fund_mod
 from luna.v7.data import klines
 from luna.v7.data.instances import build_instances
+from luna.v7.data.schema import IntegrityBlocker
 from luna.v7.features import R4Bars
 from luna.v7.models import Config
-from luna.v7.runner import ResearchUniverse, SymbolInputs
+from luna.v7.runner import InMemorySource, ResearchUniverse, SymbolInputs
 from luna.v7.timeutil import MIN, D, H, to_ns
 from luna.v7.universe import Identity
 from luna.v7.windows import Fold, decision_times
@@ -228,9 +235,36 @@ def build_inputs(seed: int, dense: Sequence[tuple[int, int]] = (BOOK,),
     return out
 
 
+class LedgeredSource(InMemorySource):
+    """TEST ONLY (module docstring): ``InMemorySource`` + an in-memory ingest ledger (records in the store
+    ledger format: table, symbol, month, status, reason, conflict)."""
+
+    def __init__(self, inputs: Mapping[str, SymbolInputs], ledger: Sequence[Mapping] = ()) -> None:
+        super().__init__(inputs)
+        self.ledger = [dict(r) for r in ledger]
+
+    def check_ingest(self, lo: int, hi: int) -> None:
+        bad = []
+        for r in self.ledger:
+            if r.get("status") == "stored":
+                continue
+            m = pd.Timestamp(str(r.get("month")) + "-01", tz="UTC")
+            p_lo, p_hi = int(m.value), int((m + pd.DateOffset(months=1)).value)
+            if r.get("conflict") is True or (p_lo < int(hi) and int(lo) < p_hi):
+                bad.append(r)
+        if bad:
+            raise IntegrityBlocker(f"in-memory ledger: unresolved records {bad}")
+
+
+def ledgered(u: ResearchUniverse, ledger: Sequence[Mapping] = ()) -> ResearchUniverse:
+    """TEST ONLY: bind a ``LedgeredSource`` ingest check (over all time) to a universe built from inputs."""
+    u._ingest_check = (LedgeredSource(u.inputs, ledger).check_ingest, -(2**62), 2**62)
+    return u
+
+
 def build_universe(seed: int, dense: Sequence[tuple[int, int]] = (BOOK,),
                    mu: Mapping[str, float] | None = None) -> ResearchUniverse:
-    return ResearchUniverse(build_inputs(seed, dense, mu))
+    return ledgered(ResearchUniverse(build_inputs(seed, dense, mu)))
 
 
 def decisions_in(window: tuple[int, int]) -> np.ndarray:
