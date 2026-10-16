@@ -409,9 +409,9 @@ def test_decision_pass_equals_full_universe(tmp_path):
     st = ViewStore(tmp_path / "v")
     out = runner.decision_pass(src, times, st, history_lo=pf.START, chunk_ns=9 * D)
     assert out["computed"] == len(times) and out["chunks"] > 3
-    full = runner.DecisionProvider(runner.ResearchUniverse.from_source(src, pf.START, pf.END),
+    full = runner.DecisionProvider(runner.ResearchUniverse.from_source(src, pf.START, pf.END, lazy=False),
                                    with_features=True, store=ViewStore(tmp_path / "v"))
-    plain = runner.DecisionProvider(runner.ResearchUniverse.from_source(src, pf.START, pf.END),
+    plain = runner.DecisionProvider(runner.ResearchUniverse.from_source(src, pf.START, pf.END, lazy=False),
                                     with_features=True)
     for t in times:
         v, r = st.get(t)
@@ -482,7 +482,7 @@ def test_decision_pass_from_the_raw_store_equals_the_full_window(tmp_path):
         vs = ViewStore(tmp_path / "v")
         assert runner.decision_pass(src, ts, vs, history_lo=pf.START, chunk_ns=2 * D)["chunks"] >= 3
         assert vs.body["data"]["raw"] == st.manifest_sha256s()
-        full = runner.DecisionProvider(runner.ResearchUniverse.from_source(src, pf.START, end),
+        full = runner.DecisionProvider(runner.ResearchUniverse.from_source(src, pf.START, end, lazy=False),
                                        with_features=True)
         for t in ts:
             v, r = vs.get(t)

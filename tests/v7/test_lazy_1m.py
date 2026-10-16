@@ -64,6 +64,11 @@ def _lazy_view(x: refs.InstView, full: bool = False) -> refs.InstView:
     return refs.restrict(lz, b15, m15, x.funding, x.inst, x.end)
 
 
+def _prov(u) -> runner.DecisionProvider:
+    """A provider that may compute missing views (the explicit opt-in of synthetic / in-memory runs)."""
+    return runner.DecisionProvider(u, with_features=True, compute_missing=True)
+
+
 def _same_run(a, b) -> None:
     assert encode_run(a) == encode_run(b)
     assert run_output_sha256(a) == run_output_sha256(b)
@@ -158,7 +163,7 @@ def test_lazy_universe_labels_equal_resident_rich_fixture(small_steps):
     assert lu.data_span() == ru.data_span()
     ts = [int(t) for t in fx.decisions_in(pf.LABEL_WIN)]
     w = (pf.LABEL_WIN[0] - 2 * D, pf.LABEL_WIN[1] + 4 * D)
-    rp, lp = runner.DecisionProvider(ru, with_features=True), runner.DecisionProvider(lu, with_features=True)
+    rp, lp = _prov(ru), _prov(lu)
     for h in (24, 72):
         a = runner.label_panel(ru, rp, ts, h, w, pf.NOW)
         b = runner.label_panel(lu, lp, ts, h, w, pf.NOW)
@@ -166,7 +171,7 @@ def test_lazy_universe_labels_equal_resident_rich_fixture(small_steps):
         assert a.n_labels > 50
     # the resident universe built directly from the inputs gives the same panel
     du = fx.ledgered(runner.ResearchUniverse(inputs))
-    same(runner.label_panel(du, runner.DecisionProvider(du, with_features=True), ts, 24, w, pf.NOW),
+    same(runner.label_panel(du, _prov(du), ts, 24, w, pf.NOW),
          runner.label_panel(lu, lp, ts, 24, w, pf.NOW))
     # provider views of the lazy universe (halt-window 1m only) equal the resident ones
     for t in pf.decision_sample()[::5]:
@@ -181,7 +186,7 @@ def test_lazy_universe_e2e_fixture_labels_and_books_identical(small_steps, monke
     ru, lu = _universes(inputs, fx.START, fx.END)
     out = {}
     for name, u in (("resident", ru), ("lazy", lu)):
-        prov = runner.DecisionProvider(u, with_features=True)
+        prov = _prov(u)
         panel = runner.label_panel(u, prov, fx.sample_times()[::7], fx.H_STAR, windows.W_DEV, fx.NOW)
         [fm] = runner.fit_fold_models(panel.samples, [fx.FOLD], fx.H_STAR)
         model = runner.FoldScoreModel([fm], "A2", fx.H_STAR)
@@ -253,7 +258,7 @@ def test_store_lazy_universe_equals_resident_at_month_boundaries(store_src, smal
         lu = runner.ResearchUniverse.from_source(src_l, ST_START, end)
         assert len(lu.inputs["S001USDT"].bars1m) == 0 and len(ru.inputs["S001USDT"].bars1m) > 10_000
         assert len(lu.inputs["S004USDT"].bars1m) > 0  # the U6 halt window rows (decision views)
-        rp, lp = (runner.DecisionProvider(u, with_features=True) for u in (ru, lu))
+        rp, lp = (_prov(u) for u in (ru, lu))
         ts = _label_times()
         win = (ST_START, end)
         flags: dict[str, set] = {}
@@ -375,7 +380,7 @@ def test_delegated_decision_views_equal_resident_across_chunks(small_steps):
     ru = runner.ResearchUniverse.from_source(src, pf.START, pf.END, lazy=False)
     lu = runner.ResearchUniverse.from_source(src, pf.START, pf.END)
     assert lu.decision_source is src and len(lu.inputs["AAAUSDT"].bars15) == 0
-    rp, lp = runner.DecisionProvider(ru, with_features=True), runner.DecisionProvider(lu, with_features=True)
+    rp, lp = _prov(ru), _prov(lu)
     times = [t for t in pf.decision_sample() if t >= pf.START + 70 * D][::3] + [pf.S_A + 72 * H + 5 * MIN]
     for t in sorted(set(times)):
         same(lp(t), rp(t))
@@ -431,7 +436,7 @@ def test_label_block_raises_the_panel_order_first_exception(monkeypatch):
     the per-symbol sweep's first."""
     src = fx.LedgeredSource(_m1_inputs())
     lu = runner.ResearchUniverse.from_source(src, pf.START, pf.END)
-    lp = runner.DecisionProvider(lu, with_features=True)
+    lp = _prov(lu)
     ts = [int(t) for t in fx.decisions_in(pf.LABEL_WIN)][:4]
     first = sorted(lp(ts[0]).cands["symbol"].astype(str))[-1]  # panel-order first failure (late symbol)
     later = sorted(lp(ts[-1]).cands["symbol"].astype(str))[0]  # the sweep reaches it first (early symbol)
@@ -457,7 +462,7 @@ def test_panel_sha256_identical_resident_and_lazy(small_steps):
     src = fx.LedgeredSource(_m1_inputs())
     ru = runner.ResearchUniverse.from_source(src, pf.START, pf.END, lazy=False)
     lu = runner.ResearchUniverse.from_source(src, pf.START, pf.END)
-    rp, lp = runner.DecisionProvider(ru, with_features=True), runner.DecisionProvider(lu, with_features=True)
+    rp, lp = _prov(ru), _prov(lu)
     ts = [int(t) for t in fx.decisions_in(pf.LABEL_WIN)]
     w = (pf.START, pf.END)
     for h in (24, 72, 168):
@@ -487,7 +492,7 @@ def test_store_aggtrades_day_loader_equals_the_frame(store_src, small_steps):
         ru = runner.ResearchUniverse.from_source(rawstore.StoreSource(st, meta), ST_START, end, lazy=False)
         src2 = rawstore.StoreSource(st, meta2, lazy_agg_budget_bytes=8 * 2**10)
         lu = runner.ResearchUniverse.from_source(src2, ST_START, end)
-        rp, lp = (runner.DecisionProvider(u, with_features=True) for u in (ru, lu))
+        rp, lp = (_prov(u) for u in (ru, lu))
         a = runner.run_book("A0", ru, rp, (B - 3 * D, B + 3 * D), 168, pf.NOW, execution="E_M")
         b = runner.run_book("A0", lu, lp, (B - 3 * D, B + 3 * D), 168, pf.NOW, execution="E_M")
         _same_run(a, b)
@@ -509,3 +514,50 @@ def test_guard_location_is_resolved_once_per_process():
         guard.check_outcome_window(pf.START, pf.START + D, now_ns=pf.NOW)
     after = spec._repo_of.cache_info()
     assert spec.code_repo() is a and after.misses == before.misses and after.hits > before.hits
+
+
+# ----------------------------------------------------------------------------------------------- round 3
+
+
+def test_lazy_universe_refuses_a_decision_view_missing_from_the_store(tmp_path):
+    """A lazy outcome universe never builds a decisions-only chunk silently: a view missing from the store
+    (or no store) is an IntegrityBlocker (K9-logged), label_panel without a store is refused; the explicit
+    opt-in computes it; a view the store holds is served."""
+    from luna.v7.data.schema import IntegrityBlocker
+    from luna.v7.viewstore import ViewStore
+
+    src = fx.LedgeredSource(_m1_inputs())
+    lu = runner.ResearchUniverse.from_source(src, pf.START, pf.END)
+    t = [x for x in pf.decision_sample() if x >= pf.START + 70 * D][0]
+    with pytest.raises(IntegrityBlocker, match="run decision_pass first"):
+        runner.DecisionProvider(lu, with_features=True)(t)
+    with pytest.raises(IntegrityBlocker, match="run decision_pass first"):
+        runner.DecisionProvider(lu, with_features=True).h_hat("AAAUSDT", t)
+    with pytest.raises(IntegrityBlocker, match="needs DecisionProvider"):
+        runner.label_panel(lu, runner.DecisionProvider(lu, with_features=True), [t], 24, (pf.START, pf.END),
+                           pf.NOW)
+    vs = ViewStore(tmp_path / "v")
+    runner.decision_pass(src, [t], vs, history_lo=pf.START)
+    p = runner.DecisionProvider(lu, with_features=True, store=ViewStore(tmp_path / "v"))
+    p(t)
+    assert p.n_computed == 0
+    with pytest.raises(IntegrityBlocker, match="run decision_pass first"):
+        p(t + 8 * H)  # not in the store
+    q = runner.DecisionProvider(lu, with_features=True, compute_missing=True)
+    same(q(t), p(t))
+    assert q.n_computed == 1
+
+
+def test_columnar_codec_is_pinned_to_the_verified_pandas(monkeypatch):
+    assert runner._Columnar.PANDAS_VERIFIED == pd.__version__
+    monkeypatch.setattr(runner._Columnar, "PANDAS_VERIFIED", "0.0")
+    with pytest.raises(RuntimeError, match="re-verify runner._Columnar"):
+        runner._Columnar().add([{"a": 1.0}])
+
+
+def test_from_source_releases_the_shared_chunk_cache(store_src):
+    st, meta, tmp = store_src
+    with k9.using(k9.K9Log(tmp / "k9f")):
+        src = rawstore.StoreSource(st, meta)
+        runner.ResearchUniverse.from_source(src, ST_START, ST_START + ST_DAYS * D)
+        assert src.cache.bytes == 0 and not src.cache.keys()

@@ -63,6 +63,7 @@ from luna.v7.runner import (
     FoldScoreModel,
     LabelPanel,
     ResearchUniverse,
+    _require_views,
     fold_convergence,
     run_book,
 )
@@ -198,6 +199,7 @@ def dev_selection(u: ResearchUniverse, provider: DecisionProvider, fold_models: 
     caller supplies are passed through to ``selection.choose`` (reported only; AMB-27 (a))."""
     k9.require()
     u.check_ingest()  # ruling R55 (fail closed: a universe without a verified store ledger is refused)
+    _require_views(u, provider, "dev_selection")  # Task 29a round 3: lazy universes replay stored views only
     q = quarters(fold_models)
     window = (q[0][0], q[-1][1])
     if not (W_DEV[0] <= window[0] and window[1] <= W_DEV[1]):

@@ -986,6 +986,11 @@ class ChunkCache:
     def keys(self) -> tuple[tuple, ...]:
         return tuple(self._items)
 
+    def clear(self) -> None:
+        """Drop every cached item (budget headroom once a universe is built; Task 29a round 3)."""
+        self._items.clear()
+        self.bytes = 0
+
 
 # ----------------------------------------------------------------------------------------------- loaders
 
@@ -1283,6 +1288,12 @@ class StoreSource:
 
     def symbols(self) -> tuple[str, ...]:
         return tuple(sorted(self.meta))
+
+    def release_cache(self) -> None:
+        """Clear the shared chunk cache (``cache``) after an outcome universe is built: its R3 / R4 / R5 / R2
+        chunks are not read again by labels or books, which use the lazy readers' own caches (Task 29a
+        round 3, budget headroom)."""
+        self.cache.clear()
 
     def check_ingest(self, lo: int, hi: int) -> None:
         """Ruling R55: every table this source reads, every symbol of the store, months overlapping [lo, hi)

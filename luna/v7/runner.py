@@ -299,7 +299,9 @@ class InMemorySource:
         full = self.inputs[symbol]
         wins = halt_windows(symbol, full.notices, list(full.insts))
         if len(full.bars15):
-            ns_array(full.bars15["known_at"].to_numpy(), f"{symbol}.bars15.known_at")  # fail closed
+            # invalid known_at values are refused up front (the resident index would not take them); known_at
+            # monotonicity is not needed by the outcome rules (the decision chunks check it themselves)
+            ns_array(full.bars15["known_at"].to_numpy(), f"{symbol}.bars15.known_at")
         trades = None
         if full.aggtrades is not None:
             if not hasattr(self, "_agg_cache"):
@@ -434,6 +436,9 @@ class ResearchUniverse:
             u = cls({s: g[0] for s, g in got.items()}, hedge, lazy={s: g[1] for s, g in got.items()})
             if any(li.b15 is not None for li in u.lazy.values()):
                 u.decision_source = source
+            rel = getattr(source, "release_cache", None)
+            if callable(rel):  # budget headroom: the shared cache is not read by labels / books (round 3)
+                rel()
         else:
             u = cls({s: source.load(s, lo, hi) for s in sorted(source.symbols())}, hedge)
         u.source_identity = _source_identity(source)
@@ -596,7 +601,8 @@ class DecisionProvider:
 
     def __init__(self, u: ResearchUniverse, with_features: bool = True,
                  max_cached_decisions: int | None = 64, *,
-                 auth: guard.HoldoutAuthorization | None = None, store: ViewStore | None = None) -> None:
+                 auth: guard.HoldoutAuthorization | None = None, store: ViewStore | None = None,
+                 compute_missing: bool = False) -> None:
         if max_cached_decisions is not None and int(max_cached_decisions) < 1:
             raise ValueError("max_cached_decisions must be >= 1 or None")
         k9.require()
@@ -617,6 +623,9 @@ class DecisionProvider:
             store.bind(u.view_identity(self.with_features))
         self.n_computed = 0  # decisions computed here (not read back from the store)
         self._chunk: tuple[int, DecisionProvider] | None = None  # lazy 15m universes: the chunk provider
+        # lazy universes (Task 29a round 3): a view missing from the store is refused unless explicitly
+        # opted in (synthetic tests / in-memory runs); production drivers fill the store with decision_pass
+        self.compute_missing = bool(compute_missing)
 
     def _sub(self, t: int) -> DecisionProvider:
         """Lazy 15m universes (``u.decision_source``; red-team r2 MJ1 round 2, AMB-38 (h)): the provider of
@@ -628,6 +637,8 @@ class DecisionProvider:
         lo0, hi0 = int(u.history_lo), int(u.window_hi)  # type: ignore[arg-type]
         if not lo0 <= t < hi0:
             raise ValueError(f"decision {t} outside the universe window [{lo0}, {hi0})")
+        if not self.compute_missing:
+            _view_missing(t, self.store is not None)
         c_lo = lo0 + (t - lo0) // DECISION_CHUNK_NS * DECISION_CHUNK_NS
         if self._chunk is None or self._chunk[0] != c_lo:
             self._chunk = None  # the previous chunk's universe is released first
@@ -874,6 +885,36 @@ class DecisionProvider:
         return self._records[int(t)]
 
 
+RULE_VIEW_MISSING = ("Task 29a round 3: a lazy outcome universe serves decision views from the view store "
+                     "only (decision_pass first); computing one in the outcome process needs an opt-in")
+
+
+def _view_missing(t: int, has_store: bool) -> None:
+    """A lazy universe's decision view that the store does not hold: refused (IntegrityBlocker, K9-logged);
+    building the chunk universe (about 2.5 GB at real scale) inside an outcome process is opt-in only
+    (``DecisionProvider(compute_missing=True)``)."""
+    from luna.v7.data.schema import IntegrityBlocker
+
+    e = IntegrityBlocker(f"decision view missing at {int(t)}: run decision_pass first"
+                         + ("" if has_store else " (no view store bound)"))
+    k9.log_refusal(e, request={"kind": "decision_view_missing", "t": int(t), "store": has_store},
+                   rule=RULE_VIEW_MISSING)
+    raise e
+
+
+def _require_views(u: ResearchUniverse, provider: DecisionProvider, what: str) -> None:
+    """Task 29a round 3: with a lazy outcome universe, ``label_panel`` / ``dev_selection`` need a bound view
+    store (or the explicit opt-in)."""
+    if u.decision_source is not None and provider.store is None and not provider.compute_missing:
+        from luna.v7.data.schema import IntegrityBlocker
+
+        e = IntegrityBlocker(f"{what}: a lazy outcome universe needs DecisionProvider(store=ViewStore(...)) "
+                             "filled by decision_pass")
+        k9.log_refusal(e, request={"kind": "decision_view_missing", "what": what, "store": False},
+                       rule=RULE_VIEW_MISSING)
+        raise e
+
+
 RULE_NO_LEDGER = ("ruling R55 ingest completeness: a research input without a verified ingest ledger (no "
                   "store check) is refused")
 
@@ -1110,6 +1151,8 @@ def label_panel(u: ResearchUniverse, provider: DecisionProvider, decision_ts: Se
     _require_store_source(u, auth, (int(window[0]), int(window[1])))
     if not provider.with_features:
         raise ValueError("label_panel needs the §9 features (DecisionProvider(with_features=True))")
+    if getattr(provider, "u", None) is u:
+        _require_views(u, provider, "label_panel")
     ts = sorted({int(t) for t in decision_ts})
     if not ts:
         raise ValueError("no decision times")
@@ -1124,34 +1167,40 @@ def label_panel(u: ResearchUniverse, provider: DecisionProvider, decision_ts: Se
         j = int(np.searchsorted(ts, ts[i] + LABEL_BLOCK_NS, "left"))
         block = ts[i:j]
         cands = {t: provider(t).cands for t in block}
-        jobs: dict[str, list[tuple[int, int]]] = {}
-        for t in block:  # inputs checked in the panel order (the same first error as one pass)
-            for c in cands[t].itertuples(index=False):
-                sym, side = str(c.symbol), int(c.side)
-                leg, btc = u.leg_data(sym, t), u.leg_data(u.hedge, t)
-                if leg is None or btc is None:
-                    raise ValueError(f"{sym} @ {t}: a gated candidate without label inputs (instance "
-                                     "missing)")
-                jobs.setdefault(sym, []).append((t, side))
-        # labels are independent across symbols: one symbol at a time, in time order, so its 1-minute reads
-        # (lazy: per (symbol, chunk) through a bounded cache) move forward; the panel order is restored below
-        got: dict[tuple[int, str, int], labels.LabelResult | None] = {}
 
         def lab(sym: str, t: int, side: int) -> labels.LabelResult | None:
             leg, btc = u.leg_data(sym, t), u.leg_data(u.hedge, t)
+            if leg is None or btc is None:
+                raise ValueError(f"{sym} @ {t}: a gated candidate without label inputs (instance missing)")
             return leg_label(LabelInputs(sym, leg, btc, (w_lo, w_end), now_ns, auth), t, side, h)
 
+        def panel_order(block: list[int] = block, cands: dict = cands) -> None:
+            """The block in the one-pass order (instance check, then label, per candidate): raises exactly
+            the one-pass path's first exception (labels are deterministic)."""
+            for t in block:
+                for c in cands[t].itertuples(index=False):
+                    lab(str(c.symbol), t, int(c.side))
+
+        jobs: dict[str, list[tuple[int, int]]] = {}
+        missing = False
+        for t in block:
+            for c in cands[t].itertuples(index=False):
+                sym, side = str(c.symbol), int(c.side)
+                if u.leg_data(sym, t) is None or u.leg_data(u.hedge, t) is None:
+                    missing = True
+                jobs.setdefault(sym, []).append((t, side))
+        if missing:  # a missing instance: the one-pass order decides which error comes first
+            panel_order()
+        # labels are independent across symbols: one symbol at a time, in time order, so its reads (lazy:
+        # per (symbol, chunk) through bounded caches) move forward; the panel order is restored below
+        got: dict[tuple[int, str, int], labels.LabelResult | None] = {}
         try:
             for sym in sorted(jobs):
                 for t, side in jobs[sym]:
                     if (t, sym, side) not in got:
                         got[(t, sym, side)] = lab(sym, t, side)
         except Exception:
-            # the block again in the panel order: the exception raised is the one-pass path's first (the
-            # labels are deterministic; a refusal is K9-logged once more)
-            for t in block:
-                for c in cands[t].itertuples(index=False):
-                    lab(str(c.symbol), t, int(c.side))
+            panel_order()  # re-raises the one-pass first exception (a refusal is K9-logged once more)
             raise
         brows: list[dict] = []
         blab: list[dict] = []
@@ -1207,6 +1256,9 @@ class _Columnar:
     """
 
     _TYPED = "fib"
+    # the pandas version this codec (pandas' private list-of-dicts path) was verified against bit for bit
+    # (tests/v7/test_lazy_1m.py::test_columnar_panel_equals_dataframe_of_dicts); another version is refused
+    PANDAS_VERIFIED = "3.0.6"
 
     def __init__(self) -> None:
         self.cols: list | None = None
@@ -1220,6 +1272,10 @@ class _Columnar:
         return isinstance(getattr(arr, "dtype", None), pd.StringDtype)
 
     def add(self, rows: list[dict]) -> None:
+        if pd.__version__ != self.PANDAS_VERIFIED:
+            raise RuntimeError(f"label panel codec verified on pandas {self.PANDAS_VERIFIED}, running "
+                               f"{pd.__version__}: re-verify runner._Columnar (pandas internals) with "
+                               "test_columnar_panel_equals_dataframe_of_dicts, then update PANDAS_VERIFIED")
         if not rows:
             return
         from pandas._libs import lib

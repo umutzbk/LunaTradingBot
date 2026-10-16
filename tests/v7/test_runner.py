@@ -935,7 +935,8 @@ def test_run_book_issues_w_hold_books_with_their_provenance(opened, tmp_path):
     universe comes from a real ``rawstore.StoreSource`` opened with the authorization (fix round 1: no
     swapped-in check), so the R55 / R56 store check and the store-source binding run as in production."""
     src, u = _hold_store_universe(tmp_path, opened.auth)
-    p = DecisionProvider(u, with_features=True, auth=opened.auth)
+    # a synthetic store without decision_pass: the explicit opt-in (Task 29a round 3)
+    p = DecisionProvider(u, with_features=True, auth=opened.auth, compute_missing=True)
     win = (windows.W_HOLD[0], windows.W_HOLD[0] + D)
     oid = opened.auth.opening_id
     a0 = runner.run_book("A0", u, p, win, 24, NOW, auth=opened.auth)
