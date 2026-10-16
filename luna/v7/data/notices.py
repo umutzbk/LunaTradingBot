@@ -6,6 +6,23 @@
 * ``confident_match``: the exact contract symbol as a whole token (non-alphanumeric boundaries, so
   ``1000PEPEUSDT`` does not match ``PEPEUSDT``) AND an unambiguous USDⓈ-M futures / perpetual context
   (``USDM_PHRASES`` / ``USDM_PAIR``, AMB-05). Anything else is no match; no fuzzy or semantic inference.
+* A-1 (AMENDMENTS-2026-10-16, normative amendment by the user; in addition to DEC-40, which stays in force):
+  **base-asset match** (``match_reason(v, symbol, bases)``, reason
+  ``base_asset_match:<BASE>;usdm_context:...``):
+  the verified R1 / E8 identity ``baseAsset`` of the symbol's instance live at the version's ``known_at``
+  (``instances.started_instance``, the DEC-40 attribution; quote asset USDT; multiplier prefix included, e.g.
+  ``1000BTTC``) occurs as a whole token (the DEC-40 boundaries, case-sensitive like the symbol token) in the
+  notice's own title or body, the same USDⓈ-M context holds and no COIN-M veto applies. A base that maps to
+  more than one live USD-M instance with quote USDT at ``known_at`` (any symbol, e.g. a perpetual and a
+  delivery contract) is ambiguous: no match (``base_asset_ambiguous:<BASE>:<n>``). PIT: only instances
+  started by ``known_at`` (and not ended) count, for the target and for the ambiguity, with their verified
+  invariant identity (DEC-31; R1 ``known_at`` = the instance's first bar); an unverified identity is never a
+  base. A version without ``known_at`` is never base-matched. The ingest (``metaingest.build_notices``,
+  which holds the whole instance / identity set) decides it and carries the base-matched symbols on the
+  version (``NoticeVersion.base_matched``; rebuilt from R11 ``matched_instances`` by
+  ``metastore.load_notice_versions``); ``U6State`` / ``terminal`` read the carried decision (the context is
+  re-checked). ``scheduled_ts`` (DEC-37), versioning and U6 are unchanged: candidates still come only from
+  sentences with the exact symbol token, so a base-only notice has ``scheduled_ts`` None.
 * ``scheduled_ts``: only an explicitly mapped UTC timestamp, else None (DEC-37).
 * ``U6State.active``: activation at ``known_at``; deactivation by a later matched postponement /
   cancellation at its ``known_at``; the 72 h auto-clear only with a unique scheduled time; a late
@@ -16,9 +33,9 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Protocol
 
 from luna.v7.constants import FROZEN
 from luna.v7.data.instances import Instance, start_known_at, started_instance
@@ -53,6 +70,8 @@ class NoticeVersion:
     text: str
     sha256: str
     recv_ts: int | None = None
+    # A-1: the symbols whose match the ingest established by the base-asset rule (PIT, with the identity set)
+    base_matched: tuple[str, ...] = ()
 
 
 def known_at(v: NoticeVersion) -> int | None:
@@ -87,12 +106,89 @@ def _usdm_context(text: str) -> bool:
     return _context(text)[0]
 
 
-def match_reason(v: NoticeVersion, symbol: str) -> tuple[bool, str]:
+class _Ident(Protocol):  # ``universe.Identity`` (R1 / E8; universe imports this module)
+    base: str | None
+    quote_asset: str | None
+    invariant_verified: bool
+
+
+BASE_QUOTE = "USDT"  # A-1: "a live USD-M instance with quote USDT"
+
+
+class InstanceBases:
+    """A-1: the instances and their verified R1 identities (per symbol, per instance idx), resolving a
+    base-asset token at a version's ``known_at`` (module docstring)."""
+
+    def __init__(self, insts_by_symbol: Mapping[str, Sequence[Instance]],
+                 identities: Mapping[str, Mapping[int, _Ident] | _Ident | None]) -> None:
+        self._insts = {s: list(v) for s, v in insts_by_symbol.items()}
+        self._ids = dict(identities)
+        self._by_base: dict[str, list[str]] = {}
+        for s in sorted(self._insts):
+            for i in self._insts[s]:
+                b = self._usdt_base(s, i.idx)
+                if b is not None and s not in self._by_base.setdefault(b, []):
+                    self._by_base[b].append(s)
+
+    def _usdt_base(self, symbol: str, idx: int) -> str | None:
+        d = self._ids.get(symbol)
+        ident = d.get(idx) if isinstance(d, Mapping) else d
+        if ident is None or ident.invariant_verified is not True or not ident.base or \
+                ident.quote_asset != BASE_QUOTE:
+            return None
+        return str(ident.base)
+
+    def symbols_with_base(self, base: str) -> tuple[str, ...]:
+        """Every symbol with some verified USDT instance of this base (candidates only; not PIT)."""
+        return tuple(self._by_base.get(base, ()))
+
+    def bases(self) -> tuple[str, ...]:
+        return tuple(sorted(self._by_base))
+
+    def live_base(self, symbol: str, ka: int) -> str | None:
+        """The verified USDT base of ``symbol``'s instance live at ``ka`` (``started_instance``), or
+        None."""
+        inst = started_instance(self._insts.get(symbol, []), int(ka))
+        return None if inst is None else self._usdt_base(symbol, inst.idx)
+
+    def live_count(self, base: str, ka: int) -> int:
+        """Live USD-M instances with quote USDT and this verified base at ``ka`` (one per symbol at most)."""
+        return sum(1 for s in self._by_base.get(base, ()) if self.live_base(s, ka) == base)
+
+
+def base_match_reason(v: NoticeVersion, symbol: str, bases: InstanceBases) -> tuple[bool, str]:
+    """A-1 rule 1 for a symbol whose exact token is absent (module docstring)."""
+    ka = known_at(v)
+    if ka is None:
+        return False, "no_symbol_token;base_asset:no_known_at"
+    base = bases.live_base(symbol, ka)
+    if base is None:
+        return False, "no_symbol_token;base_asset:no_live_usdt_identity"
+    if _token_re(base).search(v.text) is None:
+        return False, f"no_symbol_token;base_asset:no_base_token:{base}"
+    n = bases.live_count(base, ka)
+    if n != 1:
+        return False, f"no_symbol_token;base_asset_ambiguous:{base}:{n}"
+    ok, why = _context(v.text)
+    return (True, f"base_asset_match:{base};{why}") if ok else (False, f"base_asset:{base};{why}")
+
+
+def match_reason(v: NoticeVersion, symbol: str, bases: InstanceBases | None = None) -> tuple[bool, str]:
     """``confident_match`` with its reason (Task 26c ingest report): ``no_symbol_token``, the context reason
-    of ``_context`` (``coin_m_veto:...`` / ``no_usdm_context`` -> no match; ``usdm_context:...`` -> match)."""
-    if not symbol or _token_re(symbol).search(v.text) is None:
+    of ``_context`` (``coin_m_veto:...`` / ``no_usdm_context`` -> no match; ``usdm_context:...`` -> match).
+    Without the exact symbol token, A-1: with ``bases`` (the ingest) the base-asset rule decides
+    (``base_match_reason``); without, a match the ingest carried on the version (``base_matched``) holds when
+    the context still holds (``base_asset_match:carried;...``)."""
+    if not symbol:
         return False, "no_symbol_token"
-    return _context(v.text)
+    if _token_re(symbol).search(v.text) is not None:
+        return _context(v.text)
+    if bases is not None:
+        return base_match_reason(v, symbol, bases)
+    if symbol in v.base_matched:
+        ok, why = _context(v.text)
+        return (True, f"base_asset_match:carried;{why}") if ok else (False, f"base_asset:carried;{why}")
+    return False, "no_symbol_token"
 
 
 def confident_match(v: NoticeVersion, symbol: str) -> bool:

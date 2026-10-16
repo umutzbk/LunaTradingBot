@@ -29,6 +29,18 @@
   the canonical W_HOLD decision grid of h* (``windows.decision_times(*W_HOLD)``), with window = W_HOLD, no
   overlap, over the universe ``runner_select.holdout_inputs`` used for this opening (round 3). The record
   carries the library versions (numpy, pandas, pyarrow, scikit-learn, lightgbm, Python).
+* **Bridge panel (controller ruling R57; red-team r2 m2; AMB-43 (a) RESOLVED):** the pinned W_DEV panel has
+  no label for the W_DEV decisions whose label window crosses the W_DEV end (S-1.5, ``labels.leg_label``:
+  t + 15 min + h* >= W_DEV end; ``bridge_decisions``: 3 / 9 / 21 decisions at h* = 24 / 72 / 168 h). The
+  forward samples are three parts: the pinned W_DEV panel (unchanged), the BRIDGE panel(s) issued by
+  ``runner.label_panel`` under the same opening for exactly those decisions with the label window
+  ``BRIDGE_WINDOW`` = the forward T_fit [D0, 2026-01-01) (it extends into W_HOLD; W_HOLD outcomes are
+  legitimate after the opening), and the W_HOLD panels. The round-3 coverage check covers the bridge too
+  (opening, h*, label window, the holdout universe, no decision issued twice, the union exactly
+  ``bridge_decisions(h*)``); no pinned W_DEV sample may lie on a bridge or W_HOLD decision. Together they
+  cover exactly the canonical decision grid of [D0, W_HOLD end) at h*, without overlap (the pinned W_DEV
+  panel covers the rest of the W_DEV grid by construction: its labels were computed with window = W_DEV).
+  The purge is unchanged (``forward_rows``).
 * **Runbook:** the panel registry and the holdout universe are per process: run ``label_panel`` (W_HOLD, h*,
   full grid), ``holdout_inputs`` and ``forward_model`` in the SAME process, before ``holdout_verdict``. After
   a crash, resume the same opening (``guard.resume_holdout``, same ``opening_id``), regenerate the panels and
@@ -46,6 +58,7 @@ import pandas as pd
 
 from luna.v7 import guard, k9, leakage, modelcodec, models
 from luna.v7.arms import families
+from luna.v7.constants import FROZEN
 from luna.v7.cv import (
     PURGE_NS,
     FoldModel,
@@ -58,9 +71,9 @@ from luna.v7.cv import (
 )
 from luna.v7.features import Preprocessor, features_for_horizon
 from luna.v7.runner import FoldScoreModel, LabelPanel, holdout_panel_coverage, holdout_universe
-from luna.v7.timeutil import ns_array, to_ns
+from luna.v7.timeutil import MIN, H, ns_array, to_ns
 from luna.v7.viewstore import library_versions
-from luna.v7.windows import D0, W_HOLD, Fold, decision_times, final_blocks
+from luna.v7.windows import D0, W_DEV, W_HOLD, Fold, decision_times, final_blocks
 
 T_FIT = (D0, to_ns("2026-01-01"))
 T_CAL = (to_ns("2026-01-01"), to_ns("2026-07-01"))
@@ -70,6 +83,16 @@ FORWARD_FOLD_ID = -1
 # by the canonical T_F7 later, ``ForwardScoreModel`` predicts any decision from the T_cal end on)
 FORWARD_FOLD = Fold(FORWARD_FOLD_ID, T_CAL[1], T_CAL[1], T_FIT, (T_FIT[1], T_FIT[1]), T_CAL)
 assert T_CAL[1] == W_HOLD[1], "T_cal is the last 6 months of W_HOLD (§15)"
+# R57: the label window of the bridge panel (the forward T_fit; it extends into W_HOLD)
+BRIDGE_WINDOW = T_FIT
+
+
+def bridge_decisions(h: int) -> tuple[int, ...]:
+    """R57: the canonical W_DEV decisions (S-8.1 grid) without a label in the pinned W_DEV panel of horizon
+    ``h`` because their label window crosses the W_DEV end (S-1.5; ``labels.leg_label``: no label when
+    t + 15 min + h >= the window end)."""
+    fill = FROZEN.decision.fill_delay_min * MIN
+    return tuple(int(t) for t in decision_times(*W_DEV) if int(t) + fill + int(h) * H >= W_DEV[1])
 
 
 def _refuse(exc: BaseException, request: dict) -> None:
@@ -105,41 +128,57 @@ def _frozen(final: object, pin: dict, horizon: int) -> tuple[str, str]:
 
 
 def bound_samples(dev_panel: pd.DataFrame, holdout_panels: Sequence[LabelPanel], pin: dict) -> pd.DataFrame:
-    """The forward refit's samples (ruling R54): the canonical concatenation of the W_DEV label panel of h*
-    whose sha256 is pinned by the opening's LeakageReport (``panel_sha256s``, equal to the pre-opening
-    record's ``dev_label_panels``) and the W_HOLD label panels issued by ``runner.label_panel`` under this
-    opening. Any other frame, row subset or alteration is refused (HoldoutBlocked)."""
+    """The forward refit's samples (rulings R54 / R57): the canonical concatenation of the W_DEV label panel
+    of h* whose sha256 is pinned by the opening's LeakageReport (``panel_sha256s``, equal to the pre-opening
+    record's ``dev_label_panels``), the bridge panel(s) and the W_HOLD label panels issued by
+    ``runner.label_panel`` under this opening (``holdout_panels`` holds both; each is told apart by its
+    issued label window: ``BRIDGE_WINDOW`` or W_HOLD). Any other frame, row subset, alteration, label window
+    or coverage is refused (HoldoutBlocked)."""
     h = int(pin["ml_star"][1])
     want = dict(_pinned_report(pin).panel_sha256s).get(h)
     if not isinstance(dev_panel, pd.DataFrame) or leakage.panel_sha256(dev_panel, h) != want:
         raise guard.HoldoutBlocked(f"the W_DEV samples are not the pinned label panel (h = {h})")
-    hold = list(holdout_panels)
-    if not hold:
-        raise guard.HoldoutBlocked("the forward refit needs the W_HOLD label panels of the opening")
-    covs = []
-    for p in hold:
+    parts: dict[str, list[tuple]] = {"bridge": [], "W_HOLD": []}  # (coverage, panel)
+    for p in holdout_panels:
         cov = holdout_panel_coverage(p)
         if cov is None or cov.opening_id != pin["opening_id"]:
-            raise guard.HoldoutBlocked("a W_HOLD panel was not issued by label_panel under this opening")
+            raise guard.HoldoutBlocked("a W_HOLD / bridge panel was not issued by label_panel under this "
+                                       "opening")
         if cov.h != h or int(p.h) != h:
-            raise guard.HoldoutBlocked(f"a W_HOLD panel is not for h* = {h}h")
-        if cov.window != tuple(W_HOLD):
-            raise guard.HoldoutBlocked(f"a W_HOLD panel's label window {cov.window} is not W_HOLD {W_HOLD}")
-        covs.append(cov)
+            raise guard.HoldoutBlocked(f"a W_HOLD / bridge panel is not for h* = {h}h")
+        if cov.window == tuple(W_HOLD):
+            parts["W_HOLD"].append((cov, p))
+        elif cov.window == tuple(BRIDGE_WINDOW):
+            parts["bridge"].append((cov, p))
+        else:
+            raise guard.HoldoutBlocked(f"a panel's label window {cov.window} is neither W_HOLD {W_HOLD} nor "
+                                       f"the bridge window {BRIDGE_WINDOW} (R57)")
+    if not parts["W_HOLD"]:
+        raise guard.HoldoutBlocked("the forward refit needs the W_HOLD label panels of the opening")
+    if not parts["bridge"]:
+        raise guard.HoldoutBlocked("the forward refit needs the bridge panel of the opening (R57: the W_DEV "
+                                   "decisions whose labels cross the W_DEV end)")
     universe = holdout_universe(pin["opening_id"])
-    if universe is None or any(c.universe != universe for c in covs):
-        raise guard.HoldoutBlocked("the W_HOLD panels are not over the universe holdout_inputs used for this "
-                                   "opening")
+    if universe is None or any(c.universe != universe for v in parts.values() for c, _ in v):
+        raise guard.HoldoutBlocked("the W_HOLD / bridge panels are not over the universe holdout_inputs used "
+                                   "for this opening")
     seen: set[int] = set()
-    for c in covs:
+    for c, _ in parts["bridge"] + parts["W_HOLD"]:
         if seen & set(c.decisions):
-            raise guard.HoldoutBlocked("the W_HOLD panels overlap (a decision time issued twice)")
+            raise guard.HoldoutBlocked("the W_HOLD / bridge panels overlap (a decision time issued twice)")
         seen |= set(c.decisions)
-    grid = {int(t) for t in decision_times(*W_HOLD)}  # the S-8.1 grid of dev_selection / the books
-    if seen != grid:
-        raise guard.HoldoutBlocked(f"the W_HOLD panels cover {len(seen & grid)} of the {len(grid)} canonical "
-                                   f"W_HOLD decisions ({len(seen - grid)} off-grid)")
-    return canonical(pd.concat([dev_panel, *(p.samples for p in hold)], ignore_index=True), h)
+    grids = {"W_HOLD": {int(t) for t in decision_times(*W_HOLD)},  # the S-8.1 grid of dev_selection / books
+             "bridge": set(bridge_decisions(h))}
+    for part, grid in grids.items():
+        got = {int(t) for c, _ in parts[part] for t in c.decisions}
+        if got != grid:
+            raise guard.HoldoutBlocked(f"the {part} panels cover {len(got & grid)} of the {len(grid)} "
+                                       f"canonical {part} decisions ({len(got - grid)} off-grid)")
+    dev_ts = set(ns_array(dev_panel["decision_ts"], "decision_ts").tolist()) if len(dev_panel) else set()
+    if dev_ts & seen:
+        raise guard.HoldoutBlocked("the pinned W_DEV panel overlaps the bridge / W_HOLD decisions")
+    frames = [p.samples for _, p in parts["bridge"] + parts["W_HOLD"]]
+    return canonical(pd.concat([dev_panel, *frames], ignore_index=True), h)
 
 
 _AUTH_REPORT: dict[str, object] = {}
@@ -272,6 +311,6 @@ class ForwardScoreModel(FoldScoreModel):
         return 0
 
 
-__all__ = ["FORWARD_BLOCKS", "FORWARD_FOLD", "FORWARD_FOLD_ID", "ForwardScoreModel", "T_CAL", "T_FIT",
-           "bound_samples", "forward_model", "forward_model_hash", "forward_rows", "load_forward_model",
-           "loaded", "loaded_hash"]
+__all__ = ["BRIDGE_WINDOW", "FORWARD_BLOCKS", "FORWARD_FOLD", "FORWARD_FOLD_ID", "ForwardScoreModel", "T_CAL",
+           "T_FIT", "bound_samples", "bridge_decisions", "forward_model", "forward_model_hash",
+           "forward_rows", "load_forward_model", "loaded", "loaded_hash"]

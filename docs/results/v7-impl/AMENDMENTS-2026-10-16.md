@@ -49,3 +49,10 @@ Kraken comparison #5 stays UNAVAILABLE and is labelled "exploratory (previously 
 ## Implementation status
 
 Filled in as items land.
+
+| Item | Status | Code / record |
+|---|---|---|
+| A-1 | implemented (Task 29d) | Rule 1: `luna/v7/data/notices.py` (`InstanceBases`, `base_match_reason`, `match_reason(..., bases)`, `NoticeVersion.base_matched`), `luna/v7/metaingest.py` (`build_notices(..., identities=...)`, R1 identities from `ingest_metadata`), `luna/v7/metastore.py` (carried match rebuilt from R11). Rule 2: `luna/v7/data/captures.py` `TOKEN_SWAP_PHRASES` = ("token swap", "rebranding"), reason `token_swap:<phrase>`. `scheduled_ts`, versioning, U6 unchanged. Record: AMB-42 RESOLVED by A-1 (list, rule, readings). C4 re-run: `c4-notice-validation.md`. |
+| A-2 | implemented (Task 29d) | `luna/v7/leakage.py` `L9_TESTS` = 6, `L9_Z` = `norm.ppf(1 − 0.05/12)` ≈ 2.6383; `FROZEN.l9_fwer_alpha` = 0.05 replaces `l9_se_mult`. Record: AMB-33 (a) note. |
+| A-3 | implemented (Task 29d) | `luna/v7/book/engine.py` (`EngineInputs.tick_evaluable`, forward schedule only), `luna/v7/book/risk.py` (`skip_tick`), `luna/v7/forward_replay.py`. Record: AMB-43 (d) RESOLVED by A-3. |
+| R57 (controller) | implemented (Task 29d) | `luna/v7/forward_model.py` (`bridge_decisions`, `BRIDGE_WINDOW`, bridge coverage in `bound_samples`), `luna/v7/runner.py` (`_holdout_labelled`). Record: AMB-43 (a) RESOLVED by R57. |

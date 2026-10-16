@@ -16,9 +16,22 @@ outcomes are read; no network; nothing is written under var/ (the captures go in
 in a temporary directory, K9 log there too).
 
 Run: ONE run, ``frozen`` = the FROZEN-candidate code path exactly as committed (Task 26d: R50 release date,
-R51 node-tree body text, R52 DK-05 rule); no wrapper, no monkeypatch, no luna/v7 code is changed by this
-script. ``--before`` (optional): a previous C4 JSON (the pre-Task-26d run); only its count sections are copied
-into ``before`` (with its git head and file sha256) so the report can show before -> after.
+R51 node-tree body text, R52 DK-05 rule; Task 29d: the user's amendment A-1, base-asset match and token-swap /
+rebrand notices); no wrapper, no monkeypatch, no luna/v7 code is changed by this script. ``--before``
+(optional): a previous C4 JSON (the pre-A-1 run); only its count sections are copied into ``before`` (with
+its git head and file sha256) so the report can show before -> after.
+
+A-1 identities (C4 PROXY, labelled in the report): the A-1 base-asset match needs each instance's verified R1
+identity (``baseAsset``, quote). The C4 inputs hold no ``exchangeInfo``, so the C4 run gives every
+``...USDT`` symbol of the Stage-0 universe the identity base = the symbol without its ``USDT`` quote, quote
+USDT (``proxy_identities``). This is NOT an E8-verified identity; the research run uses R1
+(``metaingest.ingest_metadata``). It can differ only where a real ``baseAsset`` differs from the symbol stem.
+
+U6 coverage inside the W_DEV book test windows (the first outer test quarter starts >= D0 + 24 mo =
+2023-01-01; red-team r2): the Stage-0 class B / C cessations (last trade >= 2023-01-01) whose instance has a
+matched delisting version known before the cessation that activates U6 (``scheduled_ts`` null, or the
+version known before ``scheduled_ts`` + 72 h); computed for the before JSON and this run alike
+(``book_window``).
 
 Deterministic: inputs sorted, no clock / random in the output.
 """
@@ -48,12 +61,19 @@ from luna.v7.data.instances import Instance, started_instance  # noqa: E402
 from luna.v7.data.notices import COIN_M_PHRASES  # noqa: E402
 from luna.v7.metastore import MetaStore  # noqa: E402
 from luna.v7.timeutil import MIN, D, H, to_ns  # noqa: E402
+from luna.v7.universe import Identity  # noqa: E402
 
 S0 = REPO / "docs" / "results" / "v7-stage0"
 CUTOFF_TS14 = "20250701000000"
 BAR = 15 * MIN
 DORMANCY_D = 7
 CLEAR_H = 72
+BOOK_START = "2023-01-01"  # the first outer test quarter of the W_DEV books (D0 + 24 mo)
+# AMB-42 (3): the mixed spot notice whose text says "users may continue trading USDⓈ-M OMGUSDT and XEMUSDT
+# Perpetual Contracts"; a match of those two symbols through it alone is reported separately (red-team r2 did
+# not count it as protection; WAVESUSDT, which the same notice does settle, counts)
+AMB42_MIXED = {("en:f65faeeefe07417a8b6dd2900ba8da7e", "OMGUSDT"), ("en:f65faeeefe07417a8b6dd2900ba8da7e",
+                                                                   "XEMUSDT")}
 CODE_FILES = (
     "luna/v7/data/captures.py",
     "luna/v7/data/notices.py",
@@ -72,7 +92,7 @@ DOC_INPUTS = (
     "wayback_prepub_check.json",
 )
 _WORD = re.compile(r"[A-Za-z0-9_]+")
-# Token swap / rebranding / redenomination titles (normative item 2, reported only; never classified here).
+# Swap-like titles (diagnostic only: reports swap-like titles A-1's closed list leaves unclassified).
 _SWAP = re.compile(r"token swap|rebranding|redenomination|\bswap\b", re.IGNORECASE)
 
 
@@ -323,12 +343,56 @@ def per_capture(store: MetaStore, rows: list[dict], words: dict) -> None:
         del c, t
 
 
+def proxy_identities(insts: dict[str, list[Instance]]) -> dict[str, dict[int, Identity]]:
+    """C4 PROXY identities (module docstring): base = the symbol without its USDT quote, quote USDT. NOT
+    E8-verified; the C4 inputs hold no exchangeInfo."""
+    return {s: {i.idx: Identity(s[: -len("USDT")], None, "USDT", None, None, True) for i in v}
+            for s, v in insts.items() if s.endswith("USDT") and len(s) > len("USDT")}
+
+
 def run_build(store: MetaStore, insts) -> dict:
     caps = [store.get_capture(e["ts"], e["sha256"]) for e in store.captures()]
     try:
-        return metaingest.build_notices(caps, insts).report
+        return metaingest.build_notices(caps, insts, identities=proxy_identities(insts)).report
     finally:
         del caps
+
+
+def _ns(x: str) -> int:
+    t = pd.Timestamp(x)
+    return int((t.tz_localize("UTC") if t.tz is None else t.tz_convert("UTC")).value)
+
+
+def book_window(terms: list[dict], key: str = "frozen") -> dict:
+    """U6 coverage of the Stage-0 class B / C cessations inside the W_DEV book test windows (module
+    docstring): protected = a matched delisting version of the instance known before the cessation (last
+    trade) that activates U6 (null ``scheduled_ts``, or known before ``scheduled_ts`` + 72 h)."""
+    lo = _ns(BOOK_START)
+    ev = []
+    for t in terms:
+        if t.get("stage0_class") not in ("B", "C") or not t.get("last_trade"):
+            continue
+        cess = _ns(t["last_trade"])
+        if cess < lo:
+            continue
+        by = []
+        for d in t[key]["delisting_versions"]:
+            ka = _ns(d["known_at"])
+            if ka < cess and (d["scheduled_ts"] is None or ka < _ns(d["scheduled_ts"]) + CLEAR_H * H):
+                by.append(f"{d['version']} (known {d['known_at']}, scheduled {d['scheduled_ts']})")
+        ev.append({"instance": f"{t['symbol']}#{t['instance']}", "stage0_class": t["stage0_class"],
+                   "cessation": iso(cess), "protected": bool(by), "by": by, "status": t[key]["status"],
+                   "reasons": t[key]["reasons"]})
+    for e in ev:
+        sym = e["instance"].rsplit("#", 1)[0]
+        e["only_via_amb42_mixed_notice"] = bool(e["by"]) and all((b.split(" ")[0], sym) in AMB42_MIXED
+                                                                 for b in e["by"])
+    ev.sort(key=lambda e: (e["cessation"], e["instance"]))
+    clean = [e["instance"] for e in ev if e["protected"] and not e["only_via_amb42_mixed_notice"]]
+    return {"n": len(ev), "protected": sum(e["protected"] for e in ev),
+            "protected_instances": [e["instance"] for e in ev if e["protected"]],
+            "protected_excluding_amb42_mixed": len(clean), "protected_excluding_amb42_mixed_instances": clean,
+            "events": ev}
 
 
 # ------------------------------------------------------------------------------------------- analysis
@@ -591,45 +655,37 @@ def dk05(rep: dict, insts) -> dict:
     return sets
 
 
-def normative_items(rep: dict, terms: list[dict]) -> dict:
-    """The two items left to the user (normative amendment required): DEC-40 base-only notices and token-swap
-    notices that stay ``no_kind_phrase``; listed, never changed here."""
-    base_only = []
-    for t in terms:
-        ev = t["frozen"]
-        hits = [x for x in ev["reasons"] if x.startswith("symbol_not_whole_token")]
-        if hits and ev["status"] == "missed":
-            base_only.append(
-                {
-                    "instance": f"{t['symbol']}#{t['instance']}",
-                    "stage0_class": t["stage0_class"],
-                    "evidence": hits,
-                }
-            )
+def a1_effect(rep: dict, terms: list[dict]) -> dict:
+    """What the user's amendment A-1 changed (base-asset matches, token-swap / rebrand versions) and the
+    misses that remain (diagnostic)."""
+    base = []
+    for r in rep["versions"]:
+        for m in r["matches"]:
+            if m["reason"].startswith("base_asset_match:"):
+                base.append({"version": f"{r['notice_id']} v{r['version']}", "status": r["status"],
+                             "kind": r["kind"], "symbol": m["symbol"], "reason": m["reason"],
+                             "instance": m["instance"], "instance_reason": m["instance_reason"],
+                             "known_at": iso(r["known_at"]), "scheduled_reason": m["scheduled_reason"]})
     swaps = []
     for r in rep["versions"]:
-        if (
-            r["status"] == "unclassified"
-            and r["kind_reason"] == "no_kind_phrase"
-            and _SWAP.search(r["title"] or "")
-        ):
-            swaps.append(
-                {
-                    "version": f"{r['notice_id']} v{r['version']}",
-                    "title": r["title"],
-                    "symbols_in_text": sorted({m["symbol"] for m in r["matches"]}),
-                }
-            )
-    swap_terms = []
+        if (r["kind_reason"] or "").startswith("token_swap:"):
+            swaps.append({"version": f"{r['notice_id']} v{r['version']}", "title": r["title"],
+                          "kind_reason": r["kind_reason"], "known_at": iso(r["known_at"]),
+                          "matches": [(m["symbol"], m["match"], m["reason"], m["instance"])
+                                      for m in r["matches"]]})
+    other_swap = []
+    for r in rep["versions"]:
+        if r["status"] == "unclassified" and _SWAP.search(r["title"] or ""):
+            other_swap.append({"version": f"{r['notice_id']} v{r['version']}", "title": r["title"],
+                               "kind_reason": r["kind_reason"]})
+    residual = []
     for t in terms:
         ev = t["frozen"]
-        if ev["status"] == "missed" and any(s["version"] in x for s in swaps for x in ev["reasons"]):
-            swap_terms.append(f"{t['symbol']}#{t['instance']}")
-    return {
-        "dec40_whole_token_base_only_missed": base_only,
-        "token_swap_no_kind_phrase_versions": swaps,
-        "token_swap_affected_missed_instances": sorted(swap_terms),
-    }
+        if ev["status"] == "missed" and not all(x.startswith("no_capture") for x in ev["reasons"]):
+            residual.append({"instance": f"{t['symbol']}#{t['instance']}", "stage0_class": t["stage0_class"],
+                             "reasons": ev["reasons"]})
+    return {"base_asset_matches": base, "token_swap_versions": swaps,
+            "swap_like_titles_still_unclassified": other_swap, "missed_with_a_capture": residual}
 
 
 # ------------------------------------------------------------------------------------------- main
@@ -708,6 +764,7 @@ def main(argv=None) -> int:
             "catalog_kind_reason_counts": old["dk05"]["catalog_titles_wayback_notice_lag"][
                 "kind_reason_counts"
             ],
+            "wdev_book_window": book_window(old["terminations"]),
             "termination_reason_heads": {
                 k: dict(
                     sorted(
@@ -744,7 +801,10 @@ def main(argv=None) -> int:
         },
         "refused_captures": refused,
         "k9_refusal_logged": k9_refusals,
-        "runs": {"frozen": "metaingest.build_notices as committed (the FROZEN-candidate path; no wrapper)"},
+        "runs": {"frozen": "metaingest.build_notices as committed (the FROZEN-candidate path incl. A-1; no "
+                           "wrapper)"},
+        "a1_identities": "C4 PROXY (no exchangeInfo in the C4 inputs): base = symbol without its USDT quote, "
+                         "quote USDT, NOT E8-verified (proxy_identities)",
         "headline": {
             "frozen_can_process_real_captures": counts(rows, "frozen")["usable"] > 0,
             "release_src_counts": dict(
@@ -792,7 +852,8 @@ def main(argv=None) -> int:
         ),
         "terminations": terms,
         "dk05": dk,
-        "normative_items": normative_items(frozen, terms),
+        "wdev_book_window": book_window(terms),
+        "a1_effect": a1_effect(frozen, terms),
         "instances_source": inst_how,
         "captures": rows,
         "versions": {"frozen": slim_versions(frozen)},
@@ -818,7 +879,8 @@ def render_md(r: dict) -> str:
         "(every executed `luna` module and this script identical to HEAD: "
         f"{r['worktree_clean_for_code']}; `git status` of luna/v7: "
         f"{r['worktree_status_porcelain_luna_v7'] or 'clean'}; the FROZEN-candidate "
-        "code path only: Task 26d R50 / R51 / R52, no diagnostic wrapper). Machine-readable: "
+        "code path only: Task 26d R50 / R51 / R52 and the user's amendment A-1 (Task 29d), no diagnostic "
+        "wrapper). Machine-readable: "
         "`c4-notice-validation.json` (input / committed-code sha256 recorded there). No prices, labels, "
         "P&L or outcomes "
         "read; no network; nothing written under var/.",
@@ -830,44 +892,49 @@ def render_md(r: dict) -> str:
         f"- `release_src` per capture: {r['headline']['release_src_counts']}.",
         f"- Article `body` format per capture: {r['body_format_counts']}.",
         f"- Refused captures (ts >= 2025-07-01 / guard): {len(r['refused_captures'])}.",
+        f"- A-1 identities: {r['a1_identities']}.",
+        f"- W_DEV book test windows (cessation >= {BOOK_START}): class B / C cessations with a U6-activating "
+        f"notice known before cessation: **{r['wdev_book_window']['protected']} of "
+        f"{r['wdev_book_window']['n']}** ({', '.join(r['wdev_book_window']['protected_instances'])}); "
+        f"{r['wdev_book_window']['protected_excluding_amb42_mixed']} without a match only through the AMB-42 "
+        "(3) mixed notice (the red-team r2 basis).",
         "",
     ]
     if b:
         bc, ac = b["counts"]["frozen"], r["counts"]["frozen"]
-        d = b["counts"].get("diag_publishDate", {})
+        bw, aw = b.get("wdev_book_window") or {}, r["wdev_book_window"]
         L += [
-            "## 2. Before -> after",
+            "## 2. Before -> after (A-1)",
             "",
-            f"Before = the C4 run at HEAD `{b['git_head']}` (file sha256 `{b['sha256'][:16]}...`): "
-            "`frozen` = the "
-            "code then; `diag` = that run's DIAGNOSTIC publishDate wrapper (shown for reference only).",
+            f"Before = the C4 run at HEAD `{b['git_head']}` (file sha256 `{b['sha256'][:16]}...`; pre-A-1: "
+            "DEC-40 exact symbol only, no token-swap kind). After = this run (A-1 in force).",
             "",
-            "| measure | before (frozen) | before (diag) | after |",
-            "|---|---|---|---|",
-            f"| usable captures | {bc['usable']} | {d.get('usable')} | **{ac['usable']}** |",
-            f"| kinds (captures) | {bc['kinds']} | {d.get('kinds')} | **{ac['kinds']}** |",
+            "| measure | before | after |",
+            "|---|---|---|",
+            f"| usable captures | {bc['usable']} | **{ac['usable']}** |",
+            f"| kinds (captures) | {bc['kinds']} | **{ac['kinds']}** |",
             f"| versions (build) | {b['build_counts']['frozen']['by_kind']} / classified "
             f"{b['build_counts']['frozen']['classified']} | "
-            f"{b['build_counts'].get('diag_publishDate', {}).get('by_kind')}"
-            f" / classified {b['build_counts'].get('diag_publishDate', {}).get('classified')} | "
             f"**{r['build_counts']['frozen']['by_kind']} / classified "
             f"{r['build_counts']['frozen']['classified']}** |",
             f"| Stage-0 terminations (all) | {b['termination_coverage']['frozen']['all']} | "
-            f"{b['termination_coverage'].get('diag_publishDate', {}).get('all')} | "
             f"**{r['termination_coverage']['frozen']['all']}** |",
             f"| Stage-0 class B | {b['termination_coverage']['frozen']['B']} | "
-            f"{b['termination_coverage'].get('diag_publishDate', {}).get('B')} | "
             f"**{r['termination_coverage']['frozen']['B']}** |",
             f"| Stage-0 class C | {b['termination_coverage']['frozen']['C']} | "
-            f"{b['termination_coverage'].get('diag_publishDate', {}).get('C')} | "
             f"**{r['termination_coverage']['frozen']['C']}** |",
+            f"| W_DEV book windows: B / C cessations with a notice known before cessation | "
+            f"{bw.get('protected')} of {bw.get('n')} ({', '.join(bw.get('protected_instances', []))}) | "
+            f"**{aw['protected']} of {aw['n']}** ({', '.join(aw['protected_instances'])}) |",
+            f"| the same without a match only through the AMB-42 (3) mixed notice (red-team r2 basis) | "
+            f"{bw.get('protected_excluding_amb42_mixed')} of {bw.get('n')} | "
+            f"**{aw['protected_excluding_amb42_mixed']} of {aw['n']}** "
+            f"({', '.join(aw['protected_excluding_amb42_mixed_instances'])}) |",
             f"| miss reasons (heads) | {b['termination_reason_heads'].get('frozen')} | "
-            f"{b['termination_reason_heads'].get('diag_publishDate')} | "
             f"**{r['termination_reason_heads']}** |",
             f"| scheduled_ts reasons | {b['scheduled_reasons'].get('frozen')} | "
-            f"{b['scheduled_reasons'].get('diag_publishDate')} | "
             f"**{r['match_counts']['frozen']['scheduled_reasons']}** |",
-            f"| catalog titles (n=47) | {b['catalog_kind_reason_counts']} | (same) | "
+            f"| catalog titles (n=47) | {b['catalog_kind_reason_counts']} | "
             f"**{r['dk05']['catalog_titles_wayback_notice_lag']['kind_reason_counts']}** |",
             "",
         ]
@@ -953,23 +1020,41 @@ def render_md(r: dict) -> str:
         L.append(f"- still vetoed `modifier:{st}` ({len(ts)}):")
         for x in ts[:6]:
             L.append(f'  - "{x}"')
-    n = r["normative_items"]
+    w = r["wdev_book_window"]
     L += [
         "",
-        "## 7. Normative items (NOT changed; normative amendment required)",
+        f"## 7. W_DEV book test windows (cessation >= {BOOK_START}): U6 coverage of the class B / C "
+        "cessations",
         "",
-        "1. DEC-40 exact-symbol whole-token rule: notices naming only the base asset stay no-match. Missed "
-        "Stage-0 terminations with such a notice:",
+        "Protected (a matched delisting version known before cessation that activates U6): "
+        f"**{w['protected']} of {w['n']}**.",
         "",
+        "| instance | S0 class | cessation | protected | by | status / reasons |",
+        "|---|---|---|---|---|---|",
     ]
-    for x in n["dec40_whole_token_base_only_missed"]:
-        L.append(
-            f"   - {x['instance']} (S0 class {x['stage0_class'] or '-'}): {'; '.join(x['evidence'])[:240]}"
-        )
-    L += ["", "2. Token-swap / rebranding notices stay `no_kind_phrase`:", ""]
-    for x in n["token_swap_no_kind_phrase_versions"]:
-        L.append(f'   - {x["version"]}: "{x["title"]}" symbols in text {x["symbols_in_text"]}')
-    L += ["", f"   Missed terminations with such a notice: {n['token_swap_affected_missed_instances']}", ""]
+    for e in w["events"]:
+        prot = str(e["protected"])
+        if e["only_via_amb42_mixed_notice"]:
+            prot += " (AMB-42 (3) mixed notice only)"
+        L.append(f"| {e['instance']} | {e['stage0_class']} | {e['cessation']} | {prot} | "
+                 f"{'; '.join(e['by']) or '-'} | {e['status']}: {'; '.join(e['reasons'])[:200]} |")
+    n = r["a1_effect"]
+    L += ["", "## 8. A-1 effect (user amendment, AMENDMENTS-2026-10-16)", "",
+          "Base-asset matches (rule 1):", ""]
+    for x in n["base_asset_matches"]:
+        L.append(f"- {x['version']} ({x['status']}, {x['kind']}) {x['symbol']} -> {x['instance'] or '-'} "
+                 f"({x['instance_reason']}; known {x['known_at']}; {x['reason']}; scheduled_ts "
+                 f"{x['scheduled_reason']})")
+    L += ["", "Token-swap / rebrand versions classified `delisting` (rule 2):", ""]
+    for x in n["token_swap_versions"]:
+        L.append(f'- {x["version"]} ({x["kind_reason"]}; known {x["known_at"]}): "{x["title"]}" matches '
+                 f"{x['matches']}")
+    still = n["swap_like_titles_still_unclassified"] or "none"
+    L += ["", f"Swap-like titles still unclassified: {still}", "",
+          "Missed terminations that have a capture (residual):", ""]
+    for x in n["missed_with_a_capture"]:
+        L.append(f"- {x['instance']} (S0 class {x['stage0_class'] or '-'}): {'; '.join(x['reasons'])[:260]}")
+    L.append("")
     return "\n".join(L)
 
 

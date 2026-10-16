@@ -16,8 +16,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from luna.v7 import forward, forward_replay, guard, k9, release, runrecord, verdict, windows
+from luna.v7 import accounting, forward, forward_replay, guard, k9, release, runrecord, verdict, windows
 from luna.v7.book.engine import EngineInputs, Instrument, run
+from luna.v7.book.execution import INVALID_MARK
 from luna.v7.data.instances import Instance
 from luna.v7.features import FEATURES
 from luna.v7.forward_model import ForwardScoreModel, forward_model, load_forward_model
@@ -25,7 +26,18 @@ from luna.v7.forward_replay import DecisionPlan, decision_plan, replay
 from luna.v7.forward_store import SealedBeforeL7
 from luna.v7.timeutil import MIN, D, H, to_ns
 from tests.v7 import auth_fixtures as af
-from tests.v7.book.engine_fixtures import BTC, LO, NOW, b15, base_inputs, fund, gate_row, m1, provider
+from tests.v7.book.engine_fixtures import (
+    BTC,
+    LO,
+    NOW,
+    b15,
+    base_inputs,
+    fund,
+    gate_row,
+    instrument,
+    m1,
+    provider,
+)
 
 Q = 15 * MIN
 G0 = LO + 5 * MIN  # the first S-8.1 grid decision of the engine window
@@ -153,6 +165,87 @@ def test_engine_schedule_outside_the_window_refused():
         run("A0", _with_plan({LO - Q: True}), (LO, LO + 2 * D), 24)
 
 
+# --------------------------------------------------------------------------------- A-3: stale-quarter ticks
+
+
+def _drop15(ins, *opens):
+    """No mark-price and no last-price 15m close at the ticks the bars opening at ``opens`` end at."""
+    return replace(ins, bars15=ins.bars15[~ins.bars15["open_ts"].isin(opens)].reset_index(drop=True),
+                   mark15=ins.mark15[~ins.mark15["open_ts"].isin(opens)].reset_index(drop=True))
+
+
+def _a3(schedule, tick_evaluable=None, **kw):
+    return EngineInputs(**{**base_inputs(**kw).__dict__, "decisions": dict(schedule),
+                           "tick_evaluable": tick_evaluable})
+
+
+WIN2 = (LO, LO + 2 * D)
+
+
+def test_a3_stale_quarter_tick_without_leg_mark_is_skipped():
+    """A-3 (AMENDMENTS-2026-10-16): in the forward replay a tick inside a stale quarter (the quarter
+    [tick, tick + 15 min), the decision_time convention) is skipped: no mark, no risk action, no INVALID."""
+    tick = LO + 2 * H
+    aaa = _drop15(instrument("AAAUSDT", 100.0, -1e-4), tick - Q)  # held leg, no close ending at the tick
+    r = run("A0", _a3({G0: True}, _ev([tick]), aaa=aaa), WIN2, 24)
+    assert r.valid and r.invalid is None
+    assert tick not in set(r.marks["ts"]) and tick not in set(r.positions["ts"])  # no mark taken
+    assert {tick - Q, tick + Q} <= set(r.marks["ts"])  # the neighbouring evaluable ticks are marked
+    assert not (r.fills["ts"].between(tick, tick + Q) & (r.fills["role"] == "leg")).any()  # no risk action
+    led = accounting.account(r)
+    assert accounting.daily_ok(led) and accounting.k10_ok(led)
+
+
+def test_a3_same_missing_mark_outside_the_forward_skip_is_invalid():
+    """W_DEV / W_HOLD keep AMB-29 (a): the same held leg without a mark is INVALID_MARK on the S-8.1 grid, and
+    in a forward schedule whose tick quarter is evaluable."""
+    tick = LO + 2 * H
+    aaa = _drop15(instrument("AAAUSDT", 100.0, -1e-4), tick - Q)
+    grid = run("A0", base_inputs(aaa=aaa), WIN2, 24)
+    assert grid.invalid == INVALID_MARK and grid.invalid_ts == tick
+    fwd_ok_quarter = run("A0", _a3({G0: True}, _ev([tick - Q]), aaa=aaa), WIN2, 24)
+    assert fwd_ok_quarter.invalid == INVALID_MARK and fwd_ok_quarter.invalid_ts == tick
+    no_pred = run("A0", _a3({G0: True}, None, aaa=aaa), WIN2, 24)
+    assert no_pred.invalid == INVALID_MARK and no_pred.invalid_ts == tick
+
+
+def test_a3_stale_tick_takes_no_risk_action():
+    """BBB (the only short) spikes 20 % in the bar ending at 05:45 only: on an evaluable tick its leg stop
+    fires (and the one-sided flatten follows); with the 05:45 quarter stale the tick is skipped and nothing
+    fires."""
+    spike_lo, tick = LO + 5 * H + 30 * MIN, LO + 5 * H + 45 * MIN
+
+    def px(ts):
+        return np.where((ts >= spike_lo) & (ts < tick), 60.0, 50.0)
+
+    bbb = instrument("BBBUSDT", px, 1e-4)
+    plain = run("A0", _a3({G0: True}, _ev(), bbb=bbb), WIN2, 24)
+    assert plain.valid and (plain.fills["reason"] == "leg_stop").any()
+    r = run("A0", _a3({G0: True}, _ev([tick]), bbb=bbb), WIN2, 24)
+    assert r.valid and not r.fills["reason"].isin(["leg_stop", "one_sided_flatten", "kill"]).any()
+    assert tick not in set(r.marks["ts"])
+
+
+def test_a3_stale_midnight_tick_defers_the_day_close():
+    """No mark at a skipped midnight tick: the UTC day closes at the first marked tick after it (contiguous
+    daily rows; the accounting identities hold)."""
+    mid = LO + D
+    r = run("A0", _a3({G0: True}, _ev([mid])), WIN2, 24)
+    assert r.valid and mid not in set(r.marks["ts"])
+    d = r.daily
+    assert d["end_ts"].iloc[0] == mid + Q and d["start_ts"].iloc[1] == mid + Q
+    assert d["day"].iloc[1] == mid // D
+    led = accounting.account(r)
+    assert accounting.daily_ok(led) and accounting.k10_ok(led)
+
+
+def test_a3_tick_predicate_only_with_a_forward_schedule():
+    """The tick skip is a §15 forward-replay hook only: refused on the S-8.1 grid (W_DEV / W_HOLD)."""
+    inp = EngineInputs(**{**base_inputs().__dict__, "tick_evaluable": _ev()})
+    with pytest.raises(ValueError):
+        run("A0", inp, WIN2, 24)
+
+
 # --------------------------------------------------------------------------------- the gated replay
 
 
@@ -245,7 +338,7 @@ def frozen(tmp_path_factory):
         hs = tr._hold_samples()
         hs["y_reg"] = 200 * hs["f1_fl1"] + 1  # a strong W_HOLD signal: the frozen model trades in the replay
         hs["y_pos"] = (hs["y_reg"] > 0).astype(float)
-        forward_model(tr.dev(), [tr.issued(o, hs)], tr.final(), auth=o.auth)
+        forward_model(tr.dev(), [tr.bridge(o), tr.issued(o, hs)], tr.final(), auth=o.auth)
     finally:
         mp.undo()
     release.cache_clear()
@@ -306,6 +399,9 @@ def test_end_to_end_forward_pass_byte_identical(frozen, monkeypatch, fwd_inputs)
     assert list(fr.run.decisions["t"]) == sorted(fr.plan.schedule)
     assert model.log and set(model.log) <= set(fr.plan.schedule)  # the frozen model scored the decisions
     assert len(fr.run.fills) and fr.run.positions["ts"].max() < TF7 + 11 * D  # traded, then flat
+    # A-3: the stale day's ticks are skipped (no mark), the ticks around it are marked
+    marked = set(fr.run.marks["ts"])
+    assert not marked & set(range(day3, day3 + D, Q)) and {day3 - Q, day3 + D} <= marked
     # 10 active days then flat, costs > funding: NO-GO (H_F, P2, P6), P4 evidence short (DK-99 precedence)
     assert v.cls == forward.NOGO and v.reasons == ("H_F fails", "P2 fails", "P6 fails", "evidence: p4")
     assert v.details["evaluable_days"] == 179 and v.comparison == forward.INCOMPLETE  # no A0 supplied

@@ -37,7 +37,7 @@ from luna.v7.fetch import Fetcher, Response
 from luna.v7.guard import GuardFailure
 from luna.v7.metastore import MetaStore
 from luna.v7.timeutil import MIN, D, H, to_ns
-from luna.v7.universe import instrument_exclusion
+from luna.v7.universe import Identity, instrument_exclusion
 from tests.v7.net_fixtures import CDX, FakeTransport
 
 CODE = "0bfb6cfd5d7b4e8b9b7c0a1e2f3d4c5b"
@@ -70,6 +70,12 @@ DELIST_TITLE = "Binance Futures Will Delist USDⓈ-M XYZUSDT Perpetual Contract"
 DELIST_BODY = ("<p>Fellow Binancians,</p><p>Binance Futures will close all positions and conduct an "
                "automatic settlement on the USDⓈ-M XYZUSDT Perpetual Contract at 2024-03-15 09:00 (UTC). "
                "After that, the contract will be delisted.</p><p>Thanks &amp; regards,</p>")
+
+
+def ids(insts) -> dict:
+    """A-1: a verified USDT identity (base = the symbol without USDT) for every synthetic instance."""
+    return {s: {i.idx: Identity(s[:-4], "PERPETUAL", "USDT", "COIN", 1.0, True) for i in v}
+            for s, v in insts.items()}
 
 
 def capture(ts: str, body: bytes, original: str = URL) -> cap.Capture:
@@ -139,10 +145,40 @@ def test_each_cancellation_phrase(phrase):
     assert cap.classify_kind(f"Binance Futures Will {phrase} of USDⓈ-M OMGUSDT")[0] == "cancellation"
 
 
+@pytest.mark.parametrize("title,phrase", [
+    ("Binance Will Support the BinaryX (BNX) Token Swap and Redenomination Plan", "token swap"),
+    ("Binance Will Support the Polygon (MATIC) Token Swap to Polygon (POL)", "token swap"),
+    ("Binance Has Completed the TomoChain (TOMO) Rebranding to Viction (VIC)", "rebranding"),
+    ("Binance Will Support the Cocos-BCX (COCOS) Token Swap & Rebranding Plan to COMBO (COMBO)",
+     "token swap|rebranding"),
+])
+def test_a1_each_token_swap_phrase_is_delisting_kind_evidence(title, phrase):
+    """A-1 (AMENDMENTS-2026-10-16): the closed token-swap / rebrand list from the C4 evidence titles."""
+    assert set(phrase.split("|")) <= set(cap.TOKEN_SWAP_PHRASES)
+    assert cap.classify_kind(title) == ("delisting", f"token_swap:{phrase}")
+
+
+def test_a1_token_swap_list_is_closed_and_vetoed_by_modifiers():
+    assert cap.TOKEN_SWAP_PHRASES == ("token swap", "rebranding")
+    for t in ("Binance Will Support the XYZ Token Migration", "Binance Will Support the XYZ Redenomination",
+              "Binance Will Support the XYZ Swap", "Binance Will Rebrand XYZ"):
+        assert cap.classify_kind(t) == (None, "no_kind_phrase"), t
+    # R52 modifier veto still applies (no list phrase contains a modifier stem)
+    assert cap.classify_kind("Binance Will Postpone the XYZ Token Swap") == (
+        None, "ambiguous_kind:modifier:postpon")
+    assert cap.classify_kind("Binance Will Not Support the XYZ Rebranding") == (
+        None, "ambiguous_kind:modifier:not")
+    # a delisting phrase decides the reason; a mixed cancellation / postponement title stays unclassified
+    assert cap.classify_kind("Binance Will Delist XYZ After the Token Swap") == (
+        "delisting", "delisting:delist")
+    assert cap.classify_kind("Cancellation of the Delisting of XYZ; Token Swap Completed") == (
+        None, "ambiguous_kind:cancellation+delisting")
+
+
 def test_unclassified_and_ambiguous_titles_are_never_guessed():
     assert cap.classify_kind("Binance Futures Will Launch USDⓈ-M ABCUSDT Perpetual Contract") == (
         None, "no_kind_phrase")
-    assert cap.classify_kind("Binance Will Support the XYZ Token Swap") == (None, "no_kind_phrase")
+    assert cap.classify_kind("Binance Will Support the XYZ Token Migration") == (None, "no_kind_phrase")
     assert cap.classify_kind(None) == (None, "no_title")
     assert cap.classify_kind("Binance Futures Will Delist AUSDT and Postpone the Delisting of BUSDT") == (
         None, "ambiguous_kind:postponement+delisting")
@@ -349,7 +385,7 @@ def test_real_shaped_capture_end_to_end_matches_and_schedules_on_text():
     sentence, and each table row keeps its symbol and timestamp on its own line."""
     raw = tree_page(DELIST_TITLE, TREE, catalog=(RELEASE,), publish=RELEASE)
     insts = {**INSTS, "DEFUSDT": [Instance(0, to_ns("2023-01-01"), None, None)]}
-    rep = metaingest.build_notices([capture("20240308095620", raw)], insts).report
+    rep = metaingest.build_notices([capture("20240308095620", raw)], insts, identities=ids(insts)).report
     (rec,) = rep["versions"]
     assert (rec["status"], rec["kind"], rec["release_ts"], rec["release_src"]) == (
         "classified", "delisting", RELEASE, "releaseDate=publishDate")
@@ -382,7 +418,7 @@ def test_versions_kinds_and_unclassified_notice_in_the_report():
                                             "<p>USDⓈ-M ABCUSDT at 2024-03-02 08:00 (UTC)</p>", code=OTHER,
                                             release=to_ns("2024-03-01"), related=()),
                      f"https://www.binance.com/en/support/announcement/{OTHER}")
-    nb = metaingest.build_notices([b, a2, launch, a], INSTS)
+    nb = metaingest.build_notices([b, a2, launch, a], INSTS, identities=ids(INSTS))
     assert [(v.notice_id, v.version, v.kind) for v in nb.versions] == [(f"en:{CODE}", 1, "delisting"),
                                                                        (f"en:{CODE}", 2, "delisting")]
     v1, v2 = nb.versions
@@ -417,11 +453,16 @@ def test_no_match_reasons_are_reported():
           capture("20240308095621", page("Binance Will Delist XYZ", "<p>Spot XYZ/USDT will be delisted.</p>",
                                          code=OTHER, related=()),
                   f"https://www.binance.com/en/support/announcement/{OTHER}")]
-    rep = metaingest.build_notices(vs, INSTS).report
+    rep = metaingest.build_notices(vs, INSTS, identities=ids(INSTS)).report
     by = {r["notice_id"]: r for r in rep["versions"]}
     assert by[f"en:{CODE}"]["matches"][0]["reason"] == "coin_m_veto:coin-m"
     assert by[f"en:{CODE}"]["matches"][0]["match"] is False
-    assert by[f"en:{OTHER}"]["matches"] == [] and by[f"en:{OTHER}"]["match_reason"] == (
+    # A-1: the base token XYZ makes XYZUSDT a candidate; a spot notice has no USDⓈ-M context: no match
+    assert [(m["symbol"], m["match"], m["reason"]) for m in by[f"en:{OTHER}"]["matches"]] == [
+        ("XYZUSDT", False, "base_asset:XYZ;no_usdm_context")]
+    assert by[f"en:{OTHER}"]["match_reason"] == "no_match"
+    rep0 = metaingest.build_notices(vs, INSTS, identities={}).report  # no verified identity: no base
+    assert [r for r in rep0["versions"] if r["notice_id"] == f"en:{OTHER}"][0]["match_reason"] == (
         "no_universe_symbol_token")
     assert rep["matched_instances"] == []
 
@@ -432,7 +473,8 @@ def test_only_the_notice_title_and_body_are_matched_the_page_is_a_diagnostic():
     diagnostics in the report."""
     rel = ((OTHER, "Binance Futures Will Launch USDⓈ-M ABCUSDT Perpetual Contract", to_ns("2024-03-01")),)
     raw = page(DELIST_TITLE, DELIST_BODY, related=rel, nav='<a href="/en/futures">COIN-M Futures</a>')
-    rec = metaingest.build_notices([capture("20240308095620", raw)], INSTS).report["versions"][0]
+    nb = metaingest.build_notices([capture("20240308095620", raw)], INSTS, identities=ids(INSTS))
+    rec = nb.report["versions"][0]
     assert [(m["symbol"], m["match"], m["reason"]) for m in rec["matches"]] == [
         ("XYZUSDT", True, "usdm_context:usds-m")]
     assert rec["page"]["symbols_not_in_notice"] == ["ABCUSDT"]
@@ -465,7 +507,7 @@ def test_catalog_entries_of_the_same_code_without_a_body_are_not_candidates():
 
 def test_a_capture_without_the_article_object_is_unusable():
     no_obj = page(DELIST_TITLE, DELIST_BODY, code=OTHER, related=())  # the URL names CODE
-    rec = metaingest.build_notices([capture("20240308095620", no_obj)], INSTS).report
+    rec = metaingest.build_notices([capture("20240308095620", no_obj)], INSTS, identities=ids(INSTS)).report
     assert rec["counts"]["unusable"] == 1 and rec["counts"]["classified"] == 0
     v = rec["versions"][0]
     assert (v["status"], v["article_reason"], v["match_reason"], v["matches"]) == (
@@ -477,18 +519,18 @@ def test_capture_in_w_hold_or_m6_is_refused_before_the_opening(tmp_path):
     late = capture("20250701000000", page(DELIST_TITLE, DELIST_BODY))
     with k9.using(k9.K9Log(tmp_path / "k9")) as lg:
         with pytest.raises(guard.HoldoutBlocked):
-            metaingest.build_notices([late], INSTS)
+            metaingest.build_notices([late], INSTS, identities=ids(INSTS))
         with pytest.raises(guard.HoldoutBlocked):
             MetaStore(tmp_path / "m").put_capture(late)
         m6 = capture("20260701000000", page(DELIST_TITLE, DELIST_BODY))
         with pytest.raises(guard.EmbargoBlocked):
             MetaStore(tmp_path / "m").put_capture(m6)
         with pytest.raises(guard.EmbargoBlocked):
-            metaingest.build_notices([m6], INSTS)
+            metaingest.build_notices([m6], INSTS, identities=ids(INSTS))
         # a capture before W_HOLD whose releaseDate is in W_HOLD: nothing dated >= the W_HOLD start
         pre = capture("20250630000000", page(DELIST_TITLE, DELIST_BODY, release=to_ns("2025-07-02")))
         with pytest.raises(guard.HoldoutBlocked):
-            metaingest.build_notices([pre], INSTS)
+            metaingest.build_notices([pre], INSTS, identities=ids(INSTS))
         assert len(lg.records()) == 5
         assert not list((tmp_path / "m").rglob("*.bin"))
         # m4: the store checks the capture time only; the in-capture releaseDate is checked when the notices
@@ -496,7 +538,7 @@ def test_capture_in_w_hold_or_m6_is_refused_before_the_opening(tmp_path):
         st = MetaStore(tmp_path / "m")
         st.put_capture(pre)
         with pytest.raises(guard.HoldoutBlocked):
-            metaingest.build_notices([st.get_capture(pre.ts, pre.sha256)], INSTS)
+            metaingest.build_notices([st.get_capture(pre.ts, pre.sha256)], INSTS, identities=ids(INSTS))
 
 
 # -------------------------------------------------------------------------------- the fetch layer
@@ -875,11 +917,66 @@ def test_e6_authorized_capture_path(_opening, monkeypatch, tmp_path):
         c = st.get_capture(ts, res[0].sha256, auth=o.auth)
         insts = {"XYZUSDT": [Instance(0, to_ns("2025-01-01"), None, None)]}
         with pytest.raises(guard.HoldoutBlocked):
-            metaingest.build_notices([c], insts)
-        nb = metaingest.build_notices([c], insts, auth=o.auth)
+            metaingest.build_notices([c], insts, identities=ids(insts))
+        nb = metaingest.build_notices([c], insts, identities=ids(insts), auth=o.auth)
         v = nb.versions[0]
         assert known_at(v) == to_ns("2026-01-15") and scheduled_ts(v, "XYZUSDT") == to_ns("2026-01-20 09:00")
         st.put_table("R11", "W_HOLD", nb.table, auth=o.auth)
         with pytest.raises(guard.HoldoutBlocked):
             st.load_table("R11", "W_HOLD")
         assert st.load_notice_versions("W_HOLD", auth=o.auth) == nb.versions
+
+
+# ------------------------------------------------------------------------- A-1: base-asset notices end to end
+
+BASE_TITLE = "Binance Futures Will Delist XYZ and QQQ USDT-Margined Contracts"
+BASE_BODY = ("<p>Binance Futures will close all positions and conduct an automatic settlement on the XYZ and "
+             "QQQ USDT-Margined Perpetual Contracts at 2024-03-15 09:00 (UTC).</p>")
+
+
+def test_a1_base_only_notice_matches_through_the_ingest_and_reloads(tmp_path):
+    """A-1: a notice naming only the base assets matches the unique live USDT instance of each base at its
+    known_at (R11 matched_instances, NoticeVersion.base_matched, U6); scheduled_ts stays null (DEC-37: no
+    symbol-token sentence); the stored R11 reloads with the same carried match."""
+    t = FakeTransport()
+    ts = "20240308095620"
+    serve(t, [(ts, URL, page(BASE_TITLE, BASE_BODY))])
+    out = tmp_path / "run"
+    with k9.using(k9.K9Log(out / "k9")):
+        st = MetaStore(tmp_path / "m")
+        metaingest.ingest_captures(Fetcher(t, out, clock=lambda: RECV), st,
+                                   [metaingest.CdxQuery(url=URL.replace("https://", ""))])
+        n4 = src("N4", RECV, xinfo(XYZUSDT=FULL))
+        live = Instance(0, to_ns("2023-01-01"), None, None)
+        res = metaingest.ingest_metadata(st, {"XYZUSDT": [live]}, [n4], scope="W_DEV",
+                                         report_path=out / "report.json")
+        (v,) = res.notices.versions
+        assert v.base_matched == ("XYZUSDT",) and confident_match(v, "XYZUSDT")
+        (rec,) = res.report["notices"]["versions"]
+        (m,) = rec["matches"]
+        assert (m["symbol"], m["match"], m["reason"], m["instance"]) == (
+            "XYZUSDT", True, "base_asset_match:XYZ;usdm_context:usdt-margined", "XYZUSDT#0")
+        assert (m["scheduled_ts"], m["scheduled_reason"]) == (None, "no_timestamp_in_symbol_sentences")
+        assert "XYZ" in m["evidence"]
+        assert json.loads(res.notices.table["matched_instances"].iloc[0]) == ["XYZUSDT#0"]
+        ka = known_at(v)
+        u6 = U6State(list(res.notices.versions), "XYZUSDT", [live])
+        assert not u6.active(live, ka - 1, lambda x: False) and u6.active(live, ka + 30 * D, lambda x: False)
+        assert st.load_notice_versions("W_DEV") == res.notices.versions
+        assert res.report["rules"]["kind_phrases"]["token_swap_as_delisting"] == ["token swap", "rebranding"]
+
+
+def test_a1_ingest_ambiguous_and_not_yet_live_bases():
+    c = capture("20240308095620", page(BASE_TITLE, BASE_BODY))
+    ka = to_ns("2024-03-08 09:56:20")
+    insts = {"XYZUSDT": [Instance(0, to_ns("2023-01-01"), None, None)],
+             "XYZUSDT_240628": [Instance(0, to_ns("2024-01-01"), None, None)],  # delivery contract, same base
+             "QQQUSDT": [Instance(0, ka + 1, None, None)]}  # listed after known_at
+    idn = ids(insts)
+    idn["XYZUSDT_240628"] = {0: Identity("XYZ", "CURRENT_QUARTER", "USDT", "COIN", 1.0, True)}
+    rep = metaingest.build_notices([c], insts, identities=idn).report
+    by = {m["symbol"]: m for m in rep["versions"][0]["matches"]}
+    assert by["XYZUSDT"]["reason"] == "no_symbol_token;base_asset_ambiguous:XYZ:2"
+    assert not by["XYZUSDT"]["match"]
+    assert by["QQQUSDT"]["reason"] == "no_symbol_token;base_asset:no_live_usdt_identity"
+    assert rep["matched_instances"] == []

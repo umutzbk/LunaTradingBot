@@ -41,7 +41,7 @@ import pandas as pd
 from luna.v7 import guard, k9, netguard
 from luna.v7.data import captures as cap
 from luna.v7.data.instruments import _R1_DTYPES
-from luna.v7.data.notices import NoticeVersion
+from luna.v7.data.notices import NoticeVersion, _token_re
 from luna.v7.data.schema import TABLES, IntegrityBlocker
 from luna.v7.data.terminal import validate_r12
 from luna.v7.rawstore import (
@@ -294,6 +294,9 @@ class MetaStore:
             if t.release_ts != int(r.releaseDate) or kind != r.kind:
                 raise IntegrityBlocker(f"R11 {r.notice_id} v{r.version}: the capture does not reproduce the "
                                        "stored releaseDate / kind")
+            # A-1: the base-matched symbols the ingest carried (matched instances without the exact token)
+            syms = {str(x).rsplit("#", 1)[0] for x in json.loads(str(r.matched_instances))}
+            based = tuple(sorted(x for x in syms if _token_re(x).search(t.text or "") is None))
             out.append(NoticeVersion(str(r.notice_id), int(r.version), kind, t.release_ts, c.capture_ts,  # type: ignore[arg-type]
-                                     t.text, c.sha256))
+                                     t.text, c.sha256, base_matched=based))
         return tuple(out)

@@ -1,6 +1,17 @@
+from dataclasses import replace
+
 from luna.v7.data.instances import Instance
-from luna.v7.data.notices import NoticeVersion, U6State, confident_match, known_at, scheduled_ts
+from luna.v7.data.notices import (
+    InstanceBases,
+    NoticeVersion,
+    U6State,
+    confident_match,
+    known_at,
+    match_reason,
+    scheduled_ts,
+)
 from luna.v7.timeutil import D, H, to_ns
+from luna.v7.universe import Identity
 
 T0 = to_ns("2024-06-01")
 SCHED = to_ns("2024-06-11 09:00")
@@ -171,3 +182,77 @@ def test_version_in_first_16_min_binds_to_new_instance_used_once_current():
     st = U6State([v], "XXXUSDT", insts)
     assert st.active(insts[1], first + 16 * 60 * 10**9, never)
     assert not st.active(insts[1], first + 16 * 60 * 10**9 - 1, never)
+
+
+# ------------------------------------------------------------- A-1 (AMENDMENTS-2026-10-16): base-asset match
+
+
+KA = T0 + 6 * D  # known_at of _v's default version
+AKRO = ("Binance Futures Will Delist AKRO and DODO USDT-Margined Contracts\n"
+        "Binance Futures will close all positions and remove the AKRO and DODO contracts at "
+        "2024-06-11 09:00 (UTC).")
+
+
+def _id(base, quote="USDT", ok=True):
+    return Identity(base, "PERPETUAL", quote, "COIN", 1.0, ok)
+
+
+def _bases(**syms):
+    """symbol -> (first_bar_ts, identity) of one instance (idx 0)."""
+    insts = {s: [Instance(0, fb, None, None)] for s, (fb, _) in syms.items()}
+    ids = {s: {0: ident} for s, (_, ident) in syms.items()}
+    return InstanceBases(insts, ids)
+
+
+def test_a1_base_asset_match():
+    b = _bases(AKROUSDT=(T0, _id("AKRO")), DODOUSDT=(T0, _id("DODO")), AKROUSDC=(T0, _id("AKRO", "USDC")))
+    v = _v(AKRO)
+    assert match_reason(v, "AKROUSDT", b) == (True, "base_asset_match:AKRO;usdm_context:usdt-margined")
+    assert match_reason(v, "DODOUSDT", b)[0]
+    assert not confident_match(v, "AKROUSDT")  # DEC-40 alone (no base resolver, nothing carried): no match
+    assert match_reason(v, "AKROUSDC", b) == (False, "no_symbol_token;base_asset:no_live_usdt_identity")
+
+
+def test_a1_multiplier_base_is_its_own_token():
+    b = _bases(**{"1000BTTCUSDT": (T0, _id("1000BTTC")), "BTTCUSDT": (T0, _id("BTTC"))})
+    v = _v("Binance Futures Will Delist 1000BTTC and YFII USDT-Margined Contracts")
+    assert match_reason(v, "1000BTTCUSDT", b)[0]
+    assert match_reason(v, "BTTCUSDT", b) == (False, "no_symbol_token;base_asset:no_base_token:BTTC")
+
+
+def test_a1_ambiguous_base_gives_no_match():
+    """Two live USD-M USDT instances with base AKRO at known_at (a perpetual and a delivery contract)."""
+    b = _bases(AKROUSDT=(T0, _id("AKRO")), AKROUSDT_240628=(T0, _id("AKRO")))
+    assert match_reason(_v(AKRO), "AKROUSDT", b) == (False, "no_symbol_token;base_asset_ambiguous:AKRO:2")
+
+
+def test_a1_coin_m_veto_still_applies():
+    b = _bases(AKROUSDT=(T0, _id("AKRO")))
+    v = _v(AKRO + " COIN-M AKROUSD_PERP is not affected.")
+    assert match_reason(v, "AKROUSDT", b) == (False, "base_asset:AKRO;coin_m_veto:coin-m")
+    assert match_reason(_v("Binance Will Delist AKRO spot pairs."), "AKROUSDT", b) == (
+        False, "base_asset:AKRO;no_usdm_context")
+
+
+def test_a1_pit_instance_not_yet_known_cannot_match():
+    """Only instances live at the version's known_at count: a later instance can neither be matched nor make
+    the base ambiguous; an unverified identity never matches."""
+    later = _bases(AKROUSDT=(KA + 1, _id("AKRO")))
+    assert match_reason(_v(AKRO), "AKROUSDT", later) == (
+        False, "no_symbol_token;base_asset:no_live_usdt_identity")
+    b = _bases(AKROUSDT=(T0, _id("AKRO")), AKROUSDT_240628=(KA + 1, _id("AKRO")))
+    assert match_reason(_v(AKRO), "AKROUSDT", b)[0]  # the delivery contract starts after known_at
+    unverified = _bases(AKROUSDT=(T0, _id("AKRO", ok=False)))
+    assert not match_reason(_v(AKRO), "AKROUSDT", unverified)[0]
+    assert not match_reason(_v(AKRO, capture=None), "AKROUSDT", b)[0]  # no known_at: never matched
+
+
+def test_a1_carried_base_match_drives_u6_and_keeps_dec37():
+    """The ingest decides the base match (PIT, with the identity set) and carries it on the version
+    (``base_matched``); U6 uses it; scheduled_ts is unchanged (symbol-token sentences only: null here)."""
+    v = replace(_v(AKRO), base_matched=("AKROUSDT",))
+    assert confident_match(v, "AKROUSDT") and not confident_match(v, "DODOUSDT")
+    assert match_reason(v, "AKROUSDT")[1] == "base_asset_match:carried;usdm_context:usdt-margined"
+    assert scheduled_ts(v, "AKROUSDT") is None
+    st = U6State([v], "AKROUSDT", INSTS)
+    assert not st.active(INSTS[0], KA - 1, never) and st.active(INSTS[0], KA + 30 * D, never)

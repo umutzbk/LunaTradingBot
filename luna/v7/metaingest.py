@@ -14,24 +14,29 @@ Task 26c, AMB-39 / AMB-40).
   as ``cdx_failed`` / ``fetch_failed`` and ledgered in ``<out_dir>/INGEST_LEDGER.jsonl``. A pair already
   stored is not fetched again. Runs under the fetcher's K9 log. A stored capture's own ``releaseDate`` is
   checked when the notices are built (``build_notices`` refuses one in W_HOLD / M6; fix round 1, m4).
-* ``build_notices(captures, insts_by_symbol)``: every capture time and every ``releaseDate`` passes
-  ``guard.check_data_span`` (W_HOLD refused before the opening, M6 before R_V6: raised, K9-logged). Captures
-  are grouped by notice identity (``captures.notice_id``) and ordered by (capture time, sha256); a capture
-  whose extracted text differs from the previous capture's starts a new version (numbered 1, 2, ... per
-  notice; a later archived revision is a new version, S-2.5 / DEC-36; AMB-39 (d)) with the first such
+* ``build_notices(captures, insts_by_symbol, identities=...)``: every capture time and every ``releaseDate``
+  passes ``guard.check_data_span`` (W_HOLD refused before the opening, M6 before R_V6: raised, K9-logged).
+  Captures are grouped by notice identity (``captures.notice_id``) and ordered by (capture time, sha256); a
+  capture whose extracted text differs from the previous capture's starts a new version (numbered 1, 2, ...
+  per notice; a later archived revision is a new version, S-2.5 / DEC-36; AMB-39 (d)) with the first such
   capture's time as ``capture_ts`` and its sha256. A version is *unusable* without the notice's own article
   object (title, body, ``releaseDate``; ``captures.article``), *unclassified* when the closed kind list does
   not classify its title; only *classified* versions become ``NoticeVersion`` / R11 rows. Matching
   (``notices.match_reason``) is against the universe symbols that occur as tokens of the notice's own title +
-  body (S-2.5 / DEC-40; fix round 1, I2: the whole page is a diagnostic only); a match is attributed to the
+  body (S-2.5 / DEC-40; fix round 1, I2: the whole page is a diagnostic only) and, A-1
+  (AMENDMENTS-2026-10-16), against the symbols whose verified USDT ``baseAsset`` (``identities``: per symbol,
+  per instance idx, the R1 ``universe.Identity``; required) occurs as a token: ``notices.match_reason`` with
+  the ``notices.InstanceBases`` of all instances decides the base-asset match at the version's ``known_at``
+  (only instances live then; ambiguous base -> no match) and the base-matched symbols are carried on the
+  version (``NoticeVersion.base_matched``); a match is attributed to the
   instance live at the version's ``known_at`` (``instances.started_instance``, as ``U6State``);
   ``scheduled_delist_ts`` per matched instance comes from ``notices.scheduled_reason`` (delisting versions
   only).
 * ``ingest_metadata(store, insts_by_symbol, sources, scope=..., report_path=...)``: the stored announcement
   captures (original URL under ``/support/announcement/``; the store also holds ``exchangeInfo`` captures) ->
-  R11, the instances + identity sources -> R1 (``data.instruments``), R12 = the empty table (no exact
-  official settlement source exists, DEC-43 / DK-07; never a placeholder), the tables written once per scope
-  and the ingest report written (exclusive create) as canonical JSON.
+  R11 (matched with the R1 identities, A-1), the instances + identity sources -> R1 (``data.instruments``),
+  R12 = the empty table (no exact official settlement source exists, DEC-43 / DK-07; never a placeholder),
+  the tables written once per scope and the ingest report written (exclusive create) as canonical JSON.
 * The report (``ingest_report``) is outcome-free: no price, return or label is read. Per version: status,
   kind and the phrase that decided it, title, release / capture / known times and the release-date source
   (``release_src``, R50), the JSON date keys seen, every universe symbol occurring as a token with match /
@@ -46,7 +51,7 @@ import json
 import re
 import unicodedata
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pandas as pd
@@ -60,6 +65,7 @@ from luna.v7.data.notices import (
     COIN_M_PHRASES,
     USDM_PAIR,
     USDM_PHRASES,
+    InstanceBases,
     NoticeVersion,
     _token_re,
     known_at,
@@ -216,8 +222,10 @@ def _check_time(ns: int, what: str, auth) -> None:
     guard.check_data_span(int(ns), int(ns) + 1, auth=auth, what=what)
 
 
-def _evidence(text: str, symbol: str) -> str:
+def _evidence(text: str, symbol: str, base: str | None = None) -> str:
     m = _token_re(symbol).search(text)
+    if m is None and base:
+        m = _token_re(base).search(text)
     if m is None:
         return ""
     return text[max(0, m.start() - EVIDENCE_CHARS): m.end() + EVIDENCE_CHARS].replace("\n", " ")
@@ -228,8 +236,11 @@ def _js(obj: object) -> str:
 
 
 def build_notices(captures: Sequence[cap.Capture], insts_by_symbol: Mapping[str, Sequence[Instance]], *,
+                  identities: Mapping[str, Mapping[int, object] | object | None],
                   auth: guard.HoldoutAuthorization | None = None, venue: str = ins.VENUE) -> NoticeBuild:
-    """Versions, R11 and the notice part of the report (module docstring)."""
+    """Versions, R11 and the notice part of the report (module docstring). ``identities``: per symbol the R1
+    ``universe.Identity`` per instance idx (A-1 base-asset match; required, an unverified identity is never a
+    base)."""
     k9.require()
     for c in captures:
         _check_time(c.capture_ts, f"wayback capture {c.ts} {c.original}", auth)
@@ -237,6 +248,7 @@ def build_notices(captures: Sequence[cap.Capture], insts_by_symbol: Mapping[str,
     for c in captures:
         groups.setdefault(cap.notice_id(c.original), []).append(c)
     universe = {s: list(v) for s, v in insts_by_symbol.items()}
+    bases = InstanceBases(universe, identities)  # type: ignore[arg-type]
     versions: list[NoticeVersion] = []
     recs: list[dict] = []
     rows: list[dict] = []
@@ -258,13 +270,18 @@ def build_notices(captures: Sequence[cap.Capture], insts_by_symbol: Mapping[str,
             v = NoticeVersion(nid, n, kind or "delisting", t.release_ts or 0, c.capture_ts, text, c.sha256)
             ka = None if t.release_ts is None else known_at(v)
             words = set(_WORD.findall(text))
-            cands = sorted(s for s in universe if s in words)
+            # DEC-40 exact-symbol tokens, and (A-1) the symbols with a verified USDT base among the tokens
+            cands = sorted({s for s in universe if s in words}
+                           | {s for b in bases.bases() if b in words for s in bases.symbols_with_base(b)})
             page_words = set(_WORD.findall(t.page_text))
             page_lc = unicodedata.normalize("NFKC", t.page_text).casefold()
             text_lc = unicodedata.normalize("NFKC", text).casefold()
             matches = []
+            decided = {s: match_reason(v, s, bases) for s in cands}
+            v = replace(v, base_matched=tuple(s for s in cands if decided[s][0]
+                                              and decided[s][1].startswith("base_asset_match:")))
             for s in cands:
-                ok, why = match_reason(v, s)
+                ok, why = decided[s]
                 inst = started_instance(universe[s], ka) if ok and ka is not None else None
                 if not ok:
                     sched, sr = None, "no_confident_match"
@@ -279,7 +296,8 @@ def build_notices(captures: Sequence[cap.Capture], insts_by_symbol: Mapping[str,
                                                     "no_known_at" if ka is None else
                                                     "no_instance_live_at_known_at"),
                                 "scheduled_ts": sched, "scheduled_reason": sr,
-                                "evidence": _evidence(text, s)})
+                                "evidence": _evidence(text, s, None if ka is None else
+                                                      bases.live_base(s, ka))})
             rec = {"notice_id": nid, "version": n, "status": status, "kind": kind, "kind_reason": kind_reason,
                    "title": t.title, "article_reason": t.article_reason, "release_ts": t.release_ts,
                    "release_reason": t.release_reason, "release_src": t.release_src,
@@ -410,7 +428,10 @@ def ingest_report(notices: NoticeBuild, instruments: ins.Instruments, r12: pd.Da
         "kind": "V7_METADATA_INGEST_REPORT", "format": REPORT_FORMAT, "outcome_free": True, "scope": scope,
         "rules": {"kind_phrases": {"cancellation": list(cap.CANCELLATION_PHRASES),
                                    "postponement": list(cap.POSTPONEMENT_PHRASES),
-                                   "delisting": list(cap.DELISTING_PHRASES)},
+                                   "delisting": list(cap.DELISTING_PHRASES),
+                                   "token_swap_as_delisting": list(cap.TOKEN_SWAP_PHRASES)},  # A-1
+                  "base_asset_match": "A-1: verified USDT baseAsset token + USDⓈ-M context, no COIN-M veto, "
+                                      "unique live USD-M USDT instance at known_at",
                   "context_phrases": {"usdm": list(USDM_PHRASES), "usdm_pair": list(USDM_PAIR),
                                       "coin_m_veto": list(COIN_M_PHRASES)},
                   "identity_fields": sorted(guard.IDENTITY_FIELDS)},
@@ -442,8 +463,10 @@ def ingest_metadata(store: MetaStore, insts_by_symbol: Mapping[str, Sequence[Ins
     k9.require()
     caps = [store.get_capture(e["ts"], e["sha256"], auth=auth) for e in store.captures()]
     caps = [c for c in caps if "/support/announcement/" in c.original]
-    nb = build_notices(caps, insts_by_symbol, auth=auth)
     instr = ins.build_instruments(insts_by_symbol, sources)
+    idents = {sym: ins.instance_identities([r for r in instr.rows if r.symbol == sym])
+              for sym in sorted({r.symbol for r in instr.rows})}
+    nb = build_notices(caps, insts_by_symbol, identities=idents, auth=auth)  # A-1: base match on R1 identity
     tables = {"R11": store.put_table("R11", scope, nb.table, auth=auth),
               "R1": store.put_table("R1", scope, instr.table, auth=auth)}
     r12 = store.load_table("R12", scope, auth=auth)  # validated; empty unless exact official rows were stored

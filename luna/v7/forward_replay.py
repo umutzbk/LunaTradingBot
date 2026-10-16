@@ -21,9 +21,10 @@ AMB-43).
   after t (``forward.skipped_exit_time``) as an exits-only decision (``EngineInputs.decisions`` False; the
   S-7.4 hedge follows the post-decision book, AMB-43 (c)). A skipped decision's exit time that coincides with
   a full decision merges into it (the full decision carries the exits). So a stale quarter is a no-op for
-  DECISIONS. The tick-level "no-op for risk" is NOT implemented: which quarter a 15-minute tick belongs to
-  and whether a missing leg mark in a stale quarter skips the tick or stays ``INVALID RUN`` (AMB-29 (a)) are
-  open normative choices (AMB-43 (d), STOPPED); the engine's ticks are unchanged.
+  DECISIONS. Ticks (A-3, AMENDMENTS-2026-10-16, user-approved; AMB-43 (d) RESOLVED): the replay passes the
+  same quarter predicate as ``EngineInputs.tick_evaluable``; a 15-minute tick at ``ts`` inside a stale
+  quarter ([ts, ts + 15 min), the ``forward.decision_time`` convention) is skipped for risk and marking: no
+  mark, no risk action, no INVALID (§15's coverage rules handle the gap). W_DEV / W_HOLD keep AMB-29 (a).
 * **Verdict** (``evaluate``): ``forward.forward_evaluate`` on the replay's ML* (and optional A0) books and
   evaluable days, with the canonical source of the guards (DK-99 / DK-100 / DK-102 / DK-103 / DK-104).
 """
@@ -145,8 +146,9 @@ def replay(arm: str, inputs: EngineInputs, evaluable: Mapping[int, bool], h_star
         raise
     _check_model(arm, model, h_star)
     win = forward.w_fwd7(release.t_f7(repo), extended)  # type: ignore[arg-type]
-    plan = decision_plan(win, evaluability(evaluable))
-    run_inputs = replace(inputs, decisions=plan.schedule, now_ns=release.trusted_now_ns())
+    ev = evaluability(evaluable)
+    plan = decision_plan(win, ev)
+    run_inputs = replace(inputs, decisions=plan.schedule, tick_evaluable=ev, now_ns=release.trusted_now_ns())
     run = engine.run(arm, run_inputs, win, h_star, model, "E_T", "L-norm")
     return ForwardReplay(run, plan, evaluable_days(win, evaluable, gaps), int(l7), bool(extended))
 

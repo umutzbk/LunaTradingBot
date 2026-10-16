@@ -969,10 +969,18 @@ def label_panel(u: ResearchUniverse, provider: DecisionProvider, decision_ts: Se
     n = sum(r is not None for r in res)
     panel = LabelPanel(h, pd.DataFrame(rows), pd.DataFrame(lab_rows), n, sum(inv.values()),
                        sum(r is None for r in res), labels.invalid_rate(res), tuple(sorted(inv.items())))
-    if auth is not None and ts[0] < W_HOLD[1] and W_HOLD[0] < ts[-1] + 1:
+    if auth is not None and _holdout_labelled(ts[0], ts[-1], (w_lo, w_end)):
         _issue_holdout_panel(panel, auth, decisions=tuple(ts), window=(w_lo, w_end),
                              universe=universe_identity(u))
     return panel
+
+
+def _holdout_labelled(t_first: int, t_last: int, window: tuple[int, int]) -> bool:
+    """Whether a panel issued under the opening is registered (R54 round 3 / R57): a decision inside W_HOLD
+    (a W_HOLD panel) or a label window reaching into W_HOLD (the forward refit's bridge panel: W_DEV
+    decisions labelled with window ``forward_model.BRIDGE_WINDOW``)."""
+    return (int(t_first) < W_HOLD[1] and W_HOLD[0] < int(t_last) + 1) or (
+        int(window[1]) > W_HOLD[0] and int(window[0]) < W_HOLD[1])
 
 
 def universe_identity(u: ResearchUniverse) -> str:

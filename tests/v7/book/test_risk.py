@@ -181,3 +181,20 @@ def test_risk_precedence_and_ml_cannot_override():
     for name in ("initial_state", "on_tick", "pre_decision", "start_cooldown"):
         params = set(inspect.signature(getattr(RiskLayer, name)).parameters)
         assert not {p for p in params if any(w in p for w in ("score", "rank", "model", "ml", "yhat", "p_"))}
+
+
+def test_skip_tick_a3_advances_the_sequence_and_defers_the_day_roll():
+    """A-3 (forward replay only): a skipped stale-quarter tick evaluates nothing; a skipped 00:00 UTC tick
+    defers the day roll (and the daily-loss reset) to the next marked tick; without the skip a missing 00:00
+    mark still fails closed."""
+    s = advance(start(), MID + D - TICK)
+    s = replace(s, paused_until=MID + D)  # a daily-loss pause running until the next 00:00
+    with pytest.raises(ValueError):
+        RL.on_tick(s, MID + D + TICK, 1.0, [], {})  # the 00:00 mark is missing (no skip)
+    sk = RL.skip_tick(s, MID + D)
+    assert sk.last_tick == MID + D and sk.day_roll_deferred and sk.day == s.day and sk.peak == s.peak
+    s2, acts = RL.on_tick(sk, MID + D + TICK, 0.9, [], {})
+    assert s2.day == (MID + D) // D and s2.day_start_equity == 0.9 and not s2.day_roll_deferred
+    assert s2.paused_until is None and not acts.forced
+    with pytest.raises(ValueError):
+        RL.skip_tick(s2, MID + D + 3 * TICK)  # the sequence check stays

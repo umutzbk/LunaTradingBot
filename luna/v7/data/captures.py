@@ -56,6 +56,19 @@ Everything here is pure (no I/O, no clock) and deterministic.
   phrase gives delisting only when no MODIFIER stem (``MODIFIER_STEMS``: cancel, postpon, delay, extend,
   revok, ...) occurs in the title; with one, the title is unclassified (``ambiguous_kind:modifier:<stem>``).
   No phrase -> unclassified. Unclassified versions never enter R11 or U6.
+  A-1 (AMENDMENTS-2026-10-16, normative amendment by the user): token-swap / rebrand notices are
+  delisting-kind evidence by the CLOSED list ``TOKEN_SWAP_PHRASES`` ("token swap", "rebranding"), derived from
+  and validated on the C4 Stage-0 titles (BNX, COCOS / COMBO, MATIC, RNDR, STRAX: "token swap"; TOMO, COCOS,
+  RNDR: "rebranding"; the narrowest phrases that cover every one; "redenomination" only ever occurs with
+  "token swap", "migration" has no evidence: neither is listed). A title with a token-swap phrase and no
+  delisting phrase is a delisting with reason ``token_swap:<phrase>`` (several joined by ``|``); a delisting
+  phrase present decides the reason as before. Interaction with the R52 modifier veto: it still applies
+  to token-swap titles, except for a modifier stem that lies inside a listed phrase when that phrase is
+  itself the reason (those spans are dropped before the stems are looked up; vacuous for the current list,
+  which contains no stem), so "Postpone the XYZ Token Swap" stays unclassified. In the cancellation /
+  postponement "mixed title" test a token-swap phrase counts as a delisting phrase (fail closed:
+  unclassified). The symbol / base match of such a notice follows ``notices.match_reason`` (DEC-40 or the
+  A-1 base-asset rule).
 """
 
 from __future__ import annotations
@@ -74,7 +87,8 @@ from luna.v7.data.notices import Kind
 from luna.v7.timeutil import to_ns
 
 __all__ = ["CANCELLATION_PHRASES", "DELISTING_OF_POSTPONED", "DELISTING_PHRASES", "LEVERAGE_TIERS_UPDATE",
-           "MODIFIER_STEMS", "POSTPONEMENT_PHRASES", "Capture", "CaptureText", "UnknownNodeShape", "article",
+           "MODIFIER_STEMS", "POSTPONEMENT_PHRASES", "TOKEN_SWAP_PHRASES", "Capture", "CaptureText",
+           "UnknownNodeShape", "article",
            "article_release", "body_text", "capture_ts_ns", "classify_kind", "decode", "extract", "html_text",
            "node_tree_text", "notice_id", "release_date"]
 
@@ -90,6 +104,9 @@ POSTPONEMENT_PHRASES: tuple[str, ...] = (
     "delisting postponement", "delisting has been postponed", "delisting is postponed", "postpone delisting",
     "postpone the automatic settlement", "postponement of the automatic settlement")
 DELISTING_PHRASES: tuple[str, ...] = ("delist", "automatic settlement", "close all positions")
+# A-1 (AMENDMENTS-2026-10-16): token-swap / rebrand notices as delisting-kind evidence; CLOSED, from the C4
+# evidence titles only (module docstring)
+TOKEN_SWAP_PHRASES: tuple[str, ...] = ("token swap", "rebranding")
 # Fix round 1 (I1): a delisting title carrying any of these stems is not a delisting (unclassified).
 # Matched on the title padded with spaces (" not " needs its spaces).
 MODIFIER_STEMS: tuple[str, ...] = ("cancel", "postpon", "delay", "extend", "extens", "revok", "revoc",
@@ -491,10 +508,19 @@ def _classify(t: str) -> tuple[Kind | None, str]:
         rest = t
         for p in sorted(cancel or post, key=len, reverse=True):
             rest = rest.replace(p, " ")
-        if any(p in rest for p in DELISTING_PHRASES):
+        if any(p in rest for p in DELISTING_PHRASES + TOKEN_SWAP_PHRASES):  # A-1: a swap is delisting-kind
             return None, f"ambiguous_kind:{kind}+delisting"
         return kind, f"{kind}:" + "|".join(cancel or post)
     hits = [p for p in DELISTING_PHRASES if p in t]
+    swaps = [p for p in TOKEN_SWAP_PHRASES if p in t]
+    if not hits and swaps:  # A-1: the token-swap phrase is the reason; stems inside it do not veto
+        rest = t
+        for p in sorted(swaps, key=len, reverse=True):
+            rest = rest.replace(p, " ")
+        mods = _mods(rest)
+        if mods:
+            return None, "ambiguous_kind:modifier:" + "|".join(m.strip() for m in mods)
+        return "delisting", "token_swap:" + "|".join(swaps)
     if not hits:
         return None, "no_kind_phrase"
     mods = _mods(t)

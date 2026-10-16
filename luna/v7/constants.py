@@ -266,7 +266,10 @@ class Frozen:
     k10_tol: float = 1e-9
     invalid_max: float = 0.005
     k7_max_share: float = 0.50  # §16 K7: one feature > 50 % of total gain / |standardized weight|
-    l9_se_mult: float = 2.0  # §11 L9 (a): permuted-label out-of-fold IC within ±2 SE of 0
+    # §11 L9 (a) as amended by A-2 (AMENDMENTS-2026-10-16, user-approved; replaces the per-test 2 SE of
+    # DK-27 (a)): family-wise error rate of the 6 L9a tests; the threshold z = Phi^-1(1 - alpha / 2) with
+    # alpha = l9_fwer_alpha / #tests (two-sided Bonferroni) is computed in leakage.L9_Z, never hard-coded
+    l9_fwer_alpha: float = 0.05
     forward: Forward = field(default_factory=Forward)
     deploy: Deploy = field(default_factory=Deploy)
     d0: str = "2021-01-01"  # S-1.8 (DEC-2), re-verified in Stage 0

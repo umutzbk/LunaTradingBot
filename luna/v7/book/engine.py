@@ -43,7 +43,12 @@ one-sided check, decision, terminal unwind):
   (``EngineInputs.decisions``, built by ``luna.v7.forward_replay``): the decisions run at the scheduled times
   instead of the grid (a stale quarter's decision shifted within 2 h); a decision flagged False is a skipped
   decision's exits and risk exits: its ``open`` orders are dropped and the S-7.4 hedge follows the remaining
-  post-decision book (DK-105, AMB-43).
+  post-decision book (DK-105, AMB-43). A-3 (AMENDMENTS-2026-10-16, user-approved; AMB-43 (d)), forward replay
+  only (``EngineInputs.tick_evaluable``, accepted only with a forward schedule): a 15-minute tick at ``ts``
+  inside a non-evaluable quarter (the quarter [ts, ts + 15 min), the ``forward.decision_time`` convention) is
+  skipped for risk and marking: no mark, no risk action (``on_tick``, leg stops, kill, the one-sided flatten),
+  no INVALID (a missing leg / BTC mark there is not checked); a UTC day whose midnight tick is skipped closes
+  at the next marked tick. W_DEV / W_HOLD (the S-8.1 grid) keep AMB-29 (a) / DK-70 at every tick.
 * **terminal check** at a held instance's cessation (A: the official settlement time): A settles (DEC-43),
   B / C -> ``INVALID RUN — terminal settlement not reconstructible``.
 * **terminal unwind** at the last reference minute before the end (end - 1 min): every leg and the hedge
@@ -185,6 +190,9 @@ class EngineInputs:
     # replacing the S-8.1 grid (shifted decisions; False = a skipped decision's exits and risk exits, no
     # entries); None = the S-8.1 grid
     decisions: Mapping[int, bool] | None = None
+    # A-3 (§15 forward replay only, with ``decisions``): {quarter start -> evaluable}; a tick whose quarter
+    # [ts, ts + 15 min) is not evaluable is skipped for risk and marking (module docstring); None = every tick
+    tick_evaluable: Callable[[int], bool] | None = None
 
 
 @dataclass(frozen=True)
@@ -473,6 +481,12 @@ class _Sim:
             self.push(int(s.ts[i + 1]), EV_FUNDING, (pid, i + 1))
 
     def on_tick(self, ts: int) -> None:
+        ev = self.inp.tick_evaluable
+        if ev is not None and not ev(ts - ts % TICK):  # A-3: a stale quarter's tick is a no-op (forward only)
+            self.state = self.risk.skip_tick(self.state, ts)
+            if ts + TICK < self.unwind_ts:
+                self.push(ts + TICK, EV_TICK, None)
+            return
         prices: dict[str, tuple[float, str]] = {}
         fresh: dict[str, float] = {}
         for pid, p in self.led.pos.items():
@@ -505,8 +519,8 @@ class _Sim:
         self.fresh = fresh
         self.state, acts = self.risk.on_tick(self.state, ts, eq, self.legs(ts), fresh)
         self.forced(acts, ts + FILL_DELAY)
-        if ts % D == 0 and ts > self.led.day_start_ts:
-            self.led.close_day(ts, eq)
+        if ts - ts % D > self.led.day_start_ts:  # the first marked tick of a new UTC day (its midnight tick,
+            self.led.close_day(ts, eq)  # or the next marked one when A-3 skipped it)
         self.push(ts, EV_NEUTRAL, None)  # after this tick's fills and terminal checks (AMB-16 (d))
         if ts + TICK < self.unwind_ts:
             self.push(ts + TICK, EV_TICK, None)
@@ -889,6 +903,8 @@ class _Sim:
     def run(self) -> None:
         self.push(self.lo, EV_TICK, None)
         plan = self.inp.decisions
+        if self.inp.tick_evaluable is not None and plan is None:
+            raise ValueError("tick_evaluable (A-3) is a §15 forward-replay hook: it needs a forward schedule")
         if plan is None:
             for t in windows.decision_times(self.lo, self.end):
                 if int(t) + FILL_DELAY < self.unwind_ts:

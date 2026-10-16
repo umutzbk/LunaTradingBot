@@ -7,7 +7,12 @@ S-10.3 – S-10.6; DK-26, DK-27, SC-02, red-team M2 / M4; AMB-33).
   horizon, dates ascending) and the real out-of-fold pipeline runs on it: ``cv.run_fold`` (in-fold
   hyperparameter selection, refit, calibration) over exactly the outer folds of the real run's fold models.
   For BOTH regressor families at ALL THREE horizons: the pooled out-of-fold date-level IC (``cv.date_ic``) and
-  SE = std(date ICs) / sqrt(#dates) (``cv.date_ic_se``); FAIL if |IC| > 2 SE (an undefined IC / SE fails).
+  SE = std(date ICs) / sqrt(#dates) (``cv.date_ic_se``); FAIL if |IC| > z SE (an undefined IC / SE fails).
+  A-2 (AMENDMENTS-2026-10-16, user-approved; replaces the per-test 2 SE of DK-27 (a)): the 6 tests (2
+  regressor families x 3 horizons, ``L9_TESTS``) share a family-wise error rate of 5 % by the two-sided
+  Bonferroni threshold z = Phi^-1(1 - alpha / 2), alpha = ``FROZEN.l9_fwer_alpha`` / ``L9_TESTS`` (``L9_Z``,
+  about 2.638; the exact normal quantile ``scipy.stats.norm.ppf``, never hard-coded). The frozen seed, the 6
+  tests and determinism are unchanged: no reroll, no new seed on a restart.
 * **L9b (DK-27):** per horizon, the feature "label shifted 1 decision earlier" = ``y_reg`` of the same
   (symbol, side) at the previous decision time of the panel, with its true ``known_at`` (that label's
   ``label_known_at``). PASS iff the real L1 assertion (``features.assert_pit``, the check the candidate
@@ -39,6 +44,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
+from scipy.stats import norm
 
 from luna.v7 import cv, features, models
 from luna.v7.arms import families
@@ -53,7 +59,8 @@ from luna.v7.universe import LeakageError
 
 HORIZONS = tuple(FROZEN.horizons_h)
 SHARE_MAX = FROZEN.k7_max_share
-SE_MULT = FROZEN.l9_se_mult
+L9_TESTS = len(models.REGRESSORS) * len(HORIZONS)  # A-2: 2 regressor families x 3 horizons = 6
+L9_Z = float(norm.ppf(1.0 - FROZEN.l9_fwer_alpha / L9_TESTS / 2.0))  # two-sided Bonferroni (A-2), ~2.638
 LABEL_COLS = ("y_reg", "y_pos", "label_known_at")
 SHIFT_NAME = "label_shift_1"
 SANDBOX_COLUMN = "f1_fl1"
@@ -351,7 +358,7 @@ class LeakageReport(_Sealed):
     @property
     def failures(self) -> tuple[str, ...]:
         """Executed checks that failed (leakage findings: K1 before the opening)."""
-        out = [f"L9a {x.family}@{x.horizon}h: |IC| {abs(x.ic):.6g} > {SE_MULT:g} SE ({x.se:.6g}) or undefined"
+        out = [f"L9a {x.family}@{x.horizon}h: |IC| {abs(x.ic):.6g} > {L9_Z:.4f} SE ({x.se:.6g}) or undefined"
                for x in self.l9a if not x.passed]
         out += [f"L9b @{x.horizon}h: the shifted-label feature is not refused by L1" for x in self.l9b
                 if not x.refused]
@@ -441,7 +448,7 @@ def _ic_se(pred, y, dates) -> tuple[float, float, int]:
 
 def l9a_result(family: str, horizon: int, pred, y, dates, n_folds: int) -> L9aResult:
     ic, se, n = _ic_se(pred, y, dates)
-    ok = math.isfinite(ic) and math.isfinite(se) and abs(ic) <= SE_MULT * se
+    ok = math.isfinite(ic) and math.isfinite(se) and abs(ic) <= L9_Z * se
     return L9aResult(family, int(horizon), ic, se, n, int(n_folds), bool(ok))
 
 
@@ -706,7 +713,8 @@ def run_holdout_checks(pre: LeakageReport, *, runs: Sequence[BookRun],
                   findings=tuple(findings))
 
 
-__all__ = ["HOLDOUT_CHECKS", "HoldoutLeakageReport", "K7Result", "L9aResult", "L9bResult", "LABEL_COLS",
+__all__ = ["HOLDOUT_CHECKS", "HoldoutLeakageReport", "K7Result", "L9_TESTS", "L9_Z", "L9aResult", "L9bResult",
+           "LABEL_COLS",
            "LeakageReport", "SANDBOX_COLUMN", "SHIFT_NAME", "SandboxIC", "concentration", "covers",
            "feature_shares", "l9a", "l9a_result", "l9b", "l9b_refusal", "model_hash",
            "oof", "panel_sha256", "permute_within_dates", "report_content", "resolve_k7",

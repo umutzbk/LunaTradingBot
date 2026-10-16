@@ -29,7 +29,8 @@ model input, and the constructor applies ``RiskActions.forced`` before any score
 A halted instrument gets no order of any kind: forced exits are emitted as intents and the constructor flags
 them ``halted`` so the engine defers them (S-5.4); legs with a ``pending_exit`` get no new exit.
 State is immutable: every method returns a new ``RiskState``. Fail-closed sequencing: ``on_tick`` must be
-called at every 15-minute mark with no gap (ts == last tick + 15 min); ``pre_decision`` must be called
+called at every 15-minute mark with no gap (ts == last tick + 15 min; a forward-replay tick in a stale quarter
+is passed to ``skip_tick`` instead, A-3); ``pre_decision`` must be called
 exactly once per decision (it advances the two-consecutive-decision counters) and only after the mark at or
 before t was processed (0 <= t - last tick < 15 min). Every forced exit carries its trigger time (S-4.2 is
 the engine's).
@@ -71,6 +72,9 @@ class RiskState:
     cooldown_until: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
     inelig_streak: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
     pending_cooldown: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))  # stop trigger
+    # A-3 (forward replay only): a skipped stale-quarter tick crossed 00:00 UTC; the day rolls at the next
+    # marked tick (set only by ``skip_tick``)
+    day_roll_deferred: bool = False
 
 
 @dataclass(frozen=True)
@@ -182,10 +186,10 @@ class RiskLayer:
         day = ts // D
         s = state
         if day != s.day:
-            if ts % D:
+            if ts % D and not s.day_roll_deferred:
                 raise ValueError("the 00:00 UTC mark of a new day is missing")
             paused_until = s.paused_until if s.paused_until is not None and ts < s.paused_until else None
-            s = replace(s, day=day, day_start_equity=e, paused_until=paused_until)
+            s = replace(s, day=day, day_start_equity=e, paused_until=paused_until, day_roll_deferred=False)
         s = replace(s, peak=max(s.peak, e), last_tick=ts)
         if not s.killed and e <= RK.dd_kill * s.peak * (1 + EPS):
             s = replace(s, killed=True)
@@ -194,6 +198,17 @@ class RiskLayer:
         forced, notes = self._exits(s, ts, legs, marks, None, None)
         s = self._record_pending(s, forced)
         return s, RiskActions(ts, forced, s.killed, self._paused(s, ts), False, _frozen_map({}), notes)
+
+    def skip_tick(self, state: RiskState, ts: int) -> RiskState:
+        """A-3 (AMENDMENTS-2026-10-16; §15 forward replay only): the 15-minute tick at ``ts`` lies in a stale
+        quarter and is skipped: no mark, no rule evaluated, no action. Only the tick sequence advances (the
+        no-gap check stays); a skipped 00:00 UTC tick defers the day roll to the next marked tick."""
+        ts = int(ts)
+        if ts % TICK:
+            raise ValueError("ticks are on the 15-minute grid")
+        if state.last_tick is not None and ts != state.last_tick + TICK:
+            raise ValueError("ticks must be consecutive 15-minute marks (no skipped tick)")
+        return replace(state, last_tick=ts, day_roll_deferred=state.day_roll_deferred or ts // D != state.day)
 
     def pre_decision(
         self,

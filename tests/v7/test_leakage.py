@@ -60,7 +60,18 @@ def test_permutation_stays_within_dates_and_is_seeded():
     assert not leakage.permute_within_dates(s, 24, seed=12).equals(p)
 
 
-def test_l9a_threshold_is_two_date_level_se():
+def test_l9a_threshold_is_the_two_sided_bonferroni_quantile():
+    """A-2 (AMENDMENTS-2026-10-16): z = Phi^-1(1 - alpha/2), alpha = 0.05 / 6 (2 families x 3 horizons)."""
+    from scipy.stats import norm
+
+    assert leakage.L9_TESTS == len(models.REGRESSORS) * len(leakage.HORIZONS) == 6
+    assert FROZEN.l9_fwer_alpha == 0.05 and not hasattr(FROZEN, "l9_se_mult")
+    z = leakage.L9_Z
+    assert abs(6 * 2 * (1 - norm.cdf(z)) - 0.05) < 1e-12
+    assert z == pytest.approx(2.638, abs=5e-4)
+
+
+def test_l9a_threshold_is_z_date_level_se():
     rng = np.random.default_rng(0)
     dates = np.repeat(np.arange(60) * D + lf.FOLD.test_lo, 8)
     y = rng.normal(size=len(dates))
@@ -68,7 +79,18 @@ def test_l9a_threshold_is_two_date_level_se():
     ok = leakage.l9a_result("en", 24, noise, y, dates, n_folds=1)
     assert ok.ic == pytest.approx(cv.date_ic(noise, y, dates))
     assert ok.se == pytest.approx(cv.date_ic_se(noise, y, dates))
-    assert ok.passed is (abs(ok.ic) <= FROZEN.l9_se_mult * ok.se) and ok.passed and ok.n_dates == 60
+    assert ok.passed is (abs(ok.ic) <= leakage.L9_Z * ok.se) and ok.passed and ok.n_dates == 60
+    # an |IC| between 2 SE and z SE now passes (the old per-test 2 SE threshold failed it)
+    se = ok.se
+    pred_mid = None
+    for k in range(1, 400):
+        cand = noise + 0.002 * k * y
+        ic, s2 = cv.date_ic(cand, y, dates), cv.date_ic_se(cand, y, dates)
+        if 2.05 * s2 < abs(ic) < 2.6 * s2:
+            pred_mid = cand
+            break
+    assert pred_mid is not None and se > 0
+    assert leakage.l9a_result("en", 24, pred_mid, y, dates, n_folds=1).passed
     bad = leakage.l9a_result("en", 24, y + 0.3 * noise, y, dates, n_folds=1)  # a leak survives the shuffle
     assert not bad.passed and abs(bad.ic) > 2 * bad.se
     nan = leakage.l9a_result("en", 24, noise[:8], y[:8], dates[:8], n_folds=1)  # one date: SE undefined

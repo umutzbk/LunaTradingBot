@@ -277,8 +277,6 @@ ROWS: list[tuple[str, str, object, object]] = [
     ("§16 K7 50 % gain / weight share (leakage.SHARE_MAX)", r"\| K7 \| One feature carries > (50) % of total LightGBM gain",
      lambda: F.k7_max_share, pct),
     # --- §11 leakage controls --------------------------------------------------------------------------------
-    ("§11 L9 (a) permuted-label IC within ±2 SE (leakage.SE_MULT)", r"out-of-fold IC within ±(\d+) SE of 0",
-     lambda: F.l9_se_mult, None),
     ("§16 K10 tolerance", r"\| K10 \| \\\|Σ_c ρ_c \+ MKT − PR\\\| > (1e-9) × Σ\\\|fill notional\\\|", lambda: F.k10_tol, None),
     # --- rows of numbers the checked sections state outside their main tables (fix round 1) -----------------
     ("S-4.2 forced exit delay (min)", r"Forced risk exits fill on the first 1-minute bar after the trigger \+ (\d+) min",
@@ -401,6 +399,9 @@ def test_spec_tables_have_rows():
 # Spec numbers inside the checked sections that have no FROZEN counterpart, with the reason. Each regex must
 # still match the frozen text once.
 NOT_CODED: list[tuple[str, str, str]] = [
+    ("§11 L9 (a) permuted-label IC within ±2 SE", r"out-of-fold IC within ±(\d+) SE of 0",
+     "superseded by the user's post-freeze clarification A-2 (docs/results/v7-impl/AMENDMENTS-2026-10-16.md): "
+     "|IC| <= z SE with z = Phi^-1(1 - alpha/2), alpha = FROZEN.l9_fwer_alpha / 6 (leakage.L9_Z, ~2.638)"),
     ("S-2.3 PIT lag 1 min", r"All inputs must have `known_at` ≤ `t` − 1 min\.",
      "structural PIT lag = timeutil.MIN: universe.py:137 (assert_pit), universe.py:142 (pit_rows), features.py:136, "
      "pitindex.py FrameIndex.pit_end / HaltIndex.pit_end (indexed PIT prefixes, Task 26b)"),
