@@ -61,6 +61,7 @@ filtered globally.
 from __future__ import annotations
 
 import hashlib
+import json
 import pickle
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
@@ -937,39 +938,90 @@ def label_panel(u: ResearchUniverse, provider: DecisionProvider, decision_ts: Se
     panel = LabelPanel(h, pd.DataFrame(rows), pd.DataFrame(lab_rows), n, sum(inv.values()),
                        sum(r is None for r in res), labels.invalid_rate(res), tuple(sorted(inv.items())))
     if auth is not None and ts[0] < W_HOLD[1] and W_HOLD[0] < ts[-1] + 1:
-        _issue_holdout_panel(panel, auth)
+        _issue_holdout_panel(panel, auth, decisions=tuple(ts), window=(w_lo, w_end),
+                             universe=universe_identity(u))
     return panel
 
 
-# W_HOLD label panels issued by ``label_panel`` under a verified authorization: panel sha256
-# (``leakage.panel_sha256``) -> opening_id (this process). The §15 forward refit accepts only these
-# (ruling R54).
-_HOLD_PANELS: dict[str, str] = {}
+def universe_identity(u: ResearchUniverse) -> str:
+    """sha256 of the universe's data identity (the source's, else the inputs' content hash), its symbols and
+    hedge: the universe a W_HOLD label panel was computed on (ruling R54 round 3)."""
+    data = u.source_identity if u.source_identity is not None else {"inputs": inputs_identity(u.inputs)}
+    body = {"data": data, "symbols": sorted(str(s) for s in u.inputs), "hedge": str(u.hedge)}
+    return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)
+                          .encode()).hexdigest()
 
 
-def _issue_holdout_panel(panel: LabelPanel, auth: guard.HoldoutAuthorization | None) -> str:
-    """Register a W_HOLD label panel of ``label_panel`` under the verified opening ``auth`` (module-private
-    issuer; TEST HOOK in ``tests/v7/test_forward_refit.py``). Returns its sha256."""
+@dataclass(frozen=True)
+class PanelCoverage:
+    """What a W_HOLD label panel was issued for: the opening, h, the label window, the requested decision
+    times (the panel's coverage, valid labels or not) and the universe identity."""
+
+    opening_id: str
+    h: int
+    window: tuple[int, int]
+    decisions: tuple[int, ...]
+    universe: str
+
+
+# W_HOLD label panels issued by ``label_panel`` under a verified authorization (this process): panel sha256
+# (``leakage.panel_sha256``) -> its coverage. The §15 forward refit accepts only these, and only when they
+# cover the canonical W_HOLD grid over the universe ``holdout_inputs`` used (ruling R54, round 3).
+_HOLD_PANELS: dict[str, PanelCoverage] = {}
+# opening_id -> the universe identity of the issued W_HOLD panel ``runner_select.holdout_inputs`` consumed
+_HOLD_UNIVERSE: dict[str, str] = {}
+
+
+def _issue_holdout_panel(panel: LabelPanel, auth: guard.HoldoutAuthorization | None, *,
+                         decisions: Sequence[int], window: tuple[int, int], universe: str) -> str:
+    """Register a W_HOLD label panel of ``label_panel`` and its coverage under the verified opening ``auth``
+    (module-private issuer; TEST HOOK in ``tests/v7/test_forward_refit.py``). Returns its sha256."""
     from luna.v7.leakage import panel_sha256  # leakage imports runner
 
     pin = guard.verified_opening(auth)
     sha = panel_sha256(panel.samples, panel.h)
-    _HOLD_PANELS[sha] = pin["opening_id"]
+    _HOLD_PANELS[sha] = PanelCoverage(pin["opening_id"], int(panel.h), (int(window[0]), int(window[1])),
+                                      tuple(sorted({int(t) for t in decisions})), str(universe))
     return sha
 
 
-def holdout_panel_issued(panel: LabelPanel, opening_id: str) -> bool:
-    """True iff ``panel`` (its canonical samples) was issued by ``label_panel`` under the opening
-    ``opening_id`` in this process."""
+def holdout_panel_coverage(panel: LabelPanel) -> PanelCoverage | None:
+    """The coverage ``panel`` (its canonical samples) was issued with by ``label_panel`` in this process,
+    else None."""
     from luna.v7.leakage import panel_sha256
 
     if not isinstance(panel, LabelPanel):
-        return False
+        return None
     try:
         sha = panel_sha256(panel.samples, panel.h)
     except (ValueError, KeyError, TypeError):
-        return False
-    return _HOLD_PANELS.get(sha) == opening_id
+        return None
+    return _HOLD_PANELS.get(sha)
+
+
+def holdout_panel_issued(panel: LabelPanel, opening_id: str) -> bool:
+    """True iff ``panel`` was issued by ``label_panel`` under the opening ``opening_id`` in this process."""
+    cov = holdout_panel_coverage(panel)
+    return cov is not None and cov.opening_id == opening_id
+
+
+def _note_holdout_universe(panel: LabelPanel, auth: guard.HoldoutAuthorization | None) -> str | None:
+    """Called by ``runner_select.holdout_inputs`` (TEST HOOK elsewhere): when its panel was issued under this
+    opening, its universe becomes the opening's W_HOLD universe (first one kept; a different later one is
+    refused). Returns the recorded identity (None for a panel not issued here)."""
+    pin = guard.verified_opening(auth)
+    cov = holdout_panel_coverage(panel)
+    if cov is None or cov.opening_id != pin["opening_id"]:
+        return None
+    prior = _HOLD_UNIVERSE.setdefault(pin["opening_id"], cov.universe)
+    if prior != cov.universe:
+        raise ValueError("the W_HOLD panel's universe differs from the one already used for this opening")
+    return prior
+
+
+def holdout_universe(opening_id: str) -> str | None:
+    """The W_HOLD universe identity ``holdout_inputs`` used for the opening (this process), else None."""
+    return _HOLD_UNIVERSE.get(opening_id)
 
 
 # ------------------------------------------------------------------------------------------------ books
@@ -1030,6 +1082,7 @@ def decision_log(run: BookRun, provider: DecisionProvider,
 __all__ = ["DECISION_CHUNK_NS", "DecisionProvider", "DecisionRecord", "FoldScoreModel", "InMemorySource",
            "LabelPanel", "ResearchUniverse", "SymbolInputs", "UniverseSource", "decision_log",
            "decision_pass",
-           "fit_fold_models", "fold_convergence", "halt_windows", "holdout_panel_issued", "label_panel",
+           "fit_fold_models", "fold_convergence", "halt_windows", "holdout_panel_coverage",
+           "holdout_panel_issued", "holdout_universe", "label_panel", "universe_identity", "PanelCoverage",
            "model_hash",
            "run_book"]

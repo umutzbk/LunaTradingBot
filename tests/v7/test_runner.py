@@ -791,6 +791,12 @@ def test_holdout_inputs_require_authorization(dev_valid, opened, tmp_path, monke
         holdout_inputs(auth=auth(), **{**kw, "ml_T": kw["a0_T"]})
     with pytest.raises(ValueError, match="undefined"):
         holdout_inputs(auth=auth(), **{**kw, "panel": _panel(h, rate=float("nan"))})
+    # R54 round 3: the issued W_HOLD panel holdout_inputs consumes fixes the opening's W_HOLD universe (the
+    # forward refit's panels must be over it); a non-issued panel records nothing
+    assert runner.holdout_universe(auth().opening_id) is None
+    runner._issue_holdout_panel(kw["panel"], auth(), decisions=(1,), window=windows.W_HOLD, universe="c" * 64)
+    holdout_inputs(auth=auth(), **kw)
+    assert runner.holdout_universe(auth().opening_id) == "c" * 64
     # Task 27 (L11, AMB-41): a caller-supplied Kraken pair never enters the S-13.3 family
     raw_kraken = {**{n: None for n in verdict.SECONDARY}, verdict.KRAKEN: (kw["ml_T"], kw["ml_T"])}
     with pytest.raises(ValueError, match="kraken.comparison"):

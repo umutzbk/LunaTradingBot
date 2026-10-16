@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from luna.v7 import cv, guard, leakage, models, runrecord, selection, stats
+from luna.v7 import cv, guard, leakage, models, runner, runrecord, selection, stats
 from luna.v7 import verdict as verdict_mod
 from luna.v7.accounting import account, mean_daily_net, period_net
 from luna.v7.arms import families
@@ -360,6 +360,7 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
                          dev_mean_daily_net=mean_daily_net(account(dev_run)), dev_kill=tuple(kill),
                          leakage=rep, holdout_leakage=hold, integrity=tuple(integrity), k8=k8,
                          secondary=secondary, a1_calib=a1, B=B, seed=seed)
+    runner._note_holdout_universe(panel, auth)  # the W_HOLD universe the forward refit must match (R54)
     _ISSUED_INPUTS[id(x)] = x  # the inputs holdout_verdict accepts (issued here, for this opening)
     _INPUT_OPENING[id(x)] = pin["opening_id"]
     return x

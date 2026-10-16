@@ -25,7 +25,14 @@
   the refit is pinned once per opening by ``guard.pin_forward_model`` (write-once record + model blob next to
   the opening markers; an identical re-refit returns the record, a different one is refused, K9-logged);
   ``load_forward_model`` verifies the record and the blob (also after the verdict marker) and is the only way
-  the forward replay gets the model (``ForwardScoreModel``).
+  the forward replay gets the model (``ForwardScoreModel``). The W_HOLD panels must together cover exactly
+  the canonical W_HOLD decision grid of h* (``windows.decision_times(*W_HOLD)``), with window = W_HOLD, no
+  overlap, over the universe ``runner_select.holdout_inputs`` used for this opening (round 3). The record
+  carries the library versions (numpy, pandas, pyarrow, scikit-learn, lightgbm, Python).
+* **Runbook:** the panel registry and the holdout universe are per process: run ``label_panel`` (W_HOLD, h*,
+  full grid), ``holdout_inputs`` and ``forward_model`` in the SAME process, before ``holdout_verdict``. After
+  a crash, resume the same opening (``guard.resume_holdout``, same ``opening_id``), regenerate the panels and
+  the holdout inputs, then refit: an identical refit returns the existing record.
 """
 
 from __future__ import annotations
@@ -50,9 +57,10 @@ from luna.v7.cv import (
     decision_dates,
 )
 from luna.v7.features import Preprocessor, features_for_horizon
-from luna.v7.runner import FoldScoreModel, LabelPanel, holdout_panel_issued
+from luna.v7.runner import FoldScoreModel, LabelPanel, holdout_panel_coverage, holdout_universe
 from luna.v7.timeutil import ns_array, to_ns
-from luna.v7.windows import D0, W_HOLD, Fold, final_blocks
+from luna.v7.viewstore import library_versions
+from luna.v7.windows import D0, W_HOLD, Fold, decision_times, final_blocks
 
 T_FIT = (D0, to_ns("2026-01-01"))
 T_CAL = (to_ns("2026-01-01"), to_ns("2026-07-01"))
@@ -108,9 +116,29 @@ def bound_samples(dev_panel: pd.DataFrame, holdout_panels: Sequence[LabelPanel],
     hold = list(holdout_panels)
     if not hold:
         raise guard.HoldoutBlocked("the forward refit needs the W_HOLD label panels of the opening")
+    covs = []
     for p in hold:
-        if not holdout_panel_issued(p, pin["opening_id"]) or int(p.h) != h:
+        cov = holdout_panel_coverage(p)
+        if cov is None or cov.opening_id != pin["opening_id"]:
             raise guard.HoldoutBlocked("a W_HOLD panel was not issued by label_panel under this opening")
+        if cov.h != h or int(p.h) != h:
+            raise guard.HoldoutBlocked(f"a W_HOLD panel is not for h* = {h}h")
+        if cov.window != tuple(W_HOLD):
+            raise guard.HoldoutBlocked(f"a W_HOLD panel's label window {cov.window} is not W_HOLD {W_HOLD}")
+        covs.append(cov)
+    universe = holdout_universe(pin["opening_id"])
+    if universe is None or any(c.universe != universe for c in covs):
+        raise guard.HoldoutBlocked("the W_HOLD panels are not over the universe holdout_inputs used for this "
+                                   "opening")
+    seen: set[int] = set()
+    for c in covs:
+        if seen & set(c.decisions):
+            raise guard.HoldoutBlocked("the W_HOLD panels overlap (a decision time issued twice)")
+        seen |= set(c.decisions)
+    grid = {int(t) for t in decision_times(*W_HOLD)}  # the S-8.1 grid of dev_selection / the books
+    if seen != grid:
+        raise guard.HoldoutBlocked(f"the W_HOLD panels cover {len(seen & grid)} of the {len(grid)} canonical "
+                                   f"W_HOLD decisions ({len(seen - grid)} off-grid)")
     return canonical(pd.concat([dev_panel, *(p.samples for p in hold)], ignore_index=True), h)
 
 
@@ -180,7 +208,7 @@ def forward_model(dev_panel: pd.DataFrame, holdout_panels: Sequence[LabelPanel],
             "code_commit": pin["code_commit"], "ml_star": pin["ml_star"], "horizon": horizon,
             "forward_model_hash": hashlib.sha256(blob).hexdigest(),
             "samples_sha256": leakage.panel_sha256(s, horizon), "final_model_hash": pin["final_model_hash"],
-            "config": _config(fm, reg)}
+            "config": _config(fm, reg), "libraries": library_versions()}
     try:
         guard.pin_forward_model(auth, body, blob)
     except guard.HoldoutBlocked as e:

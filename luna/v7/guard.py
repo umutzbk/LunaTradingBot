@@ -95,7 +95,7 @@ FORWARD_LOG = "FORWARD_MODEL_ATTEMPTS.jsonl"  # append-only log of every forward
 FORWARD_KIND = "V7_FORWARD_MODEL"
 FORWARD_FIELDS = frozenset({"kind", "run_id", "opening_id", "code_commit", "ml_star", "horizon",
                             "forward_model_hash", "samples_sha256", "final_model_hash", "config",
-                            "created_utc", "record_sha256"})
+                            "libraries", "created_utc", "record_sha256"})
 RUN_ID = "v7-" + SPEC_BLOB_SHA256[:16]  # canonical run identity of the single opening
 
 # E8 (S-1.7): the only exchangeInfo fields that may establish history (immutable identity / schema, DEC-31).

@@ -7,6 +7,7 @@ is the synthetic one of ``auth_fixtures`` (``guard._roots`` seam)."""
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import numpy as np
 import pandas as pd
@@ -28,7 +29,7 @@ from luna.v7.forward_model import (
 )
 from luna.v7.runner import LabelPanel
 from luna.v7.timeutil import MIN, D, H, to_ns
-from luna.v7.windows import D0, W_HOLD
+from luna.v7.windows import D0, W_HOLD, decision_times
 from tests.v7 import auth_fixtures as af
 from tests.v7 import leak_fixtures as lf
 
@@ -60,11 +61,18 @@ def _panel(samples: pd.DataFrame) -> LabelPanel:
     return LabelPanel(H_STAR, samples, pd.DataFrame(), len(samples), 0, 0, 0.0, ())
 
 
-def issued(o, samples=None) -> LabelPanel:
-    """A W_HOLD panel issued under the opening (``runner._issue_holdout_panel``: TEST HOOK for
-    ``label_panel``, whose real run needs a full research universe)."""
+GRID = tuple(int(t) for t in decision_times(*W_HOLD))  # the canonical W_HOLD decision grid
+UNIVERSE = "a" * 64  # the synthetic universe identity of the issued panels
+
+
+def issued(o, samples=None, *, decisions=GRID, window=W_HOLD, universe=UNIVERSE, note=True) -> LabelPanel:
+    """A W_HOLD panel issued under the opening with its coverage (``runner._issue_holdout_panel``: TEST HOOK
+    for ``label_panel``, whose real run needs a full research universe); ``note``: the panel is also the one
+    ``holdout_inputs`` consumed (``runner._note_holdout_universe``, its call in ``holdout_inputs``)."""
     p = _panel(_hold_samples() if samples is None else samples)
-    runner._issue_holdout_panel(p, o.auth)
+    runner._issue_holdout_panel(p, o.auth, decisions=decisions, window=tuple(window), universe=universe)
+    if note:
+        runner._note_holdout_universe(p, o.auth)
     return p
 
 
@@ -170,8 +178,9 @@ def test_holdout_panel_not_issued_under_this_auth_refused(o, monkeypatch):
     with pytest.raises(guard.HoldoutBlocked, match="not issued"):
         forward_model(dev(), [_panel(_hold_samples(seed=5))], final(), auth=o.auth)  # never issued
     p = issued(o, _hold_samples(seed=6))
-    for k in [k for k, v in runner._HOLD_PANELS.items() if v == o.auth.opening_id]:
-        monkeypatch.setitem(runner._HOLD_PANELS, k, "f" * 64)  # issued under another opening
+    for k, v in list(runner._HOLD_PANELS.items()):
+        if v.opening_id == o.auth.opening_id:  # issued under another opening
+            monkeypatch.setitem(runner._HOLD_PANELS, k, replace(v, opening_id="f" * 64))
     with pytest.raises(guard.HoldoutBlocked, match="not issued"):
         forward_model(dev(), [p], final(), auth=o.auth)
 
@@ -348,3 +357,60 @@ def test_lgb_reg_reuses_best_iter(opened_a3, monkeypatch):
     finally:
         for p in _files():
             p.unlink(missing_ok=True)
+
+
+# --------------------------------------------------------------------------------- W_HOLD coverage (round 3)
+
+
+def _halves():
+    s = _hold_samples()
+    mid = GRID[len(GRID) // 2]
+    lo = s[s["decision_ts"] < mid].reset_index(drop=True)
+    hi = s[s["decision_ts"] >= mid].reset_index(drop=True)
+    return lo, hi, GRID[: len(GRID) // 2], GRID[len(GRID) // 2:]
+
+
+def test_full_canonical_grid_accepted_also_split_in_panels(o):
+    sa, sb, ga, gb = _halves()
+    pa, pb = issued(o, sa, decisions=ga), issued(o, sb, decisions=gb)
+    forward_model(dev(), [pa, pb], final(), auth=o.auth)  # two disjoint panels covering the grid
+    libs = guard.forward_model_record()["libraries"]
+    assert libs["scikit-learn"] and libs["lightgbm"] and libs["python"]
+
+
+def test_subset_grid_panel_refused(o):
+    sa, _, ga, _ = _halves()
+    with pytest.raises(guard.HoldoutBlocked, match="canonical"):
+        forward_model(dev(), [issued(o, sa, decisions=ga)], final(), auth=o.auth)  # e.g. 2025H2 only
+    with pytest.raises(guard.HoldoutBlocked, match="canonical"):
+        forward_model(dev(), [issued(o, decisions=GRID[:-1])], final(), auth=o.auth)  # one decision short
+    assert guard.forward_model_record() is None
+
+
+def test_early_window_panel_refused(o):
+    with pytest.raises(guard.HoldoutBlocked, match="label window"):
+        forward_model(dev(), [issued(o, window=(W_HOLD[0], W_HOLD[1] - 30 * D))], final(), auth=o.auth)
+
+
+def test_panel_over_another_universe_refused(o):
+    with pytest.raises(guard.HoldoutBlocked, match="universe"):
+        forward_model(dev(), [issued(o, universe="b" * 64, note=False)], final(), auth=o.auth)
+    with pytest.raises(ValueError, match="universe differs"):  # holdout_inputs keeps the first universe
+        issued(o, _hold_samples(seed=7), universe="b" * 64)
+
+
+def test_overlapping_duplicate_panels_refused(o):
+    sa, sb, ga, gb = _halves()
+    pa = issued(o, sa, decisions=ga)
+    pb = issued(o, sb, decisions=(ga[-1], *gb))  # one decision issued twice
+    with pytest.raises(guard.HoldoutBlocked, match="overlap"):
+        forward_model(dev(), [pa, pb], final(), auth=o.auth)
+
+
+def test_wrong_horizon_panel_refused(o):
+    s = _hold_samples()
+    s["h"] = 24
+    p = LabelPanel(24, s, pd.DataFrame(), len(s), 0, 0, 0.0, ())
+    runner._issue_holdout_panel(p, o.auth, decisions=GRID, window=W_HOLD, universe=UNIVERSE)
+    with pytest.raises(guard.HoldoutBlocked, match="not for h"):
+        forward_model(dev(), [p], final(), auth=o.auth)
