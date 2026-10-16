@@ -43,6 +43,13 @@ wall-clock; the DT4 run record is written by ``luna.v7.runrecord`` to a caller-s
   hardened authorization (``auth``; None before the opening). A W_HOLD t or input in W_HOLD is refused
   before the opening, M6 until the canonical R_V6; a refusal is raised and K9-logged. Every research entry
   point refuses to run without a configured K9 log (``k9.require``).
+* Ingest completeness (red-team r2 MJ2, ruling R55, AMB-45): ``from_source`` / ``for_decisions`` (so
+  ``decision_pass``) first call the source's ``check_ingest(lo, hi)`` when it has one
+  (``rawstore.StoreSource``: the store's ledger, ``RawStore.check_ingest_complete``), and the universe keeps
+  that check: ``label_panel`` and ``run_book`` (so ``runner_select.dev_selection``) re-run it
+  (``ResearchUniverse.check_ingest``). An unresolved ingest gap or conflict in the data used is refused
+  (IntegrityBlocker, K9-logged), never read as missing data. A universe built directly from in-memory inputs
+  has no store and nothing to check.
 * ``FoldScoreModel``: ``engine.ScoreModel`` over the outer-fold models: a decision t uses the model whose test
   quarter contains t (S-10.6 "each quarter uses its own fold model") and t outside every test quarter is
   refused. Logs (fold id, model sha256) and the predictions per decision.
@@ -333,6 +340,14 @@ class ResearchUniverse:
         self.source_identity: object = None
         self.history_lo: int | None = None
         self.window_hi: int | None = None
+        self._ingest_check: tuple[object, int, int] | None = None  # (source check, lo, hi): ruling R55
+
+    def check_ingest(self) -> None:
+        """Ruling R55: re-run the source's ingest-completeness check over this universe's window (nothing for
+        a universe built directly from inputs)."""
+        if self._ingest_check is not None:
+            chk, lo, hi = self._ingest_check
+            chk(lo, hi)  # type: ignore[operator]
 
     @classmethod
     def from_source(cls, source: UniverseSource, lo: int, hi: int, hedge: str = HEDGE) -> ResearchUniverse:
@@ -341,9 +356,11 @@ class ResearchUniverse:
         lo, hi = int(lo), int(hi)
         if hi <= lo:
             raise ValueError(f"empty window [{lo}, {hi})")
+        chk = _ingest_gate(source, lo, hi)
         u = cls({s: source.load(s, lo, hi) for s in sorted(source.symbols())}, hedge)
         u.source_identity = _source_identity(source)
         u.history_lo, u.window_hi = lo, hi
+        u._ingest_check = chk
         return u
 
     @classmethod
@@ -357,11 +374,13 @@ class ResearchUniverse:
         if hi <= lo or lo < history_lo:
             raise ValueError(f"decision window [{lo}, {hi}) outside the history start {history_lo}")
         bars_lo = max(history_lo, lo - LOOKBACK_15M)
+        chk = _ingest_gate(source, history_lo, hi)
         u = cls({s: source.load_decision_inputs(s, bars_lo, hi, history_lo)  # type: ignore[attr-defined]
                  for s in sorted(source.symbols())}, hedge)
         u.decisions_only = True
         u.source_identity = _source_identity(source)
         u.history_lo, u.window_hi = history_lo, hi
+        u._ingest_check = chk
         for s, sd in u.sd.items():  # the look-back argument needs the indexed path (sorted, monotone ka)
             c = sd.cache
             assert c is not None
@@ -730,6 +749,16 @@ class DecisionProvider:
         return self._records[int(t)]
 
 
+def _ingest_gate(source: object, lo: int, hi: int) -> tuple[object, int, int] | None:
+    """Ruling R55: run the source's ``check_ingest(lo, hi)`` (a store-backed source) and return it for the
+    universe's later re-checks; None for a source without a store."""
+    chk = getattr(source, "check_ingest", None)
+    if not callable(chk):
+        return None
+    chk(lo, hi)
+    return chk, int(lo), int(hi)
+
+
 def _source_identity(source: object) -> object:
     ident = getattr(source, "identity", None)
     return ident() if callable(ident) else None
@@ -757,6 +786,8 @@ def decision_pass(source: UniverseSource, decision_ts: Sequence[int], store: Vie
     ident = _source_identity(source)
     if ident is None:
         raise ValueError("decision_pass needs a source with a data identity (source.identity())")
+    if len(decision_ts):  # ruling R55: the whole pass's data first (each chunk's universe re-checks it)
+        _ingest_gate(source, history_lo, max(int(t) for t in decision_ts) + 1)
     store.bind(view_body(ident, history_lo, tuple(source.symbols()), hedge, with_features))
     ts = sorted({int(t) for t in decision_ts})
     if not ts or ts[0] < int(history_lo):
@@ -908,6 +939,7 @@ def label_panel(u: ResearchUniverse, provider: DecisionProvider, decision_ts: Se
     w_lo, w_end = int(window[0]), int(window[1])
     guard.check_outcome_window(ts[0], min(ts[-1] + FILL_DELAY + h * H + MIN, w_end), auth=auth, now_ns=now_ns)
     u.check_data(auth)
+    u.check_ingest()
     rows: list[dict] = []
     res: list[labels.LabelResult | None] = []
     lab_rows: list[dict] = []
@@ -1104,6 +1136,7 @@ def run_book(arm: str, u: ResearchUniverse, provider: DecisionProvider, window: 
         miss = [s for s in u.candidates if u.instruments[s].aggtrades is None]
         if miss:
             raise ValueError(f"E_M needs aggTrades for {miss}")
+    u.check_ingest()  # ruling R55
     inputs = u.engine_inputs(provider, now_ns, auth)  # checks the universe span (``check_data``)
     run = replace(engine.run(arm, inputs, window, h, model=model, execution=execution), research=True)
     if auth is not None and int(window[0]) < W_HOLD[1] and W_HOLD[0] < int(window[1]):

@@ -609,3 +609,73 @@ Additional interpretations under AMB-04 (all implementation clarifications):
 - (d) **The tick-level "no-op for risk" — STOPPED.** The engine evaluates risk (`RiskLayer.on_tick`: drawdown kill, leg stops, gross) and marks at every 15-minute tick; a held leg without a mark-price or last-price close at a tick is `INVALID RUN — required leg mark missing` (DK-70, AMB-29 (a), user decision: no carry). Two outcome-changing choices are open: (i) which quarter's evaluability governs the tick at `ts` (the quarter ending at `ts`, whose 15-minute bar the tick uses, or the quarter starting at `ts`, as `decision_time` does for decisions); (ii) in a stale quarter with a held leg whose mark is missing, whether the tick is skipped (no mark, no risk, equity carried to the next evaluable tick - a "no-op") or stays `INVALID RUN` under AMB-29 (a), and whether a skipped decision's risk exits then also cover the skipped ticks' triggers. Both change forward outcomes (a stale quarter would either void the run or let the book ride through it unmeasured) and no docket entry decides them. Code: NOT implemented; the engine's ticks are unchanged in the forward replay (risk at every tick; missing leg mark = INVALID RUN). Stale quarters are a no-op for DECISIONS only (shift / skip, (c)). Classification: **normative amendment required - user decision**.
 - (e) **Data source.** `forward_replay.replay` takes `EngineInputs` built by the caller: the recorder's raw record format (and hence the loader from the sealed `ForwardStore` into bars / funding / metadata with `known_at` = max(`recv_ts`, natural `known_at`)) is not specified yet (the recorder is reviewed with the replay code before T_F7). The store itself opens only at the canonical L7 (unchanged). Part 1 (the frozen forward model and its record) is built (R54); part 2, the store -> `EngineInputs` loader, remains a forward-stage item. Classification: implementation clarification (missing component of the recorder, out of this task).
 - Tests: tests/v7/test_forward_refit.py, tests/v7/test_forward_replay.py.
+
+## AMB-44 - DEC-19 "pinned manifest": definition, builder, opening check, post-opening consumer (red-team r2 MJ4, controller ruling R56; Task 29c)
+
+- Spec: DEC-19 "pinned manifest / guards ready"; §17 "Holdout opening (DEC-19): token from an explicit approval phrase, exclusive markers, pinned manifest, read-only loaders"; S-1.7 "file listings (name, size, published checksum) of W_HOLD ... for the Stage 0 completeness check"; N1 / N2; DK-01; K9. Code: luna/v7/manifest.py, luna/v7/guard.py (`preflight`), luna/v7/fetch.py (`Fetcher._check_pinned`, `ManifestMismatch`), luna/v7/rawstore.py (`RawStore._manifest_gaps`).
+- Gap in the literal text: the spec names the "pinned manifest" but does not define its content. Before Task 29c, `preflight` accepted any 64-hex string (AMB-34 (g)).
+- Ruling R56 (implemented as ruled):
+  - **Content.** The manifest is the canonical JSON of the W_HOLD file listings (sorted keys, entries sorted by key, UTF-8 / ASCII, LF, no timestamp in the hashed body). Each entry is an N1 key, its size and its published checksum (the S3 ETag from the N2 listing).
+  - **Tables.** R3 15m monthly + daily, R5 1m monthly + daily, R4 mark / index / premium 15m monthly (R47) and fundingRate monthly.
+  - **Symbols.** Every USD-M symbol with W_HOLD files in the single-page N2 listings, plus the hedge BTCUSDT, which is required.
+  - **Builder.** It reads through the fetch layer: a truncated listing fails closed, and M6 keys are dropped there. It writes to the canonical location `<home>/.luna/v7_holdout/<RUN_ID>/W_HOLD_MANIFEST.json`, and refuses to write once an opening file exists.
+  - **Opening check.** `preflight` (so `authorize_holdout` / `resume_holdout`) recomputes the sha256 of the file at the canonical location. The sha256 must equal `manifest_sha256`, the bytes must be canonical and the document must validate.
+  - **Post-opening consumer.** Every W_HOLD N1 file fetched under the authorization must be listed with the same size and published checksum. Otherwise the fetch raises `ManifestMismatch`, a `FetchError`: the file is refused, K9-logged and ledgered as an ingest gap, which blocks under R55. There is no override.
+  - **Manifest coverage.** With the authorization, the ingest gate also requires every manifest `.zip` key in use to be a source of its stored chunk.
+- Implementation clarifications (not outcome-changing):
+  - (a) **Listings.** The symbols come from the CommonPrefixes of the dataset root listings (`data/futures/um/<freq>/<dataset>/`). Monthly files take one listing per (table, symbol). Daily files take one listing per (table, symbol, W_HOLD month), using the monthly-prefix form of `ingest.daily_days` (DK-01). A root listing longer than one page fails closed.
+  - (b) **CHECKSUM keys.** Both the `.zip` and the `.zip.CHECKSUM` keys are kept, because both are N1 files fetched at the opening.
+  - (c) **ETag forms.** For a single-part upload, the S3 ETag is the md5 of the bytes, and it is compared. A multipart ETag (`<md5>-<n>`) cannot be recomputed from the bytes alone. A `.zip` with a multipart ETag is therefore bound by its size and by its `.CHECKSUM` file: the fetch layer checks that file's own size and md5 ETag, and verifies the zip against the sha256 it contains. A `.CHECKSUM` with a non-md5 ETag, or any other ETag form, fails closed.
+  - (d) **No sidecar.** No build-metadata sidecar is written (optional per the controller).
+- Classification: implementation clarification. It defines the term from S-1.7 / DEC-19 and adds no new rule.
+- Tests: tests/v7/test_manifest_gate.py (builder, preflight, immutability, post-opening consumer, manifest coverage), and the synthetic manifest in tests/v7/auth_fixtures.py.
+
+## AMB-45 - Ingest-completeness gate: ledgered gaps and DEC-33 conflicts block the research run (red-team r2 MJ2, controller ruling R55; Task 29c)
+
+- Spec:
+  - DEC-33 / S-2.2: "If a key exists in both with conflicting OHLCV values, the conflict is reported as a **data-integrity blocker**; neither value is chosen silently".
+  - S-2.2 (activity-based instances, DEC-35); S-5.4; DEC-43 / K11.
+  - Ruling R48 made per-chunk failures ledgered and non-fatal for the ingestion. It did not cover a research run that consumes a store with holes.
+- Code:
+  - luna/v7/rawstore.py: store ledger, `check_ingest_complete`, `ingest_state_sha256`, `data_manifests`, `StoreSource.check_ingest` / `identity`.
+  - luna/v7/ingest.py: `attempt` records, `_ledger(..., store)`, `adopt_ledgers`.
+  - luna/v7/runner.py: `from_source` / `for_decisions` / `decision_pass` / `label_panel` / `run_book`, `ResearchUniverse.check_ingest`.
+  - luna/v7/metaingest.py: `instances_from_store`.
+- Ruling R55 (implemented as ruled):
+  - Any ledgered DEC-33 conflict blocks and is never auto-resolved.
+  - Any unresolved ingest gap blocks.
+  - A later successful ingest of the same (table, symbol, month) resolves a gap. The resolution is appended to the ledger.
+  - A refusal is an `IntegrityBlocker` and is K9-logged.
+  - The sha256 of the ledger's resolved state is part of the data identity (`StoreSource.identity()["ingest"]`, `RawStore.data_manifests()["ingest_ledger_state"]`).
+- Implementation clarifications:
+  - (a) **Where the ledger lives.**
+    - The ingest ledger was per fetcher (`<out_dir>/INGEST_LEDGER.jsonl`, one per driver worker). A research entry point therefore could not find "the ledgers of the store it reads".
+    - The store now has its own append-only, fsynced `<store root>/INGEST_LEDGER.jsonl`, with the same record format (table, symbol, month, status, sha256, rows, reason).
+    - `put_chunk` / `resume_chunk` append a `stored` record carrying the chunk file's sha256. The ingestion appends an `attempt` record before fetching a chunk, then its `gap` / `spill_not_requested` records.
+    - The fetcher ledgers are unchanged, so the C6 driver's reports keep working.
+  - (b) **Resolution rule.**
+    - The rule does not depend on record order.
+    - These records block: `gap`, `spill_not_requested`, `attempt`, an unknown status, and a record that lacks a field.
+    - A blocked key is resolved only by a `stored` record carrying the sha256 of the chunk the store holds now.
+    - A record whose reason names a conflict (DEC-33 monthly / daily, S-2.6 funding) is never resolved.
+    - The `attempt` record covers exceptions the ingestion does not ledger, such as a transport error that the driver retries: the chunk stays an unresolved key.
+  - (c) **Coverage.**
+    - A stored chunk without a `stored` record of its own sha256 blocks: the ledger is not this store's complete ledger (it was deleted, or the store predates R55).
+    - An unreadable ledger line blocks every use.
+    - A store that predates R55 is accepted after either of two steps:
+      - a resumed ingest, which re-records each verified chunk;
+      - `ingest.adopt_ledgers(store, [old fetcher ledgers])`, which appends the old records as they are. Metadata capture records are skipped, and an unreadable old line blocks every use.
+    - Flagged for the controller: legacy runs wrote no `attempt` records, so a legacy chunk that failed with an unledgered exception is invisible after adoption. To be complete, re-run the plan through the current ingest.
+  - (d) **What "in use" means.**
+    - The keys whose month overlaps the entry point's window.
+    - Every table the source reads and every symbol of the store. A symbol whose bars never arrived is absent from the metadata but is still in use.
+    - `instances_from_store` checks R3 for its requested symbols from the history start.
+  - (e) **Spill.** `spill_not_requested` (funding rows of a month that was not requested) blocks, because rows that were not stored are a hole.
+  - (f) **Entry points.**
+    - Checked directly: `ResearchUniverse.from_source` / `for_decisions`, `decision_pass` (up front, then per chunk), `label_panel`, `run_book`, `StoreSource.check_ingest` and `instances_from_store`.
+    - Checked through `run_book`: `dev_selection`.
+    - With the authorization (`StoreSource(auth=...)`), the W_HOLD universe of the opening flow also needs every pinned manifest file stored (AMB-44).
+    - `StoreSource` construction takes no window and does not check; the controller listed it as an alternative to `from_source`.
+    - Not checked directly, flagged for the controller: `authorize_holdout` / `resume_holdout` and `forward_model.forward_model`. They take no store. Their inputs are the pinned W_DEV panels and runs, plus the W_HOLD panels issued by `label_panel`, and those are gated. Adding a store argument to the opening would change the guard API beyond the minimal R56 preflight change.
+- Classification: implementation clarification. This is the reading of the ruling. The residual in (f) for the opening and forward-model entry points needs a controller decision.
+- Tests: tests/v7/test_manifest_gate.py. It includes the red-team probe `probe_gap_instance.py` as a test: the gap no longer splits the instance, and the run refuses until a re-ingest resolves it. It also covers conflicts, attempts, unledgered chunks, a torn ledger, scope filters, identity, adoption and the entry points.

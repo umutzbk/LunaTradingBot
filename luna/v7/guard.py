@@ -606,8 +606,9 @@ def resume_phrase() -> str:
 def preflight(*, pre_opening: str | Path | None = None, manifest_sha256: str | None = None) -> dict:
     """Every DEC-19 prerequisite except the phrase and the markers, on the canonical code repository
     (``_roots``): code freeze (tags, HEAD == code tag, clean tree, frozen spec), the persisted pre-opening
-    record re-verified at HEAD (``opening``), the W_HOLD file manifest sha256. Returns {head, spec_sha256,
-    pre_opening}; HoldoutBlocked listing every failure."""
+    record re-verified at HEAD (``opening``), the W_HOLD file manifest sha256 (ruling R56: the sha256 of the
+    canonical listing manifest at ``manifest.manifest_path()``, verified by its content). Returns {head,
+    spec_sha256, pre_opening}; HoldoutBlocked listing every failure."""
     repo = Path(_roots()[0])
     fails: list[str] = []
     missing = False
@@ -636,9 +637,12 @@ def preflight(*, pre_opening: str | Path | None = None, manifest_sha256: str | N
         pre = opening.load_pre_opening(pre_opening, head=head)
     except HoldoutBlocked as e:
         fails.append(str(e).removeprefix("holdout opening refused: "))
-    if not isinstance(manifest_sha256, str) or not _SHA.match(manifest_sha256):
-        fails.append("the W_HOLD file manifest sha256 to pin is missing or malformed (DEC-19 pinned "
-                     "manifest)")
+    from luna.v7 import manifest  # local: manifest imports this module
+
+    try:  # ruling R56: the sha256 of the canonical W_HOLD listing manifest at its canonical location
+        manifest.verify_pinned(manifest_sha256)
+    except HoldoutBlocked as e:
+        fails.append(str(e))
     if fails:
         raise HoldoutBlocked("holdout opening refused: " + "; ".join(fails))
     return {"head": head, "spec_sha256": SPEC_BLOB_SHA256, "pre_opening": pre}

@@ -10,6 +10,9 @@ AMB-34). No real data, never the real home directory or the real repository's gi
   ``test_opening.test_dev_issuer_is_only_used_by_dev_selection``). The happy paths use it because a real
   S-10.6 run over a full outer quarter is too slow for the test gate; the LeakageReport is always the real
   ``leakage.run_leakage_checks`` output on the tiny synthetic panels of ``leak_fixtures``.
+* ``MANIFEST``: the sha256 of a synthetic, valid DEC-19 W_HOLD listing manifest (ruling R56: one R3 monthly
+  W_HOLD zip of the hedge and its ``.CHECKSUM``, sizes and md5 ETags of ``HOLD_ZIP_BODY`` / ``HOLD_CK_BODY``),
+  written to the canonical location by ``roots`` (so ``guard.preflight`` finds it).
 * ``authorize(...)``: writes the pre-opening record and opens a synthetic holdout at a tmp location
   (``roots`` monkeypatches the guard's single location seam ``guard._roots``; ``guard.verify_spec`` patched
   exactly as in the existing guard tests).
@@ -29,13 +32,28 @@ from types import SimpleNamespace
 from unittest import mock
 
 from luna.v7 import guard, opening, release, runner_select, selection, spec
+from luna.v7 import manifest as wman
 from luna.v7.runner import FoldScoreModel
 from tests.v7 import leak_fixtures as lf
 from tests.v7.run_fixtures import funding_run
 
 HEAD_COMMIT = lf.COMMIT  # the deterministic HEAD of ``frozen_repo`` (fixed content, identity and dates)
 DATE = "2026-01-01T00:00:00+0000"
-MANIFEST = "c" * 64  # the W_HOLD file manifest pinned at the opening (synthetic)
+HOLD_ZIP_KEY = "data/futures/um/monthly/klines/BTCUSDT/15m/BTCUSDT-15m-2025-08.zip"
+HOLD_ZIP_BODY = b"W_HOLD zip"
+HOLD_CK_BODY = f"{hashlib.sha256(HOLD_ZIP_BODY).hexdigest()}  BTCUSDT-15m-2025-08.zip".encode()
+MANIFEST_DOC = wman.document([
+    (HOLD_ZIP_KEY, len(HOLD_ZIP_BODY), hashlib.md5(HOLD_ZIP_BODY).hexdigest()),
+    (HOLD_ZIP_KEY + ".CHECKSUM", len(HOLD_CK_BODY), hashlib.md5(HOLD_CK_BODY).hexdigest())])
+MANIFEST = hashlib.sha256(wman.canonical_bytes(MANIFEST_DOC)).hexdigest()  # pinned at the opening (synthetic)
+
+
+def write_manifest(home: Path, doc: dict | None = None) -> Path:
+    """The synthetic manifest at the canonical location under ``home`` (ruling R56)."""
+    p = Path(home) / ".luna" / "v7_holdout" / guard.RUN_ID / wman.FILE
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(wman.canonical_bytes(MANIFEST_DOC if doc is None else doc))
+    return p
 
 
 def git(repo: Path, *args: str) -> str:
@@ -113,6 +131,7 @@ def roots(monkeypatch, repo: Path, home: Path) -> None:
     """Point the guard's single location seam (``guard._roots``) at a tmp repository / home (tests only: no
     public opening function takes a location)."""
     monkeypatch.setattr(guard, "_roots", lambda: (Path(repo), Path(home)))
+    write_manifest(home)
 
 
 def authorize(base: Path, monkeypatch, *, dev=None, report=None, manifest: str = MANIFEST) -> SimpleNamespace:

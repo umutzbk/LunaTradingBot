@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from luna.v7 import guard, leakage, opening, runner_select, runstore, selection, windows
+from luna.v7 import manifest as wman
 from luna.v7.spec import code_repo
 from luna.v7.timeutil import D
 from tests.v7 import auth_fixtures as af
@@ -75,7 +76,7 @@ def _refused(base: Path, record: Path, match: str, **kw) -> None:
         _authorize(base, record, **kw)
     assert not guard.holdout_opened()
     if (base / "home").exists():  # nothing but the attempt log
-        assert {p.name for p in (base / "home").rglob("*") if p.is_file()} <= {guard.OPENING_LOG}
+        assert {p.name for p in (base / "home").rglob("*") if p.is_file()} <= {guard.OPENING_LOG, wman.FILE}
 
 
 # --------------------------------------------------------------------------------------------- forgery
@@ -700,7 +701,8 @@ def test_hard_kill_states_are_left_to_governance(tmp_path, monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         _authorize(tmp_path, rec)
     home = tmp_path / "home"
-    assert not [p for p in home.rglob("*.json")] if home.exists() else True  # rolled back
+    # rolled back (the pre-opening W_HOLD manifest stays)
+    assert not [p for p in home.rglob("*.json") if p.name != wman.FILE] if home.exists() else True
     n["k"] = 0
     rollback = guard._rollback
     monkeypatch.setattr(guard, "_rollback", lambda written: None)  # a hard kill: no rollback runs

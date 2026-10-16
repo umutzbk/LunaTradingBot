@@ -33,6 +33,12 @@ previous process log is restored afterwards). One source file in memory at a tim
   integrity or fetching (``IntegrityBlocker``, ``FetchError``) is not fatal: it is ledgered as a gap in
   ``<out_dir>/INGEST_LEDGER.jsonl`` (append-only, fsynced) and the other chunks continue; a guard refusal
   (W_HOLD / M6 / allowlist / N2 truncation) is raised.
+* Ingest completeness (red-team r2 MJ2, ruling R55, AMB-45): every ledger record that is not ``stored`` is
+  also appended to the store's own ledger (``RawStore.append_ledger``; ``stored`` records are written there by
+  ``put_chunk`` / ``resume_chunk`` themselves), and an ``attempt`` record is appended there before a chunk's
+  sources are fetched, so a chunk that fails in any way (an exception that is not ledgered included) stays an
+  unresolved key until a later successful ingest stores it; ``RawStore.check_ingest_complete`` refuses the
+  data in use while one is unresolved. The fetcher's ledger keeps its format.
 * ``list_archive`` / ``daily_days``: N2 single-page listings (truncation refused by the fetch layer, DK-01;
   M6 keys dropped there).
 
@@ -61,9 +67,10 @@ from luna.v7.data import klines
 from luna.v7.data.schema import IntegrityBlocker
 from luna.v7.fetch import MAX_RESPONSE_BYTES, Fetched, Fetcher, FetchError, ListingEntry
 from luna.v7.netguard import Request
-from luna.v7.rawstore import TABLES, RawStore, StoreTable, _symbol, month_period, store_bound
+from luna.v7.rawstore import TABLES, RawStore, StoreTable, _symbol, ledger_record, month_period, store_bound
 
-__all__ = ["BVIS", "FAPI_FUNDING", "LEDGER", "N3_LIMIT", "RULE_DROPPED", "S3", "daily_days", "ingest_bars",
+__all__ = ["BVIS", "FAPI_FUNDING", "LEDGER", "N3_LIMIT", "RULE_DROPPED", "S3", "adopt_ledgers", "daily_days",
+           "ingest_bars",
            "ingest_funding_archive", "ingest_funding_rest", "ingest_months", "list_archive", "listed_months",
            "n1_url"]
 
@@ -255,6 +262,7 @@ def ingest_bars(fetcher: Fetcher, store: RawStore, table: str, symbol: str, mont
         done = _skip(store, table, symbol, month, urls)
         if done is not None:
             return done
+        _attempt(store, table, symbol, month)
         bar_ns = int(t.known_at_ns)  # type: ignore[arg-type]
         sources: list[dict] = []
         frames: list[pd.DataFrame] = []
@@ -321,13 +329,48 @@ def _dedupe_month(rows: pd.DataFrame, month: str) -> tuple[pd.DataFrame, list[st
     return kept.drop(columns=["_other", "_file"]).reset_index(drop=True), sorted(set(kept["_file"]))
 
 
-def _ledger(fetcher: Fetcher, rec: dict) -> dict:
+def _ledger(fetcher: Fetcher, rec: dict, store: RawStore | None = None) -> dict:
+    """Append ``rec`` to the fetcher's ledger; with ``store``, a record that is not ``stored`` also to the
+    store's ledger (ruling R55; ``stored`` records come from ``put_chunk`` / ``resume_chunk``)."""
     Path(fetcher.out_dir).mkdir(parents=True, exist_ok=True)
     with open(Path(fetcher.out_dir) / LEDGER, "a", encoding="utf-8") as f:
         f.write(json.dumps(rec, sort_keys=True, default=str) + "\n")
         f.flush()
         os.fsync(f.fileno())
+    if store is not None and rec.get("status") != "stored":
+        store.append_ledger(rec)
     return rec
+
+
+def adopt_ledgers(store: RawStore, paths: Sequence[str | Path]) -> int:
+    """Append the records of earlier fetcher ledgers (``<out_dir>/INGEST_LEDGER.jsonl`` of runs from before
+    the store had its own ledger, e.g. the C6 dry run's ``w<i>`` ledgers) to the store's ledger, as they are
+    (ruling R55; the gate is order-independent, so adopting twice changes nothing). Metadata capture
+    records (``kind`` = ``wayback_capture``, the MetaStore's) are skipped; an unreadable line becomes an
+    ``unreadable`` record with no key, which blocks every use until governance repairs it (fail closed).
+    Returns the number of records appended."""
+    n = 0
+    for path in paths:
+        for i, line in enumerate(Path(path).read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                rec = None
+            if not isinstance(rec, dict):
+                rec = {"status": "unreadable", "reason": f"{path}:{i}: unreadable legacy ledger line"}
+            elif rec.get("kind") == "wayback_capture":
+                continue
+            store.append_ledger(rec)
+            n += 1
+    return n
+
+
+def _attempt(store: RawStore, table: str, symbol: str, month: str) -> None:
+    """Ruling R55: before a chunk's sources are fetched, an ``attempt`` record in the store's ledger (resolved
+    only when the chunk is stored)."""
+    store.append_ledger(ledger_record(table, symbol, month, "attempt", reason="ingest started"))
 
 
 def _stored(table: str, symbol: str, month: str, e: Mapping) -> dict:
@@ -370,6 +413,8 @@ def ingest_funding_archive(fetcher: Fetcher, store: RawStore, symbol: str,
                 else None for m in months]
         if months and all(e is not None for e in done):  # every month completed and verified: no fetch
             return [_ledger(fetcher, _stored(table, symbol, m, e)) for m, e in zip(months, done, strict=True)]
+        for m in months:
+            _attempt(store, table, symbol, m)
         bound = store_bound(auth)
         frames: list[pd.DataFrame] = []
         srcs: dict[str, dict] = {}
@@ -404,7 +449,7 @@ def ingest_funding_archive(fetcher: Fetcher, store: RawStore, symbol: str,
         out: list[dict] = []
         for m in months:
             if m in gaps:
-                out.append(_ledger(fetcher, _gap(table, symbol, m, gaps[m])))
+                out.append(_ledger(fetcher, _gap(table, symbol, m, gaps[m]), store))
                 continue
             try:
                 rows, files = _dedupe_month(allrows[ev == m], m)
@@ -412,11 +457,11 @@ def ingest_funding_archive(fetcher: Fetcher, store: RawStore, symbol: str,
                                     sources=[srcs[x] for x in sorted(set(files) | {m})], auth=auth)
                 out.append(_ledger(fetcher, _stored(table, symbol, m, e)))
             except IntegrityBlocker as err:
-                out.append(_ledger(fetcher, _gap(table, symbol, m, f"{type(err).__name__}: {err}")))
+                out.append(_ledger(fetcher, _gap(table, symbol, m, f"{type(err).__name__}: {err}"), store))
         for m in sorted(set(ev) - set(months)):
             out.append(_ledger(fetcher, {**_gap(table, symbol, str(m), f"{int((ev == m).sum())} rows of this "
                                                 "month in the files of its neighbours; month not requested"),
-                                         "status": "spill_not_requested"}))
+                                         "status": "spill_not_requested"}, store))
         return out
 
 
@@ -433,6 +478,7 @@ def ingest_funding_rest(fetcher: Fetcher, store: RawStore, symbol: str, month: s
         done = _skip(store, "R2_rest", symbol, month, [url_key])
         if done is not None:
             return done
+        _attempt(store, "R2_rest", symbol, month)
         f = fetcher.fetch(Request(FAPI_FUNDING, params), auth=auth)
         try:
             rows = json.loads((f.body or b"").decode("utf-8"))
@@ -478,5 +524,5 @@ def ingest_months(fetcher: Fetcher, store: RawStore, table: str, symbol: str,
                     e = ingest_bars(fetcher, store, table, symbol, m, auth=auth)
                 out.append(_ledger(fetcher, _stored(table, symbol, m, e)))
             except NONFATAL as err:
-                out.append(_ledger(fetcher, _gap(table, symbol, m, f"{type(err).__name__}: {err}")))
+                out.append(_ledger(fetcher, _gap(table, symbol, m, f"{type(err).__name__}: {err}"), store))
         return out

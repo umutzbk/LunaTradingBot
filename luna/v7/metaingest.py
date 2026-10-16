@@ -360,7 +360,11 @@ def instances_from_store(store: RawStore, symbols: Sequence[str], hi: int, *, lo
     through the guarded loader (open_ts and vol_base only). ``lo`` must be the history start (S-2.2: a
     symbol's first instance starts at its first archived bar; a later ``lo`` would cut an instance and move
     its ``first_bar_ts``); by default it is derived per symbol: the start of its first stored R3 chunk (fix
-    round 1, m6)."""
+    round 1, m6). Ruling R55 (red-team r2 MJ2): the R3 ingest of these symbols over [lo or the history start,
+    hi) must be complete (``RawStore.check_ingest_complete``), else IntegrityBlocker (K9-logged): a missing
+    month would split a live instance into two (a phantom instance end)."""
+    store.check_ingest_complete(0 if lo is None else int(lo), int(hi), tables=("R3",), symbols=list(symbols),
+                                auth=auth)
     ld = TableLoader(store, "R3", auth=auth)
     out = {}
     for s in sorted(symbols):

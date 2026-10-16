@@ -43,6 +43,22 @@ an ``IntegrityBlocker`` (never "no rows"). Only the requested columns are decode
 its rows. Decoded columns sit in a ``ChunkCache``: LRU with a fixed byte budget (an implementation parameter,
 ``DEFAULT_CACHE_BYTES``), deterministic eviction.
 
+Ingest completeness (red-team r2 MJ2, controller ruling R55, AMB-45): ``<root>/INGEST_LEDGER.jsonl`` is the
+store's own append-only, fsynced ingest ledger (the records of ``luna.v7.ingest``'s ledger: table, symbol,
+month, status, sha256, rows, reason). ``put_chunk`` and ``resume_chunk`` append a ``stored`` record (the
+chunk file's sha256); the ingestion appends an ``attempt`` record before it fetches a chunk and its ``gap`` /
+``spill_not_requested`` records. ``check_ingest_complete(lo, hi, tables=, symbols=, auth=)`` refuses
+(``IntegrityBlocker``, K9-logged) when, among the (table, symbol, month) keys in use (month overlapping
+[lo, hi)): a key has an unresolved blocking record (``gap`` / ``spill_not_requested`` / ``attempt`` / an
+unknown status; resolved only by a ``stored`` record of the chunk the store now holds, whatever the order;
+a record whose reason is a DEC-33 / S-2.6 conflict is never resolved by a re-ingest), a stored chunk has no
+``stored`` record of its own sha256 (the ledger is not this store's complete ledger), or the ledger has an
+unreadable line. With the verified authorization, every ``.zip`` key of the pinned W_HOLD manifest in use
+must be a source of its stored chunk (ruling R56: a manifest entry that never reached the store is a gap).
+The research entry points call it (``StoreSource.check_ingest``; ``runner.ResearchUniverse.from_source`` /
+``for_decisions``, ``label_panel``, ``run_book``; ``metaingest.instances_from_store``): a hole is never read
+as missing data.
+
 ``StoreSource``: the loader-backed ``runner.UniverseSource``. Executed ``BookRun`` objects are persisted by
 ``luna.v7.runstore`` (canonical parquet + JSON, no pickle), which reuses this module's write-once helpers.
 """
@@ -55,6 +71,7 @@ import io
 import json
 import os
 import re
+import threading
 from collections import OrderedDict
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -65,7 +82,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from luna.v7 import guard, k9, netguard, windows
+from luna.v7 import guard, k9, manifest, netguard, windows
 from luna.v7.constants import FROZEN
 from luna.v7.data import funding as fund_mod
 from luna.v7.data.instances import Instance
@@ -77,9 +94,10 @@ from luna.v7.runner import SymbolInputs
 from luna.v7.timeutil import ns_array
 from luna.v7.universe import Identity
 
-__all__ = ["DEFAULT_CACHE_BYTES", "FORMAT", "MAX_SCALE", "TABLES", "ChunkCache", "FundingLoader",
-           "ImmutabilityViolation", "RawStore", "StoreBusy", "StoreSource", "StoreTable",
-           "SymbolMeta", "TableLoader", "content_sha256", "month_period", "months_between", "store_bound"]
+__all__ = ["DEFAULT_CACHE_BYTES", "FORMAT", "LEDGER", "MAX_SCALE", "TABLES", "ChunkCache", "FundingLoader",
+           "ImmutabilityViolation", "IngestIndex", "RawStore", "StoreBusy", "StoreSource", "StoreTable",
+           "SymbolMeta", "TableLoader", "append_ledger", "content_sha256", "ledger_record", "month_period",
+           "months_between", "store_bound"]
 
 DEFAULT_CACHE_BYTES = 512 * 2**20  # implementation parameter (AMB-36 (i)): decoded-column LRU budget
 FORMAT = "parquet/zstd-9/scaled-int-delta/v1"
@@ -89,6 +107,12 @@ LOCK = ".writer.lock"
 SCALES_KEY = b"luna.v7.scales"
 RULE_IMMUTABLE = "§3 raw files immutable once written (integrity)"
 RULE_INTEGRITY = "§3 raw file sha256 differs from its manifest (integrity)"
+RULE_INGEST = ("ruling R55 ingest completeness: unresolved ingest gap / DEC-33 conflict / unledgered chunk "
+               "in the data used (refused, never read as missing data)")
+LEDGER = "INGEST_LEDGER.jsonl"
+STORED = "stored"
+BLOCKING = frozenset({"gap", "spill_not_requested", "attempt"})
+_LEDGER_LOCK = threading.Lock()
 _SYMBOL = re.compile(r"[A-Z0-9_]{1,40}\Z", re.ASCII)
 _MONTH = re.compile(r"(\d{4})-(\d{2})\Z", re.ASCII)
 _SHA = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
@@ -410,6 +434,48 @@ def _writer_lock(root: Path) -> Iterator[None]:
         f.close()
 
 
+# ------------------------------------------------------------------------------------------- ledger
+
+
+def ledger_record(table: str, symbol: str, month: str, status: str, *, sha256: str | None = None,
+                  rows: int | None = None, reason: str | None = None) -> dict:
+    """One ingest-ledger record (the format of ``luna.v7.ingest``'s ledger)."""
+    return {"table": table, "symbol": symbol, "month": month, "status": status, "sha256": sha256,
+            "rows": rows, "reason": reason}
+
+
+def append_ledger(path: Path, rec: Mapping) -> None:
+    """Append one JSON line (fsynced; serialised across this process's threads; a torn last line of a crash
+    is never glued to the new record, it stays unreadable: fail closed)."""
+    line = (json.dumps(dict(rec), sort_keys=True, default=str) + "\n").encode()
+    path = Path(path)
+    with _LEDGER_LOCK:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "ab") as f:
+            if f.tell() > 0:
+                with open(path, "rb") as r:
+                    r.seek(-1, os.SEEK_END)
+                    if r.read(1) != b"\n":
+                        line = b"\n" + line
+            f.write(line)
+            f.flush()
+            os.fsync(f.fileno())
+
+
+def _conflict(reason: object) -> bool:
+    return isinstance(reason, str) and "conflict" in reason.lower()
+
+
+@dataclass(frozen=True)
+class IngestIndex:
+    """The store ledger against the store: ``unresolved`` {key: reason}, ``unledgered`` keys (a chunk with no
+    ``stored`` record of its sha256), ``unreadable`` ledger line numbers. key = (table, symbol, month)."""
+
+    unresolved: Mapping[tuple, str]
+    unledgered: frozenset
+    unreadable: tuple[int, ...]
+
+
 # ------------------------------------------------------------------------------------------------ store
 
 
@@ -419,6 +485,145 @@ class RawStore:
 
     def __init__(self, root: str | Path) -> None:
         self.root = Path(root)
+        self._ingest_cache: tuple[object, IngestIndex] | None = None
+
+    # the store's ingest ledger (ruling R55)
+    @property
+    def ledger_path(self) -> Path:
+        return self.root / LEDGER
+
+    def append_ledger(self, rec: Mapping) -> None:
+        """Append one record to the store's ingest ledger (module docstring)."""
+        append_ledger(self.ledger_path, rec)
+
+    def _stored_record(self, table: str, symbol: str, month: str, e: Mapping) -> None:
+        self.append_ledger(ledger_record(_table(table).key, symbol, month, STORED, sha256=e["sha256"],
+                                         rows=e["rows"]))
+
+    def ingest_index(self) -> IngestIndex:
+        """The ledger against the store's manifests (module docstring); cached on the ledger's size / mtime
+        and the table-manifest sha256s."""
+        p = self.ledger_path
+        try:
+            st = p.stat()
+            sig: object = (st.st_size, st.st_mtime_ns)
+        except OSError:
+            sig = None
+        key = (sig, tuple(sorted(self.manifest_sha256s().items())))
+        if self._ingest_cache is not None and self._ingest_cache[0] == key:
+            return self._ingest_cache[1]
+        records: list[dict] = []
+        bad: list[int] = []
+        if sig is not None:
+            for i, line in enumerate(p.read_bytes().decode("utf-8", errors="replace").splitlines(), 1):
+                if not line.strip():
+                    continue
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    r = None
+                if isinstance(r, dict):
+                    records.append(r)
+                else:
+                    bad.append(i)
+        chunks: dict[tuple, str] = {}
+        for t in TABLES:
+            tm = self.table_manifest(t) or {"symbols": {}}
+            for sym in tm["symbols"]:
+                for month, e in (self.symbol_manifest(t, sym) or {"chunks": {}})["chunks"].items():
+                    chunks[(t, sym, month)] = e["sha256"]
+        stored: dict[tuple, set] = {}
+        blocking: dict[tuple, str] = {}
+        for r in records:
+            k = (r.get("table"), r.get("symbol"), r.get("month"))
+            if r.get("status") == STORED:
+                stored.setdefault(k, set()).add(r.get("sha256"))
+                continue
+            why = f"{r.get('status')}: {r.get('reason')}"
+            old = blocking.get(k)
+            if old is None or (not _conflict(old) and (_conflict(why) or old.startswith("attempt"))):
+                blocking[k] = why  # the most informative record: a conflict, else a gap over an attempt
+        unresolved = {k: why for k, why in blocking.items()
+                      if _conflict(why) or k not in chunks or chunks[k] not in stored.get(k, ())}
+        unledgered = frozenset(k for k, sha in chunks.items() if sha not in stored.get(k, ()))
+        idx = IngestIndex(unresolved, unledgered, tuple(bad))
+        self._ingest_cache = (key, idx)
+        return idx
+
+    def ingest_state_sha256(self) -> str:
+        """The sha256 of the ledger's resolved state (the unresolved keys with their reasons, the
+        unledgered chunks, the unreadable lines): part of the data identity (``data_manifests``,
+        ``StoreSource.identity``) so view stores and run records change when completeness changes (ruling
+        R55)."""
+        idx = self.ingest_index()
+        body = {"unresolved": sorted(([*k, why] for k, why in idx.unresolved.items()), key=repr),
+                "unledgered": sorted((list(k) for k in idx.unledgered), key=repr),
+                "unreadable": list(idx.unreadable)}
+        return _sha_bytes(_canonical(body))
+
+    def data_manifests(self) -> dict[str, str]:
+        """The DT4 data manifests of this store: every table-manifest sha256 plus ``ingest_ledger_state``
+        (``ingest_state_sha256``; ruling R55)."""
+        return {**self.manifest_sha256s(), "ingest_ledger_state": self.ingest_state_sha256()}
+
+    def check_ingest_complete(self, lo: int, hi: int, *, tables: Sequence[str] | None = None,
+                              symbols: Sequence[str] | None = None,
+                              auth: guard.HoldoutAuthorization | None = None) -> None:
+        """Ruling R55 (module docstring): refuse (IntegrityBlocker, K9-logged) when the data in use, the
+        (table, symbol, month) keys of ``tables`` / ``symbols`` (None: all) whose month overlaps [lo, hi), is
+        not completely ingested."""
+        k9.require()
+        lo, hi = int(lo), int(hi)
+        tset = None if tables is None else {_table(t).key for t in tables}
+        sset = None if symbols is None else set(symbols)
+
+        def used(k: tuple) -> bool:
+            t, s, m = k
+            if not (isinstance(t, str) and isinstance(s, str)):
+                return True  # a malformed record is in use (fail closed)
+            if (tset is not None and t not in tset) or (sset is not None and s not in sset):
+                return False
+            try:
+                p_lo, p_hi = month_period(m)
+            except (ValueError, TypeError):
+                return True
+            return p_lo < hi and lo < p_hi
+
+        idx = self.ingest_index()
+        bad = [f"ledger line {i} unreadable" for i in idx.unreadable]
+        bad += [f"{k}: unresolved {why}" for k, why in sorted(idx.unresolved.items(), key=repr) if used(k)]
+        bad += [f"{k}: stored chunk without a stored ledger record" for k in sorted(idx.unledgered)
+                if used(k)]
+        if auth is not None:
+            bad += self._manifest_gaps(lo, hi, tset, sset, auth)
+        if bad:
+            more = " ..." if len(bad) > 5 else ""
+            e = IntegrityBlocker(f"raw store {self.root}: ingest incomplete for [{lo}, {hi}) ({len(bad)}: "
+                                 f"{'; '.join(bad[:5])}{more}); refused (ruling R55)")
+            k9.log_refusal(e, request={"kind": "ingest_completeness", "store": str(self.root), "lo": lo,
+                                       "hi": hi, "n": len(bad)}, rule=RULE_INGEST)
+            raise e
+
+    def _manifest_gaps(self, lo: int, hi: int, tset: set | None, sset: set | None, auth) -> list[str]:
+        """Ruling R56: every ``.zip`` key in use of the pinned W_HOLD manifest must be a source of its stored
+        chunk."""
+        pin = guard.verified_opening(auth)
+        m = manifest.load_pinned(pin["manifest_sha256"])
+        srcs: dict[tuple[str, str], dict] = {}
+        out: list[str] = []
+        for table, sym, period, key in sorted(m.zips()):
+            per = guard.file_period(key)
+            if per is None or not (per[0] < hi and lo < per[1]):
+                continue
+            if (tset is not None and table not in tset) or (sset is not None and sym not in sset):
+                continue
+            if (table, sym) not in srcs:
+                srcs[(table, sym)] = (self.symbol_manifest(table, sym) or {"chunks": {}})["chunks"]
+            e = srcs[(table, sym)].get(period[:7])
+            url = "https://data.binance.vision/" + key
+            if e is None or url not in {s.get("url") for s in e.get("sources", [])}:
+                out.append(f"({table}, {sym}, {period[:7]}): pinned W_HOLD file {key} not stored")
+        return out
 
     # paths
     def table_dir(self, table: str) -> Path:
@@ -474,7 +679,9 @@ class RawStore:
         t = _table(table)
         with _writer_lock(self.root):
             self._sync_table(t, symbol)
-        return self.verify_chunk(table, symbol, month)
+        e = self.verify_chunk(table, symbol, month)
+        self._stored_record(table, symbol, month, e)  # ruling R55: a verified chunk is a stored record
+        return e
 
     # the write path
     def put_chunk(self, table: str, symbol: str, month: str, df: pd.DataFrame, *, sources: Sequence[Mapping],
@@ -516,7 +723,9 @@ class RawStore:
                     path.parent.mkdir(parents=True, exist_ok=True)
                     _create_once(path, data)
                 self._sync_table(t, symbol)  # heals a crash between the symbol and the table manifest
-                return self.verify_chunk(table, symbol, month)
+                e = self.verify_chunk(table, symbol, month)
+                self._stored_record(table, symbol, month, e)
+                return e
             if path.exists():  # orphan (crash before its manifest entry): adopted only when identical
                 data = path.read_bytes()
                 try:
@@ -538,6 +747,7 @@ class RawStore:
                      "span": [int(ts[0]), int(ts[-1]) + 1] if len(ts) else None,
                      "sources": [dict(s) for s in sources]}
             self._record(t, symbol, month, entry)
+            self._stored_record(table, symbol, month, entry)
         return entry
 
     def _record(self, t: StoreTable, symbol: str, month: str, entry: dict) -> None:
@@ -867,6 +1077,7 @@ class StoreSource:
                  budget_bytes: int = DEFAULT_CACHE_BYTES) -> None:
         self.cache = cache if cache is not None else ChunkCache(budget_bytes)
         self.store = store
+        self.auth = auth
         self.meta = dict(meta)
         self.bars = {k: TableLoader(store, k, auth=auth, cache=self.cache)
                      for k in ("R3", "R5", "R4_mark", "R4_index", "R4_premium")}
@@ -875,13 +1086,20 @@ class StoreSource:
     def symbols(self) -> tuple[str, ...]:
         return tuple(sorted(self.meta))
 
+    def check_ingest(self, lo: int, hi: int) -> None:
+        """Ruling R55: every table this source reads, every symbol of the store, months overlapping [lo, hi)
+        completely ingested (``RawStore.check_ingest_complete``; a symbol missing from the metadata because
+        its bars never arrived is still in use)."""
+        self.store.check_ingest_complete(lo, hi, auth=self.auth)
+
     def identity(self) -> dict:
-        """The data identity of a view-store key (fix round 1, I2): every table-manifest sha256 of the store
-        and a sha256 of the per-symbol metadata the views read (instances, identity, notices, terminal
-        events)."""
+        """The data identity of a view-store key (fix round 1, I2): every table-manifest sha256 of the store,
+        the sha256 of its ingest ledger's resolved state (ruling R55) and a sha256 of the per-symbol metadata
+        the views read (instances, identity, notices, terminal events)."""
         meta = sorted((s, (list(m.insts), m.identity, tuple(m.notices), sorted(dict(m.terminals).items())))
                       for s, m in self.meta.items())
-        return {"raw": self.store.manifest_sha256s(), "meta": hashlib.sha256(repr(meta).encode()).hexdigest()}
+        return {"raw": self.store.manifest_sha256s(), "ingest": self.store.ingest_state_sha256(),
+                "meta": hashlib.sha256(repr(meta).encode()).hexdigest()}
 
     def load(self, symbol: str, lo: int, hi: int) -> SymbolInputs:
         m = self.meta[symbol]

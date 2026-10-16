@@ -56,13 +56,13 @@ from typing import Protocol
 
 import httpx
 
-from luna.v7 import guard, k9, netguard
+from luna.v7 import guard, k9, manifest, netguard, windows
 from luna.v7.guard import EmbargoBlocked, GuardFailure, HoldoutBlocked
 from luna.v7.netguard import EndpointRefused, Request
 
 __all__ = ["DEFAULT_TIMEOUT_S", "FETCH_LOG", "MAX_RESPONSE_BYTES", "FetchError", "Fetched", "Fetcher",
-           "HttpxTransport", "IntegrityError", "Listing", "ListingEntry", "ListingTruncated", "Response",
-           "ResponseTooLarge", "Transport", "fetch"]
+           "HttpxTransport", "IntegrityError", "Listing", "ListingEntry", "ListingTruncated",
+           "ManifestMismatch", "Response", "ResponseTooLarge", "Transport", "fetch"]
 
 DEFAULT_TIMEOUT_S = 30.0
 MAX_RESPONSE_BYTES = 1 << 30  # implementation parameter (AMB-35 (k)); larger archives: daily N1 files
@@ -73,6 +73,7 @@ RULE_N6 = "S-1.7 N6 response (HTTP 200, Memento-Datetime == ts)"
 RULE_N5_BOUND = "S-1.7 N5 server-side bound (CDX row beyond the bound)"
 RULE_TRUNCATED = "S-1.7 N2 / DK-01 listing must fit one page (IsTruncated)"
 RULE_E6_CAPTURE = "S-1.7 E6 capture fetched once, pinned and hashed"
+RULE_MANIFEST = "DEC-19 pinned W_HOLD manifest: a W_HOLD N1 file must match its pinned listing (ruling R56)"
 _HEX64 = re.compile(r"\A[0-9a-fA-F]{64}\Z")
 
 
@@ -82,6 +83,11 @@ class FetchError(RuntimeError):
 
 class IntegrityError(FetchError):
     """An N1 file does not match its published .CHECKSUM."""
+
+
+class ManifestMismatch(IntegrityError):
+    """A W_HOLD N1 file fetched after the opening that is not listed in the pinned manifest with the same size
+    and published checksum (ruling R56): refused, K9-logged, nothing returned (an ingest gap under R55)."""
 
 
 class ResponseTooLarge(FetchError):
@@ -288,6 +294,8 @@ class Fetcher:
                 raise
         elif status != 200:
             raise FetchError(f"{req.url}: HTTP {status} (no content returned)")
+        if kind == "N1" and auth is not None:
+            self._check_pinned(req, body, auth)
         sha = _sha(body)
         out: dict = {}
         if kind == "N1" and not req.url.endswith(".CHECKSUM"):
@@ -309,6 +317,23 @@ class Fetcher:
         return Fetched(kind, req.url, params, status, recv_ts, sha, body, **out)
 
     # -- per class ----------------------------------------------------------------------------------------
+
+    def _check_pinned(self, req: Request, body: bytes, auth) -> None:
+        """Ruling R56: a W_HOLD N1 file (zip or .CHECKSUM) fetched under the authorization must match the
+        pinned manifest entry of its key (``manifest.match_entry``), else ManifestMismatch, K9-logged."""
+        per = guard.file_period(req.url)
+        if per is None or not windows.overlaps(per[0], per[1], windows.W_HOLD):
+            return
+        key = req.url.split("://", 1)[-1].split("/", 1)[-1]
+        try:
+            pin = guard.verified_opening(auth)
+            why = manifest.match_entry(manifest.load_pinned(pin["manifest_sha256"]), key, body)
+        except guard.HoldoutBlocked as e:
+            why = f"pinned W_HOLD manifest unavailable ({e})"
+        if why is not None:
+            e = ManifestMismatch(f"{req.url}: {why}; refused (nothing returned)")
+            self._refused(e, req, RULE_MANIFEST, body)
+            raise e
 
     def _verify_checksum(self, req: Request, body: bytes, sha: str, auth) -> str:
         ck = self.fetch(Request(req.url + ".CHECKSUM"), auth=auth)
