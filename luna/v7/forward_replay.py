@@ -138,7 +138,7 @@ def replay(arm: str, inputs: EngineInputs, evaluable: Mapping[int, bool], h_star
     k9.require()
     repo = _canonical()
     try:
-        l7 = forward.require_l7(repo, extended=extended)  # type: ignore[arg-type]
+        l7 = forward.require_l7(extended=extended)
     except SealedBeforeL7 as e:
         k9.log_refusal(e, request={"kind": "forward_replay", "arm": str(arm), "extended": bool(extended)},
                        rule=guard.k9_rule(e))
@@ -167,7 +167,7 @@ def evaluate(ml: ForwardReplay, a0: ForwardReplay | None, *, holdout_class: str,
                       unrecovered_funding=unrecovered_funding, terminal_events=terminal_events,
                       a0=None if a0 is None else a0.run, extended=ml.extended, deploy=deploy,
                       dec14_verified=dec14_verified, ic=ic, calib=calib, B=B, seed=seed)
-    return forward.forward_evaluate(x, repo=_canonical())  # type: ignore[arg-type]
+    return forward.forward_evaluate(x)
 
 
 __all__ = ["DecisionPlan", "ForwardReplay", "decision_plan", "evaluability", "evaluable_days", "evaluate",

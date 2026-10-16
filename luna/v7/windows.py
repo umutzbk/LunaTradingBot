@@ -73,6 +73,23 @@ def stage0_fail(d0: int) -> bool:
     return len(outer_folds(d0)) < MIN_FOLDS
 
 
+def hold_quarter_edges() -> tuple[int, ...]:
+    """The 5 edges of the 4 calendar quarters of W_HOLD (S-13.2 P5 "the 4 holdout quarters"; red-team r2
+    MJ3: the only quarter edges ``runner_select.holdout_inputs`` accepts). W_HOLD starts and ends on calendar
+    quarter starts; anything else raises."""
+    lo, hi = W_HOLD
+    edges = [lo]
+    while edges[-1] < hi:
+        edges.append(_shift_months(edges[-1], 3))
+    for e in edges:
+        ts = pd.Timestamp(e, tz="UTC")
+        if ts != ts.normalize() or ts.day != 1 or ts.month not in (1, 4, 7, 10):
+            raise ValueError(f"W_HOLD edge {ts} is not a calendar quarter start")
+    if edges[-1] != hi or len(edges) != 5:
+        raise ValueError("W_HOLD is not 4 calendar quarters")
+    return tuple(int(e) for e in edges)
+
+
 def final_blocks() -> Fold:
     """Final model before W_HOLD (S-10.4 step 6); test = W_HOLD."""
     c = W_HOLD[0]
@@ -80,23 +97,34 @@ def final_blocks() -> Fold:
     return Fold(0, c, W_HOLD[1], tr, sel, cal)
 
 
-def m6(repo: Path | None = None) -> tuple[int, int | None]:
+def _canonical_repo() -> Path:
+    """The canonical code repository: the guards' single location seam (``guard._roots``; tests monkeypatch
+    it). No caller repository is taken (red-team r2 MJ5, SC-06)."""
+    from luna.v7 import guard  # local: guard imports this module
+
+    return Path(guard._roots()[0])
+
+
+def m6() -> tuple[int, int | None]:
     """M6 = [V6 holdout start, R_V6) (S-1.2). The start comes from the hash-checked V6 artefacts; the end is
     R_V6 from the canonical, hash-checked release record (``release.r_v6``, SC-06 / AMB-34) and None while
-    that record is absent or does not verify (R_V6 undetermined: M6 open-ended)."""
+    that record is absent or does not verify (R_V6 undetermined: M6 open-ended). Both are read from the
+    canonical repository only (``guard._roots``; no caller repository, red-team r2 MJ5)."""
+    repo = _canonical_repo()
     return v6_artifacts(repo).holdout_start, release.r_v6(repo)
 
 
 @functools.cache
 def _m6_by_repo(repo_key: str) -> tuple[int, int | None]:
-    return m6(Path(repo_key))
+    repo = Path(repo_key)
+    return v6_artifacts(repo).holdout_start, release.r_v6(repo)
 
 
-def m6_cached(repo: Path | None = None) -> tuple[int, int | None]:
-    """``m6(repo)`` read once per process and resolved repository (the hash-checked V6 artefacts and R_V6
-    release record via git); a failure (SpecMismatch) is not cached. This is the canonical span every guard
-    compares against (outcome guard, ``netguard.partition_m6_keys``)."""
-    return _m6_by_repo(release.repo_key(repo))
+def m6_cached() -> tuple[int, int | None]:
+    """``m6()`` read once per process and resolved canonical repository (the hash-checked V6 artefacts and
+    R_V6 release record via git); a failure (SpecMismatch) is not cached. This is the canonical span every
+    guard compares against (outcome guard, ``netguard.partition_m6_keys``). No caller repository (MJ5)."""
+    return _m6_by_repo(release.repo_key(_canonical_repo()))
 
 
 def overlaps(lo: int, hi: int, span: tuple[int, int | None]) -> bool:

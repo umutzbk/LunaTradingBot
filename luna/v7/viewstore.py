@@ -29,7 +29,9 @@ when it round-trips canonically (decode(encode(x)) re-encodes to the same bytes 
 ``RangeIndex``); otherwise it stays in memory only (recomputed on demand). A stored file that does not decode,
 or whose parquet hash differs, is an ``IntegrityBlocker`` (never a silent recompute). The store is a local
 cache of this code's own output: anyone who can write ``<root>`` can alter it (as with any working file);
-the per-call W_HOLD guard stays in the provider (a stored view is never served for a refused t).
+the per-call W_HOLD guard stays in the provider (a stored view is never served for a refused t), and
+``get`` itself passes every t through ``guard.check_data_span`` (red-team r2 m4: a stored W_HOLD view, outcome
+free but sealed, is readable only with the verified opening and never after the verdict; K9-logged).
 
 Bound: the store holds one view per decision of the evaluated windows (about 5,000 for W_DEV, on disk); the
 provider keeps at most ``max_cached_decisions`` decoded views in memory (LRU, deterministic eviction).
@@ -46,6 +48,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from luna.v7 import guard
 from luna.v7.book.engine import DecisionView
 from luna.v7.data.schema import IntegrityBlocker
 from luna.v7.rawstore import _canonical, _create_once
@@ -185,7 +188,10 @@ class ViewStore:
     def _paths(self, t: int) -> tuple[Path, Path]:
         return self.dir / f"{int(t)}.json", self.dir / f"{int(t)}.parquet"
 
-    def get(self, t: int) -> tuple[DecisionView, object] | None:
+    def get(self, t: int, *, auth: object = None) -> tuple[DecisionView, object] | None:
+        """The stored (view, record) of t, else None. t passes the data guard first (W_HOLD needs the
+        verified opening ``auth``, as in ``runner.decision_pass``; M6 / W_FWD7 stay refused)."""
+        guard.check_data_span(int(t), int(t) + 1, auth=auth, what="stored decision view")
         self._bound()
         pj, pp = self._paths(t)
         if not pj.exists():

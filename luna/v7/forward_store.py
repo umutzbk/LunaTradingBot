@@ -4,8 +4,9 @@ Raw responses go directly into a content-addressed store with ``recv_ts``, sourc
 no read path before L7: ``read`` / ``iter_records`` take no time or L7 argument and refuse unless the
 canonical L7 exists (``release.l7``: the hash-checked R_V6 release and T_F7 review-pass records, SC-06 /
 AMB-34) and the guards' trusted clock (``release.trusted_now_ns``, the wall clock) has reached it. No caller
-value can unseal the store (red-team M5). The canonical source is injectable only like the other guards'
-(``repo``).
+value can unseal the store (red-team M5), and no caller repository either (red-team r2 MJ5: a forged scratch
+repository with valid-looking records unsealed it): the canonical repository is resolved only through the
+guards' single location seam ``guard._roots`` (tests monkeypatch it).
 
 ``extract_transport_id`` is the only parsing allowed before L7: the article id / code / URL needed to fetch
 the raw body. It never returns titles, bodies, dates or anything semantic (EC-8).
@@ -37,10 +38,18 @@ class Record:
     size: int
 
 
-def _gate(repo: Path | None) -> int | None:
+def _canonical_repo() -> Path:
+    from luna.v7 import guard  # local: guard imports this module
+
+    return Path(guard._roots()[0])
+
+
+def _gate() -> int | None:
     """Refuse before the canonical L7; return the ``recv_ts`` bound of the readable records: T_F7 + 180 d
     until the extended L7 (records of the extension window [T_F7 + 180 d, ...) stay sealed until the extended
-    look, review m2), None (no bound) from the extended L7 on."""
+    look, review m2), None (no bound) from the extended L7 on. The records come from the canonical repository
+    only."""
+    repo = _canonical_repo()
     l7 = release.l7(repo)
     now = release.trusted_now_ns()
     if l7 is None or now < l7:
@@ -53,12 +62,11 @@ def _gate(repo: Path | None) -> int | None:
 
 
 class ForwardStore:
-    """Append-only: blobs/<sha256> (content addressed) + index.jsonl (one line per snapshot). ``repo``: the
-    repository holding the canonical records (default: the code repository)."""
+    """Append-only: blobs/<sha256> (content addressed) + index.jsonl (one line per snapshot). The read gate
+    uses the canonical records of the code repository (``guard._roots``); no repository is taken."""
 
-    def __init__(self, root: Path | str, *, repo: Path | None = None) -> None:
+    def __init__(self, root: Path | str) -> None:
         self.root = Path(root)
-        self._repo = repo
         self._blobs = self.root / "blobs"
         self._index = self.root / "index.jsonl"
 
@@ -84,13 +92,13 @@ class ForwardStore:
         return [Record(**json.loads(line)) for line in self._index.read_text(encoding="utf-8").splitlines()]
 
     def iter_records(self) -> Iterator[Record]:
-        bound = _gate(self._repo)
+        bound = _gate()
         for r in self._records():
             if bound is None or r.recv_ts < bound:
                 yield r
 
     def read(self, sha256: str) -> bytes:
-        bound = _gate(self._repo)
+        bound = _gate()
         if not sha256.isalnum():
             raise ValueError("invalid sha256")
         if bound is not None and not any(r.sha256 == sha256 and r.recv_ts < bound for r in self._records()):

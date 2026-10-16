@@ -18,10 +18,12 @@ from luna.v7 import (
     cv,
     features,
     guard,
+    k9,
     leakage,
     models,
     opening,
     runner,
+    runner_select,
     runrecord,
     selection,
     verdict,
@@ -49,6 +51,7 @@ from luna.v7.windows import Fold
 from tests.v7 import auth_fixtures as af
 from tests.v7 import fixtures_v7 as fx
 from tests.v7 import leak_fixtures as lf
+from tests.v7 import run_fixtures as rf
 
 BTC = fx.BTC
 SHORTS = ("AAAUSDT", "BBBUSDT", "CCCUSDT")  # positive funding: A0 shorts them
@@ -735,7 +738,7 @@ def test_dev_selection_invalid_precondition(inputs, opened):
     with pytest.raises(ValueError, match="no ML"):
         holdout_inputs(auth=opened.auth, ml_T=r72, a0_T=r72, ml_M=r72,
                        a0_M=r72, quarter_edges=(), panel=None,
-                       final_model=None, leakage_report=None, records=None, integrity=(), dev=dev)
+                       final_model=None, leakage_report=None, integrity=(), dev=dev)
     with pytest.raises(ValueError, match="no ML"):  # no ML*: no leakage report either (holdout sealed)
         dev_leakage_checks(dev, {}, None, **lf.PROV)
 
@@ -750,32 +753,58 @@ def _panel(h: int, n_days: int = 4, rate: float = 0.002) -> LabelPanel:
     return LabelPanel(h, s.reset_index(drop=True), pd.DataFrame(), len(s), 0, 0, rate, ())
 
 
+HOLD_U = rf.HOLD_U  # the synthetic universe identity of the issued W_HOLD books and panel
+HOLD_GRID = rf.HOLD_GRID
+_to_hold = rf.to_hold
+_issue = rf.issue_hold
+
+
+def _issue_books(kw, auth, final_hash, **over):
+    for k in ("ml_T", "a0_T", "ml_M", "a0_M"):
+        _issue(kw[k], auth, model_hashes=(final_hash,) if k.startswith("ml") else None, **over)
+
+
 def test_holdout_inputs_require_authorization(dev_valid, opened, tmp_path, monkeypatch):
     dev, q = dev_valid
     arm, h = dev.ml_star
     reg, clf = families(arm)
     final = lf.final(h, reg)  # the final model the pinned LeakageReport audited (I-2)
-    kw = dict(ml_T=dev.runs[(arm, h)], a0_T=dev.runs[("A0", h)], ml_M=dev.em_runs["ML*"],
-              a0_M=dev.em_runs["A0"],
-              quarter_edges=(q[0][0], q[0][0] + 12 * H, q[1][0], q[1][0] + 12 * H, q[1][1]),
-              panel=_panel(h), final_model=final,
-              leakage_report=opened.report, records=lf.clean_records, integrity=(),
+    fh = runner.model_hash(final)
+    panel = _panel(h)
+    kw = dict(ml_T=_to_hold(dev.runs[(arm, h)]), a0_T=_to_hold(dev.runs[("A0", h)]),
+              ml_M=_to_hold(dev.em_runs["ML*"]), a0_M=_to_hold(dev.em_runs["A0"]),
+              quarter_edges=windows.hold_quarter_edges(),
+              panel=panel, final_model=final,
+              leakage_report=opened.report, integrity=(),
               dev_ml_run=dev.runs[(arm, h)], dev_kill=(), B=B_SMALL)
     auth = lambda: opened.auth  # noqa: E731  (the real opening of this module)
+    _issue_books(kw, auth(), fh)
+    runner._issue_holdout_panel(panel, auth(), decisions=HOLD_GRID, window=windows.W_HOLD, universe=HOLD_U)
     for bad in (None, object(), {"approved": True}, object.__new__(guard.HoldoutAuthorization)):
         with pytest.raises(guard.HoldoutBlocked):
             holdout_inputs(auth=bad, **kw)
+    assert runner.holdout_universe(auth().opening_id) is None
     x = holdout_inputs(auth=auth(), **kw)
+    assert runner.holdout_universe(auth().opening_id) == HOLD_U  # R54 round 3: the forward refit's universe
     assert isinstance(x, verdict.HoldoutInputs) and x.dev_kill == () and x.k8.invalid_label_rate == 0.002
+    assert x.quarter_edges == windows.hold_quarter_edges()
     assert x.k8.missing_funding_rate == missing_funding_rate([kw["ml_T"], kw["a0_T"]])
     assert len(x.ic[0]) == len(x.calib[0]) == len(x.a1_calib[0]) == len(kw["panel"].samples)
-    assert verdict.holdout(x).cls in verdict.CLASSES  # the assembled inputs are accepted by the verdict
+    with pytest.raises(ValueError, match="holdout_verdict"):  # W_HOLD inputs: no public verdict
+        verdict.holdout(x)
+    assert verdict._holdout(x).cls in verdict.CLASSES  # the assembled inputs are accepted by the verdict
     # SC-02: the holdout-phase leakage report is built here over the four runs, linked to the pre report
     assert x.leakage is kw["leakage_report"] and x.holdout_leakage.pre_sha256 == x.leakage.sha256
     assert lf.leakage.covers(x.holdout_leakage, [kw[k] for k in ("ml_T", "a0_T", "ml_M", "a0_M")])
-    assert x.holdout_leakage.findings == ()
-    late = holdout_inputs(auth=auth(), **{**kw, "records": lambda t: lf.clean_records(t + MIN)})
-    assert late.holdout_leakage.findings and verdict.holdout(late).cls in (verdict.LEAKAGE, verdict.INVALID)
+    assert x.holdout_leakage.findings == () and dict(x.holdout_leakage.checks)["L1"] > 0
+    # red-team r2 m1: the L1 re-check reads the max_known_at each run recorded when run_book issued it; no
+    # caller records function exists any more
+    with pytest.raises(TypeError):
+        holdout_inputs(auth=auth(), records=lf.clean_records, **kw)
+    _issue(kw["ml_T"], auth(), model_hashes=(fh,), late=True)
+    late = holdout_inputs(auth=auth(), **kw)
+    assert late.holdout_leakage.findings and verdict._holdout(late).cls in (verdict.LEAKAGE, verdict.INVALID)
+    _issue(kw["ml_T"], auth(), model_hashes=(fh,))
     skipped = lf.run_checks(arm, h, samples={}, fold_models={}, final_model=None)
     for bad, msg in (((), "run_leakage_checks"), (replace(kw["leakage_report"], commit="c" * 40),
                                                    "run_leakage_checks"), (skipped, "did not pass")):
@@ -791,12 +820,7 @@ def test_holdout_inputs_require_authorization(dev_valid, opened, tmp_path, monke
         holdout_inputs(auth=auth(), **{**kw, "ml_T": kw["a0_T"]})
     with pytest.raises(ValueError, match="undefined"):
         holdout_inputs(auth=auth(), **{**kw, "panel": _panel(h, rate=float("nan"))})
-    # R54 round 3: the issued W_HOLD panel holdout_inputs consumes fixes the opening's W_HOLD universe (the
-    # forward refit's panels must be over it); a non-issued panel records nothing
-    assert runner.holdout_universe(auth().opening_id) is None
-    runner._issue_holdout_panel(kw["panel"], auth(), decisions=(1,), window=windows.W_HOLD, universe="c" * 64)
-    holdout_inputs(auth=auth(), **kw)
-    assert runner.holdout_universe(auth().opening_id) == "c" * 64
+    _mj3_refusals(kw, auth, fh, h)
     # Task 27 (L11, AMB-41): a caller-supplied Kraken pair never enters the S-13.3 family
     raw_kraken = {**{n: None for n in verdict.SECONDARY}, verdict.KRAKEN: (kw["ml_T"], kw["ml_T"])}
     with pytest.raises(ValueError, match="kraken.comparison"):
@@ -848,7 +872,14 @@ def test_holdout_inputs_require_authorization(dev_valid, opened, tmp_path, monke
         holdout_inputs(auth=auth(), **kw)
     # R45 / review round 2 I-C, on a separate opening of the same DevSelection (the module's stays open)
     o2 = af.authorize(tmp_path / "o2", monkeypatch, dev=opened.dev)
-    x2 = holdout_inputs(auth=o2.auth, **{**kw, "leakage_report": o2.auth.leakage_report})
+    k2 = {**kw, "leakage_report": o2.auth.leakage_report}
+    with pytest.raises(guard.HoldoutBlocked, match="under this opening"):  # books issued for another opening
+        holdout_inputs(auth=o2.auth, **k2)
+    _issue_books(kw, o2.auth, fh)
+    with pytest.raises(guard.HoldoutBlocked, match="panel was not issued"):  # issued for another opening
+        holdout_inputs(auth=o2.auth, **k2)
+    runner._issue_holdout_panel(panel, o2.auth, decisions=HOLD_GRID, window=windows.W_HOLD, universe=HOLD_U)
+    x2 = holdout_inputs(auth=o2.auth, **k2)
     with pytest.raises(ValueError, match="holdout_verdict"):  # the public verdict refuses W_HOLD-shaped use
         verdict.holdout(replace(x2, ml_T=replace(x2.ml_T, window=windows.W_HOLD)))
     with pytest.raises(ValueError, match="issued by holdout_inputs"):  # inputs not issued for this opening
@@ -861,7 +892,7 @@ def test_holdout_inputs_require_authorization(dev_valid, opened, tmp_path, monke
     with pytest.raises(guard.HoldoutBlocked, match="verdict"):  # no second look
         holdout_verdict(x2, auth=o2.auth)
     with pytest.raises(guard.HoldoutBlocked, match="verdict"):  # the authorization opens nothing any more
-        holdout_inputs(auth=o2.auth, **{**kw, "leakage_report": o2.auth.leakage_report})
+        holdout_inputs(auth=o2.auth, **k2)
     with pytest.raises(guard.HoldoutBlocked, match="verdict"):
         guard.check_outcome_window(windows.W_HOLD[0], windows.W_HOLD[0] + D, auth=o2.auth, now_ns=NOW)
     with af.verify_spec_off(), pytest.raises(guard.HoldoutBlocked, match="verdict"):
@@ -874,6 +905,83 @@ def test_holdout_inputs_require_authorization(dev_valid, opened, tmp_path, monke
     assert rec["holdout_opening"]["opening_id"] == o2.auth.opening_id
     with pytest.raises(ValueError, match="opening"):
         _record([kw["ml_T"]], opening={"pin": {}})
+
+
+def test_run_book_issues_w_hold_books_with_their_provenance(inputs, opened):
+    """Red-team r2 MJ3 / m1: ``run_book`` under the verified opening issues a W_HOLD book with its opening,
+    window, universe identity, score-model hashes and the bound provider's per-decision max_known_at
+    (``runner.holdout_run_coverage``); a book outside W_HOLD, or without the opening, is not issued."""
+    u = uni(inputs)
+    p = DecisionProvider(u, with_features=True, auth=opened.auth)
+    win = (windows.W_HOLD[0], windows.W_HOLD[0] + D)
+    oid = opened.auth.opening_id
+    a0 = runner.run_book("A0", u, p, win, 24, NOW, auth=opened.auth)
+    cov = runner.holdout_run_coverage(a0, oid)
+    assert cov is not None and cov.opening_id == oid and cov.window == win and cov.model_hashes is None
+    assert (cov.arm, cov.execution, cov.h) == ("A0", "E_T", 24)
+    assert cov.universe == runner.universe_identity(u)
+    ts = [int(t) for t in a0.decisions["t"]]
+    assert ts and [t for t, _ in cov.known_at] == ts
+    assert all(mk == p.record(t).max_known_at for t, mk in cov.known_at)
+    m = FoldScoreModel(fakes([win]), "A2", 24)
+    ml = runner.run_book("A2", u, p, win, 24, NOW, model=m, auth=opened.auth)
+    mc = runner.holdout_run_coverage(ml, oid)
+    assert mc is not None and mc.model_hashes == m.hashes and mc.arm == "A2"
+    assert runner.holdout_run_coverage(ml, "0" * 64) is None  # issued for this opening only
+    assert runner.holdout_run_coverage(replace(ml, arm="A3"), oid) is None  # identity, not only outputs
+    dev = runner.run_book("A0", u, p, (T - 5 * MIN, T + D), 24, NOW, auth=opened.auth)
+    assert runner.holdout_run_coverage(dev, oid) is None  # outside W_HOLD: not a W_HOLD book
+
+
+def _mj3_refusals(kw, auth, fh, h):
+    """Red-team r2 MJ3: one refusal per binding check (HoldoutBlocked, K9-logged, before any computation);
+    the valid inputs are accepted again afterwards."""
+    a = auth()
+    log = k9.current()
+
+    def refused(match, **over):
+        n = len(log.records())
+        with pytest.raises(guard.HoldoutBlocked, match=match):
+            holdout_inputs(auth=a, **{**kw, **over})
+        assert len(log.records()) == n + 1 and log.records()[-1]["rule"] == runner_select.MJ3_RULE
+
+    # 1. a book not issued by run_book (an altered copy: another output sha256)
+    altered = replace(kw["ml_T"], integrity=(*kw["ml_T"].integrity, "x"))
+    refused("ml_T: not a W_HOLD book issued", ml_T=altered)
+    # 2. a book whose window is not W_HOLD (a sub-window run, issued)
+    sub = _issue(replace(kw["a0_T"], window=(windows.W_HOLD[0], windows.W_HOLD[1] - D)), a)
+    refused("a0_T: window", a0_T=sub)
+    # 3. the four books over different universes
+    other_u = _issue(replace(kw["a0_M"], integrity=(*kw["a0_M"].integrity, "u")), a, universe="d" * 64)
+    refused("one universe", a0_M=other_u)
+    # 4. an ML* book scored with a fold model / not by the pinned final model alone
+    for hashes in (("e" * 64,), (fh, "e" * 64), None):
+        ml = replace(kw["ml_M"], integrity=(*kw["ml_M"].integrity, str(hashes)))
+        _issue(ml, a, model_hashes=hashes)
+        refused("ml_M: not scored by the pinned final model", ml_M=ml)
+    # 5. quarter edges that are not the 4 calendar quarters of W_HOLD (month-based, too few, shifted)
+    e = windows.hold_quarter_edges()
+    for edges in ((e[0], e[0] + 30 * D, e[0] + 60 * D, e[0] + 90 * D, e[4]), e[:4], (e[0] + D, *e[1:])):
+        refused("calendar quarters", quarter_edges=edges)
+    # 6. panels: not issued; issued for another h, a partial window, a partial grid, another universe
+    refused("panel was not issued", panel=_panel(h, n_days=3))
+    other_h = 24 if h != 24 else 72
+    ph = _panel(other_h, n_days=2)
+    runner._issue_holdout_panel(ph, a, decisions=HOLD_GRID, window=windows.W_HOLD, universe=HOLD_U)
+    refused("not for h", panel=ph)
+    cases = (("window", dict(window=(windows.W_HOLD[0], windows.W_HOLD[1] - D))),
+             ("covers", dict(decisions=HOLD_GRID[:-1])), ("covers", dict(decisions=(*HOLD_GRID, 1))),
+             ("books. universe", dict(universe="f" * 64)))
+    for i, (match, cov) in enumerate(cases):
+        p = _panel(h, n_days=1 + i % 2)
+        p = replace(p, samples=p.samples.iloc[: len(p.samples) - i - 1].reset_index(drop=True))
+        runner._issue_holdout_panel(p, a, **{**dict(decisions=HOLD_GRID, window=windows.W_HOLD,
+                                                    universe=HOLD_U), **cov})
+        refused(match, panel=p)
+    # _note_holdout_universe never accepts an unissued panel silently
+    with pytest.raises(guard.HoldoutBlocked, match="not issued"):
+        runner._note_holdout_universe(_panel(h, n_days=3), a)
+    assert isinstance(holdout_inputs(auth=a, **kw), verdict.HoldoutInputs)  # the valid inputs still pass
 
 
 def test_dev_leakage_checks_use_the_dev_fold_models():
@@ -944,7 +1052,7 @@ def test_missing_required_inputs_fail_closed(inputs, dev_valid, opened):
         holdout_inputs(auth=opened.auth, ml_T=dev.runs[("A2", 24)],
                        a0_T=dev.runs[("A0", 24)],
                        ml_M=dev.em_runs["A0"], a0_M=dev.em_runs["A0"], quarter_edges=(), panel=_panel(24),
-                       final_model=None, leakage_report=None, records=None, integrity=())
+                       final_model=None, leakage_report=None, integrity=())
 
 
 def test_dev_selection_refusals(inputs):

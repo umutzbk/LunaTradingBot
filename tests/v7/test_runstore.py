@@ -215,6 +215,28 @@ def test_window_guard_and_window_mismatch(tmp_path, log):
         rs.load(sha2, file_sha256=run_file_sha256(run))
 
 
+def test_falsified_manifest_window_never_decodes_a_w_hold_run(tmp_path, log, monkeypatch):
+    """Red-team r2 m3: the manifest window is unpinned and rewritable; a W_HOLD run whose manifest entry
+    claims a W_DEV window is refused by the guard on the pinned run.json's own window, before any frame file
+    is read or decoded."""
+    rs = RunStore(tmp_path / "runs")
+    hold = rf.funding_run([0.01, 0.02], lo=windows.W_HOLD[0])
+    sha = rs.put(hold)
+    man_p = tmp_path / "runs" / "MANIFEST.json"
+    m = json.loads(man_p.read_text(encoding="utf-8"))
+    m["runs"][sha]["window"] = [int(rf.LO), int(rf.LO) + 2 * D]  # a W_DEV window
+    man_p.write_text(json.dumps(m), encoding="utf-8")
+
+    def no_decode(*a, **k):
+        raise AssertionError("decode_run reached before the record window was guarded")
+
+    monkeypatch.setattr(runstore, "decode_run", no_decode)
+    n = len(log.records())
+    with pytest.raises(guard.HoldoutBlocked):
+        rs.load(sha, file_sha256=run_file_sha256(hold))
+    assert len(log.records()) == n + 1 and "(record)" in json.dumps(log.records()[-1])
+
+
 # ------------------------------------------------------------------------------- Task 26b carried minors
 
 

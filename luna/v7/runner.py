@@ -695,7 +695,7 @@ class DecisionProvider:
                     or (u.window_hi is not None and t >= u.window_hi)):
                 raise ValueError(f"decision {t} outside the universe window [{u.history_lo}, {u.window_hi}): "
                                  "its view is not the stored one")
-            got = self.store.get(t)
+            got = self.store.get(t, auth=self.auth)
         if got is not None:
             self._views[t], self._records[t] = got  # type: ignore[assignment]
         else:
@@ -1005,14 +1005,15 @@ def holdout_panel_issued(panel: LabelPanel, opening_id: str) -> bool:
     return cov is not None and cov.opening_id == opening_id
 
 
-def _note_holdout_universe(panel: LabelPanel, auth: guard.HoldoutAuthorization | None) -> str | None:
-    """Called by ``runner_select.holdout_inputs`` (TEST HOOK elsewhere): when its panel was issued under this
-    opening, its universe becomes the opening's W_HOLD universe (first one kept; a different later one is
-    refused). Returns the recorded identity (None for a panel not issued here)."""
+def _note_holdout_universe(panel: LabelPanel, auth: guard.HoldoutAuthorization | None) -> str:
+    """Called by ``runner_select.holdout_inputs`` (TEST HOOK elsewhere): the panel must have been issued by
+    ``label_panel`` under this opening (else HoldoutBlocked: red-team r2 MJ3, an unissued panel is never
+    accepted silently); its universe becomes the opening's W_HOLD universe (first one kept; a different
+    later one is refused). Returns the recorded identity."""
     pin = guard.verified_opening(auth)
     cov = holdout_panel_coverage(panel)
     if cov is None or cov.opening_id != pin["opening_id"]:
-        return None
+        raise guard.HoldoutBlocked("the W_HOLD label panel was not issued by label_panel under this opening")
     prior = _HOLD_UNIVERSE.setdefault(pin["opening_id"], cov.universe)
     if prior != cov.universe:
         raise ValueError("the W_HOLD panel's universe differs from the one already used for this opening")
@@ -1022,6 +1023,64 @@ def _note_holdout_universe(panel: LabelPanel, auth: guard.HoldoutAuthorization |
 def holdout_universe(opening_id: str) -> str | None:
     """The W_HOLD universe identity ``holdout_inputs`` used for the opening (this process), else None."""
     return _HOLD_UNIVERSE.get(opening_id)
+
+
+@dataclass(frozen=True)
+class RunCoverage:
+    """What a W_HOLD book of ``run_book`` was issued for (red-team r2 MJ3): the opening, the run's arm /
+    execution / h*, its window, the universe identity, the score model's fold-model hashes (None: no score
+    model, A0) and, per decision t, the ``max_known_at`` the bound provider recorded (the holdout L1
+    re-check reads these, never a caller function; red-team r2 m1)."""
+
+    opening_id: str
+    arm: str
+    execution: str
+    h: int
+    window: tuple[int, int]
+    universe: str
+    model_hashes: tuple[str, ...] | None
+    known_at: tuple[tuple[int, int | None], ...]
+
+
+# W_HOLD books issued by ``run_book`` under a verified authorization (this process): (opening_id, the run's
+# identity: arm, h*, execution, layer, window and output sha256 ``runrecord.run_output_sha256``, which alone
+# does not name the arm) -> its coverage. ``runner_select.holdout_inputs`` accepts only these.
+_HOLD_RUNS: dict[tuple[str, tuple], RunCoverage] = {}
+
+
+def _run_key(run: BookRun) -> tuple:
+    from luna.v7.runrecord import run_output_sha256  # runtime import, as for the panels
+
+    return (str(run.arm), int(run.h_star), str(run.execution), str(run.layer),
+            (int(run.window[0]), int(run.window[1])), run_output_sha256(run))
+
+
+def _issue_holdout_run(run: BookRun, auth: guard.HoldoutAuthorization | None, *, universe: str,
+                       model_hashes: Sequence[str] | None,
+                       known_at: Sequence[tuple[int, int | None]]) -> str:
+    """Register a W_HOLD book of ``run_book`` under the verified opening ``auth`` (module-private issuer;
+    TEST HOOK in ``tests/v7/test_runner.py`` / ``test_end_to_end_synthetic.py``, whose synthetic universes
+    hold no W_HOLD data). Returns the run's output sha256."""
+    pin = guard.verified_opening(auth)
+    key = _run_key(run)
+    _HOLD_RUNS[(pin["opening_id"], key)] = RunCoverage(
+        pin["opening_id"], str(run.arm), str(run.execution), int(run.h_star),
+        (int(run.window[0]), int(run.window[1])), str(universe),
+        None if model_hashes is None else tuple(str(x) for x in model_hashes),
+        tuple((int(t), None if mk is None else int(mk)) for t, mk in known_at))
+    return key[-1]
+
+
+def holdout_run_coverage(run: BookRun, opening_id: str) -> RunCoverage | None:
+    """The coverage ``run`` (by its identity and output sha256) was issued with by ``run_book`` under
+    the opening ``opening_id`` in this process, else None."""
+    if not isinstance(run, BookRun):
+        return None
+    try:
+        key = _run_key(run)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return None
+    return _HOLD_RUNS.get((str(opening_id), key))
 
 
 # ------------------------------------------------------------------------------------------------ books
@@ -1046,7 +1105,15 @@ def run_book(arm: str, u: ResearchUniverse, provider: DecisionProvider, window: 
         if miss:
             raise ValueError(f"E_M needs aggTrades for {miss}")
     inputs = u.engine_inputs(provider, now_ns, auth)  # checks the universe span (``check_data``)
-    return replace(engine.run(arm, inputs, window, h, model=model, execution=execution), research=True)
+    run = replace(engine.run(arm, inputs, window, h, model=model, execution=execution), research=True)
+    if auth is not None and int(window[0]) < W_HOLD[1] and W_HOLD[0] < int(window[1]):
+        # a W_HOLD book (the engine verified the opening): issued with its provenance (red-team r2 MJ3 / m1)
+        dec = run.decisions
+        ts = [int(t) for t in ns_array(dec["t"], "decisions.t")] if len(dec) else []
+        _issue_holdout_run(run, auth, universe=universe_identity(u),
+                           model_hashes=None if model is None else model.hashes,
+                           known_at=[(t, provider.record(t).max_known_at) for t in ts])
+    return run
 
 
 def decision_log(run: BookRun, provider: DecisionProvider,
@@ -1083,6 +1150,7 @@ __all__ = ["DECISION_CHUNK_NS", "DecisionProvider", "DecisionRecord", "FoldScore
            "LabelPanel", "ResearchUniverse", "SymbolInputs", "UniverseSource", "decision_log",
            "decision_pass",
            "fit_fold_models", "fold_convergence", "halt_windows", "holdout_panel_coverage",
-           "holdout_panel_issued", "holdout_universe", "label_panel", "universe_identity", "PanelCoverage",
+           "holdout_panel_issued", "holdout_run_coverage", "holdout_universe", "label_panel", "RunCoverage",
+           "universe_identity", "PanelCoverage",
            "model_hash",
            "run_book"]

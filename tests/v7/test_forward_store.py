@@ -4,16 +4,26 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+from unittest import mock
 
 import pytest
 
+from luna.v7 import guard
 from luna.v7.forward_store import ForwardStore, SealedBeforeL7, extract_transport_id
 from luna.v7.timeutil import D, to_ns
 from tests.v7 import auth_fixtures as af
 
 T0 = to_ns("2026-10-15")
+
+
+def _at(repo):
+    """The guards' location seam at ``repo`` (None: the real code repository); no API takes a repository."""
+    if repo is None:
+        return contextlib.nullcontext()
+    return mock.patch.object(guard, "_roots", lambda: (repo, repo.parent / "home"))
 L7 = to_ns("2027-10-15")  # canonical: T_F7 = 2026-10-16, R_V6 = 2027-10-14 -> max(T_F7 + 180 d, R_V6) + 1 d
 
 
@@ -38,13 +48,15 @@ def test_forward_store_unreadable_before_l7(tmp_path, monkeypatch):
     none = af.canonical_repo(tmp_path / "none", r_v6=None)  # R_V6 undetermined: L7 unknown
     rec = ForwardStore(tmp_path / "fs").write_raw("https://example/a", b"abc", T0)
     for repo, now in ((canon, L7 - 1), (none, L7 + 5 * D), (None, L7 + 5 * D)):
-        s = ForwardStore(tmp_path / "fs", repo=repo)
-        af.clock(monkeypatch, now)
-        with pytest.raises(SealedBeforeL7):
-            s.read(rec.sha256)
-        with pytest.raises(SealedBeforeL7):
-            list(s.iter_records())
-    s = ForwardStore(tmp_path / "fs", repo=canon)
+        s = ForwardStore(tmp_path / "fs")
+        with _at(repo):
+            af.clock(monkeypatch, now)
+            with pytest.raises(SealedBeforeL7):
+                s.read(rec.sha256)
+            with pytest.raises(SealedBeforeL7):
+                list(s.iter_records())
+    s = ForwardStore(tmp_path / "fs")
+    af.roots(monkeypatch, canon, tmp_path / "home")  # the canonical source: the guards' location seam only
     af.clock(monkeypatch, L7)
     assert s.read(rec.sha256) == b"abc"
     assert [r.sha256 for r in s.iter_records()] == [rec.sha256]
@@ -52,7 +64,8 @@ def test_forward_store_unreadable_before_l7(tmp_path, monkeypatch):
 
 
 def test_read_detects_tampering(tmp_path, monkeypatch):
-    s = ForwardStore(tmp_path / "fs", repo=af.canonical_repo(tmp_path / "canon"))
+    af.roots(monkeypatch, af.canonical_repo(tmp_path / "canon"), tmp_path / "home")
+    s = ForwardStore(tmp_path / "fs")
     rec = s.write_raw("u", b"abc", T0)
     (tmp_path / "fs" / "blobs" / rec.sha256).write_bytes(b"zzz")
     af.clock(monkeypatch, L7)

@@ -19,8 +19,9 @@ S-13.2 / S-13.4 inputs, K3, K8, K11, EC-2, DEC-19; AMB-27). Orchestration only (
 * Leakage (SC-02, AMB-33): ``dev_leakage_checks`` runs ``leakage.run_leakage_checks`` on the S-10.6 fold
   models of a DevSelection (ML*, the fold-model hashes). ``holdout_inputs`` takes that report (it must verify,
   be passed, be for ML* at h* and, with ``dev``, carry dev's fold-model hashes) and builds the holdout-phase
-  report itself (``leakage.run_holdout_checks`` over the four holdout runs with the caller's decision
-  ``records``, e.g. ``DecisionProvider.record``); no free leakage tuple exists any more.
+  report itself (``leakage.run_holdout_checks`` over the four holdout runs with the ``max_known_at`` each run
+  recorded when ``run_book`` issued it, never a caller function: red-team r2 m1); no free leakage tuple
+  exists any more.
 * Verifiable DevSelection (SC-05, AMB-34): a DevSelection is built only by ``dev_selection`` (a module-private
   issuer checked in ``__post_init__``) and carries the sha256 of its canonical record
   (``dev_selection_record``: windows, the S-10.6 result, ML*, the S-10.7 kill, fold nets, the identity and
@@ -31,6 +32,11 @@ S-13.2 / S-13.4 inputs, K3, K8, K11, EC-2, DEC-19; AMB-27). Orchestration only (
   ``guard.verify_authorization``); the LeakageReport must be the pinned one (sha256), the DevSelection (or the
   W_DEV ML* run) the pinned one, the fold-model hashes the pinned ones on every path, and the final model the
   one the report audited (``leakage.model_hash(final_model) == report.final_model_hash``).
+* ``holdout_inputs`` binds the W_HOLD inputs (red-team r2 MJ3, ``_bind_holdout``; refusals K9-logged): the
+  four required runs issued by ``run_book`` under this opening with window == W_HOLD over one universe, ML*
+  scored by the pinned final model alone, the quarter edges == ``windows.hold_quarter_edges()``, and the
+  label panel issued by ``label_panel`` under this opening for h* over the full canonical W_HOLD grid and the
+  books' universe.
 """
 
 from __future__ import annotations
@@ -45,7 +51,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from luna.v7 import cv, guard, leakage, models, runner, runrecord, selection, stats
+from luna.v7 import cv, guard, k9, leakage, models, runner, runrecord, selection, stats
 from luna.v7 import verdict as verdict_mod
 from luna.v7.accounting import account, mean_daily_net, period_net
 from luna.v7.arms import families
@@ -61,7 +67,7 @@ from luna.v7.runner import (
     run_book,
 )
 from luna.v7.verdict import HoldoutInputs, K8Rates
-from luna.v7.windows import W_DEV, decision_times
+from luna.v7.windows import W_DEV, W_HOLD, decision_times, hold_quarter_edges
 
 _DEV_ISSUER = object()  # module-private: only dev_selection builds a DevSelection
 # HoldoutInputs issued by holdout_inputs (by id, weakly held) and the opening they were issued for
@@ -269,7 +275,7 @@ def dev_leakage_checks(dev: DevSelection, samples: Mapping[int, pd.DataFrame], f
 def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: BookRun,  # noqa: N803
                    ml_M: BookRun, a0_M: BookRun, quarter_edges: Sequence[int],  # noqa: N803
                    panel: LabelPanel, final_model: object, leakage_report: leakage.LeakageReport,
-                   records: Callable[[int], object], integrity: Sequence[str],
+                   integrity: Sequence[str],
                    dev: DevSelection | None = None, dev_ml_run: BookRun | None = None,
                    dev_kill: Sequence[str] | None = None, dev_run_store: object = None,
                    secondary: Mapping | None = None, kraken: object = None,
@@ -280,9 +286,12 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
     (``cv.final_model``, or any model with ``predict(df)``) predicts the canonical panel: P7 ``ic`` = (ŷ,
     y_reg, dates), P8 ``calib`` = (ŷ_cal, y_reg, dates), the A1 calibration = (P̂_cal, y_pos, dates); K8 =
     (the panel's invalid-label rate, ``missing_funding_rate`` of the required E_T runs). ``leakage_report``:
-    the passed pre-opening ``leakage.LeakageReport`` of ML*; ``records``: the decision records of the holdout
-    runs (L1 re-check, ``leakage.run_holdout_checks``). Everything is bound to the opening's pin (module
-    docstring). ``secondary``: the S-13.3 family; comparison #5 (ML* Binance vs Kraken) enters ONLY as
+    the passed pre-opening ``leakage.LeakageReport`` of ML*. The holdout L1 re-check
+    (``leakage.run_holdout_checks``) reads the ``max_known_at`` recorded per decision when ``run_book`` issued
+    each run (``runner.RunCoverage.known_at``, the bound provider's records), never a caller function
+    (red-team r2 m1). Everything is bound to the opening's pin (module docstring) and the W_HOLD inputs to the
+    opening's canonical window, grid, quarters, universe and final model (``_bind_holdout``, red-team r2 MJ3).
+    ``secondary``: the S-13.3 family; comparison #5 (ML* Binance vs Kraken) enters ONLY as
     ``kraken`` = ``kraken.comparison(...)`` of this opening for this ML* E_T run (``_kraken_secondary``)."""
     # HoldoutBlocked: forged, the canonical opening missing / not this one, or the verdict already produced
     pin = guard.verify_authorization(auth)
@@ -309,6 +318,8 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
     for name, r in (("ml_T", ml_T), ("a0_T", a0_T), ("ml_M", ml_M), ("a0_M", a0_M), ("W_DEV ML*", dev_run)):
         if not r.research:  # DK-114 / m10: only runs of the research entry point (runner.run_book)
             raise ValueError(f"{name}: not a research run (runner.run_book); its DT4 record would not be one")
+    known = _bind_holdout(pin, {"ml_T": ml_T, "a0_T": a0_T, "ml_M": ml_M, "a0_M": a0_M}, quarter_edges, panel,
+                          int(h))
     rep = leakage_report
     if not isinstance(rep, leakage.LeakageReport) or not leakage.verify_report(rep):
         raise ValueError("leakage_report: a LeakageReport issued by leakage.run_leakage_checks is required")
@@ -354,7 +365,7 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
         raise ValueError("K8: the invalid-label rate is undefined (no labels)")
     k8 = K8Rates(float(panel.invalid_rate), missing_funding_rate([ml_T, a0_T]))
     secondary = _kraken_secondary(secondary, kraken, pin, ml_T)
-    hold = leakage.run_holdout_checks(rep, runs=[ml_T, a0_T, ml_M, a0_M], records=records)
+    hold = leakage.run_holdout_checks(rep, runs=[ml_T, a0_T, ml_M, a0_M], records=known)
     x = HoldoutInputs(ml_T=ml_T, a0_T=a0_T, ml_M=ml_M, a0_M=a0_M,
                          quarter_edges=tuple(int(x) for x in quarter_edges), ic=ic, calib=calib,
                          dev_mean_daily_net=mean_daily_net(account(dev_run)), dev_kill=tuple(kill),
@@ -364,6 +375,81 @@ def holdout_inputs(*, auth: guard.HoldoutAuthorization, ml_T: BookRun, a0_T: Boo
     _ISSUED_INPUTS[id(x)] = x  # the inputs holdout_verdict accepts (issued here, for this opening)
     _INPUT_OPENING[id(x)] = pin["opening_id"]
     return x
+
+
+@dataclass(frozen=True)
+class _Known:
+    """A recorded decision provenance for the holdout L1 re-check (``leakage.run_holdout_checks``)."""
+
+    t: int
+    max_known_at: int | None
+
+
+MJ3_RULE = "DEC-19 / S-13.4 single look: W_HOLD verdict inputs bound to the opening (red-team r2 MJ3)"
+
+
+def _bind_holdout(pin: Mapping, runs: Mapping[str, BookRun], quarter_edges: Sequence[int], panel: LabelPanel,
+                  h: int) -> Callable[[int], _Known]:
+    """Red-team r2 MJ3: refuse (HoldoutBlocked, K9-logged) before anything is computed unless
+    * every required run was issued by ``runner.run_book`` under THIS opening
+      (``runner.holdout_run_coverage``) with window == W_HOLD (the run's and the issued one);
+    * the four runs share one universe identity;
+    * the ML* runs were scored by the pinned final model alone (score-model hashes ==
+      ``(final_model_hash,)``);
+    * ``quarter_edges`` == ``windows.hold_quarter_edges()`` (the 4 calendar quarters of W_HOLD, P5);
+    * the panel was issued by ``runner.label_panel`` under this opening for h*, window == W_HOLD, coverage ==
+      the full canonical grid ``decision_times(*W_HOLD)``, over the runs' universe (the R54 round-3 check).
+    Returns the L1 record function over the runs' recorded ``max_known_at`` (red-team r2 m1)."""
+    try:
+        covs = {}
+        for name, r in runs.items():
+            cov = runner.holdout_run_coverage(r, pin["opening_id"])
+            if cov is None or cov.opening_id != pin["opening_id"]:
+                raise guard.HoldoutBlocked(f"{name}: not a W_HOLD book issued by run_book under this opening")
+            if tuple(int(x) for x in r.window) != tuple(W_HOLD) or cov.window != tuple(W_HOLD):
+                raise guard.HoldoutBlocked(f"{name}: window {tuple(r.window)} is not W_HOLD {W_HOLD}")
+            covs[name] = cov
+        universes = {c.universe for c in covs.values()}
+        if len(universes) != 1:
+            raise guard.HoldoutBlocked("the four W_HOLD books are not over one universe")
+        final = pin["final_model_hash"]
+        for name in ("ml_T", "ml_M"):
+            if final is None or covs[name].model_hashes != (final,):
+                raise guard.HoldoutBlocked(f"{name}: not scored by the pinned final model alone "
+                                           "(final_model_hash)")
+        if tuple(int(x) for x in quarter_edges) != hold_quarter_edges():
+            raise guard.HoldoutBlocked("quarter_edges are not the 4 calendar quarters of W_HOLD (P5)")
+        pc = runner.holdout_panel_coverage(panel)
+        if pc is None or pc.opening_id != pin["opening_id"]:
+            raise guard.HoldoutBlocked("the W_HOLD label panel was not issued by label_panel under this "
+                                       "opening")
+        if pc.h != int(h) or int(panel.h) != int(h):
+            raise guard.HoldoutBlocked(f"the W_HOLD label panel is not for h* = {h}h")
+        if pc.window != tuple(W_HOLD):
+            raise guard.HoldoutBlocked(f"the W_HOLD label panel's window {pc.window} is not W_HOLD {W_HOLD}")
+        grid = {int(t) for t in decision_times(*W_HOLD)}
+        if set(pc.decisions) != grid:
+            n = len(set(pc.decisions) & grid)
+            raise guard.HoldoutBlocked(f"the W_HOLD label panel covers {n} of the {len(grid)} canonical "
+                                       "W_HOLD decisions")
+        if pc.universe not in universes:
+            raise guard.HoldoutBlocked("the W_HOLD label panel is not over the books' universe")
+    except guard.HoldoutBlocked as e:
+        k9.log_refusal(e, request={"kind": "holdout_inputs", "opening_id": str(pin.get("opening_id"))},
+                       rule=MJ3_RULE)
+        raise
+    known: dict[int, int | None] = {}
+    for c in covs.values():
+        for t, mk in c.known_at:
+            prev = known.get(t)
+            known[t] = mk if prev is None else (prev if mk is None else max(prev, mk))
+
+    def record(t: int) -> _Known:
+        if int(t) not in known:
+            raise ValueError(f"decision {t}: no recorded provenance (L1 not checkable)")
+        return _Known(int(t), known[int(t)])
+
+    return record
 
 
 def _kraken_secondary(secondary: Mapping | None, kraken: object, pin: Mapping, ml_T: BookRun  # noqa: N803

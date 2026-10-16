@@ -29,7 +29,6 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC
 from email.utils import parsedate_to_datetime
-from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
 import pandas as pd
@@ -234,7 +233,7 @@ def check(req: Request, *, auth: object = None, cdx_pairs: CdxPairs | None = Non
         if per[1] > n1_hi:
             raise _refuse("N1 file period reaches W_HOLD / M6 (content refused)" if auth is None else
                           "N1 file period reaches past W_HOLD (M6 content refused after the opening)", req)
-        if auth is not None and windows.overlaps(per[0], per[1], windows.m6_cached(guard._roots()[0])):
+        if auth is not None and windows.overlaps(per[0], per[1], windows.m6_cached()):
             raise _refuse("N1 file period overlaps the canonical M6 (content refused)", req)
         return Allowed("N1")
 
@@ -273,14 +272,14 @@ def check(req: Request, *, auth: object = None, cdx_pairs: CdxPairs | None = Non
     raise _refuse("endpoint not on the S-1.7 allowlist", req)
 
 
-def partition_m6_keys(keys: list[str], *, repo: Path | None = None
-                      ) -> tuple[list[str], list[str], list[str]]:
+def partition_m6_keys(keys: list[str]) -> tuple[list[str], list[str], list[str]]:
     """N2, fail closed: (kept, dropped_m6, dropped_unparseable). A key is kept only if it is a directory
     prefix (ends with '/') or has a parseable period that does not overlap M6. W_HOLD keys stay (name only,
     nothing else is read from them). M6 is always the canonical span (``windows.m6_cached``: the hash-checked
     V6 artefacts and R_V6 release record, read once per process); no caller span is taken (SC-06, red-team
-    M5: a hand-built span kept M6 keys)."""
-    m6_span = windows.m6_cached(repo)
+    M5: a hand-built span kept M6 keys) and no caller repository (red-team r2 MJ5: a forged scratch repository
+    emptied M6)."""
+    m6_span = windows.m6_cached()
     kept: list[str] = []
     m6_dropped: list[str] = []
     unparseable: list[str] = []
@@ -295,6 +294,6 @@ def partition_m6_keys(keys: list[str], *, repo: Path | None = None
     return kept, m6_dropped, unparseable
 
 
-def drop_m6_keys(keys: list[str], *, repo: Path | None = None) -> list[str]:
+def drop_m6_keys(keys: list[str]) -> list[str]:
     """N2: the keys that survive ``partition_m6_keys`` (M6 and unparseable keys dropped in memory)."""
-    return partition_m6_keys(keys, repo=repo)[0]
+    return partition_m6_keys(keys)[0]

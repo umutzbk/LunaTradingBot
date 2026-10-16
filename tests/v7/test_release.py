@@ -24,9 +24,15 @@ LATE_KEY = "data/futures/um/monthly/klines/BTCUSDT/15m/BTCUSDT-15m-2027-11.zip"
 OLD_KEY = "data/futures/um/monthly/klines/BTCUSDT/15m/BTCUSDT-15m-2025-06.zip"
 
 
+def _at(repo):
+    """The guards' single location seam (``guard._roots``) pointed at ``repo`` (no API takes a repository:
+    round 3 m-c, red-team r2 MJ5)."""
+    return mock.patch.object(guard, "_roots", lambda: (repo, repo.parent / "home"))
+
+
 def _cow(repo, *args, **kw):
     """``check_outcome_window`` with the guard's location seam at ``repo`` (round 3 m-c: no caller repo)."""
-    with mock.patch.object(guard, "_roots", lambda: (repo, repo.parent / "home")):
+    with _at(repo):
         guard.check_outcome_window(*args, **kw)
 
 
@@ -38,21 +44,23 @@ def canon(tmp_path):
 def test_without_a_record_m6_is_open_and_l7_undefined(tmp_path, monkeypatch):
     r = af.release_repo(tmp_path / "bare")
     release.cache_clear()
-    assert windows.m6(r) == (M6_START, None) and windows.m6_cached(r) == (M6_START, None)
-    assert release.r_v6(r) is None and release.t_f7(r) is None and forward.l7(r) is None
+    with _at(r):
+        assert windows.m6() == (M6_START, None) and windows.m6_cached() == (M6_START, None)
+        assert release.r_v6(r) is None and release.t_f7(r) is None and forward.l7() is None
     af.clock(monkeypatch, to_ns("2040-01-01"))
     with pytest.raises(guard.EmbargoBlocked):
         _cow(r, M6_START, M6_START + D, now_ns=to_ns("2040-01-01"))
-    with pytest.raises(SealedBeforeL7):
-        forward.require_l7(r)
+    with _at(r), pytest.raises(SealedBeforeL7):
+        forward.require_l7()
     # the real repository has no release record either
     assert release.r_v6() is None and forward.l7() is None
 
 
 def test_canonical_record_ends_m6_and_derives_l7(canon):
     assert release.r_v6(canon) == R_V6 and release.t_f7(canon) == TF7
-    assert windows.m6(canon) == (M6_START, R_V6) == windows.m6_cached(canon)
-    assert forward.l7(canon) == L7 and forward.l7(canon, extended=True) == L7  # R_V6 dominates
+    with _at(canon):
+        assert windows.m6() == (M6_START, R_V6) == windows.m6_cached()
+        assert forward.l7() == L7 and forward.l7(extended=True) == L7  # R_V6 dominates
     rel = release.rv6_release(canon)
     assert rel.basis == "a" and len(rel.evidence_sha256) == 64 and len(rel.record_sha256) == 64
 
@@ -61,16 +69,19 @@ def test_early_written_release_and_extension(tmp_path):
     r = af.canonical_repo(tmp_path / "c", r_v6="2027-01-01T00:00:00Z", basis="c",
                           status="released_in_writing")
     assert release.r_v6(r) == to_ns("2027-01-01")
-    assert forward.l7(r) == TF7 + 181 * D and forward.l7(r, extended=True) == TF7 + 271 * D
+    with _at(r):
+        assert forward.l7() == TF7 + 181 * D and forward.l7(extended=True) == TF7 + 271 * D
 
 
 def test_forward_l7_cannot_be_fed_a_guessed_r_v6(canon):
     params = inspect.signature(forward.l7).parameters
-    assert "r_v6" not in params and "t_f7_ns" not in params
+    assert "r_v6" not in params and "t_f7_ns" not in params and "repo" not in params
     with pytest.raises(TypeError):
         forward.l7(TF7, R_V6)  # type: ignore[call-arg]
     with pytest.raises(TypeError):
         forward.l7(canon, r_v6=to_ns("2026-11-01"))  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        forward.l7(canon)  # type: ignore[call-arg]  (red-team r2 MJ5: no caller repository)
     assert "now_ns" not in inspect.signature(forward.require_l7).parameters
     assert not {"r_v6", "now_ns", "t_f7"} & {f for f in forward.ForwardInputs.__dataclass_fields__}
 
@@ -89,15 +100,16 @@ def test_store_sealed_regardless_of_arguments(tmp_path, monkeypatch, canon):
         s.read(rec.sha256)
     with pytest.raises(SealedBeforeL7):
         list(s.iter_records())
-    c = ForwardStore(tmp_path / "fs", repo=canon)  # the canonical source injected like repo / home
-    for now in (TF7 + 180 * D, R_V6, L7 - 1):
-        af.clock(monkeypatch, now)
-        with pytest.raises(SealedBeforeL7):
-            c.read(rec.sha256)
-        with pytest.raises(SealedBeforeL7):
-            list(c.iter_records())
-    af.clock(monkeypatch, L7)
-    assert c.read(rec.sha256) == b"abc" and [r.sha256 for r in c.iter_records()] == [rec.sha256]
+    c = ForwardStore(tmp_path / "fs")
+    with _at(canon):  # the canonical source: only through the guards' location seam
+        for now in (TF7 + 180 * D, R_V6, L7 - 1):
+            af.clock(monkeypatch, now)
+            with pytest.raises(SealedBeforeL7):
+                c.read(rec.sha256)
+            with pytest.raises(SealedBeforeL7):
+                list(c.iter_records())
+        af.clock(monkeypatch, L7)
+        assert c.read(rec.sha256) == b"abc" and [r.sha256 for r in c.iter_records()] == [rec.sha256]
 
 
 @pytest.mark.parametrize("variant", ["record_hash", "evidence_hash", "holdout_doc_hash", "lightweight_tag",
@@ -119,7 +131,8 @@ def test_unverified_release_record_is_absent(tmp_path, variant):
           "before_evidence": dict(evidence_at="2027-10-15T00:00:00Z")}[variant]
     r = af.canonical_repo(tmp_path / variant, **kw)
     assert release.rv6_release(r) is None and release.r_v6(r) is None
-    assert windows.m6(r) == (M6_START, None) and forward.l7(r) is None
+    with _at(r):
+        assert windows.m6() == (M6_START, None) and forward.l7() is None
     assert release.t_f7(r) == TF7  # the review record is independent and still verifies
 
 
@@ -128,10 +141,12 @@ def test_unverified_review_record_is_absent(tmp_path, monkeypatch):
     af.add_release(r, "2027-10-14T00:00:00Z")
     af.add_review(r, "2026-10-15T00:00:00Z", tamper_record=True)
     release.cache_clear()
-    assert release.r_v6(r) == R_V6 and release.t_f7(r) is None and forward.l7(r) is None
+    assert release.r_v6(r) == R_V6 and release.t_f7(r) is None
     af.clock(monkeypatch, to_ns("2040-01-01"))
-    with pytest.raises(SealedBeforeL7):
-        ForwardStore(tmp_path / "fs", repo=r).read("a" * 64)
+    with _at(r):
+        assert forward.l7() is None
+        with pytest.raises(SealedBeforeL7):
+            ForwardStore(tmp_path / "fs").read("a" * 64)
 
 
 def test_netguard_takes_no_caller_span(canon):
@@ -142,7 +157,8 @@ def test_netguard_takes_no_caller_span(canon):
     with pytest.raises(TypeError):
         netguard.partition_m6_keys(keys, m6_span=(M6_START, M6_START + 1))  # type: ignore[call-arg]
     assert netguard.drop_m6_keys(keys) == [OLD_KEY]  # canonical span: R_V6 undetermined, open-ended
-    kept, dropped, bad = netguard.partition_m6_keys(keys, repo=canon)
+    with _at(canon):
+        kept, dropped, bad = netguard.partition_m6_keys(keys)
     assert kept == [OLD_KEY, LATE_KEY] and dropped == [M6_KEY] and bad == []
 
 
@@ -201,7 +217,8 @@ def test_extension_records_stay_sealed_until_the_extended_l7(tmp_path, monkeypat
     extended L7 even after the base look."""
     r = af.canonical_repo(tmp_path / "early", r_v6="2027-01-01T00:00:00Z", basis="c",
                           status="released_in_writing")
-    s = ForwardStore(tmp_path / "fs", repo=r)
+    s = ForwardStore(tmp_path / "fs")
+    monkeypatch.setattr(guard, "_roots", lambda: (r, r.parent / "home"))
     a = s.write_raw("u", b"in window", TF7 + H)
     b = s.write_raw("u", b"in extension", TF7 + 180 * D)
     again = s.write_raw("u", b"in window", TF7 + 200 * D)  # the same bytes again in the extension
@@ -219,3 +236,34 @@ def test_outcome_guard_takes_no_caller_repo():
     """Round 3 m-c: the M6 / R_V6 / T_F7 / L7 source of the outcome guard is the canonical code repository
     (``guard._roots``), never a caller argument."""
     assert "repo" not in inspect.signature(guard.check_outcome_window).parameters
+
+
+def test_forged_scratch_repo_cannot_unseal_the_forward_store_or_m6(tmp_path, monkeypatch):
+    """Red-team r2 probe P2 (MJ5): a scratch git repository holding valid-looking R_V6 (basis (c), at the V6
+    holdout start) and review-pass (2020) records under annotated tags made ``ForwardStore(repo=fake).read``
+    return the sealed body and emptied M6 in ``partition_m6_keys(repo=fake)``. No forward / M6 function takes
+    a repository any more; the canonical sources (``guard._roots``: the real code repository here) stay
+    sealed whatever the trusted clock."""
+    fake = af.canonical_repo(tmp_path / "fake", r_v6="2026-07-01T00:00:00Z", basis="c",
+                             status="released_in_writing", review_pass="2020-01-01T00:00:00Z")
+    assert release.l7(fake) is not None  # the forged records do verify as records of THAT repository
+    store = ForwardStore(tmp_path / "fs")
+    rec = store.write_raw("https://www.binance.com/x", b"announcement body", TF7 + H)
+    for call in (lambda: ForwardStore(tmp_path / "fs", repo=fake), lambda: forward.l7(fake),
+                 lambda: forward.require_l7(fake), lambda: forward.r_v6_strict_default(fake),
+                 lambda: windows.m6(fake), lambda: windows.m6_cached(fake),
+                 lambda: netguard.partition_m6_keys([M6_KEY], repo=fake),
+                 lambda: netguard.drop_m6_keys([M6_KEY], repo=fake)):
+        with pytest.raises(TypeError):
+            call()  # passing a repository is impossible
+    for fn in (forward.forward_evaluate, forward.forward_verdict, forward.l7, forward.require_l7,
+               windows.m6, windows.m6_cached, netguard.partition_m6_keys, netguard.drop_m6_keys,
+               ForwardStore.__init__):
+        assert "repo" not in inspect.signature(fn).parameters
+    af.clock(monkeypatch, to_ns("2040-01-01"))
+    assert forward.l7() is None  # the canonical (real) repository has no release / review records
+    with pytest.raises(SealedBeforeL7):
+        store.read(rec.sha256)
+    with pytest.raises(SealedBeforeL7):
+        list(store.iter_records())
+    assert netguard.partition_m6_keys([M6_KEY]) == ([], [M6_KEY], [])  # M6 open-ended: the key is dropped

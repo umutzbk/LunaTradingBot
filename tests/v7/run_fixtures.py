@@ -6,9 +6,12 @@ so every equity sum is exact in float64 (a run without fills has a zero K10 / da
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pandas as pd
 
+from luna.v7 import runner, windows
 from luna.v7.book.engine import BookRun
 from luna.v7.timeutil import MIN, D, to_ns
 
@@ -56,3 +59,45 @@ def funding_run(nets, *, arm="A2", h=24, execution="E_T", lo=LO, invalid=None, m
                    funding_flows=pd.DataFrame(flows), daily=pd.DataFrame(rows),
                    decisions=pd.DataFrame(dict(t=[lo], killed=[False])) if decisions is None else decisions,
                    integrity=(), invalid=invalid)
+
+
+# --- W_HOLD books for holdout_inputs (red-team r2 MJ3) ----------------------------------------------------
+
+HOLD_U = "c" * 64  # the synthetic universe identity of the issued W_HOLD books and panels
+HOLD_GRID = tuple(int(t) for t in windows.decision_times(*windows.W_HOLD))  # the canonical W_HOLD grid
+_TS_COLS = ("ts", "t", "start_ts", "end_ts", "entry_decision_ts")
+
+
+def _shift(df: pd.DataFrame, off: int) -> pd.DataFrame:
+    df = df.copy()
+    for c in _TS_COLS:
+        if c in df.columns:
+            if pd.api.types.is_numeric_dtype(df[c]):
+                df[c] = df[c] + off
+            else:
+                df[c] = [v if v is None or (isinstance(v, float) and np.isnan(v)) else int(v) + off
+                         for v in df[c]]
+    if "day" in df.columns:
+        df["day"] = df["day"] + off // D
+    return df
+
+
+def to_hold(run: BookRun) -> BookRun:
+    """A synthetic W_DEV book moved by whole days into W_HOLD (every timestamp column, the day index; window
+    = W_HOLD): the synthetic universes hold no W_HOLD data, so W_HOLD books reach ``holdout_inputs`` through
+    the documented TEST HOOK ``runner._issue_holdout_run`` (``issue_hold``)."""
+    off = windows.W_HOLD[0] - (int(run.window[0]) // D) * D + 7 * D
+    tabs = {k: _shift(getattr(run, k), off) for k in ("fills", "marks", "positions", "funding_flows", "daily",
+                                                      "decisions")}
+    return replace(run, window=windows.W_HOLD, **tabs,
+                   invalid_ts=None if run.invalid_ts is None else int(run.invalid_ts) + off)
+
+
+def issue_hold(run: BookRun, auth, *, universe: str = HOLD_U, model_hashes=None,
+               late: bool = False) -> BookRun:
+    """``run_book``'s W_HOLD issuer (TEST HOOK) with each decision's recorded max_known_at (t - 1 min; t for
+    ``late``: an L1 leak)."""
+    ts = [int(t) for t in run.decisions["t"]] if len(run.decisions) else []
+    runner._issue_holdout_run(run, auth, universe=universe, model_hashes=model_hashes,
+                              known_at=[(t, t if late else t - MIN) for t in ts])
+    return run

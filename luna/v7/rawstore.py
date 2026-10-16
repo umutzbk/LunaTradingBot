@@ -796,7 +796,7 @@ def _padded(lo: int, hi: int, pad: int, auth: guard.HoldoutAuthorization | None)
     bound = store_bound(auth)
     if hi <= bound:
         p_hi = min(p_hi, bound)
-    m6_lo, m6_hi = windows.m6_cached(guard._roots()[0])
+    m6_lo, m6_hi = windows.m6_cached()
     if hi <= m6_lo:
         p_hi = min(p_hi, m6_lo)
     if m6_hi is not None and lo >= m6_hi:

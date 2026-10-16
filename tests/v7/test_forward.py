@@ -3,12 +3,13 @@ canonical release / review-pass fixture repositories (``auth_fixtures``, SC-06);
 pinned per test (``auth_fixtures.clock``)."""
 
 from dataclasses import replace
+from unittest import mock
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from luna.v7 import forward, release, stats, verdict
+from luna.v7 import forward, guard, release, stats, verdict
 from luna.v7.accounting import account
 from luna.v7.book.execution import INVALID_TERMINAL
 from luna.v7.forward import (
@@ -63,12 +64,20 @@ def _clock(repos, monkeypatch):
     af.clock(monkeypatch, NOW)
 
 
+def _at(which):
+    """The guards' location seam at the canonical source ``which`` (no forward API takes a repository)."""
+    repo = REPOS[which]
+    return mock.patch.object(guard, "_roots", lambda: (repo, repo.parent / "home"))
+
+
 def evaluate(x, which="strict"):
-    return forward_evaluate(x, repo=REPOS[which])
+    with _at(which):
+        return forward_evaluate(x)
 
 
 def verdict_of(x, which="strict"):
-    return forward_verdict(x, repo=REPOS[which])
+    with _at(which):
+        return forward_verdict(x)
 
 
 def inputs(**kw):
@@ -102,10 +111,14 @@ def test_l7_strict_default(repos):
     strict = forward.r_v6_strict_default()
     assert strict == to_ns("2027-10-14")  # V6 day-365 look (S-1.1 table), S-1.2 (a)
     assert release.r_v6(repos["strict"]) == strict == R_V6 and release.t_f7(repos["strict"]) == TF7
-    assert l7(repos["strict"]) == to_ns("2027-10-15") and l7(repos["strict"]) >= to_ns("2027-10-14")
-    assert l7(repos["none"]) is None and l7() is None  # R_V6 unknown: no look
-    assert l7(repos["early"]) == TF7 + 181 * D  # e.g. a written release (c) before the forward end
-    assert l7(repos["early"], extended=True) == TF7 + 271 * D
+    with _at("strict"):
+        assert l7() == to_ns("2027-10-15") and l7() >= to_ns("2027-10-14")
+    with _at("none"):
+        assert l7() is None  # R_V6 unknown: no look
+    assert l7() is None  # the real repository: no canonical records
+    with _at("early"):
+        assert l7() == TF7 + 181 * D  # e.g. a written release (c) before the forward end
+        assert l7(extended=True) == TF7 + 271 * D
     assert forward.FORWARD_BLOCKS["T_cal"] == (to_ns("2026-01-01"), to_ns("2026-07-01"))
 
 
@@ -116,12 +129,13 @@ def test_no_outcome_before_l7(p4_ok, monkeypatch):
     af.clock(monkeypatch, to_ns("2030-01-01"))
     with pytest.raises(SealedBeforeL7):
         evaluate(inputs(), "none")  # R_V6 undetermined: never, whatever the clock
-    with pytest.raises(SealedBeforeL7):
-        forward.require_l7(REPOS["none"])
+    with _at("none"), pytest.raises(SealedBeforeL7):
+        forward.require_l7()
     with pytest.raises(SealedBeforeL7):
         forward_evaluate(inputs())  # the real repository: no canonical records
     af.clock(monkeypatch, to_ns("2027-10-15"))
-    assert forward.require_l7(REPOS["strict"]) == to_ns("2027-10-15")
+    with _at("strict"):
+        assert forward.require_l7() == to_ns("2027-10-15")
     assert verdict_of(inputs()) == forward.GO_NOT_DEPLOYABLE
     v = evaluate(inputs(outcome_before_l7=("P&L displayed 2027-03-01",)))
     assert v.cls == forward.INVALID and "outcome computed before L7" in v.reasons[0]

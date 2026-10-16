@@ -440,7 +440,7 @@ def check_data_span(lo_ns: int, hi_ns: int, *, auth: HoldoutAuthorization | None
 def _outcome_window(lo: int, hi: int, auth: object, now_ns: int, m6_span: tuple[int, int | None] | None,
                     fresh: bool) -> None:
     repo = _roots()[0]
-    span = windows.m6_cached(repo)
+    span = windows.m6_cached()
     if m6_span is not None and tuple(m6_span) != tuple(span):
         raise EmbargoBlocked(f"m6_span {m6_span} differs from the canonical M6 {span} (S-1.2, S-1.3)")
     if windows.overlaps(lo, hi, span) and not _released(span[1], now_ns):

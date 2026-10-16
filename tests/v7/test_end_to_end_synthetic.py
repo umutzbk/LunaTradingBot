@@ -10,7 +10,8 @@ A0 and A2 under E_T and E_M (engine, L-norm) -> §8 accounting -> K10 / daily id
 triggers and the S-13.1 paired bootstrap -> verdict stage (``runner_select.holdout_inputs`` with a real
 synthetic opening per pass (``auth_fixtures.authorize``: frozen repo, injected home, pre-opening record of a
 DevSelection with these books issued through the documented test hook and the real passed LeakageReport of
-the ``leak_fixtures`` fold models, whose final model then scores the holdout panel, I-2) on a W_DEV window,
+the ``leak_fixtures`` fold models, whose final model then scores the holdout panel, I-2; the books moved by
+whole days into W_HOLD and issued, with the panel, through the documented test hooks: red-team r2 MJ3),
 ``verdict.holdout``; if the S-10.7 kill fired, ``verdict.classify`` with it). Both passes must give
 byte-identical outputs (sha256 of every key frame, the decision provenance logs and the Verdict). Everything
 is dated 2022 - early 2023 on the real calendar, inside W_DEV: the guards (labels, engine) run unmodified
@@ -38,6 +39,7 @@ from luna.v7.timeutil import D
 from tests.v7 import auth_fixtures as af
 from tests.v7 import fixtures_v7 as fx
 from tests.v7 import leak_fixtures as lf
+from tests.v7 import run_fixtures as rf
 
 SEED = 7
 SAMPLE_EVERY = 7  # every 7th day of the 4-day sample grid -> 28-day spacing, 11 sample decisions
@@ -88,11 +90,20 @@ def run_pipeline(seed: int, base, monkeypatch) -> tuple[dict[str, str], dict]:
         sha = store.put(r)
         back = store.load(sha, file_sha256=run_file_sha256(r))
         assert run_output_sha256(back) == sha and encode_run(back) == encode_run(r)
-    x = holdout_inputs(auth=opened.auth, ml_T=runs["A2"], a0_T=runs["A0"],
-                       ml_M=em["A2"], a0_M=em["A0"],
-                       quarter_edges=edges, panel=hold, final_model=lf.final(fx.H_STAR, "en"),
+    # red-team r2 MJ3: holdout_inputs takes only W_HOLD books and the W_HOLD panel issued under the opening
+    # (window, grid, quarters, universe, final model); the synthetic universe holds no W_HOLD data, so the
+    # books are moved by whole days into W_HOLD and issued, with the panel, through the documented TEST HOOKS
+    final = lf.final(fx.H_STAR, "en")
+    fh = runner.model_hash(final)
+    hr = {k: rf.issue_hold(rf.to_hold(r), opened.auth, model_hashes=(fh,) if k.startswith("A2") else None)
+          for k, r in {**runs, **{f"{k}_EM": r for k, r in em.items()}}.items()}
+    runner._issue_holdout_panel(hold, opened.auth, decisions=rf.HOLD_GRID, window=windows.W_HOLD,
+                                universe=rf.HOLD_U)
+    x = holdout_inputs(auth=opened.auth, ml_T=hr["A2"], a0_T=hr["A0"],
+                       ml_M=hr["A2_EM"], a0_M=hr["A0_EM"],
+                       quarter_edges=windows.hold_quarter_edges(), panel=hold, final_model=final,
                        dev_run_store=store, dev_kill=(), leakage_report=opened.auth.leakage_report,
-                       records=prov.record, integrity=(), B=B_SMALL)
+                       integrity=(), B=B_SMALL)
     v = holdout_verdict(x, auth=opened.auth)  # writes the verdict marker
     v_kill = None
     if kill:

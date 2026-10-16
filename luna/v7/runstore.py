@@ -356,7 +356,9 @@ class RunStore:
 
     def load(self, output_sha256: str, *, file_sha256: str,
              auth: guard.HoldoutAuthorization | None = None) -> BookRun:
-        """The persisted run ``output_sha256`` whose run.json has the (pinned) sha256 ``file_sha256``."""
+        """The persisted run ``output_sha256`` whose run.json has the (pinned) sha256 ``file_sha256``. The
+        data guard runs on the manifest's window, then (red-team r2 m3) on the window of the pinned run.json
+        itself, before any frame file is read or decoded; the decoded run must have that window."""
         k9.require()
         for v in (output_sha256, file_sha256):
             if not isinstance(v, str) or not _SHA.match(v):
@@ -369,14 +371,29 @@ class RunStore:
         d = self.root / str(e["dir"])
         if e["sha256"] != file_sha256:
             _integrity(f"{d}: manifest run.json sha256 {e['sha256']} is not the pinned {file_sha256}", d)
-        files: dict[str, bytes] = {}
-        for name in e["files"]:
+        names = list(e["files"])
+        for name in names:
             if not _plain_name(name):
                 _integrity(f"{d}: invalid file name {name!r} in the run manifest", d)
-            with open(d / name, "rb") as f:
-                files[name] = f.read()
-        if hashlib.sha256(files.get(RUN_FILE, b"")).hexdigest() != file_sha256:
+        if RUN_FILE not in names:
+            _integrity(f"{d}: the run manifest lists no {RUN_FILE}", d)
+        with open(d / RUN_FILE, "rb") as f:
+            head = f.read()
+        if hashlib.sha256(head).hexdigest() != file_sha256:
             _integrity(f"{d / RUN_FILE}: sha256 differs from the pinned {file_sha256}", d / RUN_FILE)
+        try:  # the pinned record's own window, guarded before any frame is read (m3)
+            w = _dec(json.loads(head)["scalars"]["window"])
+            rec_window = (int(w[0]), int(w[1]))  # type: ignore[index]
+        except (IntegrityBlocker, KeyError, ValueError, TypeError, IndexError) as err:
+            _integrity(f"{d}: run.json has no valid window ({type(err).__name__}: {err})", d / RUN_FILE)
+        guard.check_data_span(*rec_window, auth=auth, what=f"persisted run {output_sha256[:12]} (record)")
+        if rec_window != window:
+            _integrity(f"{d}: the record's window {rec_window} is not the manifest's {window}", d)
+        files: dict[str, bytes] = {RUN_FILE: head}
+        for name in names:
+            if name != RUN_FILE:
+                with open(d / name, "rb") as f:
+                    files[name] = f.read()
         try:
             run = decode_run(files)
         except (IntegrityBlocker, KeyError, ValueError, TypeError, pa.ArrowException) as err:

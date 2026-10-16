@@ -351,10 +351,10 @@ class Fetcher:
                     raise FetchError("N2 listing entry without a key or an integer size") from None
             elif tag == "CommonPrefixes":
                 prefixes += [(x.text or "") for x in c if _local(x.tag) == "Prefix"]
-        kept, m6, bad = netguard.partition_m6_keys([k for k, _, _ in raw], repo=guard._roots()[0])
+        kept, m6, bad = netguard.partition_m6_keys([k for k, _, _ in raw])
         keep = set(kept)
         entries = tuple(ListingEntry(k, s, ck) for k, s, ck in raw if k in keep)
-        cps = tuple(p for p in netguard.drop_m6_keys(prefixes, repo=guard._roots()[0]))
+        cps = tuple(p for p in netguard.drop_m6_keys(prefixes))
         return Listing(want, entries, cps, len(m6), len(bad))
 
     def _register_cdx(self, req: Request, body: bytes, auth) -> tuple[tuple[str, str], ...]:

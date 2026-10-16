@@ -14,7 +14,8 @@ refuses M6 before R_V6 and W_FWD7 before L7.
   canonical, hash-checked R_V6 release and T_F7 review-pass records (``luna.v7.release``, SC-06 / AMB-34): no
   caller supplies R_V6, T_F7, L7 or the time. Either record absent or not verifying → L7 is None and every
   forward outcome computation is refused (``SealedBeforeL7``), as is any call before L7 on the guards' trusted
-  clock (``release.trusted_now_ns``). The canonical source is injectable (``repo``) like every other guard.
+  clock (``release.trusted_now_ns``). The canonical source is the guards' repository (``guard._roots``); no
+  function takes a repository (red-team r2 MJ5).
 * **Evaluability (DEC-42):** a quarter is evaluable when every PRIMARY replay input is present and fresh
   (book-top / depth / ticker are diagnostic and ignored; the exchange-filter snapshot is required only for
   the D1–D3 deployment evaluation); a day is evaluable when ≥ 90 % of its 96 quarters are; a recorder gap
@@ -97,25 +98,34 @@ def w_fwd7(t_f7_ns: int, extended: bool = False) -> tuple[int, int]:
     return t, t + (FW.days + (FW.extension_days if extended else 0)) * D
 
 
-def l7(repo: Path | None = None, *, extended: bool = False) -> int | None:
+def _canonical_repo() -> Path:
+    """The canonical code repository: the guards' single location seam (``guard._roots``; tests monkeypatch
+    it). No forward function takes a repository (red-team r2 MJ5)."""
+    from luna.v7 import guard  # local: guard -> forward_store; keep the import graph acyclic
+
+    return Path(guard._roots()[0])
+
+
+def l7(*, extended: bool = False) -> int | None:
     """L7 = max(T_F7 + 180 d, R_V6) + 1 d (the extended end after the extension) from the canonical records
     only (``release.l7``); None while either is absent or does not verify (the look is refused). There is no
-    R_V6 / T_F7 argument: a guessed R_V6 cannot produce an L7 (red-team M5)."""
-    return release.l7(repo, extended=extended)
+    R_V6 / T_F7 argument: a guessed R_V6 cannot produce an L7 (red-team M5), and no repository argument: a
+    forged scratch repository cannot either (red-team r2 MJ5)."""
+    return release.l7(_canonical_repo(), extended=extended)
 
 
-def r_v6_strict_default(repo: Path | None = None) -> int:
+def r_v6_strict_default() -> int:
     """The date of S-1.2 (a), V6's day-365 look (2027-10-14T00:00Z, from the hash-checked V6 artefacts): the
     strict default under which §15 states L7 ≥ 2027-10-14. It is NOT a lower bound of R_V6: R_V6 is the
     EARLIEST of (a), (b) and (c), so a terminal V6 look (b) or a written release (c) can make it earlier;
     and (a) itself needs the look's completion and report, so R_V6 is an input, never derived here."""
-    return v6_artifacts(repo).looks[2]
+    return v6_artifacts(_canonical_repo()).looks[2]
 
 
-def require_l7(repo: Path | None = None, *, extended: bool = False) -> int:
+def require_l7(*, extended: bool = False) -> int:
     """Refuse every forward outcome computation before the canonical L7 on the trusted clock, or while L7 is
     undetermined; returns L7."""
-    v = l7(repo, extended=extended)
+    v = l7(extended=extended)
     if v is None or release.trusted_now_ns() < v:
         raise SealedBeforeL7("no forward outcome is computed before L7 or while R_V6 / T_F7 is undetermined "
                              "(§15; canonical records, trusted clock)")
@@ -324,13 +334,13 @@ def _ledger_ok(run: BookRun):
     return (led, None) if k10_ok(led) and daily_ok(led) else (None, verdict.INTEGRITY_K10)
 
 
-def forward_evaluate(x: ForwardInputs, *, repo: Path | None = None) -> ForwardVerdict:
+def forward_evaluate(x: ForwardInputs) -> ForwardVerdict:
     """The single forward look (§15). Raises before the canonical L7 / with R_V6 or T_F7 undetermined (nothing
     is computed). W_FWD7 comes from the canonical T_F7."""
     if x.holdout_class != verdict.ADVANCE:
         raise NoForwardTest(f"W_HOLD verdict {x.holdout_class!r}: no forward test (§15 precondition)")
-    require_l7(repo, extended=x.extended)
-    win = w_fwd7(release.t_f7(repo), x.extended)  # type: ignore[arg-type]  (defined: L7 exists)
+    require_l7(extended=x.extended)
+    win = w_fwd7(release.t_f7(_canonical_repo()), x.extended)  # type: ignore[arg-type]  (defined: L7 exists)
     for name, r in (("ML*", x.ml), ("A0", x.a0)):
         if r is None:
             continue
@@ -408,9 +418,9 @@ def forward_evaluate(x: ForwardInputs, *, repo: Path | None = None) -> ForwardVe
     return ForwardVerdict(cls, tuple(reasons), crit, missing, ext, a0_from, comp, det)
 
 
-def forward_verdict(x: ForwardInputs, *, repo: Path | None = None) -> Verdict:
+def forward_verdict(x: ForwardInputs) -> Verdict:
     """The §15 verdict string of ``forward_evaluate``."""
-    return forward_evaluate(x, repo=repo).cls  # type: ignore[return-value]
+    return forward_evaluate(x).cls  # type: ignore[return-value]
 
 
 __all__ = ["COMPLETE", "DEPLOY_INPUTS", "DIAGNOSTIC_INPUTS", "FORWARD_BLOCKS", "GO", "GO_NOT_DEPLOYABLE",
