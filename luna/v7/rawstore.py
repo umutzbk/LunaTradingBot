@@ -106,7 +106,7 @@ from luna.v7.data.schema import KNOWN_AT_OFFSET_NS, IntegrityBlocker
 from luna.v7.data.terminal import TerminalEvent
 from luna.v7.features import R4Bars
 from luna.v7.runner import SymbolInputs
-from luna.v7.timeutil import ns_array
+from luna.v7.timeutil import D, ns_array
 from luna.v7.universe import Identity
 
 __all__ = ["DEFAULT_CACHE_BYTES", "FORMAT", "LEDGER", "MAX_SCALE", "TABLES", "ChunkCache", "FundingLoader",
@@ -1243,13 +1243,15 @@ class FundingLoader:
 @dataclass(frozen=True)
 class SymbolMeta:
     """The per-symbol inputs that are not raw time series of this store: instances (R1 stage), the R1
-    identity, R11 notice versions, classified terminal events, optional (E_M) aggTrades."""
+    identity, R11 notice versions, classified terminal events, optional (E_M) aggTrades: a frame (ts, price,
+    qty; sorted by ts), or (red-team r2 MJ1 round 2) a per-UTC-day loader ``day(symbol, day_start) -> frame``
+    of that day's trades (R10: one daily file per symbol and UTC day), read lazily by the outcome side."""
 
     insts: list[Instance]
     identity: Identity | Mapping[int, Identity] | None  # per symbol, or per instance idx (R1)
     notices: tuple[NoticeVersion, ...]
     terminals: Mapping[int, TerminalEvent]
-    aggtrades: pd.DataFrame | None = None
+    aggtrades: object = None  # pd.DataFrame | Callable[[str, int], pd.DataFrame] | None
 
 
 class StoreSource:
@@ -1260,7 +1262,9 @@ class StoreSource:
     def __init__(self, store: RawStore, meta: Mapping[str, SymbolMeta], *,
                  auth: guard.HoldoutAuthorization | None = None, cache: ChunkCache | None = None,
                  budget_bytes: int = DEFAULT_CACHE_BYTES,
-                 lazy_1m_budget_bytes: int = lazy1m.LAZY_1M_CACHE_BYTES) -> None:
+                 lazy_1m_budget_bytes: int = lazy1m.LAZY_1M_CACHE_BYTES,
+                 lazy_15m_budget_bytes: int = lazy1m.LAZY_15M_CACHE_BYTES,
+                 lazy_agg_budget_bytes: int = lazy1m.LAZY_AGG_CACHE_BYTES) -> None:
         self.cache = cache if cache is not None else ChunkCache(budget_bytes)
         self.store = store
         self.auth = auth
@@ -1271,6 +1275,11 @@ class StoreSource:
         # the outcome side's lazy 1-minute reads: R5 with its own cache (AMB-38 (h)), so the universe's other
         # tables never evict the (symbol, month) chunks the labels / books are moving through
         self.r5_lazy = TableLoader(store, "R5", auth=auth, cache=ChunkCache(lazy_1m_budget_bytes))
+        # round 2: the R3 / R4 mark bars and the aggTrades days of the outcome side, each with its own cache
+        c15 = ChunkCache(lazy_15m_budget_bytes)
+        self.r3_lazy = TableLoader(store, "R3", auth=auth, cache=c15)
+        self.mark_lazy = TableLoader(store, "R4_mark", auth=auth, cache=c15)
+        self.agg_cache = ChunkCache(lazy_agg_budget_bytes)
 
     def symbols(self) -> tuple[str, ...]:
         return tuple(sorted(self.meta))
@@ -1294,6 +1303,9 @@ class StoreSource:
         m = self.meta[symbol]
         r4 = R4Bars(*(self.bars[k].frame(symbol, lo, hi) for k in ("R4_premium", "R4_mark", "R4_index")))
         agg = m.aggtrades
+        if agg is not None and not isinstance(agg, pd.DataFrame):
+            raise ValueError(f"{symbol}: an aggTrades day loader is read by the lazy outcome universe only "
+                             "(load_outcome_inputs)")
         if agg is not None:
             ts = (ns_array(agg["ts"].to_numpy(), f"{symbol}.aggtrades.ts") if len(agg)
                   else np.empty(0, np.int64))
@@ -1316,6 +1328,51 @@ class StoreSource:
         t5 = TABLES["R5"]
         return pd.DataFrame({**_empty(t5, t5.names), "known_at": np.empty(0, np.int64)})
 
+    @staticmethod
+    def _span_of(ld: TableLoader, symbol: str):
+        """The envelope of a table's stored rows of [a, b): the stored chunks' row spans clipped to it."""
+        def span_of(a: int, b: int) -> tuple[int, int] | None:
+            if not ld._known(symbol):
+                return None
+            got = [(max(a, int(e["span"][0])), min(b, int(e["span"][1]))) for e in ld._chunks(symbol)[3]
+                   if e.get("span")]
+            got = [(x, y) for x, y in got if x < y]
+            return (min(x for x, _ in got), max(y for _, y in got)) if got else None
+        return span_of
+
+    def lazy_table(self, ld: TableLoader, name: str, symbol: str, lo: int, hi: int,
+                   cols: Sequence[str]) -> lazy1m.LazyBars:
+        """A table's rows of [lo, hi) read on demand (``lazy1m.LazyBars``): the window guarded once
+        (``TableLoader.window_reader``), every chunk read by its period and verified; ``cols`` only."""
+        lo, hi = int(lo), int(hi)
+        read = ld.window_reader(symbol, lo, hi) if hi > lo else (lambda a, b, c: {})
+
+        def fetch(a: int, b: int, c: tuple[str, ...]) -> Mapping[str, object]:
+            return read(a, b, tuple(x for x in c if x != "known_at"))  # known_at: the loader's archive rule
+
+        t = ld.t
+        empty = pd.DataFrame({**_empty(t, t.names), "known_at": np.empty(0, np.int64)})[list(cols)]
+        return lazy1m.LazyBars(symbol, name, lo, hi, fetch, self._span_of(ld, symbol), tuple(cols), empty)
+
+    def lazy_trades(self, symbol: str, lo: int, hi: int) -> lazy1m.LazyBars | None:
+        """The symbol's aggTrades of [lo, hi) per UTC day (``lazy1m.trades_from_days``, cache ``agg_cache``):
+        from the metadata frame, or from its day loader, each day guarded (``guard.check_data_span``) before
+        it is loaded."""
+        agg = self.meta[symbol].aggtrades
+        if agg is None:
+            return None
+        if isinstance(agg, pd.DataFrame):
+            days = lazy1m.FrameDays(agg, f"{symbol}.aggtrades")
+            return lazy1m.trades_from_days(symbol, days, lo, hi, self.agg_cache, days.span)
+        if not callable(agg):
+            raise ValueError(f"{symbol}: aggtrades must be a frame or a day loader")
+
+        def day(d: int) -> pd.DataFrame:
+            guard.check_data_span(d, d + D, auth=self.auth, what=f"aggTrades {symbol} day {d}")
+            return agg(symbol, d)  # type: ignore[operator]
+
+        return lazy1m.trades_from_days(symbol, day, lo, hi, self.agg_cache)
+
     def lazy_1m(self, symbol: str, lo: int, hi: int) -> lazy1m.Lazy1m:
         """The symbol's R5 rows of [lo, hi) read on demand (``lazy1m.Lazy1m``): the columns a rule needs, per
         (symbol, month) chunk through ``r5_lazy``: the window is guarded once here, as a load of it would be
@@ -1324,33 +1381,35 @@ class StoreSource:
         ld = self.r5_lazy
         lo, hi = int(lo), int(hi)
         fetch = ld.window_reader(symbol, lo, hi) if hi > lo else (lambda a, b, cols: {})  # guards [lo, hi)
+        return lazy1m.Lazy1m(symbol, int(lo), int(hi), fetch, self._span_of(ld, symbol))
 
-        def span_of(a: int, b: int) -> tuple[int, int] | None:
-            if not ld._known(symbol):
-                return None
-            got = [(max(a, int(e["span"][0])), min(b, int(e["span"][1]))) for e in ld._chunks(symbol)[3]
-                   if e.get("span")]
-            got = [(x, y) for x, y in got if x < y]
-            return (min(x for x, _ in got), max(y for _, y in got)) if got else None
-
-        return lazy1m.Lazy1m(symbol, int(lo), int(hi), fetch, span_of)
-
-    def load_outcome_inputs(self, symbol: str, lo: int, hi: int) -> tuple[SymbolInputs, lazy1m.Lazy1m]:
-        """``load(symbol, lo, hi)`` for the outcome side (red-team r2 MJ1, AMB-38 (h)): the R5 frame holds
-        only the U6 halt windows' rows within [lo, hi) (all a decision view reads); labels and books read R5
-        through ``lazy_1m(symbol, lo, hi)``. Nothing loads the window's full 1-minute history."""
+    def load_outcome_inputs(self, symbol: str, lo: int, hi: int) -> tuple[SymbolInputs, lazy1m.LazyInputs]:
+        """The outcome universe's inputs of [lo, hi) (red-team r2 MJ1, AMB-38 (h)): the merged funding and the
+        R5 rows of the U6 halt windows resident; R5, R3 and R4 mark read on demand (``lazy_1m``,
+        ``lazy_table``) and the aggTrades per UTC day (``lazy_trades``); the R3 / R4 frames of the inputs are
+        empty (the decision views come from chunked decisions-only universes) and the R4 premium / index
+        rows enter the guarded data span by their stored envelopes. Nothing loads a full history."""
         lo, hi = int(lo), int(hi)
         m = self.meta[symbol]
-        r4 = R4Bars(*(self.bars[k].frame(symbol, lo, hi) for k in ("R4_premium", "R4_mark", "R4_index")))
-        agg = m.aggtrades
-        if agg is not None:
-            ts = (ns_array(agg["ts"].to_numpy(), f"{symbol}.aggtrades.ts") if len(agg)
-                  else np.empty(0, np.int64))
-            agg = agg.iloc[int(np.searchsorted(ts, lo, "left")):int(np.searchsorted(ts, hi, "left"))]
-        x = SymbolInputs(symbol, self.bars["R3"].frame(symbol, lo, hi), self._halt_window_r5(symbol, lo, hi),
+
+        def empty(k: str) -> pd.DataFrame:
+            t = TABLES[k]
+            return pd.DataFrame({**_empty(t, t.names), "known_at": np.empty(0, np.int64)})
+
+        r4 = R4Bars(*(empty(k) for k in ("R4_premium", "R4_mark", "R4_index")))
+        x = SymbolInputs(symbol, empty("R3"), self._halt_window_r5(symbol, lo, hi),
                          self.funding.frame(symbol, lo, hi), list(m.insts), r4, m.identity, tuple(m.notices),
-                         dict(m.terminals), agg)
-        return x, self.lazy_1m(symbol, lo, hi)
+                         dict(m.terminals), None)
+        spans = tuple(sp for k in ("R4_premium", "R4_index") if hi > lo and (sp := self._span_of(
+            self.bars[k], symbol)(lo, hi)) is not None)
+        if hi > lo:
+            for k in ("R4_premium", "R4_index"):  # their content is read by the decision side only
+                guard.check_data_span(lo, hi, auth=self.auth, what=f"raw {k} {symbol}")
+        li = lazy1m.LazyInputs(self.lazy_1m(symbol, lo, hi),
+                               self.lazy_table(self.r3_lazy, "bars15", symbol, lo, hi, lazy1m.B15_COLS),
+                               self.lazy_table(self.mark_lazy, "mark15", symbol, lo, hi, lazy1m.M15_COLS),
+                               self.lazy_trades(symbol, lo, hi), spans)
+        return x, li
 
     def load_decision_inputs(self, symbol: str, lo: int, hi: int, history_lo: int) -> SymbolInputs:
         """What a decision view reads (``runner.ResearchUniverse.for_decisions``, SC-01 part 2): R3 / R4 of

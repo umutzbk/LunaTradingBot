@@ -37,22 +37,31 @@ from luna.v7.runstore import encode_run
 from luna.v7.timeutil import MIN, D, H, to_ns
 from tests.v7 import fixtures_v7 as fx
 from tests.v7 import perf_fixtures as pf
-from tests.v7.test_perf_equivalence import _rand_view, same
+from tests.v7.test_perf_equivalence import _m1_inputs, _rand_view, same
 
 Q = 15 * MIN
 
 
 @pytest.fixture
 def small_steps(monkeypatch):
-    """Scan step 37 min and label blocks of 2 days: many window / block boundaries."""
+    """Scan step 37 min, label blocks of 2 days, decision chunks of 3 days: many window / block / chunk
+    boundaries."""
     monkeypatch.setattr(lazy1m, "SCAN_STEP_NS", 37 * MIN)
     monkeypatch.setattr(runner, "LABEL_BLOCK_NS", 2 * D)
+    monkeypatch.setattr(runner, "DECISION_CHUNK_NS", 3 * D)
 
 
-def _lazy_view(x: refs.InstView) -> refs.InstView:
-    """``x`` with its 1-minute frame replaced by a ``Lazy1m`` over the same rows."""
+def _lazy_view(x: refs.InstView, full: bool = False) -> refs.InstView:
+    """``x`` with its 1-minute frame replaced by a ``Lazy1m`` over the same rows (``full``: the 15m and mark
+    frames by ``LazyBars`` too)."""
     lz = lazy1m.from_frame("SYM", x.b1, -(2**62), 2**62)
-    return refs.restrict(lz, x.b15, x.m15, x.funding, x.inst, x.end)
+    if not full:
+        return refs.restrict(lz, x.b15, x.m15, x.funding, x.inst, x.end)
+    b15 = lazy1m.table_from_frame("SYM", "bars15", x.b15.reset_index(drop=True), -(2**62), 2**62,
+                                  lazy1m.B15_COLS)
+    m15 = lazy1m.table_from_frame("SYM", "mark15", x.m15.reset_index(drop=True), -(2**62), 2**62,
+                                  lazy1m.M15_COLS)
+    return refs.restrict(lz, b15, m15, x.funding, x.inst, x.end)
 
 
 def _same_run(a, b) -> None:
@@ -137,12 +146,12 @@ def test_lazy_path_refuses_what_the_resident_index_would_not_take():
 
 def _universes(inputs, lo, hi):
     src = fx.LedgeredSource(inputs)
-    return (runner.ResearchUniverse.from_source(src, lo, hi, lazy_1m=False),
+    return (runner.ResearchUniverse.from_source(src, lo, hi, lazy=False),
             runner.ResearchUniverse.from_source(src, lo, hi))
 
 
 def test_lazy_universe_labels_equal_resident_rich_fixture(small_steps):
-    inputs = pf.build_inputs()
+    inputs = _m1_inputs()  # no NMOUSDT: the chunked decision universes refuse non-monotone known_at
     ru, lu = _universes(inputs, pf.START, pf.END)
     assert set(lu.lazy_1m) == set(inputs) and not ru.lazy_1m
     assert len(lu.inputs["AAAUSDT"].bars1m) < len(inputs["AAAUSDT"].bars1m)  # halt windows only
@@ -240,7 +249,7 @@ def test_store_lazy_universe_equals_resident_at_month_boundaries(store_src, smal
     with k9.using(k9.K9Log(tmp / "k9b")):
         src_r = rawstore.StoreSource(st, meta)
         src_l = rawstore.StoreSource(st, meta, lazy_1m_budget_bytes=2 * 2**20)  # tiny: chunks are evicted
-        ru = runner.ResearchUniverse.from_source(src_r, ST_START, end, lazy_1m=False)
+        ru = runner.ResearchUniverse.from_source(src_r, ST_START, end, lazy=False)
         lu = runner.ResearchUniverse.from_source(src_l, ST_START, end)
         assert len(lu.inputs["S001USDT"].bars1m) == 0 and len(ru.inputs["S001USDT"].bars1m) > 10_000
         assert len(lu.inputs["S004USDT"].bars1m) > 0  # the U6 halt window rows (decision views)
@@ -317,3 +326,186 @@ def test_lazy_store_window_is_guarded_and_reads_stay_inside_it(store_src):
         for a, b in ((B - 2 * D, B), (B, B + 2 * D), (B, B)):
             with pytest.raises(ValueError, match="outside the guarded window"):
                 read(a, b, ("c",))
+
+
+# --------------------------------------------------------------------------------- round 2: 15m / R4, panel
+
+
+def test_lazy_15m_rules_equal_resident_on_random_views(small_steps):
+    """P(tau) (15m fallback), h_fill windows, the beta-hat hourly inputs, the funding mark chain and every
+    ExecView read (marks at ticks, h_fill, P) on lazy 15m / mark windows equal the resident frames."""
+    from luna.v7.beta import beta_hat_sorted
+
+    g = np.random.default_rng(41)
+    n = 0
+    for _ in range(5):
+        x = _rand_view(g)
+        lx = _lazy_view(x, full=True)
+        assert lx.ix().ok and lx.ix().lazy15 is not None
+        t15 = x.b15["open_ts"].to_numpy()
+        taus = np.concatenate([g.choice(t15, 30), g.integers(t15.min(), t15.max() + 2 * H, 30)])
+        for tau in taus.tolist():
+            same(refs.ref_price(lx, tau), refs.ref_price(x, tau))
+            same(refs.x_half_spread(lx, tau), refs.x_half_spread(x, tau))
+            ra, la = x.ix().beta_arrays(tau), lx.ix().beta_arrays(tau)
+            same(beta_hat_sorted(la, la, tau), beta_hat_sorted(ra, ra, tau))
+            n += refs.x_half_spread(x, tau) is not None
+        for kb in (pf.START + 30 * H, pf.START + 60 * H, pf.START + 100 * H):
+            a, b = refs.funding_schedule(lx, kb), refs.funding_schedule(x, kb)
+            same((a.ts, a.rate, a.nom, a.invalid), (b.ts, b.rate, b.nom, b.invalid))
+            same([a.mark(i) for i in range(len(a.ts))], [b.mark(i) for i in range(len(b.ts))])
+            for lo, hi in ((pf.START, pf.START + 40 * H), (pf.START + 9 * H, pf.START + 33 * H)):
+                same(a.check(lo, hi), b.check(lo, hi))
+        rv, lv = ExecView.build("SYM", x), ExecView.build("SYM", lx)
+        for ts in (t15[::7] + Q).tolist():
+            same(lv.mark(ts), rv.mark(ts))
+            same(lv.h_fill(ts), rv.h_fill(ts))
+            same(lv.p_exact(ts), rv.p_exact(ts))
+            same(lv.ref_at(ts), rv.ref_at(ts))
+            tr = Trade("SYM", -1, 1.5, None, False, "test", "p1")
+            same(taker_at(lv, tr, ts), taker_at(rv, tr, ts))
+    assert n > 50
+
+
+def test_delegated_decision_views_equal_resident_across_chunks(small_steps):
+    """A lazy universe's provider serves the views of 3-day decisions-only chunks (F-feature look-backs, h-hat
+    and beta-hat windows across chunk boundaries); views, records and the public per-t inputs equal the
+    resident universe's."""
+    src = fx.LedgeredSource(_m1_inputs())
+    ru = runner.ResearchUniverse.from_source(src, pf.START, pf.END, lazy=False)
+    lu = runner.ResearchUniverse.from_source(src, pf.START, pf.END)
+    assert lu.decision_source is src and len(lu.inputs["AAAUSDT"].bars15) == 0
+    rp, lp = runner.DecisionProvider(ru, with_features=True), runner.DecisionProvider(lu, with_features=True)
+    times = [t for t in pf.decision_sample() if t >= pf.START + 70 * D][::3] + [pf.S_A + 72 * H + 5 * MIN]
+    for t in sorted(set(times)):
+        same(lp(t), rp(t))
+        same(lp.record(t), rp.record(t))
+        for s_ in ("AAAUSDT", "GAPUSDT", pf.BTC):
+            same(lp.h_hat(s_, t), rp.h_hat(s_, t))
+            same(lp.beta(s_, t), rp.beta(s_, t))
+            same(lp.qv24(s_, t), rp.qv24(s_, t))
+        same(lp.stale_reasons(t), rp.stale_reasons(t))
+    assert lp.n_computed == len(set(times))
+    with pytest.raises(ValueError, match="outside the universe window"):
+        lp(pf.END + 5 * MIN)
+
+
+def _rows(g: np.random.Generator, n: int, kind: int) -> list[dict]:
+    out = []
+    for i in range(n):
+        f = float(g.normal())
+        out.append(dict(
+            f1=None if kind == 1 else (f if g.uniform() > 0.1 else None),  # an all-None block (kind 1)
+            f2=-0.0 if i % 7 == 0 else (float("nan") if i % 5 == 0 else f),
+            side=int(g.choice([1, -1])), symbol=f"S{i % 3}",
+            y_pos=None if (kind == 2 and i % 2) else int(i % 2),
+            flag=bool(i % 2), reason=None if kind != 3 else ("a" if i % 2 else None), net=f * 1e-4,
+            ts=1_640_995_200_000_000_000 + i))
+    return out
+
+
+def test_columnar_panel_equals_dataframe_of_dicts():
+    """``runner._Columnar`` (blocks) builds exactly ``pd.DataFrame(rows)``: all-None blocks of a float column,
+    ints with None, str with None, bools, -0.0 / NaN, any block split; an empty panel is ``DataFrame([])``."""
+    g = np.random.default_rng(5)
+    for _ in range(12):
+        n_blocks = int(g.integers(1, 6))
+        blocks = [_rows(g, int(g.integers(0, 40)), int(g.integers(0, 4))) for _ in range(n_blocks)]
+        col = runner._Columnar()
+        for b in blocks:
+            col.add(b)
+        want = pd.DataFrame([r for b in blocks for r in b])
+        got = col.frame()
+        same(got, want)
+        assert list(got.dtypes) == list(want.dtypes)
+    same(runner._Columnar().frame(), pd.DataFrame([]))
+    bad = runner._Columnar()
+    bad.add([{"x": 1.0}])
+    bad.add([{"x": "a"}])
+    with pytest.raises(RuntimeError, match="not reproducible"):
+        bad.frame()
+
+
+def test_label_block_raises_the_panel_order_first_exception(monkeypatch):
+    """Two labels of one block fail differently: the panel-order first one is raised (as in one pass), not
+    the per-symbol sweep's first."""
+    src = fx.LedgeredSource(_m1_inputs())
+    lu = runner.ResearchUniverse.from_source(src, pf.START, pf.END)
+    lp = runner.DecisionProvider(lu, with_features=True)
+    ts = [int(t) for t in fx.decisions_in(pf.LABEL_WIN)][:4]
+    first = sorted(lp(ts[0]).cands["symbol"].astype(str))[-1]  # panel-order first failure (late symbol)
+    later = sorted(lp(ts[-1]).cands["symbol"].astype(str))[0]  # the sweep reaches it first (early symbol)
+    assert later < first
+    real = runner.leg_label
+
+    def flaky(inputs, t, side, h):
+        if (inputs.symbol, t) in ((first, ts[0]), (later, ts[-1])):
+            raise ValueError(f"boom {inputs.symbol} {t}")
+        return real(inputs, t, side, h)
+
+    monkeypatch.setattr(runner, "leg_label", flaky)
+    w = (pf.LABEL_WIN[0] - 2 * D, pf.LABEL_WIN[1] + 4 * D)
+    with pytest.raises(ValueError, match=f"boom {first} {ts[0]}"):
+        runner.label_panel(lu, lp, ts, 24, w, pf.NOW)
+
+
+def test_panel_sha256_identical_resident_and_lazy(small_steps):
+    """The pinned panel hash (``leakage.panel_sha256``: R54 / MJ3 / L9) of the lazy universe's panel equals
+    the resident one's, for every horizon."""
+    from luna.v7 import leakage
+
+    src = fx.LedgeredSource(_m1_inputs())
+    ru = runner.ResearchUniverse.from_source(src, pf.START, pf.END, lazy=False)
+    lu = runner.ResearchUniverse.from_source(src, pf.START, pf.END)
+    rp, lp = runner.DecisionProvider(ru, with_features=True), runner.DecisionProvider(lu, with_features=True)
+    ts = [int(t) for t in fx.decisions_in(pf.LABEL_WIN)]
+    w = (pf.START, pf.END)
+    for h in (24, 72, 168):
+        a, b = runner.label_panel(ru, rp, ts, h, w, pf.NOW), runner.label_panel(lu, lp, ts, h, w, pf.NOW)
+        same(a, b)
+        if len(a.samples):
+            assert leakage.panel_sha256(a.samples, h) == leakage.panel_sha256(b.samples, h)
+
+
+def test_store_aggtrades_day_loader_equals_the_frame(store_src, small_steps):
+    """E_M from a per-UTC-day aggTrades loader (R10 daily files; a tiny cache: evictions) equals the
+    resident frame; each loaded day is guarded (a W_HOLD day is refused before the opening)."""
+    from luna.v7 import guard
+
+    st, meta, tmp = store_src
+    end = ST_START + ST_DAYS * D
+    calls: list[int] = []
+
+    def loader(sym: str, d: int) -> pd.DataFrame:
+        calls.append(d)
+        a = meta[sym].aggtrades
+        t = a["ts"].to_numpy(np.int64)
+        return a[(t >= d) & (t < d + D)].reset_index(drop=True)
+
+    meta2 = {s: replace(m, aggtrades=loader) for s, m in meta.items()}
+    with k9.using(k9.K9Log(tmp / "k9e")):
+        ru = runner.ResearchUniverse.from_source(rawstore.StoreSource(st, meta), ST_START, end, lazy=False)
+        src2 = rawstore.StoreSource(st, meta2, lazy_agg_budget_bytes=8 * 2**10)
+        lu = runner.ResearchUniverse.from_source(src2, ST_START, end)
+        rp, lp = (runner.DecisionProvider(u, with_features=True) for u in (ru, lu))
+        a = runner.run_book("A0", ru, rp, (B - 3 * D, B + 3 * D), 168, pf.NOW, execution="E_M")
+        b = runner.run_book("A0", lu, lp, (B - 3 * D, B + 3 * D), 168, pf.NOW, execution="E_M")
+        _same_run(a, b)
+        assert (a.fills["liquidity"] == "maker").any() and calls
+        assert src2.agg_cache.stats["evictions"] > 0
+        with pytest.raises(guard.HoldoutBlocked):
+            src2.lazy_trades("S001USDT", windows.W_HOLD[0], windows.W_HOLD[0] + 2 * D).frame(
+                windows.W_HOLD[0], windows.W_HOLD[0] + H)
+
+
+def test_guard_location_is_resolved_once_per_process():
+    """The guards' location seam resolves the repository once (``spec.code_repo``); a monkeypatched
+    ``guard._roots`` still replaces it (the checks are unchanged)."""
+    from luna.v7 import guard, spec
+
+    a = spec.code_repo()
+    before = spec._repo_of.cache_info()
+    for _ in range(20):
+        guard.check_outcome_window(pf.START, pf.START + D, now_ns=pf.NOW)
+    after = spec._repo_of.cache_info()
+    assert spec.code_repo() is a and after.misses == before.misses and after.hits > before.hits

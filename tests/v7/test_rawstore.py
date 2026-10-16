@@ -317,7 +317,7 @@ def test_in_memory_source_is_the_window_of_the_inputs(fx_inputs, log):
     src = fx.LedgeredSource({s: fx_inputs[s] for s in SUB})
     full = ResearchUniverse({s: fx_inputs[s] for s in SUB})
     lo, hi = full.data_span()
-    same = ResearchUniverse.from_source(src, lo, hi, lazy_1m=False)
+    same = ResearchUniverse.from_source(src, lo, hi, lazy=False)
     lazy = ResearchUniverse.from_source(src, lo, hi)  # Task 29a: the outcome side's 1m rows read lazily
     for s in SUB:
         pd.testing.assert_frame_equal(same.inputs[s].bars1m.reset_index(drop=True),
@@ -329,7 +329,7 @@ def test_in_memory_source_is_the_window_of_the_inputs(fx_inputs, log):
     t = fx.BOOK[0] + D + 5 * MIN
     pd.testing.assert_frame_equal(p_full(t).cands, p_same(t).cands)
     w_lo, w_hi = fx.BOOK[0] - 40 * D, fx.BOOK[1]
-    win = ResearchUniverse.from_source(src, w_lo, w_hi)
+    win = ResearchUniverse.from_source(src, w_lo, w_hi, lazy=False)  # the windowed frames themselves
     for s in SUB:
         b = win.inputs[s].bars15["open_ts"].to_numpy()
         assert b.min() >= w_lo and b.max() < w_hi

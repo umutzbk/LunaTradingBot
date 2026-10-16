@@ -15,9 +15,12 @@
   arrays, and ``funding_schedule`` reuses the view's per-instance annotation, marks and mark-chain arrays.
   Each returns what the frame-level definition returns; when the arrays do not qualify (unsorted, duplicate
   labels, non-numeric) the frame-level function runs.
-* Lazy 1-minute access (red-team r2 MJ1, AMB-38 (h)): the 1-minute input may be a ``lazy1m.Lazy1m`` instead of
-  a frame; ``restrict`` narrows it like a frame and ``InstIndex`` answers the 1-minute rules from it (the
-  15m arrays must qualify then, else ``ValueError``: no frame-level fallback without the frame).
+* Lazy access (red-team r2 MJ1, AMB-38 (h)): the 1-minute input may be a ``lazy1m.Lazy1m`` instead of a
+  frame, and (round 2) the 15m R3 / R4 mark inputs ``lazy1m.LazyBars``; ``restrict`` narrows them like frames
+  and ``InstIndex`` answers every rule from windows of them: P(tau) (the bar at tau), h_fill (the rows of
+  [tau - 24 h 15 min, tau)), the beta-hat hourly inputs (the bars closing at the 30 d hour grid of t,
+  ``beta_arrays``) and the funding marks (the bar ending at each settlement). Data the resident index would
+  not take is refused (``ValueError``): no frame-level fallback without the frame.
 No price is interpolated or invented: a missing value is ``None`` or a named problem.
 """
 
@@ -32,10 +35,10 @@ import pandas as pd
 from luna.v7.constants import FROZEN
 from luna.v7.data.instances import Instance
 from luna.v7.data.intervals import u3_gap
-from luna.v7.lazy1m import Lazy1m
+from luna.v7.lazy1m import Lazy1m, LazyBars
 from luna.v7.market import P, first_bar_within, first_executable_after, halted, mark_at_settle
 from luna.v7.pitindex import Hourly
-from luna.v7.spread import half_spread
+from luna.v7.spread import half_spread, half_spread_arrays
 from luna.v7.timeutil import MIN, H, ns_array
 from luna.v7.universe import _build_prefix, pit_funding
 
@@ -72,8 +75,8 @@ class InstView:
 
     inst: Instance
     b1: pd.DataFrame | Lazy1m  # a frame, or the lazy 1-minute window (red-team r2 MJ1)
-    b15: pd.DataFrame
-    m15: pd.DataFrame
+    b15: pd.DataFrame | LazyBars  # round 2: the lazy 15m windows
+    m15: pd.DataFrame | LazyBars
     funding: pd.DataFrame
     end: int  # window end
     # ``InstIndex`` / funding parts (Task 26b); not an init field: ``dataclasses.replace`` starts a new one
@@ -86,16 +89,19 @@ class InstView:
         return self.memo["ix"]
 
 
-def restrict(bars1m: pd.DataFrame | Lazy1m, bars15: pd.DataFrame, mark15: pd.DataFrame, funding: pd.DataFrame,
-             cur: Instance, w_end: int) -> InstView:
+def _cut(df, lo: int, hi: int):
+    """``trim(df, "open_ts", lo, hi)`` for a frame, ``window`` for a lazy input."""
+    return df.window(lo, hi) if isinstance(df, Lazy1m | LazyBars) else trim(df, "open_ts", lo, hi)
+
+
+def restrict(bars1m: pd.DataFrame | Lazy1m, bars15: pd.DataFrame | LazyBars, mark15: pd.DataFrame | LazyBars,
+             funding: pd.DataFrame, cur: Instance, w_end: int) -> InstView:
     hi = w_end if cur.last_trade_ts is None else min(w_end, cur.last_trade_ts)
-    b1 = bars1m.window(cur.first_bar_ts, hi) if isinstance(bars1m, Lazy1m) else trim(
-        bars1m, "open_ts", cur.first_bar_ts, hi)
     return InstView(
         cur,
-        b1,
-        trim(bars15, "open_ts", cur.first_bar_ts, hi),
-        trim(mark15, "open_ts", cur.first_bar_ts, hi),
+        _cut(bars1m, cur.first_bar_ts, hi),
+        _cut(bars15, cur.first_bar_ts, hi),
+        _cut(mark15, cur.first_bar_ts, hi),
         trim(funding, "funding_ts", None, w_end),  # pit_funding applies the instance start
         w_end,
     )
@@ -146,6 +152,9 @@ class InstIndex:
         self.x = x
         self.ok = False
         self.lazy: Lazy1m | None = x.b1 if isinstance(x.b1, Lazy1m) else None
+        self.lazy15: LazyBars | None = x.b15 if isinstance(x.b15, LazyBars) else None
+        if self.lazy15 is not None and self.lazy is None:
+            raise ValueError("lazy 15m bars need the lazy 1-minute input (one outcome universe)")
         if self.lazy is not None:
             self._init_lazy(x)
             return
@@ -173,6 +182,9 @@ class InstIndex:
         """The 15m arrays as in the resident case; the 1-minute rules read ``self.lazy``. A 15m frame that
         does not qualify is refused (the frame-level fallback needs the resident 1-minute frame)."""
         b15 = x.b15
+        if self.lazy15 is not None:  # every 15m rule reads windows of it (``lazy1m.LazyBars`` checks them)
+            self.ok = True
+            return
         try:
             t15 = _int64(b15, "open_ts")
             ka15 = ns_array(b15["known_at"], "known_at") if len(b15) else np.empty(0, np.int64)
@@ -206,7 +218,8 @@ class InstIndex:
     def P(self, tau: int) -> float | None:  # noqa: N802
         v = self.lazy.open_at(tau) if self.lazy is not None else self._open_at(self.t1, self.o1, tau)
         if v is None or v <= 0:
-            v = self._open_at(self.t15, self.o15, tau)
+            v = self.lazy15.row_at(tau, "o") if self.lazy15 is not None else self._open_at(self.t15, self.o15,
+                                                                                            tau)
         return v if v is not None and v > 0 else None
 
     def first_bar_within(self, tau: int, window_ns: int) -> tuple[int, float] | None:
@@ -219,6 +232,8 @@ class InstIndex:
         return int(tu[j]), float(self.o1[self.usable[j]])
 
     def half_spread(self, tau: int) -> float | None:
+        if self.lazy15 is not None:
+            return x_half_spread_lazy(self.lazy15, tau)
         a = int(np.searchsorted(self.t15, tau - FROZEN.spread.window_ns, "left"))
         b = int(np.searchsorted(self.t15, tau, "left"))
         return half_spread(self.x.b15.iloc[a:b], tau)
@@ -236,11 +251,32 @@ class InstIndex:
         i = np.flatnonzero(ok)
         return None if len(i) == 0 else (int(t[i[0]]) + MIN, float(c[i[0]]))
 
+    def beta_arrays(self, t: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """(hours, close, known_at) for ``beta.beta_hat_sorted`` at t: the view's whole hourly series, or
+        (lazy) the hourly closes of the bars opening in [last - 30 d - 1 h, last + 1 h), last = the hour of
+        t - 1 min: every hour the estimate reads (the 30 d grid and the hour before it), each hour's value
+        being its own bar's (``pitindex.Hourly``), so the same lookups."""
+        if self.lazy15 is None:
+            h = self.hourly
+            return h.hours, h.close, h.ka
+        last = ((int(t) - MIN) // H) * H
+        d = self.lazy15.arrays(last - FROZEN.beta.days * 24 * H - H, last + H, ("open_ts", "c", "known_at"))
+        ot = np.asarray(d["open_ts"])
+        ka = ns_array(np.asarray(d["known_at"]), "known_at") if len(ot) else np.empty(0, np.int64)
+        hv = Hourly.build(ot, np.asarray(d["c"], np.float64), ka)
+        return hv.hours, hv.close, hv.ka
+
     @property
     def hourly(self) -> Hourly:
         if "hourly" not in self.x.memo:
             self.x.memo["hourly"] = Hourly.build(self.t15, self.c15, self.ka15)
         return self.x.memo["hourly"]
+
+
+def x_half_spread_lazy(b15: LazyBars, tau: int) -> float | None:
+    """``spread.half_spread`` on the lazy 15m rows of [tau - 24 h 15 min, tau) (``half_spread_arrays``)."""
+    d = b15.arrays(int(tau) - FROZEN.spread.window_ns, int(tau), ("open_ts", "known_at", "h", "l", "c"))
+    return half_spread_arrays(d["open_ts"], d["known_at"], d["h"], d["l"], d["c"], int(tau))
 
 
 def x_halted(x: InstView, tau: int) -> bool:
@@ -290,13 +326,16 @@ class FundingSchedule:
     raw_marks: dict[int, object]
     m15: pd.DataFrame
     l15: pd.DataFrame
-    chain: tuple[np.ndarray, ...] | None = field(default=None, compare=False, repr=False)  # Task 26b
+    chain: tuple[np.ndarray, ...] | LazyMarks | None = field(default=None, compare=False, repr=False)  # 26b
 
     def mark(self, i: int) -> float | None:
         """S-4.6 mark at settlement ``ts[i]``: record -> mark 15m close -> last-price 15m close. ``chain``:
         (open_ts, close) arrays of ``m15`` and ``l15`` with strictly increasing open_ts (``funding_schedule``;
         the same lookup with ``searchsorted``)."""
         k = int(self.ts[i])
+        if isinstance(self.chain, LazyMarks):  # round 2: the lazy 15m windows (the same chain)
+            m = pos(self.raw_marks.get(k))
+            return m if m is not None else self.chain.close_at(k - 15 * MIN)
         if self.chain is None:
             return pos(mark_at_settle({"mark_at_settle": pos(self.raw_marks.get(k))}, self.m15, self.l15, k))
         m = pos(self.raw_marks.get(k))
@@ -347,6 +386,36 @@ class FundingSchedule:
         return float(sum(float(self.rate[i]) * self.mark(i) for i in range(p, q)))  # type: ignore[operator]
 
 
+class LazyMarks:
+    """The S-4.6 15m part of the mark chain on lazy windows (red-team r2 MJ1 round 2): the close of the mark
+    bar opening at ``at`` (= settlement - 15 min) when finite and > 0, else that of the last-price bar, else
+    None: the ``positive_close`` arrays' lookup of the resident chain (a bar with an unusable close is not in
+    them)."""
+
+    BLOCK = 8 * 24 * H  # rows read per lookup block (the settlements of a label / episode reuse it)
+
+    def __init__(self, m15: LazyBars, l15: LazyBars) -> None:
+        self.m15, self.l15 = m15, l15
+        self._blk: dict[int, tuple[int, np.ndarray, np.ndarray]] = {}
+
+    def _block(self, k: int, bars: LazyBars, at: int) -> tuple[np.ndarray, np.ndarray]:
+        b0 = int(at) // self.BLOCK * self.BLOCK
+        got = self._blk.get(k)
+        if got is None or got[0] != b0:
+            d = bars.arrays(b0, b0 + self.BLOCK, ("open_ts", "c"))
+            got = (b0, np.asarray(d["open_ts"]), np.asarray(d["c"], dtype=np.float64))
+            self._blk[k] = got
+        return got[1], got[2]
+
+    def close_at(self, at: int) -> float | None:
+        for k, bars in enumerate((self.m15, self.l15)):
+            t, c = self._block(k, bars, at)
+            j = int(np.searchsorted(t, at, "left"))
+            if j < len(t) and t[j] == at and math.isfinite(v := float(c[j])) and v > 0:
+                return v
+        return None
+
+
 def _schedule_parts(x: InstView) -> tuple | None:
     """Per view (memo): the marks, the positive-close mark chain frames with their arrays (None when an
     open_ts column is not strictly increasing int64) and the per-instance annotation prefix arrays
@@ -360,14 +429,20 @@ def _schedule_parts(x: InstView) -> tuple | None:
     marks: dict[int, object] = {}
     if "mark_at_settle" in f.columns:
         marks = dict(zip(fts.tolist(), f["mark_at_settle"].tolist(), strict=True))
-    m15, l15 = positive_close(x.m15), positive_close(x.b15)
-    chain = None
+    lazy = isinstance(x.m15, LazyBars) or isinstance(x.b15, LazyBars)
+    if lazy and not (isinstance(x.m15, LazyBars) and isinstance(x.b15, LazyBars)):
+        raise ValueError("funding marks: the mark and last-price 15m inputs must both be lazy or both frames")
+    m15 = positive_close(x.m15.empty if lazy else x.m15)  # type: ignore[union-attr]
+    l15 = positive_close(x.b15.empty if lazy else x.b15)  # type: ignore[union-attr]
+    chain: tuple | LazyMarks | None = LazyMarks(x.m15, x.b15) if lazy else None  # type: ignore[arg-type]
     try:
+        if lazy:
+            raise TypeError  # no arrays: the lazy chain above
         tm, tl = _int64(m15, "open_ts"), _int64(l15, "open_ts")
         if (np.diff(tm) > 0).all() and (np.diff(tl) > 0).all():
             chain = (tm, m15["c"].to_numpy(np.float64), tl, l15["c"].to_numpy(np.float64))
     except (ValueError, TypeError, KeyError, OverflowError):
-        chain = None
+        chain = chain if lazy else None
     pre = _build_prefix(f, x.inst) if len(f) else None
     arrs = None
     if pre is not None:

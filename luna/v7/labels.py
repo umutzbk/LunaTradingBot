@@ -49,7 +49,7 @@ from luna.v7.beta import beta_hat, beta_hat_sorted, hourly_close_from_15m, hourl
 from luna.v7.constants import FROZEN
 from luna.v7.data.instances import Instance, current_instance
 from luna.v7.data.terminal import TerminalEvent
-from luna.v7.lazy1m import Lazy1m
+from luna.v7.lazy1m import Lazy1m, LazyBars
 from luna.v7.refs import (
     FundingProblem,
     InstView,
@@ -95,8 +95,8 @@ class LegData:
     """
 
     bars1m: pd.DataFrame | Lazy1m
-    bars15: pd.DataFrame
-    mark15: pd.DataFrame
+    bars15: pd.DataFrame | LazyBars
+    mark15: pd.DataFrame | LazyBars
     funding: pd.DataFrame
     insts: list[Instance]
     terminal: TerminalEvent | None = None
@@ -162,9 +162,8 @@ def _restrict(d: LegData, cur: Instance, w_end: int) -> InstView:
 
 def _beta(leg: InstView, btc: InstView, t: int) -> float | None:
     ia, ib = leg.ix(), btc.ix()
-    if ia.ok and ib.ok:  # the views' hourly arrays (built once per view)
-        ha, hb = ia.hourly, ib.hourly
-        return beta_hat_sorted((ha.hours, ha.close, ha.ka), (hb.hours, hb.close, hb.ka), t)
+    if ia.ok and ib.ok:  # the views' hourly arrays (built once per view; lazy: the window of t)
+        return beta_hat_sorted(ia.beta_arrays(t), ib.beta_arrays(t), t)
     a, b = leg.b15, btc.b15
     return beta_hat(hourly_close_from_15m(a), hourly_close_from_15m(b), t,
                     hourly_known_at_from_15m(a), hourly_known_at_from_15m(b))

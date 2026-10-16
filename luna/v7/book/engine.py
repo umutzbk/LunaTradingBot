@@ -113,7 +113,7 @@ from luna.v7.book.risk import RiskActions, RiskLayer
 from luna.v7.constants import FROZEN
 from luna.v7.data.instances import Instance, current_instance
 from luna.v7.data.terminal import TerminalEvent
-from luna.v7.lazy1m import Lazy1m
+from luna.v7.lazy1m import Lazy1m, LazyBars
 from luna.v7.refs import FundingSchedule, funding_schedule, restrict
 from luna.v7.timeutil import MIN, D
 from luna.v7.universe import GateRow, assert_pit
@@ -142,12 +142,12 @@ class Instrument:
 
     symbol: str
     bars1m: pd.DataFrame | Lazy1m
-    bars15: pd.DataFrame
-    mark15: pd.DataFrame
+    bars15: pd.DataFrame | LazyBars
+    mark15: pd.DataFrame | LazyBars
     funding: pd.DataFrame
     insts: list[Instance]
     terminals: Mapping[int, TerminalEvent] = field(default_factory=dict)
-    aggtrades: pd.DataFrame | None = None
+    aggtrades: pd.DataFrame | LazyBars | None = None
 
 
 @dataclass(frozen=True)

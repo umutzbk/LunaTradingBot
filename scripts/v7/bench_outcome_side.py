@@ -134,8 +134,9 @@ def _phase(a: argparse.Namespace) -> dict:
             out.update(decisions=len(ts), computed=res["computed"])
             out["s"] = round(time.perf_counter() - t0, 1)
             return out
-        u = runner.ResearchUniverse.from_source(src, start, end)
+        u = runner.ResearchUniverse.from_source(src, start, end)  # lazy outcome universe (round 2)
         p = runner.DecisionProvider(u, True, 64, store=vs)
+        out["rss_after_universe_mb"] = round(peak_rss_bytes() / 2**20)
         out["universe_s"] = round(time.perf_counter() - t0, 1)
         out["universe_frames_mb"] = round(_frames_bytes(u) / 2**20, 1)
         out["universe_frames_kb_per_symbol_day"] = round(_frames_bytes(u) / 1024 / a.symbols
@@ -146,7 +147,9 @@ def _phase(a: argparse.Namespace) -> dict:
             for h in (24, 72, 168):
                 panel = runner.label_panel(u, p, ts, h, (start, end), pf.NOW)
                 n[h] = dict(labels=panel.n_labels, invalid=panel.n_invalid, no_label=panel.n_no_label,
-                            samples=len(panel.samples))
+                            samples=len(panel.samples),
+                            samples_mb=round(panel.samples.memory_usage(deep=True).sum() / 2**20, 2),
+                            peak_after_mb=round(peak_rss_bytes() / 2**20))
                 del panel
             out["panels"] = n
             out["labels"] = sum(v["labels"] + v["no_label"] for v in n.values())
@@ -159,6 +162,8 @@ def _phase(a: argparse.Namespace) -> dict:
         out["n_computed_views"] = p.n_computed
         out["r5_cache"] = dict(src.r5_lazy.cache.stats, bytes=src.r5_lazy.cache.bytes,
                                decoded_chunks=src.r5_lazy.stats["decoded_chunks"])
+        out["lazy_cache_mb"] = round((src.r5_lazy.cache.bytes + src.r3_lazy.cache.bytes
+                                      + src.agg_cache.bytes) / 2**20, 1)
     return out
 
 
@@ -225,7 +230,16 @@ def main() -> None:
     if "labels" in out:
         kb = out["labels"]["universe_frames_kb_per_symbol_day"]
         x["universe_frames_kb_per_symbol_day"] = kb
-        x["universe_frames_gb_real_upper"] = round(kb * a.real_symbols * a.real_days / 2**20, 1)
+        x["universe_frames_gb_real_upper"] = round(kb * a.real_symbols * a.real_days / 2**20, 2)
+        pan = out["labels"]["panels"]
+        rows = sum(v["samples"] for v in pan.values())
+        mb = sum(v["samples_mb"] for v in pan.values())
+        per_row = mb * 2**20 / max(1, rows)
+        x["panel_bytes_per_sample_row"] = round(per_row)
+        real_rows = a.real_decisions * a.real_cands * 2  # valid labels per horizon (upper bound)
+        x["panel_gb_per_horizon_real_upper"] = round(per_row * real_rows / 2**30, 2)
+        x["labels_peak_over_universe_mb"] = (max(v["peak_after_mb"] for v in pan.values())
+                                             - out["labels"]["rss_after_universe_mb"])
     x["peaks_mb"] = {ph: out[ph]["peak_rss_mb"] for ph in a.phases.split(",") if ph in out}
     out["extrapolation_w_dev"] = x
     print(json.dumps(out, indent=1))

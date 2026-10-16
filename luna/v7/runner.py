@@ -17,12 +17,14 @@ wall-clock; the DT4 run record is written by ``luna.v7.runrecord`` to a caller-s
   (``rawstore.StoreSource``: lazy, guarded loaders over the raw store; ``InMemorySource``: the same protocol
   over in-memory ``SymbolInputs``, e.g. the synthetic fixtures). The window must cover every lookback /
   label horizon of what is evaluated in it (the caller's responsibility; rows outside it do not exist for the
-  universe). Red-team r2 MJ1 (Task 29a, AMB-38 (h)): by default the outcome side's 1-minute bars are lazy
-  (``source.load_outcome_inputs``: a ``lazy1m.Lazy1m`` per symbol read per (symbol, chunk) through a bounded
-  cache; the inputs' 1-minute frame keeps only the U6 halt windows a decision view reads), with results
-  identical to the resident frames; ``label_panel`` runs per decision block (``LABEL_BLOCK_NS``) and, inside
-  a block, one symbol at a time in time order (labels are independent across symbols; the panel order is
-  kept).
+  universe). Red-team r2 MJ1 (Task 29a, AMB-38 (h)): by default the outcome side is lazy
+  (``source.load_outcome_inputs``: the 1-minute, 15m and R4 mark bars and the aggTrades of each symbol are
+  read per window / chunk / UTC day through bounded caches, ``lazy1m``; the resident inputs are the funding
+  and the U6 halt windows' 1-minute rows) and the decision views come from chunked decisions-only universes
+  (``DecisionProvider._sub``), with results identical to the resident universe; ``label_panel`` runs per
+  decision block (``LABEL_BLOCK_NS``), one symbol at a time inside a block (labels are independent across
+  symbols; the panel order and its first exception are kept) and assembles the panel columnar
+  (``_Columnar``: exactly ``pd.DataFrame(rows)``).
 * ``decision_pass`` (SC-01 part 2, AMB-38): the outcome-free decision universe at real scale. Decisions are
   processed in chunks; each chunk builds ``ResearchUniverse.for_decisions(source, lo, hi, history_lo=...)``
   (15m / R4 bars from ``lo - pitindex.LOOKBACK_15M``, funding from ``history_lo``, 1-minute bars only inside
@@ -101,7 +103,7 @@ from luna.v7.data.notices import NoticeVersion, U6State
 from luna.v7.data.terminal import TerminalEvent
 from luna.v7.features import FEATURES, R4Bars, XSInput
 from luna.v7.labels import LabelInputs, LegData, leg_label
-from luna.v7.lazy1m import Lazy1m
+from luna.v7.lazy1m import Lazy1m, LazyInputs
 from luna.v7.pitindex import LOOKBACK_15M
 from luna.v7.spread import half_spread
 from luna.v7.timeutil import MIN, H, ns_array
@@ -286,16 +288,33 @@ class InMemorySource:
         return replace(x, bars15=w(x.bars15, "bars15"), bars1m=w(x.bars1m, "bars1m"),
                        funding=w(x.funding, "funding"), r4=r4, aggtrades=agg)
 
-    def load_outcome_inputs(self, symbol: str, lo: int, hi: int) -> tuple[SymbolInputs, Lazy1m]:
-        """``load(symbol, lo, hi)`` with the 1-minute bars split (red-team r2 MJ1, AMB-38 (h)): the frame
-        holds only the U6 halt windows' rows (all a decision view reads), the outcome side reads [lo, hi)
-        through the returned ``lazy1m.Lazy1m`` (``lazy1m.FrameFetch`` over the in-memory frame)."""
+    def load_outcome_inputs(self, symbol: str, lo: int, hi: int) -> tuple[SymbolInputs, LazyInputs]:
+        """The outcome universe's inputs of [lo, hi) (red-team r2 MJ1, AMB-38 (h)): the funding frame (and
+        the 1-minute rows of the U6 halt windows) resident; the 1-minute bars, the 15m bars, the R4 mark bars
+        and the aggTrades read on demand (``lazy1m``, over the in-memory frames; the aggTrades per UTC day
+        through a byte-bounded cache); the 15m / R4 frames of the inputs are empty (the decision side reads
+        views computed by chunked decisions-only universes, ``DecisionProvider``)."""
         lo, hi = int(lo), int(hi)
         x = self.load(symbol, lo, hi)
         full = self.inputs[symbol]
         wins = halt_windows(symbol, full.notices, list(full.insts))
-        lz = lazy1m.from_frame(symbol, full.bars1m, lo, hi)
-        return replace(x, bars1m=_in_windows(full.bars1m, "open_ts", wins, lo, hi, f"{symbol}.bars1m")), lz
+        if len(full.bars15):
+            ns_array(full.bars15["known_at"].to_numpy(), f"{symbol}.bars15.known_at")  # fail closed
+        trades = None
+        if full.aggtrades is not None:
+            if not hasattr(self, "_agg_cache"):
+                self._agg_cache = lazy1m.ByteLRU(lazy1m.LAZY_AGG_CACHE_BYTES)
+            days = lazy1m.FrameDays(full.aggtrades, f"{symbol}.aggtrades")
+            trades = lazy1m.trades_from_days(symbol, days, lo, hi, self._agg_cache, days.span)
+        spans = tuple(sp for k in ("premium", "index") if (sp := localdata.frame_span(
+            getattr(x.r4, k), ("open_ts",), f"{symbol}.r4.{k}")) is not None)
+        li = LazyInputs(lazy1m.from_frame(symbol, full.bars1m, lo, hi),
+                        lazy1m.table_from_frame(symbol, "bars15", full.bars15, lo, hi, lazy1m.B15_COLS),
+                        lazy1m.table_from_frame(symbol, "mark15", full.r4.mark, lo, hi, lazy1m.M15_COLS),
+                        trades, spans)
+        r4 = R4Bars(*(getattr(x.r4, k).iloc[0:0] for k in ("premium", "mark", "index")))
+        return replace(x, bars15=x.bars15.iloc[0:0], r4=r4, aggtrades=None,
+                       bars1m=_in_windows(full.bars1m, "open_ts", wins, lo, hi, f"{symbol}.bars1m")), li
 
     def load_decision_inputs(self, symbol: str, lo: int, hi: int, history_lo: int) -> SymbolInputs:
         """The inputs a decision view reads (``ResearchUniverse.for_decisions``): bars / R4 of [lo, hi), each
@@ -321,15 +340,17 @@ class ResearchUniverse:
     """The per-symbol objects every stage consumes, built once from ``SymbolInputs`` (``hedge`` = BTCUSDT)."""
 
     def __init__(self, inputs: Mapping[str, SymbolInputs], hedge: str = HEDGE,
-                 lazy_1m: Mapping[str, Lazy1m] | None = None) -> None:
+                 lazy: Mapping[str, LazyInputs] | None = None) -> None:
         if hedge not in inputs:
             raise ValueError(f"the hedge instrument {hedge} is a required input")
-        lazy = dict(lazy_1m or {})
-        if set(lazy) - set(inputs):
-            raise ValueError(f"lazy 1-minute inputs without symbol inputs: {sorted(set(lazy) - set(inputs))}")
-        # red-team r2 MJ1 (AMB-38 (h)): per symbol, the outcome side's 1-minute access when lazy (the inputs'
-        # bars1m frame then holds only the rows a decision view reads)
-        self.lazy_1m: dict[str, Lazy1m] = lazy
+        lz = dict(lazy or {})
+        if set(lz) - set(inputs):
+            raise ValueError(f"lazy inputs without symbol inputs: {sorted(set(lz) - set(inputs))}")
+        # red-team r2 MJ1 (AMB-38 (h)): per symbol, the outcome side's lazily read inputs (the inputs' frames
+        # then hold only what the decision side reads, or nothing when the 15m bars are lazy)
+        self.lazy: dict[str, LazyInputs] = lz
+        # the source of the chunked decisions-only universes serving the decision views (lazy 15m bars)
+        self.decision_source: object = None
         self.hedge = hedge
         self.inputs: dict[str, SymbolInputs] = {}
         self.funding_annot: dict[str, pd.DataFrame] = {}
@@ -362,8 +383,15 @@ class ResearchUniverse:
             sd = SymbolData(sym, x.bars15, x.bars1m, fa, list(x.insts), list(x.notices), x.identity)
             self.sd[sym] = replace(sd, cache=SymbolCache(sd))  # indexed inputs (Task 26b, AMB-38)
             mark15 = x.r4.mark[["open_ts", "c"]]
-            self.instruments[sym] = Instrument(sym, lazy.get(sym, x.bars1m), x.bars15, mark15,  # type: ignore[arg-type]
-                                               x.funding, list(x.insts), dict(x.terminals), x.aggtrades)
+            li = lz.get(sym)
+            if li is None:
+                self.instruments[sym] = Instrument(sym, x.bars1m, x.bars15, mark15, x.funding, list(x.insts),
+                                                   dict(x.terminals), x.aggtrades)
+            else:
+                self.instruments[sym] = Instrument(
+                    sym, li.b1, x.bars15 if li.b15 is None else li.b15, mark15 if li.m15 is None else li.m15,
+                    x.funding, list(x.insts), dict(x.terminals),
+                    x.aggtrades if li.trades is None else li.trades)
         self.candidates: tuple[str, ...] = tuple(s for s in sorted(self.inputs) if s != hedge)
         self.decisions_only = False
         # view-store key parts (fix round 1, I2): the source's data identity and the history window; None
@@ -372,6 +400,11 @@ class ResearchUniverse:
         self.history_lo: int | None = None
         self.window_hi: int | None = None
         self._ingest_check: tuple[object, int, int] | None = None  # (source check, lo, hi): ruling R55
+
+    @property
+    def lazy_1m(self) -> dict[str, Lazy1m]:
+        """The lazy 1-minute input per symbol (empty: resident frames)."""
+        return {s: li.b1 for s, li in self.lazy.items()}
 
     def check_ingest(self) -> None:
         """Ruling R55: re-run the source's ingest-completeness check over this universe's window; a universe
@@ -384,20 +417,23 @@ class ResearchUniverse:
 
     @classmethod
     def from_source(cls, source: UniverseSource, lo: int, hi: int, hedge: str = HEDGE, *,
-                    lazy_1m: bool = True) -> ResearchUniverse:
+                    lazy: bool = True) -> ResearchUniverse:
         """The universe of ``source.symbols()`` with every input restricted to the window [lo, hi) (loaded
-        symbol by symbol; module docstring). ``lazy_1m`` (default; red-team r2 MJ1, AMB-38 (h)): with a source
-        that has ``load_outcome_inputs``, labels and books read the 1-minute bars through ``lazy1m.Lazy1m``
-        (nothing loads the full 1-minute history; the inputs' frame keeps the U6 halt windows only); False, or
-        a source without it: the resident frames."""
+        symbol by symbol; module docstring). ``lazy`` (default; red-team r2 MJ1, AMB-38 (h)): with a source
+        that has ``load_outcome_inputs``, labels and books read the 1-minute, 15m and R4 mark bars and the
+        aggTrades on demand (``lazy1m``; nothing loads a full history) and the decision views come from
+        chunked decisions-only universes of the same source (``DecisionProvider``; equal to this window's
+        views, ``decision_pass``); False, or a source without it: the resident frames."""
         lo, hi = int(lo), int(hi)
         if hi <= lo:
             raise ValueError(f"empty window [{lo}, {hi})")
         chk = _ingest_gate(source, lo, hi)
-        load = getattr(source, "load_outcome_inputs", None) if lazy_1m else None
+        load = getattr(source, "load_outcome_inputs", None) if lazy else None
         if callable(load):
             got = {s: load(s, lo, hi) for s in sorted(source.symbols())}
-            u = cls({s: g[0] for s, g in got.items()}, hedge, lazy_1m={s: g[1] for s, g in got.items()})
+            u = cls({s: g[0] for s, g in got.items()}, hedge, lazy={s: g[1] for s, g in got.items()})
+            if any(li.b15 is not None for li in u.lazy.values()):
+                u.decision_source = source
         else:
             u = cls({s: source.load(s, lo, hi) for s in sorted(source.symbols())}, hedge)
         u.source_identity = _source_identity(source)
@@ -459,7 +495,7 @@ class ResearchUniverse:
 
     def data_span(self) -> tuple[int, int] | None:
         """(min, max + 1) of every input timestamp, recomputed from the current inputs: the event times of
-        every frame (``EVENT_COLS``; a lazy 1-minute input by the envelope of its rows, ``Lazy1m.span``), the
+        every frame (``EVENT_COLS``; a lazy input by the envelope of its rows, ``LazyInputs.all_spans``), the
         notices' ``release_ts`` / ``capture_ts`` / ``recv_ts``, the terminal
         events' ``cessation_ts`` / ``settle_ts`` and the instances' ``first_bar_ts`` / ``last_trade_ts`` /
         ``end_known_at`` (missing values skipped; anything unparseable refused by ``ns_array``)."""
@@ -473,10 +509,8 @@ class ResearchUniverse:
                 sp = localdata.frame_span(df, EVENT_COLS[name.split(".")[0]], f"{sym}.{name}")
                 if sp is not None:
                     spans.append(sp)
-            if sym in self.lazy_1m:  # the lazy 1-minute rows' envelope (AMB-38 (h))
-                sp = self.lazy_1m[sym].span()
-                if sp is not None:
-                    spans.append((int(sp[0]), int(sp[1])))
+            if sym in self.lazy:  # the lazily read tables' envelopes (AMB-38 (h))
+                spans.extend(self.lazy[sym].all_spans())
             notices = [v for n in x.notices for v in (n.release_ts, n.capture_ts, n.recv_ts)]
             terminals = [v for e in x.terminals.values() for v in (e.cessation_ts, e.settle_ts)]
             insts = [v for i in x.insts for v in (i.first_bar_ts, i.last_trade_ts, i.end_known_at)]
@@ -582,6 +616,26 @@ class DecisionProvider:
         if store is not None:  # bound to this universe's key body (I2): another universe / code is refused
             store.bind(u.view_identity(self.with_features))
         self.n_computed = 0  # decisions computed here (not read back from the store)
+        self._chunk: tuple[int, DecisionProvider] | None = None  # lazy 15m universes: the chunk provider
+
+    def _sub(self, t: int) -> DecisionProvider:
+        """Lazy 15m universes (``u.decision_source``; red-team r2 MJ1 round 2, AMB-38 (h)): the provider of
+        the decisions-only universe (``ResearchUniverse.for_decisions``, the ``decision_pass`` chunk of
+        ``DECISION_CHUNK_NS`` from the history start) holding t, kept for one chunk at a time. Its views and
+        records equal those of the window's resident universe (``decision_pass``: tested); data that chunked
+        universe refuses is refused here too."""
+        u = self.u
+        lo0, hi0 = int(u.history_lo), int(u.window_hi)  # type: ignore[arg-type]
+        if not lo0 <= t < hi0:
+            raise ValueError(f"decision {t} outside the universe window [{lo0}, {hi0})")
+        c_lo = lo0 + (t - lo0) // DECISION_CHUNK_NS * DECISION_CHUNK_NS
+        if self._chunk is None or self._chunk[0] != c_lo:
+            self._chunk = None  # the previous chunk's universe is released first
+            cu = ResearchUniverse.for_decisions(u.decision_source,  # type: ignore[arg-type]
+                                                c_lo, min(c_lo + DECISION_CHUNK_NS, hi0), history_lo=lo0,
+                                                hedge=u.hedge)
+            self._chunk = (c_lo, DecisionProvider(cu, self.with_features, 1, auth=self.auth))
+        return self._chunk[1]
 
     def _positions(self, sym: str) -> tuple[bool, np.ndarray, np.ndarray]:
         """(sliceable, open_ts, known_at) of the symbol's 15m bars, validated once."""
@@ -731,22 +785,40 @@ class DecisionProvider:
 
     # public per-t inputs: guarded, then the private implementation
     def instance_bars(self, sym: str, t: int) -> pd.DataFrame | None:
-        return self._instance_bars(sym, self._guard(t))
+        t = self._guard(t)
+        if self.u.decision_source is not None:
+            return self._sub(t).instance_bars(sym, t)
+        return self._instance_bars(sym, t)
 
     def h_hat(self, sym: str, t: int) -> float | None:
-        return self._h_hat(sym, self._guard(t))
+        t = self._guard(t)
+        if self.u.decision_source is not None:
+            return self._sub(t).h_hat(sym, t)
+        return self._h_hat(sym, t)
 
     def beta(self, sym: str, t: int) -> float | None:
-        return self._beta(sym, self._guard(t))
+        t = self._guard(t)
+        if self.u.decision_source is not None:
+            return self._sub(t).beta(sym, t)
+        return self._beta(sym, t)
 
     def qv24(self, sym: str, t: int) -> tuple[float | None, int | None]:
-        return self._qv24(sym, self._guard(t))
+        t = self._guard(t)
+        if self.u.decision_source is not None:
+            return self._sub(t).qv24(sym, t)
+        return self._qv24(sym, t)
 
     def stale_reasons(self, t: int) -> tuple[str, ...]:
-        return self._stale_reasons(self._guard(t))
+        t = self._guard(t)
+        if self.u.decision_source is not None:
+            return self._sub(t).stale_reasons(t)
+        return self._stale_reasons(t)
 
     def xs(self, t: int) -> list[XSInput]:
-        return self._xs(self._guard(t))
+        t = self._guard(t)
+        if self.u.decision_source is not None:
+            return self._sub(t).xs(t)
+        return self._xs(t)
 
     def __call__(self, t: int) -> DecisionView:
         t = self._guard(t)
@@ -764,6 +836,12 @@ class DecisionProvider:
             got = self.store.get(t, auth=self.auth)
         if got is not None:
             self._views[t], self._records[t] = got  # type: ignore[assignment]
+        elif self.u.decision_source is not None:  # lazy 15m universe: the chunked decisions-only view
+            sub = self._sub(t)
+            self.n_computed += 1
+            self._views[t], self._records[t] = sub(t), sub.record(t)
+            if self.store is not None:
+                self.store.put(self._views[t], self._records[t])
         else:
             u = self.u
             self.n_computed += 1
@@ -1038,9 +1116,9 @@ def label_panel(u: ResearchUniverse, provider: DecisionProvider, decision_ts: Se
     w_lo, w_end = int(window[0]), int(window[1])
     guard.check_outcome_window(ts[0], min(ts[-1] + FILL_DELAY + h * H + MIN, w_end), auth=auth, now_ns=now_ns)
     u.check_data(auth)
-    rows: list[dict] = []
-    res: list[labels.LabelResult | None] = []
-    lab_rows: list[dict] = []
+    rows, lab_rows = _Columnar(), _Columnar()  # pd.DataFrame(rows) assembled per block (AMB-38 (h))
+    cnt = {"n": 0, "none": 0}
+    inv: dict[str, int] = {}
     i = 0
     while i < len(ts):  # decision blocks (AMB-38 (h)): the block's views are held, then released
         j = int(np.searchsorted(ts, ts[i] + LABEL_BLOCK_NS, "left"))
@@ -1058,38 +1136,54 @@ def label_panel(u: ResearchUniverse, provider: DecisionProvider, decision_ts: Se
         # labels are independent across symbols: one symbol at a time, in time order, so its 1-minute reads
         # (lazy: per (symbol, chunk) through a bounded cache) move forward; the panel order is restored below
         got: dict[tuple[int, str, int], labels.LabelResult | None] = {}
-        for sym in sorted(jobs):
-            for t, side in jobs[sym]:
-                if (t, sym, side) not in got:
-                    leg, btc = u.leg_data(sym, t), u.leg_data(u.hedge, t)
-                    got[(t, sym, side)] = leg_label(LabelInputs(sym, leg, btc, (w_lo, w_end), now_ns, auth),
-                                                    t, side, h)
+
+        def lab(sym: str, t: int, side: int) -> labels.LabelResult | None:
+            leg, btc = u.leg_data(sym, t), u.leg_data(u.hedge, t)
+            return leg_label(LabelInputs(sym, leg, btc, (w_lo, w_end), now_ns, auth), t, side, h)
+
+        try:
+            for sym in sorted(jobs):
+                for t, side in jobs[sym]:
+                    if (t, sym, side) not in got:
+                        got[(t, sym, side)] = lab(sym, t, side)
+        except Exception:
+            # the block again in the panel order: the exception raised is the one-pass path's first (the
+            # labels are deterministic; a refusal is K9-logged once more)
+            for t in block:
+                for c in cands[t].itertuples(index=False):
+                    lab(str(c.symbol), t, int(c.side))
+            raise
+        brows: list[dict] = []
+        blab: list[dict] = []
         for t in block:
-            _panel_rows(cands[t], t, h, got, rows, res, lab_rows)
-        del cands, jobs, got
+            _panel_rows(cands[t], t, h, got, brows, cnt, inv, blab)
+        rows.add(brows)
+        lab_rows.add(blab)
+        del cands, jobs, got, brows, blab
         i = j
-    inv: dict[str, int] = {}
-    for r in res:
-        if r is not None and r.invalid_reason is not None:
-            inv[r.invalid_reason] = inv.get(r.invalid_reason, 0) + 1
-    n = sum(r is not None for r in res)
-    panel = LabelPanel(h, pd.DataFrame(rows), pd.DataFrame(lab_rows), n, sum(inv.values()),
-                       sum(r is None for r in res), labels.invalid_rate(res), tuple(sorted(inv.items())))
+    n = cnt["n"]
+    rate = labels.invalid_rate([]) if n == 0 else sum(inv.values()) / n  # labels.invalid_rate on the results
+    panel = LabelPanel(h, rows.frame(), lab_rows.frame(), n, sum(inv.values()), cnt["none"], rate,
+                       tuple(sorted(inv.items())))
     if auth is not None and _holdout_labelled(ts[0], ts[-1], (w_lo, w_end)):
         _issue_holdout_panel(panel, auth, decisions=tuple(ts), window=(w_lo, w_end),
                              universe=universe_identity(u))
     return panel
 
 
-def _panel_rows(cands: pd.DataFrame, t: int, h: int, got: Mapping, rows: list[dict],
-                res: list, lab_rows: list[dict]) -> None:
-    """The panel rows of decision t's candidates, in their order, from the computed labels ``got``."""
+def _panel_rows(cands: pd.DataFrame, t: int, h: int, got: Mapping, rows: list[dict], cnt: dict,
+                inv: dict[str, int], lab_rows: list[dict]) -> None:
+    """The panel rows of decision t's candidates, in their order, from the computed labels ``got``; the label
+    counts (``cnt`` n / none, ``inv`` per invalid reason) are accumulated."""
     for c in cands.itertuples(index=False):
         sym, side = str(c.symbol), int(c.side)
         r = got[(t, sym, side)]
-        res.append(r)
         if r is None:
+            cnt["none"] += 1
             continue
+        cnt["n"] += 1
+        if r.invalid_reason is not None:
+            inv[r.invalid_reason] = inv.get(r.invalid_reason, 0) + 1
         lab_rows.append(dict(decision_ts=t, symbol=sym, side=side, h=h, net=r.net, y_reg=r.y_reg_bps,
                              y_pos=r.y_pos, label_known_at=r.label_known_at,
                              invalid_reason=r.invalid_reason))
@@ -1099,6 +1193,75 @@ def _panel_rows(cands: pd.DataFrame, t: int, h: int, got: Mapping, rows: list[di
         d.update(decision_ts=t, symbol=sym, side=side, h=h, label_known_at=r.label_known_at,
                  y_reg=r.y_reg_bps, y_pos=float(r.y_pos), net=r.net)  # type: ignore[arg-type]
         rows.append(d)
+
+
+class _Columnar:
+    """``pd.DataFrame(rows)`` for rows (dicts with the same keys) supplied block by block, without holding
+    every row (red-team r2 MJ1 round 2, AMB-38 (h)). pandas converts a list of dicts column by column
+    (``dicts_to_array`` -> ``convert_object_array`` -> ``arrays_to_mgr``); each block is converted the same
+    way and a column is kept typed when the block gives int64 / float64 / bool / str, else as its objects. The
+    whole column's conversion is then reproduced exactly: blocks of one typed dtype concatenate (the union
+    of int / float(+missing) / bool / str values converts to that same dtype with the same values); any
+    other column is converted from its objects (typed blocks back to objects: equal values; a column that
+    would end as object dtype with a typed block is refused, an internal error, never a silent difference).
+    """
+
+    _TYPED = "fib"
+
+    def __init__(self) -> None:
+        self.cols: list | None = None
+        self.parts: list[list[tuple[object, object]]] = []
+        self.n = 0
+
+    @staticmethod
+    def _typed(arr: object) -> bool:
+        if isinstance(arr, np.ndarray):
+            return arr.dtype.kind in _Columnar._TYPED
+        return isinstance(getattr(arr, "dtype", None), pd.StringDtype)
+
+    def add(self, rows: list[dict]) -> None:
+        if not rows:
+            return
+        from pandas._libs import lib
+        from pandas.core.internals.construction import convert_object_array
+
+        data = [d if type(d) is dict else dict(d) for d in rows]
+        pre = lib.fast_unique_multiple_list_gen((list(x.keys()) for x in data), sort=False)
+        if self.cols is None:
+            self.cols = list(pre)
+        elif list(pre) != self.cols:
+            raise RuntimeError("label panel: rows with different keys across blocks (internal)")
+        objs = list(lib.dicts_to_array(data, list(pre)).T)
+        conv = convert_object_array(objs, dtype=None)
+        self.parts.append([(c, None if self._typed(c) else np.array(o, dtype=object))  # own copy
+                           for o, c in zip(objs, conv, strict=True)])
+        self.n += len(data)
+
+    def frame(self) -> pd.DataFrame:
+        if self.n == 0:
+            return pd.DataFrame([])
+        from pandas.core.indexes.api import default_index, ensure_index
+        from pandas.core.internals.construction import arrays_to_mgr, convert_object_array
+
+        arrays = []
+        for j in range(len(self.cols)):  # type: ignore[arg-type]
+            ps = [p[j] for p in self.parts]
+            if all(o is None for _, o in ps) and len({str(c.dtype) for c, _ in ps}) == 1:  # type: ignore[attr-defined]
+                c0 = ps[0][0]
+                arr = (np.concatenate([c for c, _ in ps]) if isinstance(c0, np.ndarray)  # type: ignore[misc]
+                       else type(c0)._concat_same_type([c for c, _ in ps]))
+            else:
+                obj = np.concatenate([o if o is not None else np.asarray(c, dtype=object) for c, o in ps])
+                arr = convert_object_array([obj], dtype=None)[0]
+                if getattr(arr, "dtype", None) == np.dtype("O") and any(o is None for _, o in ps):
+                    raise RuntimeError(f"label panel column {self.cols[j]!r}: typed and object blocks would "  # type: ignore[index]
+                                       "end as object dtype (internal; not reproducible block-wise)")
+            arrays.append(arr)
+            for p in self.parts:  # release the column's block parts (peak: about the panel twice)
+                p[j] = (None, None)
+        self.parts = []
+        mgr = arrays_to_mgr(arrays, ensure_index(self.cols), default_index(self.n), dtype=None)
+        return pd.DataFrame._from_mgr(mgr, axes=mgr.axes)
 
 
 def _holdout_labelled(t_first: int, t_last: int, window: tuple[int, int]) -> bool:

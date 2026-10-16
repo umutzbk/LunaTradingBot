@@ -6,6 +6,7 @@ V7 never hard-codes V6 boundaries: they are read at runtime from the V6 artefact
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import subprocess
@@ -40,8 +41,17 @@ class V6Bounds:
     looks: tuple[int, int, int]
 
 
+@functools.cache
+def _repo_of(module_file: str) -> Path:
+    return Path(module_file).resolve().parents[1]
+
+
 def code_repo() -> Path:
-    return Path(luna.__file__).resolve().parents[1]
+    """The code repository (the parent of the ``luna`` package), resolved once per process and package file
+    (keyed by ``luna.__file__``): the guards' location seam (``guard._roots``) calls it on every check, and a
+    path resolution per call dominated the label cost (red-team r2 MJ1 round 2, AMB-38 (h)). The checks
+    themselves are unchanged; a test that monkeypatches ``guard._roots`` replaces the seam as before."""
+    return _repo_of(luna.__file__)
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:

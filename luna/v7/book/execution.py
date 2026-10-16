@@ -32,7 +32,9 @@ Lazy 1-minute access (red-team r2 MJ1, AMB-38 (h)): the view's 1-minute input ma
 ``ExecView.b1(lo, hi)`` then reads the rows of [lo, hi) on demand (the same rows, sorted, as the slice of the
 resident sorted frame) and the halted-exit search runs forward window by window
 (``ExecView.first_executable``; the first executable bar of disjoint ordered windows is the one of their
-union).
+union). Round 2: the 15m R3 / R4 mark inputs (``lazy1m.LazyBars``) and the E_M aggTrades (per UTC day)
+are read the same way: ``b15`` / ``m15`` / ``trades_in`` return the rows of the window, sorted as the
+resident sorted frames' slices (aggTrades: stable by ts).
 """
 
 from __future__ import annotations
@@ -49,9 +51,9 @@ from luna.v7 import lazy1m
 from luna.v7.book import EPS
 from luna.v7.constants import FROZEN
 from luna.v7.data.terminal import TerminalEvent
-from luna.v7.lazy1m import Lazy1m
+from luna.v7.lazy1m import Lazy1m, LazyBars
 from luna.v7.market import P, first_bar_within, first_executable_after, halted
-from luna.v7.refs import InstView, positive_close, ref_price, trim, usable_open
+from luna.v7.refs import InstView, positive_close, ref_price, trim, usable_open, x_half_spread_lazy
 from luna.v7.spread import half_spread
 from luna.v7.timeutil import MIN, H, ns_array
 
@@ -162,17 +164,21 @@ class ExecView:
 
     symbol: str
     x: InstView
-    trades: pd.DataFrame | None = None  # aggTrades (ts, price, qty), E_M only
+    trades: pd.DataFrame | LazyBars | None = None  # aggTrades (ts, price, qty), E_M only
 
     @staticmethod
-    def build(symbol: str, x: InstView, aggtrades: pd.DataFrame | None = None) -> ExecView:
+    def build(symbol: str, x: InstView, aggtrades: pd.DataFrame | LazyBars | None = None) -> ExecView:
         s = {k: getattr(x, k).sort_values("open_ts", kind="mergesort").reset_index(drop=True)
-             for k in ("b1", "b15", "m15") if not isinstance(getattr(x, k), Lazy1m)}  # lazy: sorted reads
+             for k in ("b1", "b15", "m15")
+             if not isinstance(getattr(x, k), Lazy1m | LazyBars)}  # lazy: sorted reads
         tr = None
         if aggtrades is not None:
             hi = x.end if x.inst.last_trade_ts is None else min(x.end, x.inst.last_trade_ts)
-            tr = trim(aggtrades, "ts", x.inst.first_bar_ts, hi)
-            tr = tr.sort_values("ts", kind="mergesort").reset_index(drop=True)
+            if isinstance(aggtrades, LazyBars):
+                tr = aggtrades.window(x.inst.first_bar_ts, hi)
+            else:
+                tr = trim(aggtrades, "ts", x.inst.first_bar_ts, hi)
+                tr = tr.sort_values("ts", kind="mergesort").reset_index(drop=True)
         return ExecView(symbol, replace(x, **s), tr)
 
     @property
@@ -216,9 +222,13 @@ class ExecView:
         return None
 
     def b15(self, lo: int, hi: int) -> pd.DataFrame:
+        if isinstance(self.x.b15, LazyBars):
+            return self.x.b15.frame(lo, hi)
         return self._cut(self.x.b15, self._t15, lo, hi)
 
     def m15(self, lo: int, hi: int) -> pd.DataFrame:
+        if isinstance(self.x.m15, LazyBars):
+            return self.x.m15.frame(lo, hi)
         return self._cut(self.x.m15, self._tm, lo, hi)
 
     @cached_property
@@ -230,6 +240,8 @@ class ExecView:
         """aggTrades with lo <= ts < hi (sorted, searchsorted slice)."""
         if self.trades is None:
             raise ValueError(f"no aggTrades for {self.symbol}")
+        if isinstance(self.trades, LazyBars):
+            return self.trades.frame(lo, hi)
         return self._cut(self.trades, self._tt, lo, hi)
 
     def halted(self, tau: int) -> bool:
@@ -262,11 +274,19 @@ class ExecView:
 
     def h_fill(self, tau: int) -> float | None:
         """S-4.4 h_fill(tau): the S-4.5 proxy at tau on this instance's bars."""
+        if isinstance(self.x.b15, LazyBars):  # the window's arrays (``refs.x_half_spread_lazy``)
+            return x_half_spread_lazy(self.x.b15, tau)
         return half_spread(self.b15(tau - FROZEN.spread.window_ns - BAR_15M, tau), tau)
 
     def mark(self, ts: int) -> tuple[float | None, str]:
         """Mark at a 15-minute tick: the mark-price 15m bar ending at ts (close), else the last-price 15m bar
         ending at ts (close) (the S-4.6 chain without a record; AMB-19 (e)); (None, "missing") otherwise."""
+        if isinstance(self.x.m15, LazyBars) and isinstance(self.x.b15, LazyBars):
+            for lz, src in ((self.x.m15, "mark"), (self.x.b15, "last")):  # the bar opening at ts - 15 min
+                v = lz.row_at(ts - BAR_15M, "c")
+                if v is not None and v > 0:
+                    return v, src
+            return None, "missing"
         for bars, src in ((self.m15, "mark"), (self.b15, "last")):
             b = positive_close(bars(ts - BAR_15M, ts - BAR_15M + 1))
             if len(b):

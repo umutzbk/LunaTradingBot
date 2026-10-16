@@ -33,6 +33,27 @@ def _pairs(bars15: pd.DataFrame, span: tuple[int, int] | None = None
     h = bars15["h"].to_numpy(np.float64)
     lo = bars15["l"].to_numpy(np.float64)
     c = bars15["c"].to_numpy(np.float64)
+    return _products(t, ka, h, lo, c, span)
+
+
+def _f64(x) -> np.ndarray:
+    return x.to_numpy(np.float64) if hasattr(x, "to_numpy") else np.asarray(x, dtype=np.float64)
+
+
+def _pairs_arrays(open_ts, known_at, high, low, close, span: tuple[int, int] | None = None
+                  ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """``_pairs`` on the columns (arrays; the lazy windows of red-team r2 MJ1 round 2): the same validation,
+    in the same order, and the same products."""
+    t = ns_array(open_ts, "open_ts")
+    ka = ns_array(known_at, "known_at")
+    h = _f64(high)
+    lo = _f64(low)
+    c = _f64(close)
+    return _products(t, ka, h, lo, c, span)
+
+
+def _products(t: np.ndarray, ka: np.ndarray, h: np.ndarray, lo: np.ndarray, c: np.ndarray,
+              span: tuple[int, int] | None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     if span is not None:
         m = (t >= span[0]) & (t < span[1])
         t, ka, h, lo, c = t[m], ka[m], h[m], lo[m], c[m]
@@ -57,7 +78,16 @@ def pair_products(bars15: pd.DataFrame) -> pd.DataFrame:
 def half_spread(bars15_instance: pd.DataFrame, tau_ns: int) -> float | None:
     """S-4.5 proxy value h(tau) (decision-time or fill-time); None if the pair set is empty."""
     lo = tau_ns - FROZEN.spread.window_ns
-    t, pi, known = _pairs(bars15_instance, (lo, tau_ns))
+    return _value(*_pairs(bars15_instance, (lo, tau_ns)), lo, tau_ns)
+
+
+def half_spread_arrays(open_ts, known_at, high, low, close, tau_ns: int) -> float | None:
+    """``half_spread`` on a bar window's columns (``_pairs_arrays``; the lazy 15m windows): the same value."""
+    lo = tau_ns - FROZEN.spread.window_ns
+    return _value(*_pairs_arrays(open_ts, known_at, high, low, close, (lo, tau_ns)), lo, tau_ns)
+
+
+def _value(t: np.ndarray, pi: np.ndarray, known: np.ndarray, lo: int, tau_ns: int) -> float | None:
     sel = pi[(t >= lo) & (known <= tau_ns - MIN)]
     if len(sel) == 0:
         return None
