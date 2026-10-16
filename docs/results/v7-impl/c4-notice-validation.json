@@ -1,19 +1,795 @@
 {
+ "a1_effect": {
+  "base_asset_matches": [
+   {
+    "instance": "BTCUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2024-11-01T13:48:21Z",
+    "reason": "base_asset_match:BTC;usdm_context:usds-m",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "BTCUSDT",
+    "version": "en:043c8407bb904652a428573a50d07e07 v1"
+   },
+   {
+    "instance": "NOTUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2024-11-01T13:48:21Z",
+    "reason": "base_asset_match:NOT;usdm_context:usds-m",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "NOTUSDT",
+    "version": "en:043c8407bb904652a428573a50d07e07 v1"
+   },
+   {
+    "instance": "ANCUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2022-05-13T02:30:34Z",
+    "reason": "base_asset_match:ANC;usdm_context:usdt-margined",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "ANCUSDT",
+    "version": "en:0bfb6cfd10aa4d26926260c0159ef58d v1"
+   },
+   {
+    "instance": "BTCUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2024-03-08T09:56:20Z",
+    "reason": "base_asset_match:BTC;usdm_context:usds-m",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "BTCUSDT",
+    "version": "en:2e6eb8e644664a6ca7b6659a226c41b0 v1"
+   },
+   {
+    "instance": "BNBUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2022-11-13T09:49:06Z",
+    "reason": "base_asset_match:BNB;usdm_context:usds-m",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "BNBUSDT",
+    "version": "en:3b4c7c08479b48d48189191e37a7adca v1"
+   },
+   {
+    "instance": "BTCUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2022-11-13T09:49:06Z",
+    "reason": "base_asset_match:BTC;usdm_context:usds-m",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "BTCUSDT",
+    "version": "en:3b4c7c08479b48d48189191e37a7adca v1"
+   },
+   {
+    "instance": "BNBUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2023-05-18T08:16:58Z",
+    "reason": "base_asset_match:BNB;usdm_context:usdt-margined",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "BNBUSDT",
+    "version": "en:45852dc155b641bc9e1c23bc41d8ded6 v1"
+   },
+   {
+    "instance": "COCOSUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2023-05-18T08:16:58Z",
+    "reason": "base_asset_match:COCOS;usdm_context:usdt-margined",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "COCOSUSDT",
+    "version": "en:45852dc155b641bc9e1c23bc41d8ded6 v1"
+   },
+   {
+    "instance": "1000BTTCUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2022-04-04T05:21:58Z",
+    "reason": "base_asset_match:1000BTTC;usdm_context:usdt-margined",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "1000BTTCUSDT",
+    "version": "en:4baf8d70485c46e38637bd063c58c4d8 v1"
+   },
+   {
+    "instance": "YFIIUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2022-04-04T05:21:58Z",
+    "reason": "base_asset_match:YFII;usdm_context:usdt-margined",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "YFIIUSDT",
+    "version": "en:4baf8d70485c46e38637bd063c58c4d8 v1"
+   },
+   {
+    "instance": "BNBUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2023-02-10T04:37:40Z",
+    "reason": "base_asset_match:BNB;usdm_context:usdt-margined",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "BNBUSDT",
+    "version": "en:4d23ada51a2e4fa182835c77d51ba1a9 v1"
+   },
+   {
+    "instance": "BTCUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2023-02-10T04:37:40Z",
+    "reason": "base_asset_match:BTC;usdm_context:usdt-margined",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "BTCUSDT",
+    "version": "en:4d23ada51a2e4fa182835c77d51ba1a9 v1"
+   },
+   {
+    "instance": "BOMEUSDT#0",
+    "instance_reason": "attributed",
+    "kind": null,
+    "known_at": "2024-04-29T14:12:01Z",
+    "reason": "base_asset_match:BOME;usdm_context:usds-m",
+    "scheduled_reason": "not_a_delisting",
+    "status": "unclassified",
+    "symbol": "BOMEUSDT",
+    "version": "en:686612ddcd824cd493963371eac1a80b v1"
+   },
+   {
+    "instance": "BTCUSDT#0",
+    "instance_reason": "attributed",
+    "kind": null,
+    "known_at": "2024-04-29T14:12:01Z",
+    "reason": "base_asset_match:BTC;usdm_context:usds-m",
+    "scheduled_reason": "not_a_delisting",
+    "status": "unclassified",
+    "symbol": "BTCUSDT",
+    "version": "en:686612ddcd824cd493963371eac1a80b v1"
+   },
+   {
+    "instance": "MATICUSDT#0",
+    "instance_reason": "attributed",
+    "kind": null,
+    "known_at": "2024-04-29T14:12:01Z",
+    "reason": "base_asset_match:MATIC;usdm_context:usds-m",
+    "scheduled_reason": "not_a_delisting",
+    "status": "unclassified",
+    "symbol": "MATICUSDT",
+    "version": "en:686612ddcd824cd493963371eac1a80b v1"
+   },
+   {
+    "instance": "MEMEUSDT#0",
+    "instance_reason": "attributed",
+    "kind": null,
+    "known_at": "2024-04-29T14:12:01Z",
+    "reason": "base_asset_match:MEME;usdm_context:usds-m",
+    "scheduled_reason": "not_a_delisting",
+    "status": "unclassified",
+    "symbol": "MEMEUSDT",
+    "version": "en:686612ddcd824cd493963371eac1a80b v1"
+   },
+   {
+    "instance": "TIAUSDT#0",
+    "instance_reason": "attributed",
+    "kind": null,
+    "known_at": "2024-04-29T14:12:01Z",
+    "reason": "base_asset_match:TIA;usdm_context:usds-m",
+    "scheduled_reason": "not_a_delisting",
+    "status": "unclassified",
+    "symbol": "TIAUSDT",
+    "version": "en:686612ddcd824cd493963371eac1a80b v1"
+   },
+   {
+    "instance": "USDCUSDT#0",
+    "instance_reason": "attributed",
+    "kind": null,
+    "known_at": "2024-04-29T14:12:01Z",
+    "reason": "base_asset_match:USDC;usdm_context:usds-m",
+    "scheduled_reason": "not_a_delisting",
+    "status": "unclassified",
+    "symbol": "USDCUSDT",
+    "version": "en:686612ddcd824cd493963371eac1a80b v1"
+   },
+   {
+    "instance": "SCUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2022-06-10T10:09:59Z",
+    "reason": "base_asset_match:SC;usdm_context:usdt-margined",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "SCUSDT",
+    "version": "en:6ce355dedc5d438abde7b5dc99b3a56d v1"
+   },
+   {
+    "instance": "ICPUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2022-06-02T11:35:39Z",
+    "reason": "base_asset_match:ICP;usdm_context:usdt-margined",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "ICPUSDT",
+    "version": "en:af469aeeab074738bb4a276070a9d11b v1"
+   },
+   {
+    "instance": "TLMUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2022-06-02T11:35:39Z",
+    "reason": "base_asset_match:TLM;usdm_context:usdt-margined",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "TLMUSDT",
+    "version": "en:af469aeeab074738bb4a276070a9d11b v1"
+   },
+   {
+    "instance": "BLZUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2022-08-17T10:21:03Z",
+    "reason": "base_asset_match:BLZ;usdm_context:usdt-margined",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "BLZUSDT",
+    "version": "en:b312715afbff4d7493b77089967303b1 v1"
+   },
+   {
+    "instance": "BNXUSDT#0",
+    "instance_reason": "attributed",
+    "kind": null,
+    "known_at": "2022-11-20T04:50:45Z",
+    "reason": "base_asset_match:BNX;usdm_context:usds-m",
+    "scheduled_reason": "not_a_delisting",
+    "status": "unclassified",
+    "symbol": "BNXUSDT",
+    "version": "en:cb9254650c784d319259c5ba8569d11a v1"
+   },
+   {
+    "instance": "AKROUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2022-05-18T14:31:01Z",
+    "reason": "base_asset_match:AKRO;usdm_context:usdt-margined",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "AKROUSDT",
+    "version": "en:d1cb959677034c45b5149f1d998ae2b1 v1"
+   },
+   {
+    "instance": "DODOUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2022-05-18T14:31:01Z",
+    "reason": "base_asset_match:DODO;usdm_context:usdt-margined",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "DODOUSDT",
+    "version": "en:d1cb959677034c45b5149f1d998ae2b1 v1"
+   },
+   {
+    "instance": "BTCUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2024-07-10T07:59:35Z",
+    "reason": "base_asset_match:BTC;usdm_context:usds-m",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "BTCUSDT",
+    "version": "en:d1f2ae8d99b24439a7a900caa9bb6b3b v1"
+   },
+   {
+    "instance": "USDCUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2024-07-10T07:59:35Z",
+    "reason": "base_asset_match:USDC;usdm_context:usds-m",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "USDCUSDT",
+    "version": "en:d1f2ae8d99b24439a7a900caa9bb6b3b v1"
+   },
+   {
+    "instance": "BTCUSDT#0",
+    "instance_reason": "attributed",
+    "kind": null,
+    "known_at": "2023-02-28T07:17:29Z",
+    "reason": "base_asset_match:BTC;usdm_context:usds-m",
+    "scheduled_reason": "not_a_delisting",
+    "status": "unclassified",
+    "symbol": "BTCUSDT",
+    "version": "en:e0aa73262d384ed3a616a4a66f59c9b5 v1"
+   },
+   {
+    "instance": "BNXUSDT#0",
+    "instance_reason": "attributed",
+    "kind": null,
+    "known_at": "2022-11-18T08:47:19Z",
+    "reason": "base_asset_match:BNX;usdm_context:usdt-margined",
+    "scheduled_reason": "not_a_delisting",
+    "status": "unclassified",
+    "symbol": "BNXUSDT",
+    "version": "en:e15fac275e7a4e858dc4bb79ffc24c50 v1"
+   },
+   {
+    "instance": "TOMOUSDT#0",
+    "instance_reason": "attributed",
+    "kind": null,
+    "known_at": "2022-11-09T19:32:55Z",
+    "reason": "base_asset_match:TOMO;usdm_context:usdt-margined",
+    "scheduled_reason": "not_a_delisting",
+    "status": "unclassified",
+    "symbol": "TOMOUSDT",
+    "version": "en:e1d9bbcd3e214208b39b5c2a8087dda7 v1"
+   },
+   {
+    "instance": "LUNAUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2022-05-12T15:01:46Z",
+    "reason": "base_asset_match:LUNA;usdm_context:usds-m|usdt-margined|usds-margined",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "LUNAUSDT",
+    "version": "en:ef3ce76d5c2d45ee9b6dc3f281cde744 v1"
+   },
+   {
+    "instance": "LINKUSDT#0",
+    "instance_reason": "attributed",
+    "kind": null,
+    "known_at": "2022-11-17T09:38:24Z",
+    "reason": "base_asset_match:LINK;usdm_context:usds-m",
+    "scheduled_reason": "not_a_delisting",
+    "status": "unclassified",
+    "symbol": "LINKUSDT",
+    "version": "en:f23822acd32f48c994c92ced49866043 v1"
+   },
+   {
+    "instance": "WAVESUSDT#0",
+    "instance_reason": "attributed",
+    "kind": null,
+    "known_at": "2022-11-17T09:38:24Z",
+    "reason": "base_asset_match:WAVES;usdm_context:usds-m",
+    "scheduled_reason": "not_a_delisting",
+    "status": "unclassified",
+    "symbol": "WAVESUSDT",
+    "version": "en:f23822acd32f48c994c92ced49866043 v1"
+   },
+   {
+    "instance": "BTCUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2024-06-03T03:02:08Z",
+    "reason": "base_asset_match:BTC;usdm_context:usds-m",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "BTCUSDT",
+    "version": "en:f65faeeefe07417a8b6dd2900ba8da7e v1"
+   },
+   {
+    "instance": "ETHUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2024-06-03T03:02:08Z",
+    "reason": "base_asset_match:ETH;usdm_context:usds-m",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "ETHUSDT",
+    "version": "en:f65faeeefe07417a8b6dd2900ba8da7e v1"
+   },
+   {
+    "instance": "NOTUSDT#0",
+    "instance_reason": "attributed",
+    "kind": "delisting",
+    "known_at": "2024-06-03T03:02:08Z",
+    "reason": "base_asset_match:NOT;usdm_context:usds-m",
+    "scheduled_reason": "no_timestamp_in_symbol_sentences",
+    "status": "classified",
+    "symbol": "NOTUSDT",
+    "version": "en:f65faeeefe07417a8b6dd2900ba8da7e v1"
+   }
+  ],
+  "missed_with_a_capture": [
+   {
+    "instance": "AGIXUSDT#0",
+    "reasons": [
+     "unclassified_kind:no_kind_phrase;r52a:leverage_margin_tiers_update_dropped (en:7f43e06a36e7417a82ed691a0d7307c4 v1)"
+    ],
+    "stage0_class": "C"
+   },
+   {
+    "instance": "BNXUSDT#0",
+    "reasons": [
+     "no_confident_match:base_asset:BNX;no_usdm_context (en:f4f20b3b72324b3b82c543988f5b2328 v1)",
+     "no_confident_match:no_symbol_token;base_asset:no_live_usdt_identity (en:4d23ada51a2e4fa182835c77d51ba1a9 v1)",
+     "unclassified_kind:no_kind_phrase (en:cb9254650c784d319259c5ba8569d11a v1)",
+     "unclassified_kind:no_kind_phrase (en:e15fac275e7a4e858dc4bb79ffc24c50 v1)",
+     "unclassified_kind:no_kind_phrase (en:e894a11164af4d61935735f9d1f70a88 v1)",
+     "unclassified_kind:no_kind_phrase;r52a:leverage_margin_tiers_update_dropped (en:63a12323c35d406aa977914f9d794909 v1)",
+     "unclassified_kind:no_kind_phrase;r52a:leverage_margin_tiers_update_dropped (en:b003f85c03be402b993b47740f5f4305 v1)"
+    ],
+    "stage0_class": "C"
+   },
+   {
+    "instance": "BNXUSDT#1",
+    "reasons": [
+     "no_confident_match:base_asset:BNX;no_usdm_context (en:f4f20b3b72324b3b82c543988f5b2328 v1)",
+     "no_confident_match:no_symbol_token;base_asset:no_live_usdt_identity (en:4d23ada51a2e4fa182835c77d51ba1a9 v1)",
+     "unclassified_kind:no_kind_phrase (en:cb9254650c784d319259c5ba8569d11a v1)",
+     "unclassified_kind:no_kind_phrase (en:e15fac275e7a4e858dc4bb79ffc24c50 v1)",
+     "unclassified_kind:no_kind_phrase (en:e894a11164af4d61935735f9d1f70a88 v1)",
+     "unclassified_kind:no_kind_phrase;r52a:leverage_margin_tiers_update_dropped (en:63a12323c35d406aa977914f9d794909 v1)",
+     "unclassified_kind:no_kind_phrase;r52a:leverage_margin_tiers_update_dropped (en:b003f85c03be402b993b47740f5f4305 v1)"
+    ],
+    "stage0_class": "C"
+   },
+   {
+    "instance": "BZRXUSDT#0",
+    "reasons": [
+     "unclassified_kind:no_kind_phrase (en:14378198b6594dd4ae029ea3b56ed517 v1)"
+    ],
+    "stage0_class": "C"
+   },
+   {
+    "instance": "COMBOUSDT#0",
+    "reasons": [
+     "no_confident_match:no_symbol_token;base_asset:no_live_usdt_identity (en:18550322a4944094840831c3efe2d223 v1)",
+     "no_confident_match:no_symbol_token;base_asset:no_live_usdt_identity (en:45852dc155b641bc9e1c23bc41d8ded6 v1)"
+    ],
+    "stage0_class": null
+   },
+   {
+    "instance": "CVXUSDT#0",
+    "reasons": [
+     "no_confident_match:base_asset:CVX;no_usdm_context (en:cd599a0f00004f399b03b8077788e39c v1)"
+    ],
+    "stage0_class": null
+   },
+   {
+    "instance": "LOOMUSDT#0",
+    "reasons": [
+     "instance:no_instance_live_at_known_at (en:cfe97d52a8c840d3ba631835b637e9e7 v1)",
+     "no_confident_match:no_symbol_token;base_asset:no_live_usdt_identity (en:5a927cdc26a0401b8bb5f49c5b61f54d v1)"
+    ],
+    "stage0_class": null
+   },
+   {
+    "instance": "MATICUSDT#0",
+    "reasons": [
+     "no_confident_match:coin_m_veto:coin-m (en:6a6de383727f4659a3050f7982e1620f v1)",
+     "unclassified_kind:no_kind_phrase (en:686612ddcd824cd493963371eac1a80b v1)"
+    ],
+    "stage0_class": "B"
+   },
+   {
+    "instance": "OCEANUSDT#0",
+    "reasons": [
+     "unclassified_kind:no_kind_phrase;r52a:leverage_margin_tiers_update_dropped (en:7f43e06a36e7417a82ed691a0d7307c4 v1)"
+    ],
+    "stage0_class": null
+   },
+   {
+    "instance": "ORBSUSDT#0",
+    "reasons": [
+     "instance:no_instance_live_at_known_at (en:cfe97d52a8c840d3ba631835b637e9e7 v1)"
+    ],
+    "stage0_class": null
+   },
+   {
+    "instance": "STPTUSDT#0",
+    "reasons": [
+     "no_confident_match:no_symbol_token;base_asset:no_live_usdt_identity (en:cd599a0f00004f399b03b8077788e39c v1)"
+    ],
+    "stage0_class": null
+   },
+   {
+    "instance": "TOMOUSDT#0",
+    "reasons": [
+     "no_confident_match:no_symbol_token;base_asset:no_live_usdt_identity (en:0491a610ab2d4ab3af6d15dce961c5ae v1)",
+     "unclassified_kind:no_kind_phrase (en:e1d9bbcd3e214208b39b5c2a8087dda7 v1)"
+    ],
+    "stage0_class": "C"
+   }
+  ],
+  "swap_like_titles_still_unclassified": [],
+  "token_swap_versions": [
+   {
+    "kind_reason": "token_swap:token swap",
+    "known_at": "2024-03-28T16:21:48Z",
+    "matches": [
+     [
+      "BTCUSDT",
+      false,
+      "base_asset:BTC;no_usdm_context",
+      null
+     ],
+     [
+      "STRAXUSDT",
+      false,
+      "no_symbol_token;base_asset:no_live_usdt_identity",
+      null
+     ]
+    ],
+    "title": "Binance Has Completed the Stratis (STRAX) Token Swap and Redenomination",
+    "version": "en:033618992939455aa64fd113a2c1e76f v1"
+   },
+   {
+    "kind_reason": "token_swap:rebranding",
+    "known_at": "2023-11-24T19:36:17Z",
+    "matches": [
+     [
+      "BNBUSDT",
+      false,
+      "base_asset:BNB;no_usdm_context",
+      null
+     ],
+     [
+      "TOMOUSDT",
+      false,
+      "no_symbol_token;base_asset:no_live_usdt_identity",
+      null
+     ],
+     [
+      "VICUSDT",
+      false,
+      "no_symbol_token;base_asset:no_live_usdt_identity",
+      null
+     ]
+    ],
+    "title": "Binance Has Completed the TomoChain (TOMO) Rebranding to Viction (VIC)",
+    "version": "en:0491a610ab2d4ab3af6d15dce961c5ae v1"
+   },
+   {
+    "kind_reason": "token_swap:token swap|rebranding",
+    "known_at": "2023-06-02T08:35:25Z",
+    "matches": [
+     [
+      "BNBUSDT",
+      false,
+      "base_asset:BNB;no_usdm_context",
+      null
+     ],
+     [
+      "COCOSUSDT",
+      false,
+      "no_symbol_token;base_asset:no_live_usdt_identity",
+      null
+     ],
+     [
+      "COMBOUSDT",
+      false,
+      "no_symbol_token;base_asset:no_live_usdt_identity",
+      null
+     ]
+    ],
+    "title": "Binance Has Completed the Cocos-BCX (COCOS) Token Swap & Rebranding Plan to COMBO (COMBO)",
+    "version": "en:18550322a4944094840831c3efe2d223 v1"
+   },
+   {
+    "kind_reason": "token_swap:token swap",
+    "known_at": "2024-03-08T09:56:20Z",
+    "matches": [
+     [
+      "AUSDT",
+      false,
+      "no_symbol_token;base_asset:no_live_usdt_identity",
+      null
+     ],
+     [
+      "BTCUSDT",
+      true,
+      "base_asset_match:BTC;usdm_context:usds-m",
+      "BTCUSDT#0"
+     ],
+     [
+      "STRAXUSDT",
+      true,
+      "usdm_context:usds-m",
+      "STRAXUSDT#0"
+     ]
+    ],
+    "title": "Binance Will Support the Stratis (STRAX) Token Swap and Redenomination Plan",
+    "version": "en:2e6eb8e644664a6ca7b6659a226c41b0 v1"
+   },
+   {
+    "kind_reason": "token_swap:token swap|rebranding",
+    "known_at": "2023-05-18T08:16:58Z",
+    "matches": [
+     [
+      "AUSDT",
+      false,
+      "no_symbol_token;base_asset:no_live_usdt_identity",
+      null
+     ],
+     [
+      "BNBUSDT",
+      true,
+      "base_asset_match:BNB;usdm_context:usdt-margined",
+      "BNBUSDT#0"
+     ],
+     [
+      "COCOSUSDT",
+      true,
+      "base_asset_match:COCOS;usdm_context:usdt-margined",
+      "COCOSUSDT#0"
+     ],
+     [
+      "COMBOUSDT",
+      false,
+      "no_symbol_token;base_asset:no_live_usdt_identity",
+      null
+     ]
+    ],
+    "title": "Binance Will Support the Cocos-BCX (COCOS) Token Swap & Rebranding Plan to COMBO (COMBO)",
+    "version": "en:45852dc155b641bc9e1c23bc41d8ded6 v1"
+   },
+   {
+    "kind_reason": "token_swap:token swap",
+    "known_at": "2023-02-10T04:37:40Z",
+    "matches": [
+     [
+      "AUSDT",
+      false,
+      "no_symbol_token;base_asset:no_live_usdt_identity",
+      null
+     ],
+     [
+      "BNBUSDT",
+      true,
+      "base_asset_match:BNB;usdm_context:usdt-margined",
+      "BNBUSDT#0"
+     ],
+     [
+      "BNXUSDT",
+      false,
+      "no_symbol_token;base_asset:no_live_usdt_identity",
+      null
+     ],
+     [
+      "BTCUSDT",
+      true,
+      "base_asset_match:BTC;usdm_context:usdt-margined",
+      "BTCUSDT#0"
+     ]
+    ],
+    "title": "Binance Will Support the BinaryX (BNX) Token Swap and Redenomination Plan",
+    "version": "en:4d23ada51a2e4fa182835c77d51ba1a9 v1"
+   },
+   {
+    "kind_reason": "token_swap:token swap",
+    "known_at": "2024-08-28T09:49:40Z",
+    "matches": [
+     [
+      "AUSDT",
+      false,
+      "no_symbol_token;base_asset:no_live_usdt_identity",
+      null
+     ],
+     [
+      "BNBUSDT",
+      false,
+      "base_asset:BNB;coin_m_veto:coin-m",
+      null
+     ],
+     [
+      "BTCUSDT",
+      false,
+      "base_asset:BTC;coin_m_veto:coin-m",
+      null
+     ],
+     [
+      "ETHUSDT",
+      false,
+      "base_asset:ETH;coin_m_veto:coin-m",
+      null
+     ],
+     [
+      "MATICUSDT",
+      false,
+      "coin_m_veto:coin-m",
+      null
+     ],
+     [
+      "POLUSDT",
+      false,
+      "no_symbol_token;base_asset:no_live_usdt_identity",
+      null
+     ],
+     [
+      "USDCUSDT",
+      false,
+      "base_asset:USDC;coin_m_veto:coin-m",
+      null
+     ]
+    ],
+    "title": "Binance Will Support the Polygon (MATIC) Token Swap to Polygon (POL)",
+    "version": "en:6a6de383727f4659a3050f7982e1620f v1"
+   },
+   {
+    "kind_reason": "token_swap:token swap|rebranding",
+    "known_at": "2024-07-26T09:59:01Z",
+    "matches": [
+     [
+      "BTCUSDT",
+      false,
+      "base_asset:BTC;no_usdm_context",
+      null
+     ],
+     [
+      "RENDERUSDT",
+      false,
+      "no_symbol_token;base_asset:no_live_usdt_identity",
+      null
+     ],
+     [
+      "RNDRUSDT",
+      false,
+      "no_symbol_token;base_asset:no_live_usdt_identity",
+      null
+     ],
+     [
+      "USDCUSDT",
+      false,
+      "base_asset:USDC;no_usdm_context",
+      null
+     ]
+    ],
+    "title": "Binance Has Completed the Render (RNDR) Token Swap and Rebranding to Render (RENDER)",
+    "version": "en:7aa2bb48ab194bb9aebbc3f72b5819ed v1"
+   },
+   {
+    "kind_reason": "token_swap:token swap|rebranding",
+    "known_at": "2024-07-10T07:59:35Z",
+    "matches": [
+     [
+      "AUSDT",
+      false,
+      "no_symbol_token;base_asset:no_live_usdt_identity",
+      null
+     ],
+     [
+      "BTCUSDT",
+      true,
+      "base_asset_match:BTC;usdm_context:usds-m",
+      "BTCUSDT#0"
+     ],
+     [
+      "RENDERUSDT",
+      false,
+      "no_symbol_token;base_asset:no_live_usdt_identity",
+      null
+     ],
+     [
+      "RNDRUSDT",
+      true,
+      "usdm_context:usds-m",
+      "RNDRUSDT#0"
+     ],
+     [
+      "USDCUSDT",
+      true,
+      "base_asset_match:USDC;usdm_context:usds-m",
+      "USDCUSDT#0"
+     ]
+    ],
+    "title": "Binance Will Support the Render (RNDR) Token Swap and Rebranding to Render (RENDER)",
+    "version": "en:d1f2ae8d99b24439a7a900caa9bb6b3b v1"
+   }
+  ]
+ },
+ "a1_identities": "C4 PROXY (no exchangeInfo in the C4 inputs): base = symbol without its USDT quote, quote USDT, NOT E8-verified (proxy_identities)",
  "before": {
   "build_counts": {
-   "diag_publishDate": {
-    "by_kind": {
-     "cancellation": 0,
-     "delisting": 19,
-     "postponement": 0
-    },
-    "captures": 54,
-    "classified": 19,
-    "unclassified": 28,
-    "unusable": 0,
-    "versions": 47
-   },
-   "draft_rule": {
+   "frozen": {
     "by_kind": {
      "cancellation": 0,
      "delisting": 24,
@@ -24,137 +800,294 @@
     "unclassified": 23,
     "unusable": 0,
     "versions": 47
-   },
-   "frozen": {
-    "by_kind": {
-     "cancellation": 0,
-     "delisting": 0,
-     "postponement": 0
-    },
-    "captures": 54,
-    "classified": 0,
-    "unclassified": 0,
-    "unusable": 54,
-    "versions": 54
    }
   },
   "catalog_kind_reason_counts": {
-   "ambiguous_kind:modifier:postpon": 2,
-   "ambiguous_kind:modifier:updat": 28,
    "delisting:delist": 16,
-   "no_kind_phrase": 1
+   "delisting:delist;r52a:leverage_margin_tiers_update_dropped": 28,
+   "no_kind_phrase": 1,
+   "postponement:r52b:postponed+delist": 2
   },
   "counts": {
-   "diag_publishDate": {
+   "frozen": {
     "captures": 54,
     "kinds": {
-     "delisting": 26,
-     "unclassified": 28
+     "delisting": 31,
+     "unclassified": 23
     },
     "unusable_by_reason": {},
     "unusable_by_year": {},
     "usable": 54
-   },
-   "frozen": {
-    "captures": 54,
-    "kinds": {
-     "unusable": 54
-    },
-    "unusable_by_reason": {
-     "no_release_date": 54
-    },
-    "unusable_by_year": {
-     "2022": 31,
-     "2023": 10,
-     "2024": 11,
-     "2025": 2
-    },
-    "usable": 0
    }
   },
-  "git_head": "d78a1c115ca821412c9d53b4ceccb86c2ee1d6f6",
+  "git_head": "e506e9c6b67660abc77a246915fc52775a940e83",
   "scheduled_reasons": {
-   "diag_publishDate": {
-    "conflicting_candidates": 1,
-    "mapped": 4,
+   "frozen": {
+    "conflicting_candidates": 2,
+    "mapped": 10,
     "no_confident_match": 1,
-    "not_a_delisting": 18,
-    "several_timestamps_without_respectively": 8
-   },
-   "draft_rule": {
-    "conflicting_candidates": 1,
-    "mapped": 4,
-    "no_confident_match": 1,
-    "not_a_delisting": 17,
-    "several_timestamps_without_respectively": 9
-   },
-   "frozen": {}
+    "no_timestamp_in_symbol_sentences": 2,
+    "not_a_delisting": 16
+   }
   },
-  "sha256": "0a36ce25342544d4e948d0d5d754413d82cb12bdfe4f1974ac04b2ea9ab65ff1",
+  "sha256": "7425bfb96ae501ef6565ded0a0bfca65f922d8f7991ac78700f7f4b5a77b6587",
   "termination_coverage": {
-   "diag_publishDate": {
-    "B": {
-     "matched_null": 3,
-     "matched_scheduled": 1,
-     "matched_scheduled_not_the_termination": 1,
-     "missed": 9
-    },
-    "C": {
-     "missed": 12
-    },
-    "all": {
-     "matched_null": 5,
-     "matched_scheduled": 2,
-     "matched_scheduled_not_the_termination": 2,
-     "missed": 65
-    }
-   },
-   "draft_rule": {
-    "B": {
-     "matched_null": 3,
-     "matched_scheduled": 1,
-     "matched_scheduled_not_the_termination": 1,
-     "missed": 9
-    },
-    "C": {
-     "missed": 12
-    },
-    "all": {
-     "matched_null": 5,
-     "matched_scheduled": 2,
-     "matched_scheduled_not_the_termination": 2,
-     "missed": 65
-    }
-   },
    "frozen": {
     "B": {
-     "missed": 14
+     "matched_null": 2,
+     "matched_scheduled": 3,
+     "missed": 9
     },
     "C": {
      "missed": 12
     },
     "all": {
-     "missed": 74
+     "matched_null": 2,
+     "matched_scheduled": 6,
+     "matched_scheduled_not_the_termination": 1,
+     "missed": 65
     }
    }
   },
   "termination_reason_heads": {
-   "diag_publishDate": {
-    "instance": 2,
-    "no_capture": 40,
-    "symbol_not_whole_token": 34,
-    "unclassified_kind": 15
-   },
-   "draft_rule": {
-    "instance": 2,
-    "no_capture": 40,
-    "symbol_not_whole_token": 34,
-    "unclassified_kind": 15
-   },
    "frozen": {
-    "no_capture": 35,
-    "unusable_article": 248
+    "instance": 2,
+    "no_capture": 40,
+    "symbol_not_whole_token": 36,
+    "unclassified_kind": 13
    }
+  },
+  "wdev_book_window": {
+   "events": [
+    {
+     "by": [],
+     "cessation": "2023-02-01T00:00:00Z",
+     "instance": "BNXUSDT#0",
+     "only_via_amb42_mixed_notice": false,
+     "protected": false,
+     "reasons": [
+      "symbol_not_whole_token:base BNX only (en:4d23ada51a2e4fa182835c77d51ba1a9 v1, unclassified)",
+      "symbol_not_whole_token:base BNX only (en:cb9254650c784d319259c5ba8569d11a v1, unclassified)",
+      "symbol_not_whole_token:base BNX only (en:e15fac275e7a4e858dc4bb79ffc24c50 v1, unclassified)",
+      "symbol_not_whole_token:base BNX only (en:f4f20b3b72324b3b82c543988f5b2328 v1, classified)",
+      "unclassified_kind:no_kind_phrase (en:e894a11164af4d61935735f9d1f70a88 v1)",
+      "unclassified_kind:no_kind_phrase;r52a:leverage_margin_tiers_update_dropped (en:63a12323c35d406aa977914f9d794909 v1)",
+      "unclassified_kind:no_kind_phrase;r52a:leverage_margin_tiers_update_dropped (en:b003f85c03be402b993b47740f5f4305 v1)"
+     ],
+     "stage0_class": "C",
+     "status": "missed"
+    },
+    {
+     "by": [],
+     "cessation": "2023-05-25T09:15:00Z",
+     "instance": "COCOSUSDT#0",
+     "only_via_amb42_mixed_notice": false,
+     "protected": false,
+     "reasons": [
+      "symbol_not_whole_token:base COCOS only (en:18550322a4944094840831c3efe2d223 v1, unclassified)",
+      "symbol_not_whole_token:base COCOS only (en:45852dc155b641bc9e1c23bc41d8ded6 v1, unclassified)",
+      "symbol_not_whole_token:base COCOS only (en:ed7dcc263e6e4f3687f8260340ec96ce v1, classified)",
+      "unclassified_kind:no_kind_phrase (en:e0aa73262d384ed3a616a4a66f59c9b5 v1)"
+     ],
+     "stage0_class": "B",
+     "status": "missed"
+    },
+    {
+     "by": [],
+     "cessation": "2023-11-14T09:00:00Z",
+     "instance": "TOMOUSDT#0",
+     "only_via_amb42_mixed_notice": false,
+     "protected": false,
+     "reasons": [
+      "symbol_not_whole_token:base TOMO only (en:0491a610ab2d4ab3af6d15dce961c5ae v1, unclassified)",
+      "symbol_not_whole_token:base TOMO only (en:e1d9bbcd3e214208b39b5c2a8087dda7 v1, unclassified)"
+     ],
+     "stage0_class": "C",
+     "status": "missed"
+    },
+    {
+     "by": [],
+     "cessation": "2024-03-15T09:00:00Z",
+     "instance": "STRAXUSDT#0",
+     "only_via_amb42_mixed_notice": false,
+     "protected": false,
+     "reasons": [
+      "symbol_not_whole_token:base STRAX only (en:033618992939455aa64fd113a2c1e76f v1, unclassified)",
+      "symbol_not_whole_token:base STRAX only (en:5a927cdc26a0401b8bb5f49c5b61f54d v1, classified)",
+      "symbol_not_whole_token:base STRAX only (en:cd599a0f00004f399b03b8077788e39c v1, classified)",
+      "unclassified_kind:no_kind_phrase (en:2e6eb8e644664a6ca7b6659a226c41b0 v1)"
+     ],
+     "stage0_class": "B",
+     "status": "missed"
+    },
+    {
+     "by": [
+      "en:f65faeeefe07417a8b6dd2900ba8da7e v1 (known 2024-06-03T03:02:08Z, scheduled None)"
+     ],
+     "cessation": "2024-06-11T09:00:00Z",
+     "instance": "WAVESUSDT#0",
+     "only_via_amb42_mixed_notice": false,
+     "protected": true,
+     "reasons": [
+      "scheduled_ts null:conflicting_candidates (en:f65faeeefe07417a8b6dd2900ba8da7e v1)"
+     ],
+     "stage0_class": "B",
+     "status": "matched_null"
+    },
+    {
+     "by": [],
+     "cessation": "2024-06-25T09:15:00Z",
+     "instance": "AGIXUSDT#0",
+     "only_via_amb42_mixed_notice": false,
+     "protected": false,
+     "reasons": [
+      "unclassified_kind:no_kind_phrase;r52a:leverage_margin_tiers_update_dropped (en:7f43e06a36e7417a82ed691a0d7307c4 v1)"
+     ],
+     "stage0_class": "C",
+     "status": "missed"
+    },
+    {
+     "by": [],
+     "cessation": "2024-07-16T09:00:00Z",
+     "instance": "RNDRUSDT#0",
+     "only_via_amb42_mixed_notice": false,
+     "protected": false,
+     "reasons": [
+      "symbol_not_whole_token:base RNDR only (en:7aa2bb48ab194bb9aebbc3f72b5819ed v1, unclassified)",
+      "unclassified_kind:no_kind_phrase (en:499af13827e04741999c15f9139ff3de v1)",
+      "unclassified_kind:no_kind_phrase (en:d1f2ae8d99b24439a7a900caa9bb6b3b v1)"
+     ],
+     "stage0_class": "B",
+     "status": "missed"
+    },
+    {
+     "by": [],
+     "cessation": "2024-09-04T09:00:00Z",
+     "instance": "MATICUSDT#0",
+     "only_via_amb42_mixed_notice": false,
+     "protected": false,
+     "reasons": [
+      "symbol_not_whole_token:base MATIC only (en:686612ddcd824cd493963371eac1a80b v1, unclassified)",
+      "unclassified_kind:no_kind_phrase (en:6a6de383727f4659a3050f7982e1620f v1)"
+     ],
+     "stage0_class": "B",
+     "status": "missed"
+    },
+    {
+     "by": [],
+     "cessation": "2024-10-30T09:15:00Z",
+     "instance": "UNFIUSDT#0",
+     "only_via_amb42_mixed_notice": false,
+     "protected": false,
+     "reasons": [],
+     "stage0_class": "B",
+     "status": "matched_scheduled"
+    },
+    {
+     "by": [
+      "en:f65faeeefe07417a8b6dd2900ba8da7e v1 (known 2024-06-03T03:02:08Z, scheduled None)"
+     ],
+     "cessation": "2024-12-09T09:15:00Z",
+     "instance": "XEMUSDT#0",
+     "only_via_amb42_mixed_notice": true,
+     "protected": true,
+     "reasons": [
+      "scheduled_ts null:no_timestamp_in_symbol_sentences (en:f65faeeefe07417a8b6dd2900ba8da7e v1)"
+     ],
+     "stage0_class": "B",
+     "status": "matched_null"
+    },
+    {
+     "by": [
+      "en:27eac260521b4f40ab331e1a345887a7 v1 (known 2024-12-06T17:43:23Z, scheduled 2024-12-16T09:00:00Z)"
+     ],
+     "cessation": "2024-12-16T09:15:00Z",
+     "instance": "MAVIAUSDT#0",
+     "only_via_amb42_mixed_notice": false,
+     "protected": true,
+     "reasons": [],
+     "stage0_class": "B",
+     "status": "matched_scheduled"
+    },
+    {
+     "by": [],
+     "cessation": "2024-12-26T09:15:00Z",
+     "instance": "DARUSDT#0",
+     "only_via_amb42_mixed_notice": false,
+     "protected": false,
+     "reasons": [
+      "no_capture (no Stage-0 capture names the symbol in its notice text or page)"
+     ],
+     "stage0_class": "C",
+     "status": "missed"
+    },
+    {
+     "by": [],
+     "cessation": "2025-01-06T09:15:00Z",
+     "instance": "FTMUSDT#0",
+     "only_via_amb42_mixed_notice": false,
+     "protected": false,
+     "reasons": [
+      "no_capture (no Stage-0 capture names the symbol in its notice text or page)"
+     ],
+     "stage0_class": "C",
+     "status": "missed"
+    },
+    {
+     "by": [],
+     "cessation": "2025-03-17T09:15:00Z",
+     "instance": "BNXUSDT#1",
+     "only_via_amb42_mixed_notice": false,
+     "protected": false,
+     "reasons": [
+      "symbol_not_whole_token:base BNX only (en:4d23ada51a2e4fa182835c77d51ba1a9 v1, unclassified)",
+      "symbol_not_whole_token:base BNX only (en:cb9254650c784d319259c5ba8569d11a v1, unclassified)",
+      "symbol_not_whole_token:base BNX only (en:e15fac275e7a4e858dc4bb79ffc24c50 v1, unclassified)",
+      "symbol_not_whole_token:base BNX only (en:f4f20b3b72324b3b82c543988f5b2328 v1, classified)",
+      "unclassified_kind:no_kind_phrase (en:e894a11164af4d61935735f9d1f70a88 v1)",
+      "unclassified_kind:no_kind_phrase;r52a:leverage_margin_tiers_update_dropped (en:63a12323c35d406aa977914f9d794909 v1)",
+      "unclassified_kind:no_kind_phrase;r52a:leverage_margin_tiers_update_dropped (en:b003f85c03be402b993b47740f5f4305 v1)"
+     ],
+     "stage0_class": "C",
+     "status": "missed"
+    },
+    {
+     "by": [],
+     "cessation": "2025-04-14T09:15:00Z",
+     "instance": "VIDTUSDT#0",
+     "only_via_amb42_mixed_notice": false,
+     "protected": false,
+     "reasons": [
+      "no_capture (no Stage-0 capture names the symbol in its notice text or page)"
+     ],
+     "stage0_class": "C",
+     "status": "missed"
+    },
+    {
+     "by": [],
+     "cessation": "2025-05-21T09:00:00Z",
+     "instance": "EOSUSDT#0",
+     "only_via_amb42_mixed_notice": false,
+     "protected": false,
+     "reasons": [
+      "no_capture (no Stage-0 capture names the symbol in its notice text or page)"
+     ],
+     "stage0_class": "C",
+     "status": "missed"
+    }
+   ],
+   "n": 16,
+   "protected": 3,
+   "protected_excluding_amb42_mixed": 2,
+   "protected_excluding_amb42_mixed_instances": [
+    "WAVESUSDT#0",
+    "MAVIAUSDT#0"
+   ],
+   "protected_instances": [
+    "WAVESUSDT#0",
+    "XEMUSDT#0",
+    "MAVIAUSDT#0"
+   ]
   }
  },
  "body_format_counts": {
@@ -164,12 +1097,12 @@
   "frozen": {
    "by_kind": {
     "cancellation": 0,
-    "delisting": 24,
+    "delisting": 33,
     "postponement": 0
    },
    "captures": 54,
-   "classified": 24,
-   "unclassified": 23,
+   "classified": 33,
+   "unclassified": 14,
    "unusable": 0,
    "versions": 47
   }
@@ -2604,8 +3537,8 @@
      "releaseDate",
      "updateTime"
     ],
-    "kind": null,
-    "kind_reason": "no_kind_phrase",
+    "kind": "delisting",
+    "kind_reason": "token_swap:token swap",
     "releaseDate": "2023-02-10T04:30:03Z",
     "release_reason": "article_release_date",
     "release_src": "releaseDate=publishDate",
@@ -2922,8 +3855,8 @@
      "releaseDate",
      "updateTime"
     ],
-    "kind": null,
-    "kind_reason": "no_kind_phrase",
+    "kind": "delisting",
+    "kind_reason": "token_swap:token swap|rebranding",
     "releaseDate": "2023-05-18T04:55:04Z",
     "release_reason": "article_release_date",
     "release_src": "releaseDate=publishDate",
@@ -3004,8 +3937,8 @@
      "releaseDate",
      "updateTime"
     ],
-    "kind": null,
-    "kind_reason": "no_kind_phrase",
+    "kind": "delisting",
+    "kind_reason": "token_swap:token swap|rebranding",
     "releaseDate": "2023-06-02T08:10:07Z",
     "release_reason": "article_release_date",
     "release_src": "releaseDate=publishDate",
@@ -3170,8 +4103,8 @@
      "releaseDate",
      "updateTime"
     ],
-    "kind": null,
-    "kind_reason": "no_kind_phrase",
+    "kind": "delisting",
+    "kind_reason": "token_swap:rebranding",
     "releaseDate": "2023-11-24T10:30:02Z",
     "release_reason": "article_release_date",
     "release_src": "releaseDate=publishDate",
@@ -3255,8 +4188,8 @@
      "releaseDate",
      "updateTime"
     ],
-    "kind": null,
-    "kind_reason": "no_kind_phrase",
+    "kind": "delisting",
+    "kind_reason": "token_swap:token swap",
     "releaseDate": "2024-03-08T08:30:31Z",
     "release_reason": "article_release_date",
     "release_src": "releaseDate=publishDate",
@@ -3341,8 +4274,8 @@
      "releaseDate",
      "updateTime"
     ],
-    "kind": null,
-    "kind_reason": "no_kind_phrase",
+    "kind": "delisting",
+    "kind_reason": "token_swap:token swap",
     "releaseDate": "2024-03-28T08:53:12Z",
     "release_reason": "article_release_date",
     "release_src": "releaseDate=publishDate",
@@ -3764,8 +4697,8 @@
      "releaseDate",
      "updateTime"
     ],
-    "kind": null,
-    "kind_reason": "no_kind_phrase",
+    "kind": "delisting",
+    "kind_reason": "token_swap:token swap|rebranding",
     "releaseDate": "2024-07-10T06:30:03Z",
     "release_reason": "article_release_date",
     "release_src": "releaseDate=publishDate",
@@ -3850,8 +4783,8 @@
      "releaseDate",
      "updateTime"
     ],
-    "kind": null,
-    "kind_reason": "no_kind_phrase",
+    "kind": "delisting",
+    "kind_reason": "token_swap:token swap|rebranding",
     "releaseDate": "2024-07-26T09:00:01Z",
     "release_reason": "article_release_date",
     "release_src": "releaseDate=publishDate",
@@ -3936,8 +4869,8 @@
      "releaseDate",
      "updateTime"
     ],
-    "kind": null,
-    "kind_reason": "no_kind_phrase",
+    "kind": "delisting",
+    "kind_reason": "token_swap:token swap",
     "releaseDate": "2024-08-28T09:00:07Z",
     "release_reason": "article_release_date",
     "release_src": "releaseDate=publishDate",
@@ -4310,20 +5243,20 @@
   }
  ],
  "code_sha256": {
-  "luna/v7/data/captures.py": "21a8a0c9638559c1d843e981ad7cd5b30ce64caa564b1569ca099526ea94a38c",
+  "luna/v7/data/captures.py": "88e3c4053e3c7737814996bde4fb3d692cea107eec93cf0da53f3d4ba93e5ae9",
   "luna/v7/data/instances.py": "a897a269f3723cf78c07ae4edca5b9064dc8f127f32354a626a968c1188632a9",
-  "luna/v7/data/notices.py": "3886e18b6d8b064854412773a8c872284b38b1437a3a0857689df3a460901ae6",
-  "luna/v7/metaingest.py": "ff5208ad1076261d073cc563e5b21149dfac27916787d5ccdf04c7bfa1a03b02",
-  "luna/v7/metastore.py": "700a1de895bdc8ad88851dcb88bd4377334c0dd122862973259ccd2f225aa8f1",
-  "scripts/v7/validate_notices_stage0.py": "c3377149d582fd233b0cc8ef3bb8135917f8fb0767dd7468c1dec6c419166093"
+  "luna/v7/data/notices.py": "e267e4beb4013060ef1740645766a27a89204c7008a732ae054efb9966954eae",
+  "luna/v7/metaingest.py": "d3dd2862937e4e4693bf16cfa15978c7a972a44d97ffd111092a338dd9e287f6",
+  "luna/v7/metastore.py": "e124a73a9bd230e6bccd349c66aaf1541d4c15ed1d7c27ed58f952858d71e129",
+  "scripts/v7/validate_notices_stage0.py": "3e9bab2799bbef5df5e7526528a8a34005b652ee52a0725c5bdbb5ecca136822"
  },
  "code_sha256_source": "git show HEAD:<path>",
  "counts": {
   "frozen": {
    "captures": 54,
    "kinds": {
-    "delisting": 31,
-    "unclassified": 23
+    "delisting": 40,
+    "unclassified": 14
    },
    "unusable_by_reason": {},
    "unusable_by_year": {},
@@ -4998,7 +5931,7 @@
    "veto_titles": {}
   }
  },
- "git_head": "e506e9c6b67660abc77a246915fc52775a940e83",
+ "git_head": "183cceedc31c9dbcf3cd9d1ab18105da82512588",
  "headline": {
   "frozen_can_process_real_captures": true,
   "real_article_structure": "The notice's own article object (same 32-hex code, string `body`) carries `publishDate` but NO `releaseDate`; `releaseDate` (ms) occurs only on body-less same-code catalog entries (on 39 of 54 captures; publishDate equals it on 38). R50: the release time is the same-code catalog `releaseDate`, else the article `publishDate`, the later of the two when both exist and differ (`release_src`). R51: the node-tree bodies are converted to text (block elements break lines, table cells joined by ` | `).",
@@ -5063,13 +5996,13 @@
   "captures/20241206174323_902fdf32cd12ed0b.bin": "902fdf32cd12ed0b2b43ddcfafcb7f166da1955a3afba95fa05f81eb1124e1ac",
   "captures/20250428050527_76361e4dd77f08ab.bin": "76361e4dd77f08ab188da8fb5e7ad8a6a9cc7c74195432c521b12d309f9a3140",
   "captures/20250429054216_e2e0611dbec37fea.bin": "e2e0611dbec37feaf95983d69449520e9d9d213f0eaa9c80df15146c07a619d9",
-  "docs/results/v7-stage0/delisting_coverage.csv": "ce97406292fd0edaa7600ae0a111b01b9b85fa1f564608fccfa3cf1566efe458",
-  "docs/results/v7-stage0/m31/classification.json": "fcfe4e8146cc4ea462482826aaa28100e0b62b80e691c774be0c47d050e2cff5",
-  "docs/results/v7-stage0/m31/events.json": "8070b202ee49fce9a5656d1cc5992103727ab57b5755f081bfa6e414d4f1ebe6",
-  "docs/results/v7-stage0/m31/notices.json": "c10d875212066900a1e8ad285ea4b09b683c0f7229d479c773a436f487636fc2",
-  "docs/results/v7-stage0/symbol_trading_history.csv": "8578d3c09cc01fd7e82a46c0985ec1a715de9fdde5d859abdef2b1eabadf3f18",
-  "docs/results/v7-stage0/wayback_notice_lag.json": "e590b23200f9ee68deaf4bd9918a260b41d9faf81138026000be2e7242e5061b",
-  "docs/results/v7-stage0/wayback_prepub_check.json": "7285efcd96680b9ae275ab691bbad772583952424bfb526a04a44d50e279d63d"
+  "docs/results/v7-stage0/delisting_coverage.csv": "d7467cffc86db6e81551d6fd5e4374ab7e8ddc0f163c254a518eededded3f92c",
+  "docs/results/v7-stage0/m31/classification.json": "aea4f11e06bc951ad7756f486d92b334c4bbce50b3831d1d2343c3a7c82620f0",
+  "docs/results/v7-stage0/m31/events.json": "530c99017e88e1ebaf0006f69439f26a2d5b0bf063d2fc05f84a9076d967ba1e",
+  "docs/results/v7-stage0/m31/notices.json": "db3fce422a2cf74ae5bb364c924bd10506ccd076a90b5c9e5c04cffa3063eb57",
+  "docs/results/v7-stage0/symbol_trading_history.csv": "b340f4bd32166d8dcc59c18f0c8857815db332d91146663c9230441c5206c346",
+  "docs/results/v7-stage0/wayback_notice_lag.json": "7248a830a970a730539e118ba3f4b50cc407a6bed3a5e71e6b1da2414f680158",
+  "docs/results/v7-stage0/wayback_prepub_check.json": "830ecffe790951f8daaeb522f97a1fa52fa354ef2eafed5d42a13d0303594658"
  },
  "instances_source": {
   "1000000BOBUSDT": "symbol_trading_history.csv (single instance)",
@@ -5597,71 +6530,118 @@
   "luna/config.py": "acc2442e0e9ec2725564d5c3fb30cfd55727a17a1de26a57e0901e921565ca67",
   "luna/instruments.py": "8b0aaeada14593350574b8f558735b011e916a2fdc858e576302d4ad1adb0496",
   "luna/types.py": "8ce1c586952c7baefa3342e488790f4b18983d6922e406a46aba98efae04cada",
-  "luna/v7/__init__.py": "e92629ae17f786ff7e0f50bb409d701866d80859be90bbf6d1a3e219dfdc3c59",
+  "luna/v7/__init__.py": "94937591fdb388024308364423c12187edba5cd15d816982a02580bb49047c10",
   "luna/v7/accounting.py": "7632b7533fab5193bf1f169ee41619a19b35ebc8f059d38073872600fdfb3104",
   "luna/v7/arms.py": "8361154b6db5040e95d0a38a1db68f9cffbb25d47a73750ef69d96025ad068fa",
   "luna/v7/beta.py": "dde7b5248c6deec8c4d5c6eeefe627acd167fcb9bc87dcc91e390c6fbabf8389",
   "luna/v7/book/__init__.py": "63b6e827a18b5279366935134ff6dc625809ca566e2759fba09f48167fd3c315",
   "luna/v7/book/constructor.py": "8a6051c6a11ceba29484a6f30a674f9a84b382500e3772c931726893139cbc08",
-  "luna/v7/book/engine.py": "fc480000382fa03e2fe8848422c97777f46d2557da0bee014d363c16170ab9c4",
+  "luna/v7/book/engine.py": "c719b9092cb568aef6c41a27f97ca7ac4d2c5eddce8af5bb3d869c85a18b7abb",
   "luna/v7/book/execution.py": "7c423435dcd1d93e332a5ad78ca18c2a609c89ad54f94c5f82d4dbb56eb60a12",
   "luna/v7/book/hedge.py": "754d9a57bea05a0c94d4ca1720a227cb226c4353c8ec08f55fa0aac247c68045",
   "luna/v7/book/ledger.py": "1dd9acf82344a79efa24a9a5da25af012c42cbae5ddd1529f9e1ac21aa395483",
-  "luna/v7/book/risk.py": "96a2866d58ff71205fbade4930ab249cfbd9dcd1a36059f9aab73f100f6bdc0f",
-  "luna/v7/constants.py": "496101d46129053f73c93ede47a0f82c4550d3f3d9fdfbf7cabdf098e30477b6",
+  "luna/v7/book/risk.py": "fd5e564ba3a64c3595725058a66c5eab171547e96bcb83d68e4af2165564c418",
+  "luna/v7/constants.py": "ee21137772220e658eab63ae7f1f19b4518613e099ed5b4bc2b88f2e665f288d",
   "luna/v7/cv.py": "6106a1cf8eb58b6830a90e55f9a5bd531efd7b6e0972255fb4d080101c1c2c7e",
   "luna/v7/data/__init__.py": "1ba687a0d9f505bef7b4efb4cf9c14068800d3661feba5973dfb83ea3d06aad1",
-  "luna/v7/data/captures.py": "21a8a0c9638559c1d843e981ad7cd5b30ce64caa564b1569ca099526ea94a38c",
+  "luna/v7/data/captures.py": "88e3c4053e3c7737814996bde4fb3d692cea107eec93cf0da53f3d4ba93e5ae9",
   "luna/v7/data/funding.py": "b812485dfb06706b8d30925f8244637d7067c5be91639b90980ffad487c172a7",
   "luna/v7/data/instances.py": "a897a269f3723cf78c07ae4edca5b9064dc8f127f32354a626a968c1188632a9",
   "luna/v7/data/instruments.py": "b9575f35340b821ca032a10686af785c857ddc32366a0633b38bdbdc539e10f8",
   "luna/v7/data/intervals.py": "de2429fa7c9d055910f0f16f7339284878ac588117d61a64e823693dba219c5e",
   "luna/v7/data/klines.py": "8dc5e235b0ffeee044f0ce8de993239e4ecf54e7d5f478c8b4f507a1680759b9",
-  "luna/v7/data/notices.py": "3886e18b6d8b064854412773a8c872284b38b1437a3a0857689df3a460901ae6",
+  "luna/v7/data/notices.py": "e267e4beb4013060ef1740645766a27a89204c7008a732ae054efb9966954eae",
   "luna/v7/data/schema.py": "550664006de81ffc541b6f835840948ce31377d5075917c3e4fb15e93b250f4c",
   "luna/v7/data/terminal.py": "124de2d2d864d7f4e1f564cfbfd17297bd862209cbb230212142c25b54183099",
   "luna/v7/deploy.py": "119c390a91ffd83398c1af7f121001ff5c48ce92da9f12039e7bd1725521ec8f",
   "luna/v7/features.py": "7fb08398cc10bb21bfb39bcd512855bed1b9c831437b8d21e6da8bed0193c4d4",
-  "luna/v7/fetch.py": "2d1ac1fe0d47e599c341ed81097c273d1642d0e9e11e67fd8c30ac05683aedb2",
-  "luna/v7/forward_store.py": "aa9bba75527ac81bf6e8cfdfb9980ea29362f7e6ec135671d4c96e7f78ea1eec",
-  "luna/v7/guard.py": "8f83ed1d26b8bee1fcc62b63fb7b33f7f1b288caf994d46fec4a03ce4f152718",
-  "luna/v7/ingest.py": "7782daa63994b100ba2eef91e03ce87bc41c4a5cfa884dd11755bcb47fbe83e8",
+  "luna/v7/fetch.py": "47a01f3e14869fe92db4dca37fb97f50330b4ccda70f155547aa6aa3168f477d",
+  "luna/v7/forward_store.py": "95d0fa21329818fe068b54095255b542dbccf38596c04f6852d28a7915d86293",
+  "luna/v7/guard.py": "2c5bbfec90317f55638d754b2904a94db903f49ec02fba0d24a3f0583a18d869",
+  "luna/v7/ingest.py": "8d7084bef9a74559661e287e11c38de4343f5526d12851f3bc887a4d6d794cc8",
   "luna/v7/k9.py": "fe7d8b1751828defc7301c65bffc24dc9a0f10f24491659afedfd9e820377cb0",
   "luna/v7/labels.py": "7678b66d03e47bf29bb4610906f346ff164e8ee373c93b4b40e001e797806d76",
   "luna/v7/localdata.py": "4ddfadf2c12ea50df3e46d494032b4c080063e4089a1d92fbb85e1198e158226",
+  "luna/v7/manifest.py": "895bba0a42d7906a10536435698b0ffca01d887971166871b2c6ff3394bb7aea",
   "luna/v7/market.py": "02c12a56c3f28049a60b52a9a0e2e3a74890662bbc683a1984c0f812142f8fba",
-  "luna/v7/metaingest.py": "ff5208ad1076261d073cc563e5b21149dfac27916787d5ccdf04c7bfa1a03b02",
-  "luna/v7/metastore.py": "700a1de895bdc8ad88851dcb88bd4377334c0dd122862973259ccd2f225aa8f1",
+  "luna/v7/metaingest.py": "d3dd2862937e4e4693bf16cfa15978c7a972a44d97ffd111092a338dd9e287f6",
+  "luna/v7/metastore.py": "e124a73a9bd230e6bccd349c66aaf1541d4c15ed1d7c27ed58f952858d71e129",
   "luna/v7/models.py": "2cd65f8dbb163338a4e7b63888789c58a48c2269ddc2b4500d57e7ad90de0be0",
-  "luna/v7/netguard.py": "dc8ac1a984827f8a9e63c4109dcbbb219ccebc7966a13ec6406f3d52a48f2f44",
+  "luna/v7/netguard.py": "7f1088661dcc42ebf93b3b432cbd197d7fdf6ed41251613195ccf29043c53fd2",
   "luna/v7/pitindex.py": "3704e70a32088c7a34f5208dc16e023c044e5f5394ddd99ae63ac202eea8aa2d",
-  "luna/v7/rawstore.py": "4ef5babba42e5b051893f17bee3738596cc0490db93a13a1139ebbc8e01b44fa",
+  "luna/v7/rawstore.py": "83870c062892f008380646cefdd7d79441afc30a9f59640deb2e2e6ecbb7719c",
   "luna/v7/refs.py": "df81110c4091a0d446472a1527bc01cf9cef6ffd8d84de2ec475517473ff0515",
   "luna/v7/release.py": "f724b78cfd713f4cd7925b4cd9c24839f6ccd245e0ea4474c037279ce499d35c",
-  "luna/v7/runner.py": "e5d4ec4b79dbcbb96f096e037000dee000903f4626f33d7fccb809455245beb8",
+  "luna/v7/runner.py": "d18e38c799372cbdda67892ccec42655bacbd37abddd66852e75133f881d3e8f",
   "luna/v7/spec.py": "9c8bb71bb808c63bd66fbe140c513d195764c9cc6bdec5ec6762249258f030bf",
   "luna/v7/spread.py": "0e2a3ced4cd7d470c27f52d628d1c23856017012637186cbde114cce1a5f9e47",
   "luna/v7/timeutil.py": "9e67a0e09b9c8282ac9a100a714bf04569bed24e669ecf44c90f9e33251bc4f9",
   "luna/v7/universe.py": "5ecbbf0097c5bdc001d9e952355be6c9b0fb63f71eae021f58518ee6b4e51b14",
-  "luna/v7/windows.py": "ef78b57cd4db36e1c27c9792c1dfc8c3d5577b33bc71a7d6120ef3901a8009f5"
+  "luna/v7/windows.py": "9dcb695d73f35caf942e627669fdfe108dd436a361240df55da93d9bab5365b6"
  },
  "match_counts": {
   "frozen": {
    "coin_m_veto": 1,
-   "confident": 30,
+   "confident": 66,
    "reasons": {
+    "base_asset:APE;coin_m_veto:coin-m": 1,
+    "base_asset:BNB;coin_m_veto:coin-m": 1,
+    "base_asset:BNB;no_usdm_context": 3,
+    "base_asset:BNX;no_usdm_context": 1,
+    "base_asset:BTC;coin_m_veto:coin-m": 1,
+    "base_asset:BTC;no_usdm_context": 7,
+    "base_asset:CVX;no_usdm_context": 1,
+    "base_asset:ETH;coin_m_veto:coin-m": 1,
+    "base_asset:FLM;no_usdm_context": 1,
+    "base_asset:ICX;coin_m_veto:coin-m": 1,
+    "base_asset:KNC;coin_m_veto:coin-m": 1,
+    "base_asset:LUNA;coin_m_veto:coin-m|coin-margined": 1,
+    "base_asset:RAY;no_usdm_context": 1,
+    "base_asset:ROSE;coin_m_veto:coin-m": 1,
+    "base_asset:SRM;no_usdm_context": 2,
+    "base_asset:USDC;coin_m_veto:coin-m": 1,
+    "base_asset:USDC;no_usdm_context": 1,
+    "base_asset:XTZ;coin_m_veto:coin-m": 1,
+    "base_asset_match:1000BTTC;usdm_context:usdt-margined": 1,
+    "base_asset_match:AKRO;usdm_context:usdt-margined": 1,
+    "base_asset_match:ANC;usdm_context:usdt-margined": 1,
+    "base_asset_match:BLZ;usdm_context:usdt-margined": 1,
+    "base_asset_match:BNB;usdm_context:usds-m": 1,
+    "base_asset_match:BNB;usdm_context:usdt-margined": 2,
+    "base_asset_match:BNX;usdm_context:usds-m": 1,
+    "base_asset_match:BNX;usdm_context:usdt-margined": 1,
+    "base_asset_match:BOME;usdm_context:usds-m": 1,
+    "base_asset_match:BTC;usdm_context:usds-m": 7,
+    "base_asset_match:BTC;usdm_context:usdt-margined": 1,
+    "base_asset_match:COCOS;usdm_context:usdt-margined": 1,
+    "base_asset_match:DODO;usdm_context:usdt-margined": 1,
+    "base_asset_match:ETH;usdm_context:usds-m": 1,
+    "base_asset_match:ICP;usdm_context:usdt-margined": 1,
+    "base_asset_match:LINK;usdm_context:usds-m": 1,
+    "base_asset_match:LUNA;usdm_context:usds-m|usdt-margined|usds-margined": 1,
+    "base_asset_match:MATIC;usdm_context:usds-m": 1,
+    "base_asset_match:MEME;usdm_context:usds-m": 1,
+    "base_asset_match:NOT;usdm_context:usds-m": 2,
+    "base_asset_match:SC;usdm_context:usdt-margined": 1,
+    "base_asset_match:TIA;usdm_context:usds-m": 1,
+    "base_asset_match:TLM;usdm_context:usdt-margined": 1,
+    "base_asset_match:TOMO;usdm_context:usdt-margined": 1,
+    "base_asset_match:USDC;usdm_context:usds-m": 2,
+    "base_asset_match:WAVES;usdm_context:usds-m": 1,
+    "base_asset_match:YFII;usdm_context:usdt-margined": 1,
     "coin_m_veto:coin-m": 1,
+    "no_symbol_token;base_asset:no_live_usdt_identity": 39,
     "usdm_context:usds-m": 30
    },
    "related_article_matches_possible": 0,
    "scheduled_reasons": {
-    "conflicting_candidates": 2,
-    "mapped": 10,
-    "no_confident_match": 1,
-    "no_timestamp_in_symbol_sentences": 2,
-    "not_a_delisting": 16
+    "conflicting_candidates": 3,
+    "mapped": 11,
+    "no_confident_match": 67,
+    "no_timestamp_in_symbol_sentences": 26,
+    "not_a_delisting": 26
    },
-   "symbol_tokens_checked": 31,
+   "symbol_tokens_checked": 133,
    "versions_with_symbols_only_on_page (related-article-only)": [
     "en:033618992939455aa64fd113a2c1e76f v1: ANTUSDT,BLUEBIRDUSDT,BTCUSDT,CTKUSDT,DGBUSDT,FOOTBALLUSDT,METISUSDT,MYROUSDT",
     "en:043c8407bb904652a428573a50d07e07 v1: 1000CATUSDT,1MBABYDOGEUSDT,ANTUSDT,AUDIOUSDT,BLUEBIRDUSDT,CATIUSDT,COSUSDT,CTKUSDT",
@@ -5714,281 +6694,55 @@
   }
  },
  "no_article_code_urls": [],
- "normative_items": {
-  "dec40_whole_token_base_only_missed": [
-   {
-    "evidence": [
-     "symbol_not_whole_token:base 1000BTTC only (en:4baf8d70485c46e38637bd063c58c4d8 v1, classified)"
-    ],
-    "instance": "1000BTTCUSDT#0",
-    "stage0_class": null
-   },
-   {
-    "evidence": [
-     "symbol_not_whole_token:base AKRO only (en:d1cb959677034c45b5149f1d998ae2b1 v1, classified)"
-    ],
-    "instance": "AKROUSDT#0",
-    "stage0_class": "C"
-   },
-   {
-    "evidence": [
-     "symbol_not_whole_token:base ANC only (en:0bfb6cfd10aa4d26926260c0159ef58d v1, classified)"
-    ],
-    "instance": "ANCUSDT#0",
-    "stage0_class": "B"
-   },
-   {
-    "evidence": [
-     "symbol_not_whole_token:base BLZ only (en:b312715afbff4d7493b77089967303b1 v1, classified)"
-    ],
-    "instance": "BLZUSDT#0",
-    "stage0_class": null
-   },
-   {
-    "evidence": [
-     "symbol_not_whole_token:base BNX only (en:4d23ada51a2e4fa182835c77d51ba1a9 v1, unclassified)",
-     "symbol_not_whole_token:base BNX only (en:cb9254650c784d319259c5ba8569d11a v1, unclassified)",
-     "symbol_not_whole_token:base BNX only (en:e15fac275e7a4e858dc4bb79ffc24c50 v1, unclassified)",
-     "symbol_not_whole_token:base BNX only (en:f4f20b3b72324b3b82c543988f5b2328 v1, classified)"
-    ],
-    "instance": "BNXUSDT#0",
-    "stage0_class": "C"
-   },
-   {
-    "evidence": [
-     "symbol_not_whole_token:base BNX only (en:4d23ada51a2e4fa182835c77d51ba1a9 v1, unclassified)",
-     "symbol_not_whole_token:base BNX only (en:cb9254650c784d319259c5ba8569d11a v1, unclassified)",
-     "symbol_not_whole_token:base BNX only (en:e15fac275e7a4e858dc4bb79ffc24c50 v1, unclassified)",
-     "symbol_not_whole_token:base BNX only (en:f4f20b3b72324b3b82c543988f5b2328 v1, classified)"
-    ],
-    "instance": "BNXUSDT#1",
-    "stage0_class": "C"
-   },
-   {
-    "evidence": [
-     "symbol_not_whole_token:base BZRX only (en:14378198b6594dd4ae029ea3b56ed517 v1, unclassified)"
-    ],
-    "instance": "BZRXUSDT#0",
-    "stage0_class": "C"
-   },
-   {
-    "evidence": [
-     "symbol_not_whole_token:base COCOS only (en:18550322a4944094840831c3efe2d223 v1, unclassified)",
-     "symbol_not_whole_token:base COCOS only (en:45852dc155b641bc9e1c23bc41d8ded6 v1, unclassified)",
-     "symbol_not_whole_token:base COCOS only (en:ed7dcc263e6e4f3687f8260340ec96ce v1, classified)"
-    ],
-    "instance": "COCOSUSDT#0",
-    "stage0_class": "B"
-   },
-   {
-    "evidence": [
-     "symbol_not_whole_token:base COMBO only (en:18550322a4944094840831c3efe2d223 v1, unclassified)",
-     "symbol_not_whole_token:base COMBO only (en:45852dc155b641bc9e1c23bc41d8ded6 v1, unclassified)"
-    ],
-    "instance": "COMBOUSDT#0",
-    "stage0_class": null
-   },
-   {
-    "evidence": [
-     "symbol_not_whole_token:base CVX only (en:cd599a0f00004f399b03b8077788e39c v1, classified)"
-    ],
-    "instance": "CVXUSDT#0",
-    "stage0_class": null
-   },
-   {
-    "evidence": [
-     "symbol_not_whole_token:base DODO only (en:d1cb959677034c45b5149f1d998ae2b1 v1, classified)"
-    ],
-    "instance": "DODOUSDT#0",
-    "stage0_class": "B"
-   },
-   {
-    "evidence": [
-     "symbol_not_whole_token:base ICP only (en:af469aeeab074738bb4a276070a9d11b v1, classified)"
-    ],
-    "instance": "ICPUSDT#0",
-    "stage0_class": "B"
-   },
-   {
-    "evidence": [
-     "symbol_not_whole_token:base LOOM only (en:5a927cdc26a0401b8bb5f49c5b61f54d v1, classified)"
-    ],
-    "instance": "LOOMUSDT#0",
-    "stage0_class": null
-   },
-   {
-    "evidence": [
-     "symbol_not_whole_token:base LUNA only (en:1b73e64616ee4e769c29e70c66728d1a v1, classified)",
-     "symbol_not_whole_token:base LUNA only (en:1b73e64616ee4e769c29e70c66728d1a v2, classified)",
-     "symbol_not_whole_token:base LUNA only (en:ef3ce76d5c2d45ee9b6dc3f281cde744 v1, classified)"
-    ],
-    "instance": "LUNAUSDT#0",
-    "stage0_class": "B"
-   },
-   {
-    "evidence": [
-     "symbol_not_whole_token:base MATIC only (en:686612ddcd824cd493963371eac1a80b v1, unclassified)"
-    ],
-    "instance": "MATICUSDT#0",
-    "stage0_class": "B"
-   },
-   {
-    "evidence": [
-     "symbol_not_whole_token:base RNDR only (en:7aa2bb48ab194bb9aebbc3f72b5819ed v1, unclassified)"
-    ],
-    "instance": "RNDRUSDT#0",
-    "stage0_class": "B"
-   },
-   {
-    "evidence": [
-     "symbol_not_whole_token:base SC only (en:6ce355dedc5d438abde7b5dc99b3a56d v1, classified)"
-    ],
-    "instance": "SCUSDT#0",
-    "stage0_class": null
-   },
-   {
-    "evidence": [
-     "symbol_not_whole_token:base STPT only (en:cd599a0f00004f399b03b8077788e39c v1, classified)"
-    ],
-    "instance": "STPTUSDT#0",
-    "stage0_class": null
-   },
-   {
-    "evidence": [
-     "symbol_not_whole_token:base STRAX only (en:033618992939455aa64fd113a2c1e76f v1, unclassified)",
-     "symbol_not_whole_token:base STRAX only (en:5a927cdc26a0401b8bb5f49c5b61f54d v1, classified)",
-     "symbol_not_whole_token:base STRAX only (en:cd599a0f00004f399b03b8077788e39c v1, classified)"
-    ],
-    "instance": "STRAXUSDT#0",
-    "stage0_class": "B"
-   },
-   {
-    "evidence": [
-     "symbol_not_whole_token:base TLM only (en:af469aeeab074738bb4a276070a9d11b v1, classified)"
-    ],
-    "instance": "TLMUSDT#0",
-    "stage0_class": "B"
-   },
-   {
-    "evidence": [
-     "symbol_not_whole_token:base TOMO only (en:0491a610ab2d4ab3af6d15dce961c5ae v1, unclassified)",
-     "symbol_not_whole_token:base TOMO only (en:e1d9bbcd3e214208b39b5c2a8087dda7 v1, unclassified)"
-    ],
-    "instance": "TOMOUSDT#0",
-    "stage0_class": "C"
-   },
-   {
-    "evidence": [
-     "symbol_not_whole_token:base YFII only (en:4baf8d70485c46e38637bd063c58c4d8 v1, classified)"
-    ],
-    "instance": "YFIIUSDT#0",
-    "stage0_class": null
-   }
-  ],
-  "token_swap_affected_missed_instances": [
-   "BNXUSDT#0",
-   "BNXUSDT#1",
-   "COCOSUSDT#0",
-   "COMBOUSDT#0",
-   "MATICUSDT#0",
-   "RNDRUSDT#0",
-   "STRAXUSDT#0",
-   "TOMOUSDT#0"
-  ],
-  "token_swap_no_kind_phrase_versions": [
-   {
-    "symbols_in_text": [],
-    "title": "Binance Has Completed the Stratis (STRAX) Token Swap and Redenomination",
-    "version": "en:033618992939455aa64fd113a2c1e76f v1"
-   },
-   {
-    "symbols_in_text": [],
-    "title": "Binance Has Completed the TomoChain (TOMO) Rebranding to Viction (VIC)",
-    "version": "en:0491a610ab2d4ab3af6d15dce961c5ae v1"
-   },
-   {
-    "symbols_in_text": [],
-    "title": "Binance Has Completed the Cocos-BCX (COCOS) Token Swap & Rebranding Plan to COMBO (COMBO)",
-    "version": "en:18550322a4944094840831c3efe2d223 v1"
-   },
-   {
-    "symbols_in_text": [
-     "STRAXUSDT"
-    ],
-    "title": "Binance Will Support the Stratis (STRAX) Token Swap and Redenomination Plan",
-    "version": "en:2e6eb8e644664a6ca7b6659a226c41b0 v1"
-   },
-   {
-    "symbols_in_text": [],
-    "title": "Binance Will Support the Cocos-BCX (COCOS) Token Swap & Rebranding Plan to COMBO (COMBO)",
-    "version": "en:45852dc155b641bc9e1c23bc41d8ded6 v1"
-   },
-   {
-    "symbols_in_text": [],
-    "title": "Binance Will Support the BinaryX (BNX) Token Swap and Redenomination Plan",
-    "version": "en:4d23ada51a2e4fa182835c77d51ba1a9 v1"
-   },
-   {
-    "symbols_in_text": [
-     "MATICUSDT"
-    ],
-    "title": "Binance Will Support the Polygon (MATIC) Token Swap to Polygon (POL)",
-    "version": "en:6a6de383727f4659a3050f7982e1620f v1"
-   },
-   {
-    "symbols_in_text": [],
-    "title": "Binance Has Completed the Render (RNDR) Token Swap and Rebranding to Render (RENDER)",
-    "version": "en:7aa2bb48ab194bb9aebbc3f72b5819ed v1"
-   },
-   {
-    "symbols_in_text": [
-     "RNDRUSDT"
-    ],
-    "title": "Binance Will Support the Render (RNDR) Token Swap and Rebranding to Render (RENDER)",
-    "version": "en:d1f2ae8d99b24439a7a900caa9bb6b3b v1"
-   }
-  ]
- },
  "outcome_free": true,
  "refused_captures": [],
  "runs": {
-  "frozen": "metaingest.build_notices as committed (the FROZEN-candidate path; no wrapper)"
+  "frozen": "metaingest.build_notices as committed (the FROZEN-candidate path incl. A-1; no wrapper)"
  },
  "termination_coverage": {
   "frozen": {
    "B": {
-    "matched_null": 2,
-    "matched_scheduled": 3,
-    "missed": 9
+    "matched_null": 9,
+    "matched_scheduled": 4,
+    "missed": 1
    },
    "C": {
-    "missed": 12
+    "matched_null": 1,
+    "missed": 11
    },
    "all": {
-    "matched_null": 2,
-    "matched_scheduled": 6,
+    "matched_null": 14,
+    "matched_scheduled": 7,
     "matched_scheduled_not_the_termination": 1,
-    "missed": 65
+    "missed": 52
    }
   }
  },
  "termination_reason_heads": {
   "instance": 2,
   "no_capture": 40,
-  "symbol_not_whole_token": 36,
-  "unclassified_kind": 13
+  "no_confident_match": 11,
+  "unclassified_kind": 15
  },
  "terminations": [
   {
    "coverage_announcement": "2022-04-04 05:21",
    "frozen": {
-    "delisting_versions": [],
+    "delisting_versions": [
+     {
+      "known_at": "2022-04-04T05:21:58Z",
+      "sched_minus_last_trade_h": null,
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "version": "en:4baf8d70485c46e38637bd063c58c4d8 v1"
+     }
+    ],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base 1000BTTC only (en:4baf8d70485c46e38637bd063c58c4d8 v1, classified)"
+     "scheduled_ts null:no_timestamp_in_symbol_sentences (en:4baf8d70485c46e38637bd063c58c4d8 v1)"
     ],
     "scheduled_ts": [],
-    "status": "missed"
+    "status": "matched_null"
    },
    "instance": 0,
    "last_trade": "2022-04-11",
@@ -6020,13 +6774,21 @@
   {
    "coverage_announcement": "2022-05-18 10:59",
    "frozen": {
-    "delisting_versions": [],
+    "delisting_versions": [
+     {
+      "known_at": "2022-05-18T14:31:01Z",
+      "sched_minus_last_trade_h": null,
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "version": "en:d1cb959677034c45b5149f1d998ae2b1 v1"
+     }
+    ],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base AKRO only (en:d1cb959677034c45b5149f1d998ae2b1 v1, classified)"
+     "scheduled_ts null:no_timestamp_in_symbol_sentences (en:d1cb959677034c45b5149f1d998ae2b1 v1)"
     ],
     "scheduled_ts": [],
-    "status": "missed"
+    "status": "matched_null"
    },
    "instance": 0,
    "last_trade": "2022-05-27T07:00",
@@ -6075,13 +6837,21 @@
   {
    "coverage_announcement": "2022-05-13 02:27",
    "frozen": {
-    "delisting_versions": [],
+    "delisting_versions": [
+     {
+      "known_at": "2022-05-13T02:30:34Z",
+      "sched_minus_last_trade_h": null,
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "version": "en:0bfb6cfd10aa4d26926260c0159ef58d v1"
+     }
+    ],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base ANC only (en:0bfb6cfd10aa4d26926260c0159ef58d v1, classified)"
+     "scheduled_ts null:no_timestamp_in_symbol_sentences (en:0bfb6cfd10aa4d26926260c0159ef58d v1)"
     ],
     "scheduled_ts": [],
-    "status": "missed"
+    "status": "matched_null"
    },
    "instance": 0,
    "last_trade": "2022-05-13T04:15",
@@ -6181,13 +6951,21 @@
   {
    "coverage_announcement": "2022-08-17 09:55",
    "frozen": {
-    "delisting_versions": [],
+    "delisting_versions": [
+     {
+      "known_at": "2022-08-17T10:21:03Z",
+      "sched_minus_last_trade_h": null,
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "version": "en:b312715afbff4d7493b77089967303b1 v1"
+     }
+    ],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base BLZ only (en:b312715afbff4d7493b77089967303b1 v1, classified)"
+     "scheduled_ts null:no_timestamp_in_symbol_sentences (en:b312715afbff4d7493b77089967303b1 v1)"
     ],
     "scheduled_ts": [],
-    "status": "missed"
+    "status": "matched_null"
    },
    "instance": 0,
    "last_trade": "2024-12-23",
@@ -6200,10 +6978,10 @@
     "delisting_versions": [],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base BNX only (en:4d23ada51a2e4fa182835c77d51ba1a9 v1, unclassified)",
-     "symbol_not_whole_token:base BNX only (en:cb9254650c784d319259c5ba8569d11a v1, unclassified)",
-     "symbol_not_whole_token:base BNX only (en:e15fac275e7a4e858dc4bb79ffc24c50 v1, unclassified)",
-     "symbol_not_whole_token:base BNX only (en:f4f20b3b72324b3b82c543988f5b2328 v1, classified)",
+     "no_confident_match:base_asset:BNX;no_usdm_context (en:f4f20b3b72324b3b82c543988f5b2328 v1)",
+     "no_confident_match:no_symbol_token;base_asset:no_live_usdt_identity (en:4d23ada51a2e4fa182835c77d51ba1a9 v1)",
+     "unclassified_kind:no_kind_phrase (en:cb9254650c784d319259c5ba8569d11a v1)",
+     "unclassified_kind:no_kind_phrase (en:e15fac275e7a4e858dc4bb79ffc24c50 v1)",
      "unclassified_kind:no_kind_phrase (en:e894a11164af4d61935735f9d1f70a88 v1)",
      "unclassified_kind:no_kind_phrase;r52a:leverage_margin_tiers_update_dropped (en:63a12323c35d406aa977914f9d794909 v1)",
      "unclassified_kind:no_kind_phrase;r52a:leverage_margin_tiers_update_dropped (en:b003f85c03be402b993b47740f5f4305 v1)"
@@ -6227,10 +7005,10 @@
     "delisting_versions": [],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base BNX only (en:4d23ada51a2e4fa182835c77d51ba1a9 v1, unclassified)",
-     "symbol_not_whole_token:base BNX only (en:cb9254650c784d319259c5ba8569d11a v1, unclassified)",
-     "symbol_not_whole_token:base BNX only (en:e15fac275e7a4e858dc4bb79ffc24c50 v1, unclassified)",
-     "symbol_not_whole_token:base BNX only (en:f4f20b3b72324b3b82c543988f5b2328 v1, classified)",
+     "no_confident_match:base_asset:BNX;no_usdm_context (en:f4f20b3b72324b3b82c543988f5b2328 v1)",
+     "no_confident_match:no_symbol_token;base_asset:no_live_usdt_identity (en:4d23ada51a2e4fa182835c77d51ba1a9 v1)",
+     "unclassified_kind:no_kind_phrase (en:cb9254650c784d319259c5ba8569d11a v1)",
+     "unclassified_kind:no_kind_phrase (en:e15fac275e7a4e858dc4bb79ffc24c50 v1)",
      "unclassified_kind:no_kind_phrase (en:e894a11164af4d61935735f9d1f70a88 v1)",
      "unclassified_kind:no_kind_phrase;r52a:leverage_margin_tiers_update_dropped (en:63a12323c35d406aa977914f9d794909 v1)",
      "unclassified_kind:no_kind_phrase;r52a:leverage_margin_tiers_update_dropped (en:b003f85c03be402b993b47740f5f4305 v1)"
@@ -6334,7 +7112,7 @@
     "delisting_versions": [],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base BZRX only (en:14378198b6594dd4ae029ea3b56ed517 v1, unclassified)"
+     "unclassified_kind:no_kind_phrase (en:14378198b6594dd4ae029ea3b56ed517 v1)"
     ],
     "scheduled_ts": [],
     "status": "missed"
@@ -6352,16 +7130,21 @@
   {
    "coverage_announcement": null,
    "frozen": {
-    "delisting_versions": [],
+    "delisting_versions": [
+     {
+      "known_at": "2023-05-18T08:16:58Z",
+      "sched_minus_last_trade_h": null,
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "version": "en:45852dc155b641bc9e1c23bc41d8ded6 v1"
+     }
+    ],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base COCOS only (en:18550322a4944094840831c3efe2d223 v1, unclassified)",
-     "symbol_not_whole_token:base COCOS only (en:45852dc155b641bc9e1c23bc41d8ded6 v1, unclassified)",
-     "symbol_not_whole_token:base COCOS only (en:ed7dcc263e6e4f3687f8260340ec96ce v1, classified)",
-     "unclassified_kind:no_kind_phrase (en:e0aa73262d384ed3a616a4a66f59c9b5 v1)"
+     "scheduled_ts null:no_timestamp_in_symbol_sentences (en:45852dc155b641bc9e1c23bc41d8ded6 v1)"
     ],
     "scheduled_ts": [],
-    "status": "missed"
+    "status": "matched_null"
    },
    "instance": 0,
    "last_trade": "2023-05-25T09:15",
@@ -6379,8 +7162,8 @@
     "delisting_versions": [],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base COMBO only (en:18550322a4944094840831c3efe2d223 v1, unclassified)",
-     "symbol_not_whole_token:base COMBO only (en:45852dc155b641bc9e1c23bc41d8ded6 v1, unclassified)"
+     "no_confident_match:no_symbol_token;base_asset:no_live_usdt_identity (en:18550322a4944094840831c3efe2d223 v1)",
+     "no_confident_match:no_symbol_token;base_asset:no_live_usdt_identity (en:45852dc155b641bc9e1c23bc41d8ded6 v1)"
     ],
     "scheduled_ts": [],
     "status": "missed"
@@ -6397,7 +7180,7 @@
     "delisting_versions": [],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base CVX only (en:cd599a0f00004f399b03b8077788e39c v1, classified)"
+     "no_confident_match:base_asset:CVX;no_usdm_context (en:cd599a0f00004f399b03b8077788e39c v1)"
     ],
     "scheduled_ts": [],
     "status": "missed"
@@ -6449,13 +7232,21 @@
   {
    "coverage_announcement": "2022-05-18 10:59",
    "frozen": {
-    "delisting_versions": [],
+    "delisting_versions": [
+     {
+      "known_at": "2022-05-18T14:31:01Z",
+      "sched_minus_last_trade_h": null,
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "version": "en:d1cb959677034c45b5149f1d998ae2b1 v1"
+     }
+    ],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base DODO only (en:d1cb959677034c45b5149f1d998ae2b1 v1, classified)"
+     "scheduled_ts null:no_timestamp_in_symbol_sentences (en:d1cb959677034c45b5149f1d998ae2b1 v1)"
     ],
     "scheduled_ts": [],
-    "status": "missed"
+    "status": "matched_null"
    },
    "instance": 0,
    "last_trade": "2022-05-27T09:00",
@@ -6638,13 +7429,21 @@
   },
   {
    "frozen": {
-    "delisting_versions": [],
+    "delisting_versions": [
+     {
+      "known_at": "2022-06-02T11:35:39Z",
+      "sched_minus_last_trade_h": null,
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "version": "en:af469aeeab074738bb4a276070a9d11b v1"
+     }
+    ],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base ICP only (en:af469aeeab074738bb4a276070a9d11b v1, classified)"
+     "scheduled_ts null:no_timestamp_in_symbol_sentences (en:af469aeeab074738bb4a276070a9d11b v1)"
     ],
     "scheduled_ts": [],
-    "status": "missed"
+    "status": "matched_null"
    },
    "instance": 0,
    "last_trade": "2022-06-10T09:15",
@@ -6786,7 +7585,7 @@
     "other_kinds": [],
     "reasons": [
      "instance:no_instance_live_at_known_at (en:cfe97d52a8c840d3ba631835b637e9e7 v1)",
-     "symbol_not_whole_token:base LOOM only (en:5a927cdc26a0401b8bb5f49c5b61f54d v1, classified)"
+     "no_confident_match:no_symbol_token;base_asset:no_live_usdt_identity (en:5a927cdc26a0401b8bb5f49c5b61f54d v1)"
     ],
     "scheduled_ts": [],
     "status": "missed"
@@ -6800,15 +7599,21 @@
   {
    "coverage_announcement": "2022-05-12 04:50",
    "frozen": {
-    "delisting_versions": [],
+    "delisting_versions": [
+     {
+      "known_at": "2022-05-12T15:01:46Z",
+      "sched_minus_last_trade_h": null,
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "version": "en:ef3ce76d5c2d45ee9b6dc3f281cde744 v1"
+     }
+    ],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base LUNA only (en:1b73e64616ee4e769c29e70c66728d1a v1, classified)",
-     "symbol_not_whole_token:base LUNA only (en:1b73e64616ee4e769c29e70c66728d1a v2, classified)",
-     "symbol_not_whole_token:base LUNA only (en:ef3ce76d5c2d45ee9b6dc3f281cde744 v1, classified)"
+     "scheduled_ts null:no_timestamp_in_symbol_sentences (en:ef3ce76d5c2d45ee9b6dc3f281cde744 v1)"
     ],
     "scheduled_ts": [],
-    "status": "missed"
+    "status": "matched_null"
    },
    "instance": 0,
    "last_trade": "2022-05-12T15:45",
@@ -6826,8 +7631,8 @@
     "delisting_versions": [],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base MATIC only (en:686612ddcd824cd493963371eac1a80b v1, unclassified)",
-     "unclassified_kind:no_kind_phrase (en:6a6de383727f4659a3050f7982e1620f v1)"
+     "no_confident_match:coin_m_veto:coin-m (en:6a6de383727f4659a3050f7982e1620f v1)",
+     "unclassified_kind:no_kind_phrase (en:686612ddcd824cd493963371eac1a80b v1)"
     ],
     "scheduled_ts": [],
     "status": "missed"
@@ -7054,7 +7859,7 @@
     ],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base RAY only (en:e0ff4c7020ca4203b49907505bc86809 v1, classified)"
+     "no_confident_match:base_asset:RAY;no_usdm_context (en:e0ff4c7020ca4203b49907505bc86809 v1)"
     ],
     "scheduled_ts": [
      "2022-11-15T04:30:00Z"
@@ -7104,15 +7909,24 @@
   {
    "coverage_announcement": null,
    "frozen": {
-    "delisting_versions": [],
+    "delisting_versions": [
+     {
+      "known_at": "2024-07-10T07:59:35Z",
+      "sched_minus_last_trade_h": 0.0,
+      "scheduled_reason": "mapped",
+      "scheduled_ts": "2024-07-16T09:00:00Z",
+      "version": "en:d1f2ae8d99b24439a7a900caa9bb6b3b v1"
+     }
+    ],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base RNDR only (en:7aa2bb48ab194bb9aebbc3f72b5819ed v1, unclassified)",
-     "unclassified_kind:no_kind_phrase (en:499af13827e04741999c15f9139ff3de v1)",
-     "unclassified_kind:no_kind_phrase (en:d1f2ae8d99b24439a7a900caa9bb6b3b v1)"
+     "no_confident_match:no_symbol_token;base_asset:no_live_usdt_identity (en:7aa2bb48ab194bb9aebbc3f72b5819ed v1)",
+     "unclassified_kind:no_kind_phrase (en:499af13827e04741999c15f9139ff3de v1)"
     ],
-    "scheduled_ts": [],
-    "status": "missed"
+    "scheduled_ts": [
+     "2024-07-16T09:00:00Z"
+    ],
+    "status": "matched_scheduled"
    },
    "instance": 0,
    "last_trade": "2024-07-16T09:00",
@@ -7127,13 +7941,21 @@
   {
    "coverage_announcement": "2022-06-10 10:02",
    "frozen": {
-    "delisting_versions": [],
+    "delisting_versions": [
+     {
+      "known_at": "2022-06-10T10:09:59Z",
+      "sched_minus_last_trade_h": null,
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "version": "en:6ce355dedc5d438abde7b5dc99b3a56d v1"
+     }
+    ],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base SC only (en:6ce355dedc5d438abde7b5dc99b3a56d v1, classified)"
+     "scheduled_ts null:no_timestamp_in_symbol_sentences (en:6ce355dedc5d438abde7b5dc99b3a56d v1)"
     ],
     "scheduled_ts": [],
-    "status": "missed"
+    "status": "matched_null"
    },
    "instance": 0,
    "last_trade": "2022-06-17",
@@ -7189,9 +8011,9 @@
     ],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base SRM only (en:14378198b6594dd4ae029ea3b56ed517 v1, unclassified)",
-     "symbol_not_whole_token:base SRM only (en:d1a73a4b0f624f52897b4c38fa9decb3 v1, classified)",
-     "symbol_not_whole_token:base SRM only (en:e0ff4c7020ca4203b49907505bc86809 v1, classified)",
+     "no_confident_match:base_asset:SRM;no_usdm_context (en:d1a73a4b0f624f52897b4c38fa9decb3 v1)",
+     "no_confident_match:base_asset:SRM;no_usdm_context (en:e0ff4c7020ca4203b49907505bc86809 v1)",
+     "unclassified_kind:no_kind_phrase (en:14378198b6594dd4ae029ea3b56ed517 v1)",
      "unclassified_kind:no_kind_phrase (en:f76c0244dcb5412c82158e9c338a971c v1)",
      "unclassified_kind:no_kind_phrase;r52a:leverage_margin_tiers_update_dropped (en:d4262447f26146c49aae928f269b2801 v1)"
     ],
@@ -7233,7 +8055,7 @@
     "delisting_versions": [],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base STPT only (en:cd599a0f00004f399b03b8077788e39c v1, classified)"
+     "no_confident_match:no_symbol_token;base_asset:no_live_usdt_identity (en:cd599a0f00004f399b03b8077788e39c v1)"
     ],
     "scheduled_ts": [],
     "status": "missed"
@@ -7247,16 +8069,21 @@
   {
    "coverage_announcement": null,
    "frozen": {
-    "delisting_versions": [],
+    "delisting_versions": [
+     {
+      "known_at": "2024-03-08T09:56:20Z",
+      "sched_minus_last_trade_h": null,
+      "scheduled_reason": "conflicting_candidates",
+      "scheduled_ts": null,
+      "version": "en:2e6eb8e644664a6ca7b6659a226c41b0 v1"
+     }
+    ],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base STRAX only (en:033618992939455aa64fd113a2c1e76f v1, unclassified)",
-     "symbol_not_whole_token:base STRAX only (en:5a927cdc26a0401b8bb5f49c5b61f54d v1, classified)",
-     "symbol_not_whole_token:base STRAX only (en:cd599a0f00004f399b03b8077788e39c v1, classified)",
-     "unclassified_kind:no_kind_phrase (en:2e6eb8e644664a6ca7b6659a226c41b0 v1)"
+     "scheduled_ts null:conflicting_candidates (en:2e6eb8e644664a6ca7b6659a226c41b0 v1)"
     ],
     "scheduled_ts": [],
-    "status": "missed"
+    "status": "matched_null"
    },
    "instance": 0,
    "last_trade": "2024-03-15T09:00",
@@ -7270,13 +8097,21 @@
   },
   {
    "frozen": {
-    "delisting_versions": [],
+    "delisting_versions": [
+     {
+      "known_at": "2022-06-02T11:35:39Z",
+      "sched_minus_last_trade_h": null,
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "version": "en:af469aeeab074738bb4a276070a9d11b v1"
+     }
+    ],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base TLM only (en:af469aeeab074738bb4a276070a9d11b v1, classified)"
+     "scheduled_ts null:no_timestamp_in_symbol_sentences (en:af469aeeab074738bb4a276070a9d11b v1)"
     ],
     "scheduled_ts": [],
-    "status": "missed"
+    "status": "matched_null"
    },
    "instance": 0,
    "last_trade": "2022-06-09T09:00",
@@ -7294,8 +8129,8 @@
     "delisting_versions": [],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base TOMO only (en:0491a610ab2d4ab3af6d15dce961c5ae v1, unclassified)",
-     "symbol_not_whole_token:base TOMO only (en:e1d9bbcd3e214208b39b5c2a8087dda7 v1, unclassified)"
+     "no_confident_match:no_symbol_token;base_asset:no_live_usdt_identity (en:0491a610ab2d4ab3af6d15dce961c5ae v1)",
+     "unclassified_kind:no_kind_phrase (en:e1d9bbcd3e214208b39b5c2a8087dda7 v1)"
     ],
     "scheduled_ts": [],
     "status": "missed"
@@ -7438,13 +8273,21 @@
   {
    "coverage_announcement": "2022-04-04 05:21",
    "frozen": {
-    "delisting_versions": [],
+    "delisting_versions": [
+     {
+      "known_at": "2022-04-04T05:21:58Z",
+      "sched_minus_last_trade_h": null,
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "version": "en:4baf8d70485c46e38637bd063c58c4d8 v1"
+     }
+    ],
     "other_kinds": [],
     "reasons": [
-     "symbol_not_whole_token:base YFII only (en:4baf8d70485c46e38637bd063c58c4d8 v1, classified)"
+     "scheduled_ts null:no_timestamp_in_symbol_sentences (en:4baf8d70485c46e38637bd063c58c4d8 v1)"
     ],
     "scheduled_ts": [],
-    "status": "missed"
+    "status": "matched_null"
    },
    "instance": 0,
    "last_trade": "2022-04-12",
@@ -7459,11 +8302,32 @@
     "article_reason": "ok",
     "capture_sha256": "0bf03bae28763d48ab1b80eaf69cf62580b72bafe52416198bcbca844a055e61",
     "capture_ts": "2024-03-28T16:21:48Z",
-    "kind": null,
-    "kind_reason": "no_kind_phrase",
+    "kind": "delisting",
+    "kind_reason": "token_swap:token swap",
     "known_at": "2024-03-28T16:21:48Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "no_match",
+    "matches": [
+     {
+      "confident_match": false,
+      "evidence": "n. Available services for new Stratis (STRAX) Spot trading opened for the STRAX/BTC, STRAX/USDT and STRAX/TRY spot trading pairs at 2024-03-28 08:00 (UTC). STRAX w",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:BTC;no_usdm_context",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "BTCUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "STRAXUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:033618992939455aa64fd113a2c1e76f",
     "page_coin_m_not_in_notice": [
@@ -7483,7 +8347,7 @@
     ],
     "releaseDate": "2024-03-28T08:53:12Z",
     "release_src": "releaseDate=publishDate",
-    "status": "unclassified",
+    "status": "classified",
     "title": "Binance Has Completed the Stratis (STRAX) Token Swap and Redenomination",
     "version": 1
    },
@@ -7496,6 +8360,36 @@
     "known_at": "2024-11-01T13:48:21Z",
     "match_reason": "matched",
     "matches": [
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "AUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "ase note: The exact trading pairs being removed are: KP3R/USDT, OOKI/USDT, UNFI/BTC, UNFI/TRY, UNFI/USDT, USDT/IDRT All trade orders will be automatically removed ",
+      "instance": "BTCUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:BTC;usdm_context:usds-m",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "BTCUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "0 (UTC). Please note that the conversion of delisted tokens into stablecoins is NOT guaranteed. A separate notification will be made before the conversion where ap",
+      "instance": "NOTUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:NOT;usdm_context:usds-m",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "NOTUSDT"
+     },
      {
       "confident_match": true,
       "evidence": "nce Futures will close all positions and conduct an automatic settlement on the UNFIUSDT USDⓈ-M Perpetual Contract at 2024-10-30 09:00 (UTC). The contracts will be deli",
@@ -7559,11 +8453,42 @@
     "article_reason": "ok",
     "capture_sha256": "18fbd2b6aa650741c35aed7d68b969d9c5fa91c0f1c56b0be7ee01ec053c7e79",
     "capture_ts": "2023-11-24T19:36:17Z",
-    "kind": null,
-    "kind_reason": "no_kind_phrase",
+    "kind": "delisting",
+    "kind_reason": "token_swap:rebranding",
     "known_at": "2023-11-24T19:36:17Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "no_match",
+    "matches": [
+     {
+      "confident_match": false,
+      "evidence": "TomoChain (TOMO) rebranding to Viction (VIC). Deposits for VIC on the Ethereum, BNB Beacon Chain and Viction networks are now open, while withdrawals for VIC are s",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:BNB;no_usdm_context",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "BNBUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "TOMOUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "VICUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:0491a610ab2d4ab3af6d15dce961c5ae",
     "page_coin_m_not_in_notice": [
@@ -7579,7 +8504,7 @@
     ],
     "releaseDate": "2023-11-24T10:30:02Z",
     "release_src": "releaseDate=publishDate",
-    "status": "unclassified",
+    "status": "classified",
     "title": "Binance Has Completed the TomoChain (TOMO) Rebranding to Viction (VIC)",
     "version": 1
    },
@@ -7590,8 +8515,19 @@
     "kind": "delisting",
     "kind_reason": "delisting:delist",
     "known_at": "2022-05-13T02:30:34Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "matched",
+    "matches": [
+     {
+      "confident_match": true,
+      "evidence": "Binance Futures Will Delist USDT-Margined ANC Perpetual Contract Fellow Binancians, Binance Futures will conduct an automatic",
+      "instance": "ANCUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:ANC;usdm_context:usdt-margined",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "ANCUSDT"
+     }
+    ],
     "n_captures": 3,
     "notice_id": "en:0bfb6cfd10aa4d26926260c0159ef58d",
     "page_coin_m_not_in_notice": [
@@ -7614,8 +8550,29 @@
     "kind": null,
     "kind_reason": "no_kind_phrase",
     "known_at": "2022-11-24T19:08:29Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "no_match",
+    "matches": [
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "BZRXUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "SRMUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:14378198b6594dd4ae029ea3b56ed517",
     "page_coin_m_not_in_notice": [
@@ -7644,11 +8601,42 @@
     "article_reason": "ok",
     "capture_sha256": "c8e636ee62915bb8d78d0f9eb06fc43cc28a406cdfa248c73302150fd63d63cc",
     "capture_ts": "2023-06-02T08:35:25Z",
-    "kind": null,
-    "kind_reason": "no_kind_phrase",
+    "kind": "delisting",
+    "kind_reason": "token_swap:token swap|rebranding",
     "known_at": "2023-06-02T08:35:25Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "no_match",
+    "matches": [
+     {
+      "confident_match": false,
+      "evidence": "ed at a ratio of 1 COCOS = 1 COMBO. New COMBO (COMBO) smart contract addresses: BNB Smart Chain (BEP20): 0xc03fBF20A586fa89C2a5f6F941458E1Fbc40c661 Ethereum (ERC20",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:BNB;no_usdm_context",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "BNBUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "COCOSUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "COMBOUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:18550322a4944094840831c3efe2d223",
     "page_coin_m_not_in_notice": [
@@ -7662,7 +8650,7 @@
     ],
     "releaseDate": "2023-06-02T08:10:07Z",
     "release_src": "releaseDate=publishDate",
-    "status": "unclassified",
+    "status": "classified",
     "title": "Binance Has Completed the Cocos-BCX (COCOS) Token Swap & Rebranding Plan to COMBO (COMBO)",
     "version": 1
    },
@@ -7673,8 +8661,19 @@
     "kind": "delisting",
     "kind_reason": "delisting:delist;r52a:leverage_margin_tiers_update_dropped",
     "known_at": "2022-05-12T04:53:17Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "no_match",
+    "matches": [
+     {
+      "confident_match": false,
+      "evidence": "Binance Futures to Delist Coin-Margined LUNA Perpetual Contracts and Update the Leverage & Margin Tiers for USDT-Margined LU",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:LUNA;coin_m_veto:coin-m|coin-margined",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "LUNAUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:1b73e64616ee4e769c29e70c66728d1a",
     "page_coin_m_not_in_notice": [],
@@ -7694,8 +8693,19 @@
     "kind": "delisting",
     "kind_reason": "delisting:delist;r52a:leverage_margin_tiers_update_dropped",
     "known_at": "2022-11-09T18:49:17Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "no_match",
+    "matches": [
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "LUNAUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:1b73e64616ee4e769c29e70c66728d1a",
     "page_coin_m_not_in_notice": [],
@@ -7771,18 +8781,38 @@
     "article_reason": "ok",
     "capture_sha256": "27b037c3e46f2ec73b6cc1844138dbf113dd4a300ada9a6da763c3851e03772c",
     "capture_ts": "2024-03-08T09:56:20Z",
-    "kind": null,
-    "kind_reason": "no_kind_phrase",
+    "kind": "delisting",
+    "kind_reason": "token_swap:token swap",
     "known_at": "2024-03-08T09:56:20Z",
     "match_reason": "matched",
     "matches": [
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "AUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "ll delist the STRAX/USDT cross margin pair, as well as the STRAX/USDT and STRAX/BTC isolated margin pairs at 2024-03-15 06:00 (UTC). At 2024-03-12 06:00 (UTC), Bin",
+      "instance": "BTCUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:BTC;usdm_context:usds-m",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "BTCUSDT"
+     },
      {
       "confident_match": true,
       "evidence": "Futures Binance Futures will adjust the leverage and margin tiers of the USDⓈ-M STRAXUSDT Perpetual Contract at 2024-03-08 10:30 (UTC), as per the table below. Existing ",
       "instance": "STRAXUSDT#0",
       "instance_reason": "attributed",
       "reason": "usdm_context:usds-m",
-      "scheduled_reason": "not_a_delisting",
+      "scheduled_reason": "conflicting_candidates",
       "scheduled_ts": null,
       "symbol": "STRAXUSDT"
      }
@@ -7798,7 +8828,7 @@
     ],
     "releaseDate": "2024-03-08T08:30:31Z",
     "release_src": "releaseDate=publishDate",
-    "status": "unclassified",
+    "status": "classified",
     "title": "Binance Will Support the Stratis (STRAX) Token Swap and Redenomination Plan",
     "version": 1
    },
@@ -7858,6 +8888,26 @@
     "matches": [
      {
       "confident_match": true,
+      "evidence": ":30 (UTC). Binance Liquid Swap will delist FTT/USDT, FTT/BUSD, FTT/BTC, and FTT/BNB pairs at 2022-11-14 04:30 (UTC). The users’ deposit amount in the above FTT liq",
+      "instance": "BNBUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:BNB;usdm_context:usds-m",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "BNBUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": " Cross Margin Pairs: FTT/BUSD and FTT/USDT Isolated Margin Pairs: FTT/BUSD, FTT/BTC and FTT/USDT Binance Simple Earn will delist FTT from Flexible Products at 2022",
+      "instance": "BTCUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:BTC;usdm_context:usds-m",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "BTCUSDT"
+     },
+     {
+      "confident_match": true,
       "evidence": "positions and pending orders, and conduct an automatic settlement on the USDⓈ-M FTTUSDT and FTTBUSD Perpetual Contracts at 2022-11-14 04:00 (UTC) and 2022-11-14 04:30 ",
       "instance": "FTTUSDT#0",
       "instance_reason": "attributed",
@@ -7889,11 +8939,52 @@
     "article_reason": "ok",
     "capture_sha256": "884b279764a34ec28f0c8b53c69e8e98efa750d74fe3cfd7b19879598cf7e531",
     "capture_ts": "2023-05-18T08:16:58Z",
-    "kind": null,
-    "kind_reason": "no_kind_phrase",
+    "kind": "delisting",
+    "kind_reason": "token_swap:token swap|rebranding",
     "known_at": "2023-05-18T08:16:58Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "matched",
+    "matches": [
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "AUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "list all existing COCOS spot trading pairs (i.e., COCOS/USDT, COCOS/BUSD, COCOS/BNB and COCOS/TRY) and cancel all pending COCOS spot trade orders. At 2023-05-29 08",
+      "instance": "BNBUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:BNB;usdm_context:usdt-margined",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "BNBUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "Binance Will Support the Cocos-BCX (COCOS) Token Swap & Rebranding Plan to COMBO (COMBO) Fellow Binancians, Binance will ",
+      "instance": "COCOSUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:COCOS;usdm_context:usdt-margined",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "COCOSUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "COMBOUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:45852dc155b641bc9e1c23bc41d8ded6",
     "page_coin_m_not_in_notice": [
@@ -7909,7 +9000,7 @@
     ],
     "releaseDate": "2023-05-18T04:55:04Z",
     "release_src": "releaseDate=publishDate",
-    "status": "unclassified",
+    "status": "classified",
     "title": "Binance Will Support the Cocos-BCX (COCOS) Token Swap & Rebranding Plan to COMBO (COMBO)",
     "version": 1
    },
@@ -7961,8 +9052,39 @@
     "kind": "delisting",
     "kind_reason": "delisting:delist",
     "known_at": "2022-04-04T05:21:58Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "matched",
+    "matches": [
+     {
+      "confident_match": true,
+      "evidence": "Binance Futures Will Delist 1000BTTC and YFII USDT-Margined Contracts Fellow Binancians, Binance Futures will conduc",
+      "instance": "1000BTTCUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:1000BTTC;usdm_context:usdt-margined",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "1000BTTCUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "AUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "Binance Futures Will Delist 1000BTTC and YFII USDT-Margined Contracts Fellow Binancians, Binance Futures will conduct automat",
+      "instance": "YFIIUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:YFII;usdm_context:usdt-margined",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "YFIIUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:4baf8d70485c46e38637bd063c58c4d8",
     "page_coin_m_not_in_notice": [
@@ -7982,11 +9104,52 @@
     "article_reason": "ok",
     "capture_sha256": "56c78a7f0a4a569519c4347b4d6dc97032a992dace9a7dc98e4b2e06f2081685",
     "capture_ts": "2023-02-10T04:37:40Z",
-    "kind": null,
-    "kind_reason": "no_kind_phrase",
+    "kind": "delisting",
+    "kind_reason": "token_swap:token swap",
     "known_at": "2023-02-10T04:37:40Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "matched",
+    "matches": [
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "AUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "will suspend and delist all existing BNX spot trading pairs (i.e., BNX/BTC, BNX/BNB, BNX/BUSD and BNX/USDT) and cancel all pending BNX spot trade orders. At 2023-0",
+      "instance": "BNBUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:BNB;usdm_context:usdt-margined",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "BNBUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "BNXUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "e the Mark Price. At 2023-02-12 03:00 (UTC), Binance will suspend BNX/USDT, BNX/BTC and BNX/BUSD isolated margin borrowing. At 2023-02-14 03:00 (UTC), we will clos",
+      "instance": "BTCUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:BTC;usdm_context:usdt-margined",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "BTCUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:4d23ada51a2e4fa182835c77d51ba1a9",
     "page_coin_m_not_in_notice": [
@@ -8003,7 +9166,7 @@
     ],
     "releaseDate": "2023-02-10T04:30:03Z",
     "release_src": "releaseDate=publishDate",
-    "status": "unclassified",
+    "status": "classified",
     "title": "Binance Will Support the BinaryX (BNX) Token Swap and Redenomination Plan",
     "version": 1
    },
@@ -8014,8 +9177,59 @@
     "kind": "delisting",
     "kind_reason": "delisting:delist;r52a:leverage_margin_tiers_update_dropped",
     "known_at": "2024-05-10T09:38:02Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "no_match",
+    "matches": [
+     {
+      "confident_match": false,
+      "evidence": "d Margin Tiers Leverage Before Change Position Before Change (Notional Value in APE) Maintenance Margin Rate Before Change Leverage After Change Position After Cha",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:APE;coin_m_veto:coin-m",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "APEUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "d Margin Tiers Leverage Before Change Position Before Change (Notional Value in ICX) Maintenance Margin Rate Before Change Leverage After Change Position After Cha",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:ICX;coin_m_veto:coin-m",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "ICXUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "d Margin Tiers Leverage Before Change Position Before Change (Notional Value in KNC) Maintenance Margin Rate Before Change Leverage After Change Position After Cha",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:KNC;coin_m_veto:coin-m",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "KNCUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "etual Contract Leverage Before Change Position Before Change (Notional Value in ROSE) Maintenance Margin Rate Before Change Leverage After Change Position After Cha",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:ROSE;coin_m_veto:coin-m",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "ROSEUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "d Margin Tiers Leverage Before Change Position Before Change (Notional Value in XTZ) Maintenance Margin Rate Before Change Leverage After Change Position After Cha",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:XTZ;coin_m_veto:coin-m",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "XTZUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:5150d4f0ee1546d7ae6382ba7cda3ffe",
     "page_coin_m_not_in_notice": [
@@ -8051,8 +9265,49 @@
     "kind": "delisting",
     "kind_reason": "delisting:delist",
     "known_at": "2023-02-23T06:51:27Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "no_match",
+    "matches": [
+     {
+      "confident_match": false,
+      "evidence": "Cross Margin Pairs: LOOM/BUSD, STRAX/BUSD, STRAX/USDT Isolated Margin Pairs: OG/BTC, OG/USDT Please note: At 2023-02-24 06:00 (UTC), Binance will suspend LOOM/BUSD",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:BTC;no_usdm_context",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "BTCUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "LOOMUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "OGUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "STRAXUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:5a927cdc26a0401b8bb5f49c5b61f54d",
     "page_coin_m_not_in_notice": [
@@ -8127,8 +9382,69 @@
     "kind": null,
     "kind_reason": "no_kind_phrase",
     "known_at": "2024-04-29T14:12:01Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "matched",
+    "matches": [
+     {
+      "confident_match": true,
+      "evidence": "Binance Futures Will Launch USDC-Margined BOME, TIA, and MATIC Perpetual Contracts With Up to 75x Leverage Fellow Binancians, ",
+      "instance": "BOMEUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:BOME;usdm_context:usds-m",
+      "scheduled_reason": "not_a_delisting",
+      "scheduled_ts": null,
+      "symbol": "BOMEUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "e haircuts. For example, when the Multi-Assets Mode is activated, users can use BTC as margin when trading the aforementioned perpetual contracts. The aforemention",
+      "instance": "BTCUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:BTC;usdm_context:usds-m",
+      "scheduled_reason": "not_a_delisting",
+      "scheduled_ts": null,
+      "symbol": "BTCUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "Binance Futures Will Launch USDC-Margined BOME, TIA, and MATIC Perpetual Contracts With Up to 75x Leverage Fellow Binancians, To expand the li",
+      "instance": "MATICUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:MATIC;usdm_context:usds-m",
+      "scheduled_reason": "not_a_delisting",
+      "scheduled_ts": null,
+      "symbol": "MATICUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "00 (UTC) 2024-04-25 07:15 (UTC) 2024-04-25 07:30 (UTC) Underlying Asset BOOK OF MEME (BOME) Celestia (TIA) Polygon (MATIC) Settlement Asset USDC USDC USDC Tick Size",
+      "instance": "MEMEUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:MEME;usdm_context:usds-m",
+      "scheduled_reason": "not_a_delisting",
+      "scheduled_ts": null,
+      "symbol": "MEMEUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "Binance Futures Will Launch USDC-Margined BOME, TIA, and MATIC Perpetual Contracts With Up to 75x Leverage Fellow Binancians, To ex",
+      "instance": "TIAUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:TIA;usdm_context:usds-m",
+      "scheduled_reason": "not_a_delisting",
+      "scheduled_ts": null,
+      "symbol": "TIAUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "lying Asset BOOK OF MEME (BOME) Celestia (TIA) Polygon (MATIC) Settlement Asset USDC USDC USDC Tick Size 0.000001 0.0001 0.0001 Capped Funding Rate +2.0000% / -2.00",
+      "instance": "USDCUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:USDC;usdm_context:usds-m",
+      "scheduled_reason": "not_a_delisting",
+      "scheduled_ts": null,
+      "symbol": "USDCUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:686612ddcd824cd493963371eac1a80b",
     "page_coin_m_not_in_notice": [
@@ -8153,11 +9469,51 @@
     "article_reason": "ok",
     "capture_sha256": "24327685ed26901a15f90115db1089081a1215b97568ecffa2da7a142ce3e6a0",
     "capture_ts": "2024-08-28T09:49:40Z",
-    "kind": null,
-    "kind_reason": "no_kind_phrase",
+    "kind": "delisting",
+    "kind_reason": "token_swap:token swap",
     "known_at": "2024-08-28T09:49:40Z",
     "match_reason": "no_match",
     "matches": [
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "AUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "0 (UTC), Binance will delist all existing MATIC spot trading pairs (i.e., MATIC/BNB, MATIC/BRL, MATIC/BTC, MATIC/ETH, MATIC/EUR, MATIC/FDUSD, MATIC/JPY, MATIC/TRY,",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:BNB;coin_m_veto:coin-m",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "BNBUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "delist all existing MATIC spot trading pairs (i.e., MATIC/BNB, MATIC/BRL, MATIC/BTC, MATIC/ETH, MATIC/EUR, MATIC/FDUSD, MATIC/JPY, MATIC/TRY, MATIC/USDC, and MATIC",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:BTC;coin_m_veto:coin-m",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "BTCUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "existing MATIC spot trading pairs (i.e., MATIC/BNB, MATIC/BRL, MATIC/BTC, MATIC/ETH, MATIC/EUR, MATIC/FDUSD, MATIC/JPY, MATIC/TRY, MATIC/USDC, and MATIC/USDT) and ",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:ETH;coin_m_veto:coin-m",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "ETHUSDT"
+     },
      {
       "confident_match": false,
       "evidence": "nce Futures will close all positions and conduct an automatic settlement on the MATICUSDT and MATICUSDC USDⓈ-M Perpetual Contracts at 2024-09-04 09:00 (UTC), and MATICUS",
@@ -8167,6 +9523,26 @@
       "scheduled_reason": "no_confident_match",
       "scheduled_ts": null,
       "symbol": "MATICUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "POLUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "/BRL, MATIC/BTC, MATIC/ETH, MATIC/EUR, MATIC/FDUSD, MATIC/JPY, MATIC/TRY, MATIC/USDC, and MATIC/USDT) and cancel all pending MATIC spot trading orders. At 2024-09-1",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:USDC;coin_m_veto:coin-m",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "USDCUSDT"
      }
     ],
     "n_captures": 1,
@@ -8195,7 +9571,7 @@
     ],
     "releaseDate": "2024-08-28T09:00:07Z",
     "release_src": "releaseDate=publishDate",
-    "status": "unclassified",
+    "status": "classified",
     "title": "Binance Will Support the Polygon (MATIC) Token Swap to Polygon (POL)",
     "version": 1
    },
@@ -8206,8 +9582,29 @@
     "kind": "delisting",
     "kind_reason": "delisting:delist",
     "known_at": "2022-06-10T10:09:59Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "matched",
+    "matches": [
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "AUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "Binance Futures Will Delist USDT-Margined SC Perpetual Contract Fellow Binancians, Binance Futures will conduct an automatic",
+      "instance": "SCUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:SC;usdm_context:usdt-margined",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "SCUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:6ce355dedc5d438abde7b5dc99b3a56d",
     "page_coin_m_not_in_notice": [
@@ -8227,11 +9624,52 @@
     "article_reason": "ok",
     "capture_sha256": "5753f8e49f76272af71d8768a6ea323ec137a996f2942f7a456e776a64264c1f",
     "capture_ts": "2024-07-26T09:59:01Z",
-    "kind": null,
-    "kind_reason": "no_kind_phrase",
+    "kind": "delisting",
+    "kind_reason": "token_swap:token swap|rebranding",
     "known_at": "2024-07-26T09:59:01Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "no_match",
+    "matches": [
+     {
+      "confident_match": false,
+      "evidence": " for the new RENDER tokens are now open. Spot trading has opened for the RENDER/BTC, RENDER/USDT, RENDER/FDUSD, RENDER/USDC, RENDER/TRY, RENDER/EUR, and RENDER/BRL",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:BTC;no_usdm_context",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "BTCUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "RENDERUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "RNDRUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": ". Spot trading has opened for the RENDER/BTC, RENDER/USDT, RENDER/FDUSD, RENDER/USDC, RENDER/TRY, RENDER/EUR, and RENDER/BRL spot trading pairs at 2024-07-26 08:00 ",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:USDC;no_usdm_context",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "USDCUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:7aa2bb48ab194bb9aebbc3f72b5819ed",
     "page_coin_m_not_in_notice": [
@@ -8259,7 +9697,7 @@
     ],
     "releaseDate": "2024-07-26T09:00:01Z",
     "release_src": "releaseDate=publishDate",
-    "status": "unclassified",
+    "status": "classified",
     "title": "Binance Has Completed the Render (RNDR) Token Swap and Rebranding to Render (RENDER)",
     "version": 1
    },
@@ -8391,8 +9829,39 @@
     "kind": "delisting",
     "kind_reason": "delisting:delist",
     "known_at": "2022-06-02T11:35:39Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "matched",
+    "matches": [
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "AUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "Binance Futures Will Delist TLM and ICP USDT-Margined Contracts Fellow Binancians, Binance Futures will conduct automat",
+      "instance": "ICPUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:ICP;usdm_context:usdt-margined",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "ICPUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "Binance Futures Will Delist TLM and ICP USDT-Margined Contracts Fellow Binancians, Binance Futures will conduct",
+      "instance": "TLMUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:TLM;usdm_context:usdt-margined",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "TLMUSDT"
+     }
+    ],
     "n_captures": 2,
     "notice_id": "en:af469aeeab074738bb4a276070a9d11b",
     "page_coin_m_not_in_notice": [
@@ -8471,8 +9940,19 @@
     "kind": "delisting",
     "kind_reason": "delisting:delist",
     "known_at": "2022-08-17T10:21:03Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "matched",
+    "matches": [
+     {
+      "confident_match": true,
+      "evidence": "Binance Futures Will Delist USDT-Margined BLZ Perpetual Contract Fellow Binancians, Binance Futures will conduct an automatic",
+      "instance": "BLZUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:BLZ;usdm_context:usdt-margined",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "BLZUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:b312715afbff4d7493b77089967303b1",
     "page_coin_m_not_in_notice": [
@@ -8495,8 +9975,39 @@
     "kind": null,
     "kind_reason": "no_kind_phrase",
     "known_at": "2022-11-20T04:50:45Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "matched",
+    "matches": [
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "AUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "Trade BNX USDⓈ-M Futures & Join a Trading Tournament to Share 50,000 BUSD! Promotion Peri",
+      "instance": "BNXUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:BNX;usdm_context:usds-m",
+      "scheduled_reason": "not_a_delisting",
+      "scheduled_ts": null,
+      "symbol": "BNXUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "BUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:cb9254650c784d319259c5ba8569d11a",
     "page_coin_m_not_in_notice": [
@@ -8528,8 +10039,69 @@
     "kind": "delisting",
     "kind_reason": "delisting:delist",
     "known_at": "2023-06-12T06:23:15Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "no_match",
+    "matches": [
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "BNTUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "Binance Margin Will Delist the BNT/BUSD, CVX/BTC, POLS/BUSD, POWR/BUSD, STPT/BUSD & STRAX/BUSD Isolated Margin Pairs Fellow Bina",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:BTC;no_usdm_context",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "BTCUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "Binance Margin Will Delist the BNT/BUSD, CVX/BTC, POLS/BUSD, POWR/BUSD, STPT/BUSD & STRAX/BUSD Isolated Margin Pairs Fellow ",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:CVX;no_usdm_context",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "CVXUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "POWRUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "STPTUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "STRAXUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:cd599a0f00004f399b03b8077788e39c",
     "page_coin_m_not_in_notice": [
@@ -8609,8 +10181,19 @@
     "kind": "delisting",
     "kind_reason": "delisting:delist",
     "known_at": "2022-11-09T19:04:26Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "no_match",
+    "matches": [
+     {
+      "confident_match": false,
+      "evidence": "Binance Staking to Delist SRM Fellow Binancians, Following the Serum team’s announcement on 2021-09-28 that S",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:SRM;no_usdm_context",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "SRMUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:d1a73a4b0f624f52897b4c38fa9decb3",
     "page_coin_m_not_in_notice": [
@@ -8637,8 +10220,39 @@
     "kind": "delisting",
     "kind_reason": "delisting:delist",
     "known_at": "2022-05-18T14:31:01Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "matched",
+    "matches": [
+     {
+      "confident_match": true,
+      "evidence": "Binance Futures Will Delist AKRO and DODO USDT-Margined Contracts Fellow Binancians, Binance Futures will conduc",
+      "instance": "AKROUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:AKRO;usdm_context:usdt-margined",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "AKROUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "AUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "Binance Futures Will Delist AKRO and DODO USDT-Margined Contracts Fellow Binancians, Binance Futures will conduct automat",
+      "instance": "DODOUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:DODO;usdm_context:usdt-margined",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "DODOUSDT"
+     }
+    ],
     "n_captures": 2,
     "notice_id": "en:d1cb959677034c45b5149f1d998ae2b1",
     "page_coin_m_not_in_notice": [
@@ -8658,20 +10272,60 @@
     "article_reason": "ok",
     "capture_sha256": "2c9e441fb2dbd7188353cf9cc55ab48f4b034fc6901892da27820f74abccc755",
     "capture_ts": "2024-07-10T07:59:35Z",
-    "kind": null,
-    "kind_reason": "no_kind_phrase",
+    "kind": "delisting",
+    "kind_reason": "token_swap:token swap|rebranding",
     "known_at": "2024-07-10T07:59:35Z",
     "match_reason": "matched",
     "matches": [
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "AUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": ":00 (UTC), Binance will delist all existing RNDR spot trading pairs (i.e., RNDR/BTC, RNDR/USDT, RNDR/FDUSD, RNDR/USDC, RNDR/TRY, RNDR/EUR, and RNDR/BRL) and cancel",
+      "instance": "BTCUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:BTC;usdm_context:usds-m",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "BTCUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "RENDERUSDT"
+     },
      {
       "confident_match": true,
       "evidence": "nce Futures will close all positions and conduct an automatic settlement on the RNDRUSDT USDⓈ-M Perpetual Contracts at 2024-07-16 09:00 (UTC). The contracts will be del",
       "instance": "RNDRUSDT#0",
       "instance_reason": "attributed",
       "reason": "usdm_context:usds-m",
-      "scheduled_reason": "not_a_delisting",
-      "scheduled_ts": null,
+      "scheduled_reason": "mapped",
+      "scheduled_ts": "2024-07-16T09:00:00Z",
       "symbol": "RNDRUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "l existing RNDR spot trading pairs (i.e., RNDR/BTC, RNDR/USDT, RNDR/FDUSD, RNDR/USDC, RNDR/TRY, RNDR/EUR, and RNDR/BRL) and cancel all pending RNDR spot trading ord",
+      "instance": "USDCUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:USDC;usdm_context:usds-m",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "USDCUSDT"
      }
     ],
     "n_captures": 1,
@@ -8701,7 +10355,7 @@
     ],
     "releaseDate": "2024-07-10T06:30:03Z",
     "release_src": "releaseDate=publishDate",
-    "status": "unclassified",
+    "status": "classified",
     "title": "Binance Will Support the Render (RNDR) Token Swap and Rebranding to Render (RENDER)",
     "version": 1
    },
@@ -8755,6 +10409,16 @@
     "matches": [
      {
       "confident_match": true,
+      "evidence": "le haircuts. For example, when the Multi-Asset Mode is activated, users can use BTC as margin when trading STXUSDT and COCOSUSDT Perpetual Contracts. STXUSDT and C",
+      "instance": "BTCUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:BTC;usdm_context:usds-m",
+      "scheduled_reason": "not_a_delisting",
+      "scheduled_ts": null,
+      "symbol": "BTCUSDT"
+     },
+     {
+      "confident_match": true,
       "evidence": " 14:45 (UTC) respectively, with up to 20x leverage. More details on STXUSDT and COCOSUSDT Perpetual Contracts can be found in the table below: USDⓈ-M Perpetual Contracts",
       "instance": "COCOSUSDT#0",
       "instance_reason": "attributed",
@@ -8801,8 +10465,49 @@
     "kind": "delisting",
     "kind_reason": "delisting:delist",
     "known_at": "2022-11-17T02:00:41Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "no_match",
+    "matches": [
+     {
+      "confident_match": false,
+      "evidence": "cts at 2022-11-23 03:00 (UTC). Binance Liquid Swap will delist RAY/USDT and RAY/BNB liquidity pools at 2022-11-23 03:00 (UTC). The users’ deposit amount in the abo",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:BNB;no_usdm_context",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "BNBUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "llowing margin trading pairs at 2022-11-23 03:00 (UTC): Cross Margin Pairs: SRM/BTC, SRM/BUSD, SRM/USDT, RAY/BUSD, RAY/USDT Isolated Margin Pairs: SRM/BTC, SRM/BUS",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:BTC;no_usdm_context",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "BTCUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "Binance Will Delist SRM and RAY Margin Pairs and Binance Earn Products Fellow Binancians, Binance will remove a",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:RAY;no_usdm_context",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "RAYUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "Binance Will Delist SRM and RAY Margin Pairs and Binance Earn Products Fellow Binancians, Binance will ",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:SRM;no_usdm_context",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "SRMUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:e0ff4c7020ca4203b49907505bc86809",
     "page_coin_m_not_in_notice": [
@@ -8833,8 +10538,19 @@
     "kind": null,
     "kind_reason": "no_kind_phrase",
     "known_at": "2022-11-18T08:47:19Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "matched",
+    "matches": [
+     {
+      "confident_match": true,
+      "evidence": "Binance Futures Will Launch USDT-Margined BNX Perpetual Contracts with Up to 25X Leverage Fellow Binancians, Binance Futures ",
+      "instance": "BNXUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:BNX;usdm_context:usdt-margined",
+      "scheduled_reason": "not_a_delisting",
+      "scheduled_ts": null,
+      "symbol": "BNXUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:e15fac275e7a4e858dc4bb79ffc24c50",
     "page_coin_m_not_in_notice": [
@@ -8865,8 +10581,19 @@
     "kind": null,
     "kind_reason": "no_kind_phrase",
     "known_at": "2022-11-09T19:32:55Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "matched",
+    "matches": [
+     {
+      "confident_match": true,
+      "evidence": "Binance Futures Will Launch TOMO USDT-Margined Perpetual Contract With Up to 50x Leverage Fellow Binancians, Bin",
+      "instance": "TOMOUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:TOMO;usdm_context:usdt-margined",
+      "scheduled_reason": "not_a_delisting",
+      "scheduled_ts": null,
+      "symbol": "TOMOUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:e1d9bbcd3e214208b39b5c2a8087dda7",
     "page_coin_m_not_in_notice": [
@@ -8894,6 +10621,16 @@
     "known_at": "2022-12-04T16:52:20Z",
     "match_reason": "matched",
     "matches": [
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "AUSDT"
+     },
      {
       "confident_match": true,
       "evidence": " Funding Rate Settlement Frequency and Capped Funding Rate Multiplier of USDⓈ-M BNXUSDT Perpetual Contracts (2022-12-04) Fellow Binancians, Binance Futures will make f",
@@ -8939,8 +10676,49 @@
     "kind": "delisting",
     "kind_reason": "delisting:delist",
     "known_at": "2023-01-13T06:47:56Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "no_match",
+    "matches": [
+     {
+      "confident_match": false,
+      "evidence": "n Pairs: FLM/USDT, KMD/USDT Isolated Margin Pairs: COCOS/USDT, CREAM/USDT, SCRT/BTC, SCRT/BUSD, SCRT/USDT Please note: At 2023-01-16 06:00 (UTC), Binance will susp",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:BTC;no_usdm_context",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "BTCUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "COCOSUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "Binance Margin Will Delist FLM, KMD as Borrowable Assets From Cross Margin and COCOS, CREAM, SCRT From Isolate",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:FLM;no_usdm_context",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "FLMUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "SCRTUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:ed7dcc263e6e4f3687f8260340ec96ce",
     "page_coin_m_not_in_notice": [
@@ -8998,8 +10776,29 @@
     "kind": "delisting",
     "kind_reason": "delisting:delist",
     "known_at": "2022-05-12T15:01:46Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "matched",
+    "matches": [
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "AUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "Binance Futures Will Delist LUNA USDT-Margined Contract Binance Futures will conduct an automatic settlement on ",
+      "instance": "LUNAUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:LUNA;usdm_context:usds-m|usdt-margined|usds-margined",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "LUNAUSDT"
+     }
+    ],
     "n_captures": 3,
     "notice_id": "en:ef3ce76d5c2d45ee9b6dc3f281cde744",
     "page_coin_m_not_in_notice": [
@@ -9022,8 +10821,29 @@
     "kind": null,
     "kind_reason": "no_kind_phrase",
     "known_at": "2022-11-17T09:38:24Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "matched",
+    "matches": [
+     {
+      "confident_match": true,
+      "evidence": "Binance Futures Will Launch BUSD-Margined WAVES and LINK Perpetual Contracts with Up to 20X Leverage Fellow Binancians, Binance Futures ",
+      "instance": "LINKUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:LINK;usdm_context:usds-m",
+      "scheduled_reason": "not_a_delisting",
+      "scheduled_ts": null,
+      "symbol": "LINKUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "Binance Futures Will Launch BUSD-Margined WAVES and LINK Perpetual Contracts with Up to 20X Leverage Fellow Binancians, Binance",
+      "instance": "WAVESUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:WAVES;usdm_context:usds-m",
+      "scheduled_reason": "not_a_delisting",
+      "scheduled_ts": null,
+      "symbol": "WAVESUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:f23822acd32f48c994c92ced49866043",
     "page_coin_m_not_in_notice": [
@@ -9054,8 +10874,39 @@
     "kind": "delisting",
     "kind_reason": "delisting:delist",
     "known_at": "2022-12-08T11:46:05Z",
-    "match_reason": "no_universe_symbol_token",
-    "matches": [],
+    "match_reason": "no_match",
+    "matches": [
+     {
+      "confident_match": false,
+      "evidence": "Binance Margin Will Delist BNX, TORN and More Margin Pairs on Cross Margin & Isolated Margin Fellow Binancians",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:BNX;no_usdm_context",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "BNXUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "llowing margin trading pairs at 2022-12-22 03:00 (UTC): Cross Margin Pairs: BNX/BTC, BNX/BUSD, BNX/USDT, DREP/BUSD, DREP/USDT, LOKA/BUSD, LOKA/USDT, MOB/BUSD, MOB/",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "base_asset:BTC;no_usdm_context",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "BTCUSDT"
+     },
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "LOKAUSDT"
+     }
+    ],
     "n_captures": 1,
     "notice_id": "en:f4f20b3b72324b3b82c543988f5b2328",
     "page_coin_m_not_in_notice": [
@@ -9090,6 +10941,46 @@
     "known_at": "2024-06-03T03:02:08Z",
     "match_reason": "matched",
     "matches": [
+     {
+      "confident_match": false,
+      "evidence": "",
+      "instance": null,
+      "instance_reason": "no_match",
+      "reason": "no_symbol_token;base_asset:no_live_usdt_identity",
+      "scheduled_reason": "no_confident_match",
+      "scheduled_ts": null,
+      "symbol": "AUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "M (XEM) Please note: The exact trading pairs being removed are: OMG/USDT, WAVES/BTC, WAVES/ETH, WAVES/TRY, WAVES/USDT, WNXM/USDT, XEM/USDT All trade orders will be",
+      "instance": "BTCUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:BTC;usdm_context:usds-m",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "BTCUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "ase note: The exact trading pairs being removed are: OMG/USDT, WAVES/BTC, WAVES/ETH, WAVES/TRY, WAVES/USDT, WNXM/USDT, XEM/USDT All trade orders will be automatica",
+      "instance": "ETHUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:ETH;usdm_context:usds-m",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "ETHUSDT"
+     },
+     {
+      "confident_match": true,
+      "evidence": "0 (UTC). Please note that the conversion of delisted tokens into stablecoins is NOT guaranteed. A separate notification will be made before the conversion where ap",
+      "instance": "NOTUSDT#0",
+      "instance_reason": "attributed",
+      "reason": "base_asset_match:NOT;usdm_context:usds-m",
+      "scheduled_reason": "no_timestamp_in_symbol_sentences",
+      "scheduled_ts": null,
+      "symbol": "NOTUSDT"
+     },
      {
       "confident_match": true,
       "evidence": "sm to update the Mark Price. Please note that users may continue trading USDⓈ-M OMGUSDT and XEMUSDT Perpetual Contracts. Binance Margin will delist the OMG, WAVES, WNX",
@@ -9210,9 +11101,244 @@
    }
   ]
  },
+ "wdev_book_window": {
+  "events": [
+   {
+    "by": [],
+    "cessation": "2023-02-01T00:00:00Z",
+    "instance": "BNXUSDT#0",
+    "only_via_amb42_mixed_notice": false,
+    "protected": false,
+    "reasons": [
+     "no_confident_match:base_asset:BNX;no_usdm_context (en:f4f20b3b72324b3b82c543988f5b2328 v1)",
+     "no_confident_match:no_symbol_token;base_asset:no_live_usdt_identity (en:4d23ada51a2e4fa182835c77d51ba1a9 v1)",
+     "unclassified_kind:no_kind_phrase (en:cb9254650c784d319259c5ba8569d11a v1)",
+     "unclassified_kind:no_kind_phrase (en:e15fac275e7a4e858dc4bb79ffc24c50 v1)",
+     "unclassified_kind:no_kind_phrase (en:e894a11164af4d61935735f9d1f70a88 v1)",
+     "unclassified_kind:no_kind_phrase;r52a:leverage_margin_tiers_update_dropped (en:63a12323c35d406aa977914f9d794909 v1)",
+     "unclassified_kind:no_kind_phrase;r52a:leverage_margin_tiers_update_dropped (en:b003f85c03be402b993b47740f5f4305 v1)"
+    ],
+    "stage0_class": "C",
+    "status": "missed"
+   },
+   {
+    "by": [
+     "en:45852dc155b641bc9e1c23bc41d8ded6 v1 (known 2023-05-18T08:16:58Z, scheduled None)"
+    ],
+    "cessation": "2023-05-25T09:15:00Z",
+    "instance": "COCOSUSDT#0",
+    "only_via_amb42_mixed_notice": false,
+    "protected": true,
+    "reasons": [
+     "scheduled_ts null:no_timestamp_in_symbol_sentences (en:45852dc155b641bc9e1c23bc41d8ded6 v1)"
+    ],
+    "stage0_class": "B",
+    "status": "matched_null"
+   },
+   {
+    "by": [],
+    "cessation": "2023-11-14T09:00:00Z",
+    "instance": "TOMOUSDT#0",
+    "only_via_amb42_mixed_notice": false,
+    "protected": false,
+    "reasons": [
+     "no_confident_match:no_symbol_token;base_asset:no_live_usdt_identity (en:0491a610ab2d4ab3af6d15dce961c5ae v1)",
+     "unclassified_kind:no_kind_phrase (en:e1d9bbcd3e214208b39b5c2a8087dda7 v1)"
+    ],
+    "stage0_class": "C",
+    "status": "missed"
+   },
+   {
+    "by": [
+     "en:2e6eb8e644664a6ca7b6659a226c41b0 v1 (known 2024-03-08T09:56:20Z, scheduled None)"
+    ],
+    "cessation": "2024-03-15T09:00:00Z",
+    "instance": "STRAXUSDT#0",
+    "only_via_amb42_mixed_notice": false,
+    "protected": true,
+    "reasons": [
+     "scheduled_ts null:conflicting_candidates (en:2e6eb8e644664a6ca7b6659a226c41b0 v1)"
+    ],
+    "stage0_class": "B",
+    "status": "matched_null"
+   },
+   {
+    "by": [
+     "en:f65faeeefe07417a8b6dd2900ba8da7e v1 (known 2024-06-03T03:02:08Z, scheduled None)"
+    ],
+    "cessation": "2024-06-11T09:00:00Z",
+    "instance": "WAVESUSDT#0",
+    "only_via_amb42_mixed_notice": false,
+    "protected": true,
+    "reasons": [
+     "scheduled_ts null:conflicting_candidates (en:f65faeeefe07417a8b6dd2900ba8da7e v1)"
+    ],
+    "stage0_class": "B",
+    "status": "matched_null"
+   },
+   {
+    "by": [],
+    "cessation": "2024-06-25T09:15:00Z",
+    "instance": "AGIXUSDT#0",
+    "only_via_amb42_mixed_notice": false,
+    "protected": false,
+    "reasons": [
+     "unclassified_kind:no_kind_phrase;r52a:leverage_margin_tiers_update_dropped (en:7f43e06a36e7417a82ed691a0d7307c4 v1)"
+    ],
+    "stage0_class": "C",
+    "status": "missed"
+   },
+   {
+    "by": [
+     "en:d1f2ae8d99b24439a7a900caa9bb6b3b v1 (known 2024-07-10T07:59:35Z, scheduled 2024-07-16T09:00:00Z)"
+    ],
+    "cessation": "2024-07-16T09:00:00Z",
+    "instance": "RNDRUSDT#0",
+    "only_via_amb42_mixed_notice": false,
+    "protected": true,
+    "reasons": [
+     "no_confident_match:no_symbol_token;base_asset:no_live_usdt_identity (en:7aa2bb48ab194bb9aebbc3f72b5819ed v1)",
+     "unclassified_kind:no_kind_phrase (en:499af13827e04741999c15f9139ff3de v1)"
+    ],
+    "stage0_class": "B",
+    "status": "matched_scheduled"
+   },
+   {
+    "by": [],
+    "cessation": "2024-09-04T09:00:00Z",
+    "instance": "MATICUSDT#0",
+    "only_via_amb42_mixed_notice": false,
+    "protected": false,
+    "reasons": [
+     "no_confident_match:coin_m_veto:coin-m (en:6a6de383727f4659a3050f7982e1620f v1)",
+     "unclassified_kind:no_kind_phrase (en:686612ddcd824cd493963371eac1a80b v1)"
+    ],
+    "stage0_class": "B",
+    "status": "missed"
+   },
+   {
+    "by": [],
+    "cessation": "2024-10-30T09:15:00Z",
+    "instance": "UNFIUSDT#0",
+    "only_via_amb42_mixed_notice": false,
+    "protected": false,
+    "reasons": [],
+    "stage0_class": "B",
+    "status": "matched_scheduled"
+   },
+   {
+    "by": [
+     "en:f65faeeefe07417a8b6dd2900ba8da7e v1 (known 2024-06-03T03:02:08Z, scheduled None)"
+    ],
+    "cessation": "2024-12-09T09:15:00Z",
+    "instance": "XEMUSDT#0",
+    "only_via_amb42_mixed_notice": true,
+    "protected": true,
+    "reasons": [
+     "scheduled_ts null:no_timestamp_in_symbol_sentences (en:f65faeeefe07417a8b6dd2900ba8da7e v1)"
+    ],
+    "stage0_class": "B",
+    "status": "matched_null"
+   },
+   {
+    "by": [
+     "en:27eac260521b4f40ab331e1a345887a7 v1 (known 2024-12-06T17:43:23Z, scheduled 2024-12-16T09:00:00Z)"
+    ],
+    "cessation": "2024-12-16T09:15:00Z",
+    "instance": "MAVIAUSDT#0",
+    "only_via_amb42_mixed_notice": false,
+    "protected": true,
+    "reasons": [],
+    "stage0_class": "B",
+    "status": "matched_scheduled"
+   },
+   {
+    "by": [],
+    "cessation": "2024-12-26T09:15:00Z",
+    "instance": "DARUSDT#0",
+    "only_via_amb42_mixed_notice": false,
+    "protected": false,
+    "reasons": [
+     "no_capture (no Stage-0 capture names the symbol in its notice text or page)"
+    ],
+    "stage0_class": "C",
+    "status": "missed"
+   },
+   {
+    "by": [],
+    "cessation": "2025-01-06T09:15:00Z",
+    "instance": "FTMUSDT#0",
+    "only_via_amb42_mixed_notice": false,
+    "protected": false,
+    "reasons": [
+     "no_capture (no Stage-0 capture names the symbol in its notice text or page)"
+    ],
+    "stage0_class": "C",
+    "status": "missed"
+   },
+   {
+    "by": [],
+    "cessation": "2025-03-17T09:15:00Z",
+    "instance": "BNXUSDT#1",
+    "only_via_amb42_mixed_notice": false,
+    "protected": false,
+    "reasons": [
+     "no_confident_match:base_asset:BNX;no_usdm_context (en:f4f20b3b72324b3b82c543988f5b2328 v1)",
+     "no_confident_match:no_symbol_token;base_asset:no_live_usdt_identity (en:4d23ada51a2e4fa182835c77d51ba1a9 v1)",
+     "unclassified_kind:no_kind_phrase (en:cb9254650c784d319259c5ba8569d11a v1)",
+     "unclassified_kind:no_kind_phrase (en:e15fac275e7a4e858dc4bb79ffc24c50 v1)",
+     "unclassified_kind:no_kind_phrase (en:e894a11164af4d61935735f9d1f70a88 v1)",
+     "unclassified_kind:no_kind_phrase;r52a:leverage_margin_tiers_update_dropped (en:63a12323c35d406aa977914f9d794909 v1)",
+     "unclassified_kind:no_kind_phrase;r52a:leverage_margin_tiers_update_dropped (en:b003f85c03be402b993b47740f5f4305 v1)"
+    ],
+    "stage0_class": "C",
+    "status": "missed"
+   },
+   {
+    "by": [],
+    "cessation": "2025-04-14T09:15:00Z",
+    "instance": "VIDTUSDT#0",
+    "only_via_amb42_mixed_notice": false,
+    "protected": false,
+    "reasons": [
+     "no_capture (no Stage-0 capture names the symbol in its notice text or page)"
+    ],
+    "stage0_class": "C",
+    "status": "missed"
+   },
+   {
+    "by": [],
+    "cessation": "2025-05-21T09:00:00Z",
+    "instance": "EOSUSDT#0",
+    "only_via_amb42_mixed_notice": false,
+    "protected": false,
+    "reasons": [
+     "no_capture (no Stage-0 capture names the symbol in its notice text or page)"
+    ],
+    "stage0_class": "C",
+    "status": "missed"
+   }
+  ],
+  "n": 16,
+  "protected": 6,
+  "protected_excluding_amb42_mixed": 5,
+  "protected_excluding_amb42_mixed_instances": [
+   "COCOSUSDT#0",
+   "STRAXUSDT#0",
+   "WAVESUSDT#0",
+   "RNDRUSDT#0",
+   "MAVIAUSDT#0"
+  ],
+  "protected_instances": [
+   "COCOSUSDT#0",
+   "STRAXUSDT#0",
+   "WAVESUSDT#0",
+   "RNDRUSDT#0",
+   "XEMUSDT#0",
+   "MAVIAUSDT#0"
+  ]
+ },
  "worktree_clean_for_code": true,
  "worktree_status_porcelain_executed_code": [],
- "worktree_status_porcelain_luna_v7": [
-  "?? luna/v7/forward_model.py"
- ]
+ "worktree_status_porcelain_luna_v7": []
 }
