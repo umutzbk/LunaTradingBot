@@ -430,8 +430,9 @@ def ingest_report(notices: NoticeBuild, instruments: ins.Instruments, r12: pd.Da
                                    "postponement": list(cap.POSTPONEMENT_PHRASES),
                                    "delisting": list(cap.DELISTING_PHRASES),
                                    "token_swap_as_delisting": list(cap.TOKEN_SWAP_PHRASES)},  # A-1
-                  "base_asset_match": "A-1: verified USDT baseAsset token + USDⓈ-M context, no COIN-M veto, "
-                                      "unique live USD-M USDT instance at known_at",
+                  "base_asset_match": "A-1/A-5: verified USDT baseAsset token + USDⓈ-M context phrase in the "
+                                      "same sentence, no COIN-M veto in the notice, unique live USD-M USDT "
+                                      "instance at known_at",
                   "context_phrases": {"usdm": list(USDM_PHRASES), "usdm_pair": list(USDM_PAIR),
                                       "coin_m_veto": list(COIN_M_PHRASES)},
                   "identity_fields": sorted(guard.IDENTITY_FIELDS)},

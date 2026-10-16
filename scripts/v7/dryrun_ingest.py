@@ -32,6 +32,8 @@ Usage (foreground, bounded stretches; resumable):
     python scripts/v7/dryrun_ingest.py meta-captures --budget 480
     python scripts/v7/dryrun_ingest.py meta-build
     python scripts/v7/dryrun_ingest.py report
+    python scripts/v7/dryrun_ingest.py funding-rest-na                       # Task 29e: N3 of non-perpetuals
+    python scripts/v7/dryrun_ingest.py rechunk --symbol BTCUSDT --month 2023-11   # Task 29e: A-6 re-ingest
 """
 
 from __future__ import annotations
@@ -54,7 +56,7 @@ sys.path.insert(0, str(REPO))
 
 from luna.v7 import guard, ingest, k9, netguard  # noqa: E402
 from luna.v7.fetch import Fetcher, FetchError  # noqa: E402
-from luna.v7.rawstore import TABLES, RawStore  # noqa: E402
+from luna.v7.rawstore import TABLES, RawStore, perpetual_shaped  # noqa: E402
 
 ROOT = REPO / "var" / "v7" / "dryrun"
 STAGE0 = REPO / "var" / "v7" / "stage0"
@@ -439,11 +441,15 @@ def cmd_funding_archive(a) -> None:
 
 
 def rest_plan() -> list[tuple[str, str]]:
-    """S-2.6 gap fill: the (symbol, month) R3 chunks (stored) without a stored R2_archive chunk."""
+    """S-2.6 gap fill: the (symbol, month) R3 chunks (stored) without a stored R2_archive chunk, for
+    perpetual-shaped symbols only (S-2.1 covers PERPETUAL contracts; delivery / settled names are not planned:
+    netguard refuses a non-alphanumeric N3 symbol, Task 29e)."""
     store = RawStore(STORE)
     out = []
     r3 = store.table_dir("R3")
     for sd in sorted(x for x in r3.iterdir() if x.is_dir()):
+        if not perpetual_shaped(sd.name):
+            continue
         sm = store.symbol_manifest("R3", sd.name)
         if sm is None:
             continue
@@ -482,6 +488,45 @@ def cmd_funding_rest(a) -> None:
         time.sleep(0.25)
     log_run("funding_rest", "R2_rest", t0, {"chunks": dict(n), "planned": len(todo),
                                             "remaining": len(todo) - sum(n.values())})
+
+
+def cmd_funding_rest_na(_a) -> None:
+    """Task 29e: the unresolved R2_rest keys of non-perpetual symbols (the earlier N3 plan's netguard refusals
+    of delivery / settled names) are recorded as not applicable (``ingest.mark_not_applicable``, S-2.1), so
+    R55 stops blocking on them; every other unresolved key is left as it is. Idempotent."""
+    t0 = time.time()
+    store = LockedStore(STORE)
+    idx = store.ingest_index()
+    keys = sorted(k for k in idx.unresolved if k[0] == "R2_rest" and isinstance(k[1], str)
+                  and not perpetual_shaped(k[1]))
+    for t, s, m in keys:
+        ingest.mark_not_applicable(store, t, s, m)
+    left = sorted(k for k in store.ingest_index().unresolved if k[0] == "R2_rest")
+    log_run("funding_rest_na", "R2_rest", t0, {"marked_not_applicable": len(keys),
+                                               "symbols": sorted({k[1] for k in keys}),
+                                               "r2_rest_unresolved_left": len(left)})
+
+
+def cmd_rechunk(a) -> None:
+    """Task 29e (A-6): re-run ONE bar chunk through the frozen ingest (e.g. the real BTCUSDT 2023-11 DEC-33
+    conflict ledgered as a gap before A-6): the conflicting keys are dropped as missing, the rest is stored and
+    the ``conflict_resolved_A6`` record is appended. Deterministic (same sources, same plan); prints the
+    store ledger's verdict for the key."""
+    t0 = time.time()
+    plan = json.loads((PROG / f"{a.table}.months.json").read_text())
+    v = plan.get(a.symbol) or {}
+    daily_only = a.month in v.get("daily_only", [])
+    if not daily_only and a.month not in v.get("monthly", []):
+        raise SystemExit(f"{a.table} {a.symbol} {a.month}: not in the plan")
+    store = LockedStore(STORE)
+    r = run_chunk(store, a.table, a.symbol, a.month, daily_only)
+    append_jsonl(PROG / f"{a.table}.chunks.jsonl", r)
+    key = (a.table, a.symbol, a.month)
+    idx = store.ingest_index()
+    log_run("rechunk", a.table, t0, {"symbol": a.symbol, "month": a.month, "status": r["status"],
+                                     "reason": (r["reason"] or "")[:300],
+                                     "unresolved": idx.unresolved.get(key),
+                                     "a6_resolutions": [x["keys"] for x in idx.a6.get(key, ())]})
 
 
 # ------------------------------------------------------------------------------------------ metadata
@@ -547,13 +592,23 @@ def cmd_meta_build(a) -> None:
     store = RawStore(STORE)
     ms = MetaStore(META)
     syms = sorted(x.name for x in store.table_dir("R3").iterdir() if x.is_dir())
+    plan = json.loads((PROG / "R3.months.json").read_text())
+    complete, partial = [], []
+    for sym in syms:  # instances need the symbol's whole R3 history (S-2.2): partial-history symbols left out
+        sm = store.symbol_manifest("R3", sym) or {"chunks": {}}
+        v = plan.get(sym, {})
+        want = set(v.get("monthly", [])) | set(v.get("daily_only", []))
+        (complete if want and want <= set(sm["chunks"]) else partial).append(sym)
+    syms = complete
     insts = instances_from_store(store, syms, windows.W_DEV[1])
     srcs, pit = identity_sources(ms)
     n4, cur = fetch_exchange_info(fetcher())
     sources = [*srcs, n4]
     rp = METRICS / f"meta_report_{a.scope}.json"
     res = ingest_metadata(ms, insts, sources, scope=a.scope, report_path=rp)
-    log_run("meta_build", "meta", t0, {"symbols_with_instances": len(insts),
+    log_run("meta_build", "meta", t0, {"symbols_complete_history": len(complete),
+                                       "symbols_partial_history_left_out": len(partial),
+                                       "symbols_with_instances": len(insts),
                                        "instances": sum(len(v) for v in insts.values()),
                                        "identity_sources": len(sources), "pit_filter_symbols": len(pit),
                                        "n4_current_filter_symbols": len(cur),
@@ -665,6 +720,11 @@ def main() -> None:
         s = b if name == "bars" else sub.add_parser(name)
         s.add_argument("--budget", type=float, default=480)
         s.add_argument("--workers", type=int, default=8)
+    sub.add_parser("funding-rest-na")
+    rc = sub.add_parser("rechunk")
+    rc.add_argument("--table", default="R3", choices=("R3", "R5"))
+    rc.add_argument("--symbol", required=True)
+    rc.add_argument("--month", required=True)
     mb = sub.add_parser("meta-build")
     mb.add_argument("--scope", default="W_DEV")
     rp = sub.add_parser("report")
@@ -677,7 +737,7 @@ def main() -> None:
 def _run(a) -> None:
     {"probe": cmd_probe, "bars": cmd_bars, "r5": cmd_r5, "funding-archive": cmd_funding_archive,
      "funding-rest": cmd_funding_rest, "meta-captures": cmd_meta_captures, "meta-build": cmd_meta_build,
-     "report": cmd_report}[a.cmd](a)
+     "report": cmd_report, "funding-rest-na": cmd_funding_rest_na, "rechunk": cmd_rechunk}[a.cmd](a)
 
 
 if __name__ == "__main__":

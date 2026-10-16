@@ -4,7 +4,9 @@
 quote_volume, count, taker_buy_volume, taker_buy_quote_volume, ignore) into ns-time frames; the unit is
 explicit and implausible values are refused (ambiguous units are never ingested). ``union`` = monthly union
 daily by key, daily filling keys missing from monthly; a differing value for the same key is an
-``IntegrityBlocker``.
+``IntegrityBlocker``. ``union_a6``: A-6 (AMENDMENTS-2026-10-16, user decision): the conflicting keys are
+removed from BOTH sources (missing bars, neither value chosen) and returned with both value sets, so the
+ingestion stores the rest of the chunk and records the resolution explicitly.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from __future__ import annotations
 import io
 from typing import Literal
 
+import numpy as np
 import pandas as pd
 
 from luna.v7.data.schema import IntegrityBlocker, IntegrityConflict
@@ -88,3 +91,31 @@ def union(monthly: pd.DataFrame, daily: pd.DataFrame) -> pd.DataFrame:
     extra = extra[extra["_merge"] == "left_only"].drop(columns="_merge")
     out = pd.concat([monthly, extra], ignore_index=True).sort_values(key, kind="stable")
     return out.set_index("open_ts", drop=False).rename_axis(None)
+
+
+def _plain(v: object) -> object:
+    return v.item() if isinstance(v, np.generic) else v
+
+
+def union_a6(monthly: pd.DataFrame, daily: pd.DataFrame) -> tuple[pd.DataFrame, dict | None]:
+    """A-6: ``union`` with every DEC-33 conflicting key (any value column differs) removed from both sources
+    (a missing bar). Returns (the united frame, None) without a conflict, else (the frame without those keys,
+    ``{"keys": [open_ts, ...], "monthly": [{col: value}], "daily": [{col: value}]}``, sorted by key)."""
+    key = ["symbol", "open_ts"] if "symbol" in monthly.columns or "symbol" in daily.columns else ["open_ts"]
+    for name, f in (("monthly", monthly), ("daily", daily)):
+        if f.duplicated(key).any():
+            raise IntegrityBlocker(f"duplicate keys inside {name} klines")
+    both = monthly.merge(daily, on=key, how="inner", suffixes=("_m", "_d"))
+    bad = np.zeros(len(both), bool)
+    for c in VALUE_COLUMNS:
+        bad |= (both[f"{c}_m"] != both[f"{c}_d"]).to_numpy(bool)
+    if not bad.any():
+        return union(monthly, daily), None
+    b = both[bad].sort_values(key, kind="stable")
+    drop = set(b["open_ts"].astype("int64").tolist())
+    info = {"keys": [int(x) for x in b["open_ts"]],
+            "monthly": [{c: _plain(r[f"{c}_m"]) for c in VALUE_COLUMNS} for _, r in b.iterrows()],
+            "daily": [{c: _plain(r[f"{c}_d"]) for c in VALUE_COLUMNS} for _, r in b.iterrows()]}
+    m = monthly[~monthly["open_ts"].isin(drop)]
+    d = daily[~daily["open_ts"].isin(drop)]
+    return union(m, d), info

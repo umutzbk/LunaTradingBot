@@ -108,6 +108,19 @@ class Manifest:
                 out.append((p[0], p[2], p[3], key))
         return tuple(out)
 
+    @cached_property
+    def _by_parent(self) -> dict[str, dict[str, tuple[int, str]]]:
+        """{parent directory prefix (through the last '/'): {key: entry}}, built once per manifest object."""
+        out: dict[str, dict[str, tuple[int, str]]] = {}
+        for k, v in self.entries.items():
+            out.setdefault(k[: k.rfind("/") + 1], {})[k] = v
+        return out
+
+    def under(self, prefix: str) -> dict[str, tuple[int, str]]:
+        """The pinned entries directly under ``prefix`` (no further '/'), from the parent index."""
+        return {k: v for k, v in self._by_parent.get(prefix[: prefix.rfind("/") + 1], {}).items()
+                if k.startswith(prefix)}
+
     def zips(self) -> tuple[tuple[str, str, str, str], ...]:
         """(table, symbol, period, key) of every ``.zip`` key, sorted by key (period: YYYY-MM or YYYY-MM-DD);
         parsed once per manifest object."""
@@ -287,7 +300,7 @@ def check_listing(m: Manifest, prefix: str, entries: Iterable) -> str | None:
     difference."""
     live = {e.key: (int(e.size), str(e.checksum)) for e in entries
             if e.key.startswith(prefix) and "/" not in e.key[len(prefix):] and parse_key(e.key) is not None}
-    pinned = {k: v for k, v in m.entries.items() if k.startswith(prefix) and "/" not in k[len(prefix):]}
+    pinned = m.under(prefix)  # indexed by parent prefix (Task 29e): no scan of every entry per listing
     if live == pinned:
         return None
     extra = sorted(set(live) - set(pinned))

@@ -14,7 +14,11 @@ previous process log is restored afterwards). One source file in memory at a tim
   ``.CHECKSUM`` by the fetch layer, must hold one non-empty CSV ("empty file" refused), is parsed by
   ``data.klines.parse_csv`` (header auto-detection) and ``klines.normalise`` with the one plausible time
   unit (ms / us / ns; L12), every daily row must lie inside its named day, and the files are united by
-  ``klines.union`` (DEC-33: daily fills keys missing from monthly; a conflict is an ``IntegrityBlocker``).
+  ``klines.union_a6`` (DEC-33: daily fills keys missing from monthly; A-6, AMENDMENTS-2026-10-16: a conflict
+  no longer aborts the chunk: a ``conflict`` record (``conflict: true``) is ledgered, the conflicting keys are
+  removed from BOTH sources (missing bars, neither value chosen), the rest is stored and a
+  ``conflict_resolved_A6`` record (``a6_record``: keys, both value sets, file sha256s, rule) resolves the
+  conflict for R55; the same path serves W_HOLD ingestion (``auth``)).
   The decimals of the CSV strings give the stored scales (``RawStore.put_chunk(decimals=)``). The zip bytes
   never touch the disk; the manifest keeps each source's URL, name, size, sha256, published checksum and
   ``recv_ts``.
@@ -68,10 +72,22 @@ from luna.v7.data import klines
 from luna.v7.data.schema import IntegrityBlocker, IntegrityConflict
 from luna.v7.fetch import MAX_RESPONSE_BYTES, Fetched, Fetcher, FetchError, ListingEntry
 from luna.v7.netguard import Request
-from luna.v7.rawstore import TABLES, RawStore, StoreTable, _symbol, ledger_record, month_period, store_bound
+from luna.v7.rawstore import (
+    A6_RESOLVED,
+    NOT_APPLICABLE,
+    RULE_A6,
+    TABLES,
+    RawStore,
+    StoreTable,
+    _symbol,
+    ledger_record,
+    month_period,
+    perpetual_shaped,
+    store_bound,
+)
 
-__all__ = ["BVIS", "FAPI_FUNDING", "LEDGER", "N3_LIMIT", "RULE_DROPPED", "S3", "adopt_ledgers", "daily_days",
-           "ingest_bars",
+__all__ = ["BVIS", "FAPI_FUNDING", "LEDGER", "N3_LIMIT", "RULE_DROPPED", "S3", "a6_record", "adopt_ledgers",
+           "daily_days", "ingest_bars", "mark_not_applicable",
            "ingest_funding_archive", "ingest_funding_rest", "ingest_months", "list_archive", "listed_months",
            "n1_url"]
 
@@ -289,9 +305,50 @@ def ingest_bars(fetcher: Fetcher, store: RawStore, table: str, symbol: str, mont
             frames.append(fr)
         m, extra = (frames[0], frames[1:]) if monthly else (frames[0].iloc[0:0], frames)
         d = pd.concat(extra, ignore_index=True) if extra else m.iloc[0:0]
-        df = klines.union(m, d).reset_index(drop=True)
-        return store.put_chunk(table, symbol, month, df, sources=sources, decimals=_merge_decimals(decs),
-                               auth=auth)
+        df, conf = klines.union_a6(m, d)
+        df = df.reset_index(drop=True)
+        if conf is None:
+            return store.put_chunk(table, symbol, month, df, sources=sources, decimals=_merge_decimals(decs),
+                                   auth=auth)
+        # A-6: the conflict is recorded first (it blocks until its resolution record exists), then the chunk
+        # without the conflicting keys is stored, then the resolution (keys, both value sets, file sha256s)
+        n = len(conf["keys"])
+        _ledger(fetcher, {**_gap(table, symbol, month, f"IntegrityConflict: DEC-33 kline conflict monthly vs "
+                                 f"daily on {n} key(s), first open_ts {conf['keys'][0]}; resolved by A-6 "
+                                 "(keys dropped as missing)", conflict=True), "status": "conflict"}, store)
+        e = store.put_chunk(table, symbol, month, df, sources=sources, decimals=_merge_decimals(decs),
+                            auth=auth)
+        _ledger(fetcher, a6_record(table, symbol, month, e, conf), store)
+        return e
+
+
+def a6_record(table: str, symbol: str, month: str, entry: Mapping, conf: Mapping) -> dict:
+    """The A-6 resolution record (ledger status ``conflict_resolved_A6``): the stored chunk (sha256, rows),
+    the dropped keys, both value sets, the source files (name, url, sha256) and the rule."""
+    return {"table": table, "symbol": symbol, "month": month, "status": A6_RESOLVED,
+            "sha256": entry["sha256"], "rows": entry["rows"], "conflict": False,
+            "reason": f"A-6: {len(conf['keys'])} DEC-33 conflicting key(s) removed from both sources "
+                      "(missing)",
+            "keys": [int(x) for x in conf["keys"]], "monthly_values": list(conf["monthly"]),
+            "daily_values": list(conf["daily"]), "rule": RULE_A6,
+            "sources": [{"name": s.get("name"), "url": s.get("url"), "sha256": s.get("sha256")}
+                        for s in entry["sources"]]}
+
+
+def mark_not_applicable(store: RawStore, table: str, symbol: str, month: str) -> dict:
+    """S-2.1 (perpetual contracts only): record an N3 (``R2_rest``) key of a non-perpetual symbol (delivery /
+    settled names, which netguard refuses as non-alphanumeric) as not applicable, so its ``attempt`` /
+    ``gap`` records stop blocking (R55). Refused for a perpetual-shaped symbol or another table: a real gap
+    stays a gap. Returns the appended record."""
+    if table != "R2_rest" or perpetual_shaped(symbol):
+        raise ValueError(f"not applicable only for R2_rest keys of non-perpetual symbols, got {table} "
+                         f"{symbol}")
+    month_period(month)
+    rec = {**ledger_record(table, symbol, month, NOT_APPLICABLE,
+                           reason="not_applicable: non-perpetual symbol (S-2.1 covers PERPETUAL contracts)"),
+           "conflict": False}
+    store.append_ledger(rec)
+    return rec
 
 
 # --------------------------------------------------------------------------------------------- funding

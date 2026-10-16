@@ -56,6 +56,7 @@ Filled in as items land.
 | A-2 | implemented (Task 29d) | `luna/v7/leakage.py` `L9_TESTS` = 6, `L9_Z` = `norm.ppf(1 − 0.05/12)` ≈ 2.6383; `FROZEN.l9_fwer_alpha` = 0.05 replaces `l9_se_mult`. Record: AMB-33 (a) note. |
 | A-3 | implemented (Task 29d) | `luna/v7/book/engine.py` (`EngineInputs.tick_evaluable`, forward schedule only), `luna/v7/book/risk.py` (`skip_tick`), `luna/v7/forward_replay.py`. Record: AMB-43 (d) RESOLVED by A-3. |
 | R57 (controller) | implemented (Task 29d) | `luna/v7/forward_model.py` (`bridge_decisions`, `BRIDGE_WINDOW`, bridge coverage in `bound_samples`), `luna/v7/runner.py` (`_holdout_labelled`). Record: AMB-43 (a) RESOLVED by R57. |
+| A-6 | implemented (Task 29e) | `luna/v7/data/klines.py` `union_a6`; `luna/v7/ingest.py` (`ingest_bars`: `conflict` record, chunk minus the conflicting keys, `a6_record` = ledger status `conflict_resolved_A6` with keys, both value sets, source file sha256s, `rawstore.RULE_A6`; the same path for W_HOLD); `luna/v7/rawstore.py` (R55: a DEC-33 conflict resolved only by an A-6 record of the chunk held now; S-2.6 funding conflicts still block; `a6_resolutions(lo, hi)`); `luna/v7/runrecord.py` (`run_record(a6_resolutions=)`, required for raw-store manifests). Record: AMB-45 (A-6 supersedes "never auto-resolved"). The real BTCUSDT 2023-11 conflict in the dry-run store: `python scripts/v7/dryrun_ingest.py rechunk --table R3 --symbol BTCUSDT --month 2023-11` (controller). |
 
 ## A-5 (NORMATIVE REFINEMENT of A-1, user decision 2026-10-16) — AMB-46: same-sentence context for the base-asset match
 

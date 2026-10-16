@@ -908,11 +908,18 @@ def test_holdout_inputs_require_authorization(dev_valid, opened, tmp_path, monke
         _record([kw["ml_T"]], opening={"pin": {}})
 
 
-def test_run_book_issues_w_hold_books_with_their_provenance(inputs, opened):
+def test_run_book_issues_w_hold_books_with_their_provenance(inputs, opened, tmp_path, monkeypatch):
     """Red-team r2 MJ3 / m1: ``run_book`` under the verified opening issues a W_HOLD book with its opening,
     window, universe identity, score-model hashes and the bound provider's per-decision max_known_at
     (``runner.holdout_run_coverage``); a book outside W_HOLD, or without the opening, is not issued."""
+    from luna.v7 import rawstore
+
     u = uni(inputs)
+    # Task 29e hardening: under auth the ingest check must be a StoreSource's opened with that auth (its store
+    # check itself is tested in test_manifest_gate; here a passing one over the synthetic inputs)
+    monkeypatch.setattr(rawstore.StoreSource, "check_ingest", lambda self, lo, hi: None)
+    src = rawstore.StoreSource(rawstore.RawStore(tmp_path / "raw"), {}, auth=opened.auth)
+    u._ingest_check = (src.check_ingest, *u._ingest_check[1:])
     p = DecisionProvider(u, with_features=True, auth=opened.auth)
     win = (windows.W_HOLD[0], windows.W_HOLD[0] + D)
     oid = opened.auth.opening_id

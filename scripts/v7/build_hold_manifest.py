@@ -45,12 +45,13 @@ def main(argv: list[str] | None = None) -> int:
     sha = hashlib.sha256(data).hexdigest()
     (out / "W_HOLD_MANIFEST.dryrun.json").write_bytes(data)
     report = {"sha256": sha, "symbols": len(doc["symbols"]), "keys": len(doc["entries"]),
-              "counts": manifest.counts(doc)}
+              "entries": len(doc["entries"]), "file_bytes": len(data), "counts": manifest.counts(doc)}
     (out / "W_HOLD_MANIFEST.counts.json").write_text(json.dumps(report, indent=1), encoding="utf-8")
     print(json.dumps(report, indent=1))
+    print(f"manifest: {report['entries']} entries, {report['file_bytes']} bytes")
     if a.write:
         p, sha2 = manifest.write_document(doc)
-        print(f"written {p} sha256 {sha2}")
+        print(f"written {p} sha256 {sha2} ({len(doc['entries'])} entries, {p.stat().st_size} bytes)")
     return 0
 
 

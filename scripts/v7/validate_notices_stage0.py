@@ -765,6 +765,9 @@ def main(argv=None) -> int:
                 "kind_reason_counts"
             ],
             "wdev_book_window": book_window(old["terminations"]),
+            "base_asset_matches": (old.get("a1_effect") or {}).get("base_asset_matches"),
+            "terminations_by_instance": {f"{t['symbol']}#{t['instance']}": t["frozen"]["status"]
+                                         for t in old["terminations"]},
             "termination_reason_heads": {
                 k: dict(
                     sorted(
@@ -801,8 +804,8 @@ def main(argv=None) -> int:
         },
         "refused_captures": refused,
         "k9_refusal_logged": k9_refusals,
-        "runs": {"frozen": "metaingest.build_notices as committed (the FROZEN-candidate path incl. A-1; no "
-                           "wrapper)"},
+        "runs": {"frozen": "metaingest.build_notices as committed (the FROZEN-candidate path incl. A-1 and "
+                           "A-5; no wrapper)"},
         "a1_identities": "C4 PROXY (no exchangeInfo in the C4 inputs): base = symbol without its USDT quote, "
                          "quote USDT, NOT E8-verified (proxy_identities)",
         "headline": {
@@ -879,7 +882,8 @@ def render_md(r: dict) -> str:
         "(every executed `luna` module and this script identical to HEAD: "
         f"{r['worktree_clean_for_code']}; `git status` of luna/v7: "
         f"{r['worktree_status_porcelain_luna_v7'] or 'clean'}; the FROZEN-candidate "
-        "code path only: Task 26d R50 / R51 / R52 and the user's amendment A-1 (Task 29d), no diagnostic "
+        "code path only: Task 26d R50 / R51 / R52, the user's amendment A-1 (Task 29d) and its refinement "
+        "A-5 (Task 29e: same-sentence base-asset context), no diagnostic "
         "wrapper). Machine-readable: "
         "`c4-notice-validation.json` (input / committed-code sha256 recorded there). No prices, labels, "
         "P&L or outcomes "
@@ -904,10 +908,11 @@ def render_md(r: dict) -> str:
         bc, ac = b["counts"]["frozen"], r["counts"]["frozen"]
         bw, aw = b.get("wdev_book_window") or {}, r["wdev_book_window"]
         L += [
-            "## 2. Before -> after (A-1)",
+            "## 2. Before -> after",
             "",
-            f"Before = the C4 run at HEAD `{b['git_head']}` (file sha256 `{b['sha256'][:16]}...`; pre-A-1: "
-            "DEC-40 exact symbol only, no token-swap kind). After = this run (A-1 in force).",
+            f"Before = the C4 run at HEAD `{b['git_head']}` (file sha256 `{b['sha256'][:16]}...`). After = "
+            "this run (code at this HEAD; Task 29e: A-1 with A-5, the base-asset token and a USDⓈ-M context "
+            "phrase in the same sentence).",
             "",
             "| measure | before | after |",
             "|---|---|---|",
@@ -1039,8 +1044,25 @@ def render_md(r: dict) -> str:
         L.append(f"| {e['instance']} | {e['stage0_class']} | {e['cessation']} | {prot} | "
                  f"{'; '.join(e['by']) or '-'} | {e['status']}: {'; '.join(e['reasons'])[:200]} |")
     n = r["a1_effect"]
-    L += ["", "## 8. A-1 effect (user amendment, AMENDMENTS-2026-10-16)", "",
-          "Base-asset matches (rule 1):", ""]
+    L += ["", "## 8. A-1 / A-5 effect (user amendment and refinement, AMENDMENTS-2026-10-16)", ""]
+    if b.get("base_asset_matches") is not None:
+        def _k(x):
+            return (x["version"], x["symbol"])
+        old = {_k(x): x for x in b["base_asset_matches"]}
+        new = {_k(x): x for x in n["base_asset_matches"]}
+        L += ["Base-asset matches removed (in the before run, not in this run):", ""]
+        L += [f"- {k[0]} {k[1]} -> {old[k]['instance'] or '-'} ({old[k]['kind']}; known "
+              f"{old[k]['known_at']})" for k in sorted(set(old) - set(new))] or ["- none"]
+        L += ["", "Base-asset matches added (in this run only):", ""]
+        L += [f"- {k[0]} {k[1]} -> {new[k]['instance'] or '-'}"
+              for k in sorted(set(new) - set(old))] or ["- none"]
+        bt = b.get("terminations_by_instance") or {}
+        now = {f"{t['symbol']}#{t['instance']}": t["frozen"]["status"] for t in r["terminations"]}
+        chg = sorted((i, bt[i], st) for i, st in now.items() if i in bt and bt[i] != st)
+        L += ["", "Stage-0 terminations whose status changed (before -> after):", ""]
+        L += [f"- {i}: {x} -> {y}" for i, x, y in chg] or ["- none"]
+        L += [""]
+    L += ["Base-asset matches (rule 1, this run):", ""]
     for x in n["base_asset_matches"]:
         L.append(f"- {x['version']} ({x['status']}, {x['kind']}) {x['symbol']} -> {x['instance'] or '-'} "
                  f"({x['instance_reason']}; known {x['known_at']}; {x['reason']}; scheduled_ts "

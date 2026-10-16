@@ -256,3 +256,47 @@ def test_a1_carried_base_match_drives_u6_and_keeps_dec37():
     assert scheduled_ts(v, "AKROUSDT") is None
     st = U6State([v], "AKROUSDT", INSTS)
     assert not st.active(INSTS[0], KA - 1, never) and st.active(INSTS[0], KA + 30 * D, never)
+
+
+# ------------------------------------------------- A-5 (AMENDMENTS-2026-10-16, AMB-46): same-sentence context
+
+
+def test_a5_base_in_pair_sentence_context_elsewhere_gives_no_match():
+    """BTC named only as a pair / example; the USDⓈ-M phrase is in another sentence: no base match."""
+    b = _bases(BTCUSDT=(T0, _id("BTC")), AKROUSDT=(T0, _id("AKRO")))
+    v = _v("Binance Futures Will Delist AKRO USDT-Margined Contracts\n"
+           "Users can convert their AKRO into BTC before the deadline.")
+    assert match_reason(v, "BTCUSDT", b) == (False, "base_asset:BTC;no_same_sentence_usdm_context")
+    assert match_reason(v, "AKROUSDT", b) == (True, "base_asset_match:AKRO;usdm_context:usdt-margined")
+    # the sentence split is DEC-37's _SENT_RE (".", ";", "!", "?" + whitespace, or a newline)
+    v2 = _v("The AKRO USDT-margined perpetual will be removed. Trading pairs such as AKRO/BTC stay open.")
+    assert not match_reason(v2, "BTCUSDT", b)[0] and match_reason(v2, "AKROUSDT", b)[0]
+
+
+def test_a5_base_and_context_in_same_sentence_match():
+    b = _bases(AKROUSDT=(T0, _id("AKRO")))
+    v = _v("Notice of Futures Changes\nBinance Futures will remove the AKRO USDⓈ-M perpetual contract.")
+    assert match_reason(v, "AKROUSDT", b) == (True, "base_asset_match:AKRO;usdm_context:usds-m")
+    # the "perpetual contract" + "futures" pair counts only with both words in the base's sentence
+    pair = _v("Binance Futures update.\nThe AKRO perpetual contract will be settled.")
+    assert match_reason(pair, "AKROUSDT", b) == (False, "base_asset:AKRO;no_same_sentence_usdm_context")
+    pair2 = _v("Update.\nBinance Futures will settle the AKRO perpetual contract.")
+    assert match_reason(pair2, "AKROUSDT", b) == (
+        True, "base_asset_match:AKRO;usdm_context:perpetual contract+futures")
+
+
+def test_a5_title_sentence_matches_and_veto_stays_notice_wide():
+    b = _bases(AKROUSDT=(T0, _id("AKRO")), DODOUSDT=(T0, _id("DODO")))
+    v = _v("Will Delist AKRO and DODO USDT-Margined Contracts\n"
+           "Positions will be closed at 2024-06-11 09:00 (UTC).")
+    assert match_reason(v, "AKROUSDT", b)[0] and match_reason(v, "DODOUSDT", b)[0]
+    vetoed = _v("Will Delist AKRO and DODO USDT-Margined Contracts\nCOIN-M contracts are not affected.")
+    assert match_reason(vetoed, "AKROUSDT", b) == (False, "base_asset:AKRO;coin_m_veto:coin-m")
+
+
+def test_a5_exact_symbol_match_keeps_per_notice_context():
+    """DEC-40 (exact symbol token) is unchanged: the context may be in another sentence."""
+    b = _bases(AKROUSDT=(T0, _id("AKRO")))
+    v = _v("Binance Futures Will Delist USDT-Margined Contracts\nAKROUSDT will be removed.")
+    assert match_reason(v, "AKROUSDT", b) == (True, "usdm_context:usdt-margined")
+    assert confident_match(v, "AKROUSDT")

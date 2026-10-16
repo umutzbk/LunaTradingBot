@@ -23,6 +23,13 @@
   ``metastore.load_notice_versions``); ``U6State`` / ``terminal`` read the carried decision (the context is
   re-checked). ``scheduled_ts`` (DEC-37), versioning and U6 are unchanged: candidates still come only from
   sentences with the exact symbol token, so a base-only notice has ``scheduled_ts`` None.
+* A-5 (AMENDMENTS-2026-10-16, user decision on AMB-46; refines A-1 rule 1 only): the base token and a USDⓈ-M
+  context phrase must occur in the SAME sentence (sentences split by ``_SENT_RE``, as DEC-37, on the R51
+  text; the ``perpetual contract`` + ``futures`` pair counts with both in that sentence). The COIN-M veto
+  stays notice-wide (as A-1), the ambiguity rule is unchanged; no such sentence ->
+  ``base_asset:<BASE>;no_same_sentence_usdm_context``. The DEC-40 exact-symbol match keeps the per-notice
+  context, the token-swap kind is unchanged; a carried match (decided at ingest under A-5) re-checks the
+  notice-wide context only.
 * ``scheduled_ts``: only an explicitly mapped UTC timestamp, else None (DEC-37).
 * ``U6State.active``: activation at ``known_at``; deactivation by a later matched postponement /
   cancellation at its ``known_at``; the 72 h auto-clear only with a unique scheduled time; a late
@@ -169,8 +176,16 @@ def base_match_reason(v: NoticeVersion, symbol: str, bases: InstanceBases) -> tu
     n = bases.live_count(base, ka)
     if n != 1:
         return False, f"no_symbol_token;base_asset_ambiguous:{base}:{n}"
-    ok, why = _context(v.text)
-    return (True, f"base_asset_match:{base};{why}") if ok else (False, f"base_asset:{base};{why}")
+    ok, why = _context(v.text)  # the notice-wide test: the COIN-M veto (and a context at all), as A-1
+    if not ok:
+        return False, f"base_asset:{base};{why}"
+    tok = _token_re(base)
+    for sent in _SENT_RE.split(v.text):  # A-5: the base token and a context phrase in the SAME sentence
+        if tok.search(sent) is not None:
+            s_ok, s_why = _context(sent)
+            if s_ok:
+                return True, f"base_asset_match:{base};{s_why}"
+    return False, f"base_asset:{base};no_same_sentence_usdm_context"
 
 
 def match_reason(v: NoticeVersion, symbol: str, bases: InstanceBases | None = None) -> tuple[bool, str]:

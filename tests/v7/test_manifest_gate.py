@@ -620,3 +620,56 @@ def test_planned_listing_coverage_and_torn_line_repair(tmp_path, log):
     assert b"sym" in (tmp_path / "raw" / "INGEST_LEDGER.quarantine.jsonl").read_bytes()
     assert log.records()[-1]["rule"] == rawstore.RULE_REPAIR
     assert st.quarantine_unreadable() == 0
+
+
+def test_manifest_entries_are_indexed_by_parent_prefix():
+    """Task 29e: ``check_listing`` reads the pinned entries under a prefix from a per-manifest parent index;
+    same result as the scan (direct children only, daily-stem prefixes included)."""
+    d = f"{UM}/daily/klines/BTCUSDT/15m/"
+    ents = {d + "BTCUSDT-15m-2025-08-01.zip": (1, "a" * 32), d + "BTCUSDT-15m-2025-09-01.zip": (2, "b" * 32),
+            d + "sub/BTCUSDT-15m-2025-08-02.zip": (3, "c" * 32), f"{UM}/daily/klines/X.zip": (4, "d" * 32)}
+    m = manifest.Manifest("0" * 64, ("BTCUSDT",), ents)
+    for prefix in (d, d + "BTCUSDT-15m-2025-08-", f"{UM}/daily/klines/", f"{UM}/nothing/"):
+        scan = {k: v for k, v in ents.items() if k.startswith(prefix) and "/" not in k[len(prefix):]}
+        assert m.under(prefix) == scan
+    assert m.under(d + "BTCUSDT-15m-2025-08-") == {d + "BTCUSDT-15m-2025-08-01.zip": (1, "a" * 32)}
+
+
+def test_under_auth_only_a_store_source_with_that_auth_passes(opened, tmp_path, log):
+    """Hardening (Tasks 29b / 29c re-review): under the authorization, run_book / label_panel need the
+    universe's ingest check to be a rawstore.StoreSource's, opened with the same auth; an in-memory,
+    duck-typed or subclassed source is refused (IntegrityBlocker, K9-logged) even when its own
+    check passes."""
+    from tests.v7 import fixtures_v7 as fx
+
+    class Duck:
+        auth = opened.auth
+
+        def check_ingest(self, lo, hi):
+            return None
+
+    class Sub(rawstore.StoreSource):
+        def check_ingest(self, lo, hi):
+            return None
+
+    st = RawStore(tmp_path / "raw")
+    good = rawstore.StoreSource(st, {}, auth=opened.auth)
+    other = rawstore.StoreSource(st, {}, auth=None)
+
+    def uni(chk):
+        u = runner.ResearchUniverse.__new__(runner.ResearchUniverse)
+        u._ingest_check = (chk, 0, 1)
+        return u
+
+    runner._require_store_source(uni(good.check_ingest), opened.auth)  # passes
+    runner._require_store_source(uni(fx.LedgeredSource({}).check_ingest), None)  # no auth: no requirement
+    for chk in (fx.LedgeredSource({}).check_ingest, Duck().check_ingest,
+                Sub(st, {}, auth=opened.auth).check_ingest, other.check_ingest):
+        with pytest.raises(IntegrityBlocker, match="StoreSource"):
+            runner._require_store_source(uni(chk), opened.auth)
+    assert _rules(log)[-1] == runner.RULE_AUTH_STORE
+    u = uni(fx.LedgeredSource({}).check_ingest)  # the entry points run it right after the R55 check
+    for call in (lambda: runner.run_book("A0", u, object(), windows.W_HOLD, 72, 0, auth=opened.auth),
+                 lambda: runner.label_panel(u, object(), [1], 72, windows.W_HOLD, 0, auth=opened.auth)):
+        with pytest.raises(IntegrityBlocker, match="StoreSource"):
+            call()

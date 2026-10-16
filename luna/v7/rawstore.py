@@ -52,8 +52,13 @@ chunk file's sha256); the ingestion appends an ``attempt`` record before it fetc
 [lo, hi)): a key has an unresolved blocking record (``gap`` / ``spill_not_requested`` / ``attempt`` / an
 unknown status; resolved only by a ``stored`` record of the chunk the store now holds, whatever the order;
 a record with ``conflict: true`` (DEC-33 / S-2.6; a legacy record without the field: its reason names a
-conflict) is never resolved by a re-ingest), a stored chunk has no ``stored`` record of its own sha256 (the
-ledger is not this store's complete ledger), a ``planned`` key (the caller's planned listing, optional) has no
+conflict) is not resolved by a re-ingest: A-6 (AMENDMENTS-2026-10-16) supersedes "never": a DEC-33 conflict
+of an R3 / R5 key is resolved by a well-formed ``conflict_resolved_A6`` record (``RULE_A6``: dropped keys,
+both value sets, source file sha256s) of the chunk the store now holds; an S-2.6 funding conflict still
+blocks; an ``R2_rest`` key of a non-perpetual symbol (``perpetual_shaped`` false; S-2.1) without a chunk is
+resolved by a ``not_applicable`` record, which is ignored for any other key), a stored chunk has no
+``stored`` record of its own sha256 (the ledger is not this store's complete ledger), a ``planned`` key (the
+caller's planned listing, optional) has no
 stored chunk, or the ledger has an unreadable line. Repair of an unreadable (torn) line, append-only:
 ``quarantine_unreadable`` copies its bytes to ``INGEST_LEDGER.quarantine.jsonl``, appends a ``quarantined``
 record (line number + sha256 of the bytes) and writes a K9 entry; the line is then skipped (whatever record it
@@ -62,6 +67,7 @@ authorization, every ``.zip`` key of the pinned W_HOLD manifest in use must be a
 chunk with the pinned size (and md5, for a single-part ETag) (ruling R56: a
 manifest entry that never reached the store is a gap; R10 aggTrades are not raw-store tables and are bound at
 fetch time only).
+``a6_resolutions(lo, hi)``: the A-6 records of the window (DT4, ``runrecord.run_record(a6_resolutions=)``).
 The research entry points call it (``StoreSource.check_ingest``; ``runner.ResearchUniverse.from_source`` /
 ``for_decisions``, ``label_panel``, ``run_book``; ``metaingest.instances_from_store``): a hole is never read
 as missing data.
@@ -81,7 +87,7 @@ import re
 import threading
 from collections import OrderedDict
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -119,6 +125,12 @@ RULE_INGEST = ("ruling R55 ingest completeness: unresolved ingest gap / DEC-33 c
 LEDGER = "INGEST_LEDGER.jsonl"
 STORED = "stored"
 QUARANTINED = "quarantined"
+A6_RESOLVED = "conflict_resolved_A6"  # A-6 (AMENDMENTS-2026-10-16): DEC-33 conflict keys dropped as missing
+NOT_APPLICABLE = "not_applicable"  # S-2.1: an N3 key of a non-perpetual symbol (dry-run driver, Task 29e)
+RULE_A6 = ("A-6 (AMENDMENTS-2026-10-16): a DEC-33 monthly / daily conflict is resolved by removing the "
+           "conflicting keys from both sources (missing bars, neither value chosen); the rest of the chunk "
+           "is stored")
+_PERP_RE = re.compile(r"[A-Z0-9]+")
 RULE_REPAIR = "ruling R55 ingest ledger repair: an unreadable line quarantined (append-only)"
 BLOCKING = frozenset({"gap", "spill_not_requested", "attempt"})
 _LEDGER_LOCK = threading.Lock()
@@ -480,6 +492,25 @@ def _conflict(rec: Mapping) -> bool:
     return isinstance(reason, str) and "conflict" in reason.lower()
 
 
+def perpetual_shaped(symbol: object) -> bool:
+    """S-2.1 covers PERPETUAL contracts: an alphanumeric (upper-case) symbol not ending in ``SETTLED``
+    (delivery ``XXX_YYMMDD`` and settled ``XXX_SETTLED`` / ``XXXSETTLED`` names are not perpetual-shaped)."""
+    return (isinstance(symbol, str) and _PERP_RE.fullmatch(symbol) is not None
+            and not symbol.endswith("SETTLED"))
+
+
+def _a6_ok(r: Mapping) -> bool:
+    """A well-formed A-6 resolution record: a DEC-33 (monthly union daily) table, the resolved chunk's
+    sha256, non-empty int keys with both value sets of the same length, the source files and the rule."""
+    t = r.get("table")
+    keys, m, d = r.get("keys"), r.get("monthly_values"), r.get("daily_values")
+    return (t in TABLES and TABLES[t].daily_union and isinstance(r.get("sha256"), str)
+            and isinstance(keys, list) and bool(keys)
+            and all(isinstance(x, int) and not isinstance(x, bool) for x in keys)
+            and isinstance(m, list) and isinstance(d, list) and len(m) == len(d) == len(keys)
+            and isinstance(r.get("sources"), list) and bool(r.get("sources")) and r.get("rule") == RULE_A6)
+
+
 def _rank(why: str) -> int:
     return 2 if why.startswith("conflict") else 0 if why.startswith("attempt") else 1
 
@@ -494,6 +525,8 @@ class IngestIndex:
     unreadable: tuple[int, ...]
     stored: frozenset = frozenset()  # keys with a chunk and its stored record
     unreadable_sha: tuple[tuple[int, str], ...] = ()  # (line, sha256 of its bytes)
+    a6: Mapping[tuple, tuple] = field(default_factory=dict)  # key -> A-6 records of the current chunk
+    not_applicable: frozenset = frozenset()  # keys resolved as not applicable (S-2.1, non-perpetual N3)
 
 
 # ------------------------------------------------------------------------------------------------ store
@@ -558,12 +591,20 @@ class RawStore:
         stored: dict[tuple, set] = {}
         blocking: dict[tuple, str] = {}
         conflicts: set[tuple] = set()
+        a6: dict[tuple, list[dict]] = {}
+        na: set[tuple] = set()
         for r in records:
             k = (r.get("table"), r.get("symbol"), r.get("month"))
             if r.get("status") == QUARANTINED:
                 continue
             if r.get("status") == STORED:
                 stored.setdefault(k, set()).add(r.get("sha256"))
+                continue
+            if r.get("status") == A6_RESOLVED and _a6_ok(r):
+                a6.setdefault(k, []).append(r)
+                continue
+            if r.get("status") == NOT_APPLICABLE and k[0] == "R2_rest" and not perpetual_shaped(k[1]):
+                na.add(k)
                 continue
             why = f"{r.get('status')}: {r.get('reason')}"
             if _conflict(r):
@@ -572,11 +613,20 @@ class RawStore:
             old = blocking.get(k)
             if old is None or _rank(why) > _rank(old):
                 blocking[k] = why  # the most informative record: a conflict, else a gap over an attempt
-        unresolved = {k: why for k, why in blocking.items()
-                      if k in conflicts or k not in chunks or chunks[k] not in stored.get(k, ())}
-        unledgered = frozenset(k for k, sha in chunks.items() if sha not in stored.get(k, ()))
         resolved = frozenset(k for k, sha in chunks.items() if sha in stored.get(k, ()))
-        idx = IngestIndex(unresolved, unledgered, tuple(i for i, _ in bad), resolved, tuple(bad))
+        cur_a6 = {k: tuple(r for r in rs if k in resolved and r["sha256"] == chunks[k])
+                  for k, rs in a6.items()}
+        cur_a6 = {k: rs for k, rs in cur_a6.items() if rs}
+
+        def settled(k: tuple) -> bool:
+            if k in conflicts:  # DEC-33: resolved only by A-6 (an A-6 record of the chunk the store holds)
+                return k in cur_a6
+            return k in resolved or (k in na and k not in chunks)
+
+        unresolved = {k: why for k, why in blocking.items() if not settled(k)}
+        unledgered = frozenset(k for k, sha in chunks.items() if sha not in stored.get(k, ()))
+        idx = IngestIndex(unresolved, unledgered, tuple(i for i, _ in bad), resolved, tuple(bad), cur_a6,
+                          frozenset(na))
         self._ingest_cache = (key, idx)
         return idx
 
@@ -586,10 +636,30 @@ class RawStore:
         ``StoreSource.identity``) so view stores and run records change when completeness changes (ruling
         R55)."""
         idx = self.ingest_index()
-        body = {"unresolved": sorted(([*k, why] for k, why in idx.unresolved.items()), key=repr),
-                "unledgered": sorted((list(k) for k in idx.unledgered), key=repr),
-                "unreadable": list(idx.unreadable)}
+        body: dict = {"unresolved": sorted(([*k, why] for k, why in idx.unresolved.items()), key=repr),
+                      "unledgered": sorted((list(k) for k in idx.unledgered), key=repr),
+                      "unreadable": list(idx.unreadable)}
+        if idx.a6:  # A-6 resolutions and not-applicable keys change the identity (absent: unchanged)
+            body["a6_resolved"] = sorted(([*k, r["sha256"], r["keys"]] for k, rs in idx.a6.items()
+                                          for r in rs), key=repr)
+        if idx.not_applicable:
+            body["not_applicable"] = sorted((list(k) for k in idx.not_applicable), key=repr)
         return _sha_bytes(_canonical(body))
+
+    def a6_resolutions(self, lo: int, hi: int, *, tables: Sequence[str] | None = None,
+                       symbols: Sequence[str] | None = None) -> list[dict]:
+        """A-6: the resolution records of the chunks the store holds whose dropped keys lie in [lo, hi) (for
+        DT4, ``runrecord.run_record(a6_resolutions=)``), sorted by (table, symbol, month)."""
+        tset = None if tables is None else {_table(t).key for t in tables}
+        sset = None if symbols is None else set(symbols)
+        out = []
+        for k in sorted(self.ingest_index().a6, key=repr):
+            if (tset is not None and k[0] not in tset) or (sset is not None and k[1] not in sset):
+                continue
+            for r in self.ingest_index().a6[k]:
+                if any(int(lo) <= x < int(hi) for x in r["keys"]):
+                    out.append(json.loads(_canonical(dict(r))))
+        return out
 
     def data_manifests(self) -> dict[str, str]:
         """The DT4 data manifests of this store: every table-manifest sha256 plus ``ingest_ledger_state``

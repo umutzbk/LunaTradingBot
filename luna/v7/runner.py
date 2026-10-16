@@ -781,6 +781,33 @@ def _ingest_gate(source: object, lo: int, hi: int) -> tuple[object, int, int]:
     return chk, int(lo), int(hi)
 
 
+RULE_AUTH_STORE = ("ruling R55 / R56 under the authorization: W_HOLD inputs come from a rawstore.StoreSource "
+                   "opened with the same authorization (pinned manifest coverage)")
+
+
+def _require_store_source(u: ResearchUniverse, auth: guard.HoldoutAuthorization | None) -> None:
+    """Hardening (Tasks 29b / 29c re-review): with ``auth`` the universe's bound ingest check must be the
+    ``check_ingest`` of a ``rawstore.StoreSource`` (exactly that class: no subclass, no duck type) opened with
+    this same ``auth``, so the R56 pinned-manifest coverage runs for every W_HOLD book / panel (and so for the
+    forward refit inputs, which are those panels). Refused: IntegrityBlocker, K9-logged."""
+    if auth is None:
+        return
+    from luna.v7.rawstore import StoreSource  # runtime import (rawstore imports this module)
+
+    chk = None if u._ingest_check is None else u._ingest_check[0]
+    src = getattr(chk, "__self__", None)
+    func = getattr(chk, "__func__", None)
+    if type(src) is StoreSource and func is StoreSource.check_ingest and src.auth is auth:
+        return
+    from luna.v7.data.schema import IntegrityBlocker
+
+    e = IntegrityBlocker(f"under the authorization the universe's ingest check must belong to a "
+                         f"rawstore.StoreSource opened with that authorization (got {type(src).__name__})")
+    k9.log_refusal(e, request={"kind": "ingest_completeness", "what": "auth_store_source",
+                               "source": type(src).__name__}, rule=RULE_AUTH_STORE)
+    raise e
+
+
 def _source_identity(source: object) -> object:
     ident = getattr(source, "identity", None)
     return ident() if callable(ident) else None
@@ -954,6 +981,7 @@ def label_panel(u: ResearchUniverse, provider: DecisionProvider, decision_ts: Se
         raise ValueError(f"unknown horizon {h}")
     k9.require()
     u.check_ingest()  # ruling R55 (fail closed: a universe without a store ingest check is refused)
+    _require_store_source(u, auth)
     if not provider.with_features:
         raise ValueError("label_panel needs the §9 features (DecisionProvider(with_features=True))")
     ts = sorted({int(t) for t in decision_ts})
@@ -1160,6 +1188,7 @@ def run_book(arm: str, u: ResearchUniverse, provider: DecisionProvider, window: 
     working tree; DK-114 / red-team m10)."""
     k9.require()
     u.check_ingest()  # ruling R55 (fail closed: a universe without a store ingest check is refused)
+    _require_store_source(u, auth)
     if model is not None and not isinstance(model, FoldScoreModel):
         raise TypeError(f"run_book: the score model must be a FoldScoreModel, got {type(model).__name__}")
     if arm != "A0" and not provider.with_features:

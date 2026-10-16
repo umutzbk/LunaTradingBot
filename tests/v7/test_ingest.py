@@ -141,15 +141,18 @@ def test_ingest_is_idempotent_and_resumable(tmp_path, no_k9):
     assert any(r["rule"].startswith("§3") for r in k9.K9Log(tmp_path / "run" / "k9").records())
 
 
-def test_conflicting_monthly_and_daily_is_an_integrity_blocker(tmp_path, no_k9):
+def test_conflicting_monthly_and_daily_is_resolved_by_a6(tmp_path, no_k9):
+    """A-6 (AMENDMENTS-2026-10-16): the conflicting key is dropped from both sources (a missing bar), the rest
+    of the chunk is stored and the resolution is ledgered (tests/v7/test_a6_conflicts.py has the details)."""
     t = FakeTransport()
     jan_15m(t, conflict=True)
     st = RawStore(tmp_path / "raw")
-    with pytest.raises(IntegrityBlocker, match="conflict"):
-        ingest.ingest_bars(fetcher(t, tmp_path / "run"), st, "R3", "BTCUSDT", "2024-01",
+    e = ingest.ingest_bars(fetcher(t, tmp_path / "run"), st, "R3", "BTCUSDT", "2024-01",
                            daily=("2024-01-30", "2024-01-31"))
-    assert st.entry("R3", "BTCUSDT", "2024-01") is None
-    assert not st.chunk_path("R3", "BTCUSDT", "2024-01").exists()
+    assert e["rows"] == 31 * 96 - 1
+    recs = [json.loads(x) for x in st.ledger_path.read_text(encoding="utf-8").splitlines()]
+    assert recs[-1]["status"] == rawstore.A6_RESOLVED
+    assert recs[-1]["keys"] == [to_ns("2024-01-30") + 3 * 15 * MIN]
 
 
 def test_changed_source_content_is_refused_and_logged(tmp_path, no_k9):

@@ -124,7 +124,8 @@ def run_record(*, commit: str, dirty: bool, config: Mapping, data_manifests: Map
                seeds: Mapping[str, int], uv_lock_sha256: str, libraries: Mapping[str, str],
                convergence: Sequence[Mapping], runs: Sequence[BookRun], research: bool = False,
                extra: Mapping | None = None, leakage_reports: Sequence = (),
-               opening: Mapping | None = None, kraken: object = None) -> dict:
+               opening: Mapping | None = None, kraken: object = None,
+               a6_resolutions: Sequence[Mapping] | None = None) -> dict:
     """The DT4 record with the ``data.schema`` DT4 columns (``run_id`` key, ``code_commit``,
     ``config_sha256``, ``data_manifest_sha256s``, ``seeds``, ``library_versions``) plus the working-tree
     state, the ``uv.lock`` sha256, the identity and output sha256 of every executed book, the per-fit
@@ -137,7 +138,10 @@ def run_record(*, commit: str, dirty: bool, config: Mapping, data_manifests: Map
     ``dev_selection`` book and every ``holdout_inputs`` run) or the caller passes ``research=True``; the
     caller's flag can never unset it (DK-114 / red-team m10: no longer a caller convention). ``kraken``: the
     ``kraken.KrakenComparison`` of the opening (S-1.6 / L11); its frozen V5 manifest sha256 and V6 artefact
-    hashes join ``data_manifest_sha256s`` and its exploratory block is recorded as ``kraken_exploratory``."""
+    hashes join ``data_manifest_sha256s`` and its exploratory block is recorded as ``kraken_exploratory``.
+    ``a6_resolutions``: A-6 (AMENDMENTS-2026-10-16), the store's DEC-33 conflict resolutions inside the data
+    window (``RawStore.a6_resolutions(lo, hi)``), recorded as ``a6_resolutions``; required (fail closed) when
+    the manifests come from a raw store (they name ``ingest_ledger_state``)."""
     if not _COMMIT.match(str(commit)):
         raise ValueError("commit must be a 40-hex git commit")
     if not isinstance(dirty, bool):
@@ -149,6 +153,12 @@ def run_record(*, commit: str, dirty: bool, config: Mapping, data_manifests: Map
         raise ValueError("a research run record needs a clean working tree (code_dirty)")
     if not data_manifests:
         raise ValueError("data manifest sha256s are required")
+    if a6_resolutions is None and "ingest_ledger_state" in data_manifests:
+        raise ValueError("a6_resolutions: a raw-store record must list the A-6 resolutions of its window "
+                         "(RawStore.a6_resolutions; [] when none)")
+    a6 = [dict(r) for r in (a6_resolutions or ())]
+    if not all(r.get("status") == "conflict_resolved_A6" for r in a6):
+        raise ValueError("a6_resolutions: only conflict_resolved_A6 ledger records")
     kr_block = None
     if kraken is not None:
         from luna.v7 import kraken as kr  # local: kraken imports this module
@@ -195,6 +205,7 @@ def run_record(*, commit: str, dirty: bool, config: Mapping, data_manifests: Map
         "convergence_summary": {"fits": len(conv), "not_converged": len(bad)},
         "leakage_reports": leak,
         "extra": json.loads(canonical_json(dict(extra or {}))),
+        "a6_resolutions": json.loads(canonical_json(a6)),
     }
     if kr_block is not None:  # S-1.6: exploratory (previously observed window)
         body["kraken_exploratory"] = json.loads(canonical_json(kr_block))
